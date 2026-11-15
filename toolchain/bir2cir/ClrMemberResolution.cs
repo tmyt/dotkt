@@ -6,21 +6,12 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// W1-S2 (#46) — RESOLVED-CLR-IR carry for PLAIN calls (clrStatic/clrInstance) + CONSTRUCTORS (newClr). Runs AFTER
-// BirTypeLowering.Apply (Program.cs), so every clr*/newClr node's `type` (owner) + `argTypes` are already in the
-// CLR-lowered vocabulary. bir2cir HOLDS the winning member (its MetadataLoadContext) but until now serialized only the
-// lossy `argTypes` (declared param types WITHOUT member identity), forcing ilemit to re-run overload resolution
-// (arity probes, name+arity first-picks, assignability scoring, ctor-by-arg-count, the interface-owner dynamic-dispatch
-// downgrade). This pass makes CIR the RESOLVED IR: it structurally matches the callee's DECLARED param types (kotc's
-// FIR-resolved `sig`, carried as `argTypes`) against the owner's same-name members in the MLC, requires a UNIQUE winner,
-// and stamps the winner's canonical DECLARED params as `resolvedMemberParams` (+ `dispatch` on clrInstance), deleting `argTypes`.
-// ilemit then LINKS exactly one handle (0 = hard ABI error / >1 = malformed), never picking.
-//
-// Mirrors the S1 generic-CALL matcher (Emitter.Resolve.cs ResolveGenericMethod) — its DUAL for the CONSTRUCTION case:
-// the owner is resolved on its OPEN definition, and `resolvedMemberParams` keeps a class type-var as a positional `tv(type,i)`.
-// So `List<E>` (generic stdlib) / `HashSet<EmittedType>` need NO MakeGenericType over an open/local type-arg; the
-// tv-vs-owner-instantiation bridge (the `ownerArgs` TypeNodes) resolves the concrete/open owner args positionally,
-// exactly as ilemit's GenericParamMatches `ownerArgs` branch does with reflected Types.
+// Native binding consumes the already-physical owner and carried declaration
+// descriptors. The owning typed family renderers share these reflection policies
+// and author exact MemberRefs; ilemit only links those stated identities.
+// Matching uses an open declaration frame, then projects the selected declaring
+// owner without manufacturing closed reflection types for local/type-variable
+// arguments. Applicability must not replace an explicitly selected descriptor.
 static partial class ClrMemberResolution
 {
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
@@ -31,144 +22,6 @@ static partial class ClrMemberResolution
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
     static IReadOnlySet<string> _externalCanonicalTypes = new HashSet<string>();
     static IReadOnlySet<string> _localDeclarationIds = new HashSet<string>();
-
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes)
-    {
-        _refs = refs;
-        _localTypes = localTypes ?? new HashSet<string>();
-        Walk(root);
-    }
-
-
-    static void Walk(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);
-            try { Resolve(obj); }
-            catch (InvalidOperationException error)
-            {
-                var context = new List<string>();
-                for (JsonNode owner = obj; owner != null; owner = owner.Parent)
-                    if (owner is JsonObject declaration && declaration["params"] is JsonArray
-                        && declaration["name"] is JsonValue name && name.TryGetValue<string>(out var text))
-                        context.Add(text);
-                throw new InvalidOperationException($"{string.Join(" / ", context)} {obj.GetPath()}: {error.Message}", error);
-            }
-        }
-        else if (node is JsonArray arr)
-        {
-            foreach (var item in arr.ToList()) if (item != null) Walk(item);
-        }
-    }
-
-    static void Resolve(JsonObject node)
-    {
-        // W1-S4 (#46/#183): a method DECLARATION overriding a .NET base-CLASS virtual (accessor) carries `pendingOverrideOwner`
-        // (the base owner FQN, from DeclarationRename) but no `k` — resolve its base virtual off the ref.dll and carry
-        // the complete `clrOverrideRef` so ilemit links the exact base slot (no name-only first-pick).
-        if (node["pendingOverrideOwner"] != null) ResolveOverrideBase(node);
-        switch ((node["k"] as JsonValue)?.GetValue<string>())
-        {
-            case "newClr": ResolveCtor(node); break;
-            case "new": ResolveReferencedCtor(node); break;
-            case "clrStatic": ResolveCall(node, instance: false); break;
-            case "clrInstance": ResolveCall(node, instance: true); break;
-            case "newBoundClrDelegate": ResolveBoundClrDelegate(node); ResolveDelegateCtor(node, "type"); break;
-            case "newClrStaticDelegate": ResolveClrStaticDelegate(node); ResolveDelegateCtor(node, "type"); break;
-            // A GENERIC .NET method gets its `resolvedMemberParams` from NetInteropBinding (kotc's FIR-resolved
-            // `shapeTypes`). Resolve that input to one declaration here, author its scalar memberRef, and establish the
-            // declared return for the crossing refusal. The descriptor is consumed and never reaches CIR.
-            case "clrGenericStatic": ResolveGenericCallRet(node, instance: false); break;
-            case "clrGenericInstance": ResolveGenericCallRet(node, instance: true); break;
-            case "clrPropGet": ResolveProp(node, write: false); break;
-            case "clrPropSet": ResolveProp(node, write: true); break;
-            case "clrEventAdd": ResolveEvent(node); break;
-            case "clrEventRemove": ResolveEvent(node); break;
-            case "spreadConcat": ResolveSpreadConcat(node); break;
-            case "forEachInline": ResolveForEachInline(node); break;
-            // A CONSTRUCTION names the constructor it runs, and nothing else: its value is called through the
-            // Invoke the CALL states, so no invoke identity belongs on the construction itself.
-            case "newDelegate": case "newClosure": ResolveDelegateCtor(node, "funcType"); break;
-            case "clrEventAccessorImpl": ResolveEventCas(node); break;
-            // A static field is the same member whether it is read or written, and whether it arrived through the
-            // Kotlin or the @Clr spelling. Found by enumerating the emitter's node kinds against this dispatch
-            // rather than one gate failure at a time.
-            case "staticField": case "staticFieldSet": case "clrStaticField": ResolveStaticField(node); break;
-            case "delegateInvoke": ResolveDelegateInvoke(node, "funcType"); break;
-            // The initializer may be an arbitrary stored function value, not only a newDelegate/newClosure node.
-            // Name the Invoke on the operation that performs the call; an expression-local carrier would disappear
-            // for `val f = { ... }; IntArray(n, f)` and force ilemit to rediscover the delegate member.
-            case "newArrayInit": ResolveDelegateInvoke(node, "init"); break;
-            case "constrainedCall": ResolveConstrainedCall(node); break;
-            case "newBoundDelegate": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;
-            case "nullableNull": ResolveNullableConversion(node, "nullableNull"); break;
-            case "nullableWrap": ResolveNullableConversion(node, "nullableWrap"); break;
-            case "nullableHasValue": ResolveNullableConversion(node, "nullableHasValue"); break;
-            case "nullableValue": ResolveNullableConversion(node, "nullableValue"); break;
-            // `x as? T` for a value T builds the same Nullable<T> as an ordinary wrap does, so it needs the same
-            // constructor named. It reads `elem` like its siblings; only the surrounding isinst differs.
-            case "safeCastValue": ResolveNullableConversion(node, "nullableWrap"); break;
-            case "newList": ResolveCollectionTemplate(node, "newList"); break;
-            case "field": ResolveFieldAccess(node, write: false); break;
-            case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
-            case "setField": ResolveFieldAccess(node, write: true); break;
-        }
-    }
-
-    // ---- constructors --------------------------------------------------------------------------
-
-    // A plain Kotlin `new` can target a declaration restored from a referenced DotKt assembly. It is just as external
-    // to the current emission unit as `newClr`: resolve its physical constructor here, while declarations in this CIR
-    // remain direct local links.
-    static void ResolveReferencedCtor(JsonObject node)
-    {
-        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn || _localTypes.Contains(ownerFqn.Name)) return;
-        if (ResolveOwnerType(ownerFqn) == null) return;
-        ResolveCtor(node);
-    }
-
-    static void ResolveCtor(JsonObject node)
-    {
-        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn) return;
-        var open = ResolveOwnerType(ownerFqn);
-        if (open == null)
-            throw new InvalidOperationException($"bir2cir: newClr owner '{ownerFqn.Name}' does not resolve to a .NET type");
-        // A physical constructor descriptor may use CIR primitive shorthand or the equivalent BCL FQN, including
-        // below arrays and other constructed slots. Reflection exposes the BCL spelling, so compare in the one
-        // canonical physical vocabulary instead of making nested shorthand depend on which pass authored the node.
-        var argNodes = ReadArgTypes(node)
-            .Select(BirTypeLowering.CanonicalPhysicalSlotType)
-            .ToList();
-        var ownerArgs = ownerFqn.Args?
-            .Select(BirTypeLowering.CanonicalPhysicalSlotType)
-            .ToArray();
-        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
-            .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
-        ConstructorInfo win;
-        if (node["constructorDeclarationId"] is JsonValue constructorIdentity)
-            win = _refs.SelectConstructorDeclaration(ctors, constructorIdentity.GetValue<string>());
-        else if (node["memberSignature"] is JsonArray selectedSignature)
-        {
-            var declaration = selectedSignature.Select(TypeJson.Read)
-                .Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
-            win = PickDeclaredConstructor(ctors, declaration,
-                $"selected constructor declaration on '{ownerFqn.Name}' ({DescArgs(declaration)})");
-        }
-        else
-            win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
-                $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
-        CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerArgs);
-        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
-        StampDelegateArgumentTargets(node, win.GetParameters(), ownerArgs ?? Array.Empty<TypeNode>(),
-            Array.Empty<TypeNode>());
-        // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
-        // chokepoint can tell "no return" from "nobody stamped one".
-        StampResolvedMemberReturn(node, typeof(void));
-        node.Remove("argTypes");
-        node.Remove("memberSignature");
-        node.Remove("constructorDeclarationId");
-    }
 
     static ConstructorInfo PickDeclaredConstructor(IEnumerable<ConstructorInfo> constructors,
         IReadOnlyList<TypeNode> declaration, string context)
@@ -222,192 +75,6 @@ static partial class ClrMemberResolution
         var parameters = parameter.IsGenericType ? parameter.GetGenericArguments() : Type.EmptyTypes;
         return arguments.Length == parameters.Length
             && arguments.Select((arg, i) => DeclaredConstructorSlotMatches(arg, parameters[i])).All(match => match);
-    }
-
-    // Root-V lowers a readonly Kotlin collection nested in a constructed generic to its invariant CLR sibling.
-    // A constructor descriptor remains a head-position slot, so the same source type can arrive here as
-    // `IReadOnlyList<T>` while the selected closed constructor parameter is `IList<T>`. Materialize that already-
-    // sanctioned collection-view conversion in CIR; ilemit then emits the stated cast and links the memberRef 1:1.
-    // This is structural over the reflected constructor signature, not tied to Pair/Triple or any source name.
-    static void CoerceCtorCollectionViews(JsonObject node, ParameterInfo[] parameters,
-        IReadOnlyList<TypeNode> argNodes, TypeNode[] ownerArgs)
-    {
-        if (node["args"] is not JsonArray args || args.Count != parameters.Length) return;
-        for (var i = 0; i < parameters.Length; i++)
-        {
-            var declared = MemberSigOf(parameters[i].ParameterType);
-            var closed = ownerArgs is { Length: > 0 }
-                ? SupertypeGraph.SubstOwnerTvs(declared, ownerArgs)
-                : declared;
-            if (!CollectionViewFaces.IsViewSeam(argNodes[i], closed)
-                || args[i] is not JsonNode arg)
-                continue;
-            args[i] = new JsonObject
-            {
-                ["k"] = "cast",
-                ["type"] = TypeJson.Write(closed),
-                ["e"] = arg.DeepClone(),
-            };
-        }
-    }
-
-    // ---- plain static / instance calls ---------------------------------------------------------
-
-    static void ResolveCall(JsonObject node, bool instance)
-    {
-        var ownerNode = ReadOwnerNode(node["type"]);
-        TypeNode.Fqn ownerFqn;
-        Type open;
-        // An ARRAY-owner instance method (`Array<T>.clone()` -> `System.Array.Clone`): every CLR array IS a
-        // `System.Array`, so retarget the owner to it (the receiver `T[]` is assignable, no cast needed). Its `Clone`
-        // etc. live on System.Array, not on the erased element type.
-        if (instance && ownerNode is TypeNode.Array)
-        {
-            open = SystemArrayMlc();
-            if (open == null) throw new InvalidOperationException("bir2cir: clrInstance array-owner method could not resolve System.Array");
-            ownerFqn = new TypeNode.Fqn("System.Array");
-            node["type"] = TypeJson.Write(ownerFqn);
-        }
-        else if (ownerNode is TypeNode.Fqn f)
-        {
-            ownerFqn = f;
-            open = ResolveOwnerType(f);
-            if (open == null)
-                throw new InvalidOperationException($"bir2cir: {(instance ? "clrInstance" : "clrStatic")} owner '{ownerFqn.Name}' does not resolve to a .NET type");
-        }
-        else return;
-        var name = (node["method"] as JsonValue)?.GetValue<string>();
-        var argNodes = ReadArgTypes(node);
-        // Protected declarations are part of the referenced Kotlin/CLR surface and the frontend has already enforced
-        // their source access rule.
-        // Reflection's Public-only lookup drops those legal slots; enumerate nonpublic methods but retain only CLR
-        // Family/FamORAssem, never private or assembly-only declarations.
-        var flags = BindingFlags.Public | BindingFlags.NonPublic |
-            (instance ? BindingFlags.Instance : BindingFlags.Static);
-        var cands = Candidates(open, name, argNodes, ownerFqn.Args, flags)
-            .Where(m => m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly)
-            .ToList();
-        // WITHOUT `typeArgs`, exclude generic-method DEFINITIONS so `Task.fromException` binds the non-generic
-        // `Task FromException(Exception)`, not `Task<T> FromException<T>(Exception)` (no inferable T). WITH `typeArgs`
-        // keep BOTH kinds: a generic Kotlin @ClrIntrinsic (`arrayCopy<T>`) can bind a NON-generic BCL method
-        // (`Array.Copy(Array,…)`) OR a generic one (`Array.Fill<T>`) — the structural param match then disambiguates.
-        bool hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
-        if (!hasTypeArgs) cands = cands.Where(m => !m.IsGenericMethodDefinition).ToList();
-        // An INTERFACE-owner miss with no candidate at all used to become a `clrDynInstance` node, which ilemit
-        // emitted as `recv.GetType().GetMethod(name).Invoke(recv, args)`. That runtime name-only lookup preserved no
-        // overload, declaring slot, explicit-interface implementation or generic arity, and it returned null — an
-        // opaque NullReferenceException — whenever the receiver was a plain BCL collection, which is the common case.
-        // The Kotlin members that motivated it (`removeAll`/`retainAll`/`addAll`) now have a physical representation:
-        // MemberCallSubstitution routes them to the `kotlin.collections.ClrCollectionDefaults` dispatchers, and every
-        // Kotlin implementer carries a real `DotKt.Runtime.CompilerServices.Kotlin*Slots` interface slot so its
-        // override is reached by ordinary virtual dispatch. A member arriving here unresolved is therefore an upstream
-        // routing gap, not something to resolve at run time; PickUnique's hard error propagates.
-        var context = $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})";
-        var win = node["resolvedMemberParams"] is JsonArray selectedSignature
-            ? TryPickDeclared(cands, selectedSignature.Select(TypeJson.Read).ToList(), open)
-                ?? throw new InvalidOperationException($"bir2cir: selected declaration {context} has no unique open signature")
-            : PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args, context);
-        var dispatch = instance
-            ? Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false)
-            : null;
-        // `constrained. V; callvirt Slot` names the virtual SLOT, not V's override body. For example, the valid
-        // unboxed TimeSpan.ToString form names System.Object.ToString; pairing `constrained. TimeSpan` with a
-        // TimeSpan.ToString token makes the runtime consume the receiver incorrectly. Preserve the selected override
-        // for signature/crossing facts below, but carry its base-definition token as the physical dispatch target.
-        MethodInfo dispatchTarget = win;
-        if (dispatch == "constrained")
-            dispatchTarget = ConstrainedSlot(win, open);
-        node["memberRef"] = MemberRefJson(dispatchTarget, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
-        StampResolvedMethodTypeParameters(node, win);
-        StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
-        StampResolvedMemberReturn(node, win.ReturnType);
-        node.Remove("argTypes");
-        node.Remove("resolvedMemberParams");
-        if (instance) node["dispatch"] = dispatch;
-    }
-
-    // THE DECLARED RETURN OF A GENERIC .NET METHOD. Everything else about these nodes was already resolved
-    // upstream, so this establishes one fact and touches nothing: the member's own return type, open (a method
-    // type-variable stays positional), for the crossing refusal to read. Without it a foreign `List<int?> Make<T>()`
-    // reached that refusal with no declared return at all and its caller-view `ret` — already erased to Kotlin's
-    // `List<object>` — said nothing.
-    //
-    // UNKNOWN IS NOT SPELLED `void`. Stamping a fake `void` for an overload set this could not narrow satisfied the
-    // chokepoint — a stamp WAS made — while telling the crossing refusal there was no declared return to object to,
-    // so a C# `List<int?> Make<T>(int)` beside a `string Make<T>(string)` passed both and its
-    // `List<Nullable<int32>>` was consumed as a `List<object>`. The node already carries the FIR-resolved internal
-    // `resolvedMemberParams`, which is the exact matching input used to author the memberRef, so the return is resolved
-    // through it by the same unique-match discipline every other member here uses — INCLUDING lookup through the
-    // implemented interfaces, since a class may satisfy the Kotlin-surfaced member through a private explicit
-    // MethodImpl body whose public name lives only on the interface. If that input resolves no declaration, the
-    // reference ABI is incomplete and lowering stops before CIR is written.
-    //
-    // There is no "unresolved but emit later" state. A declaration that can become an external CIL operand — including
-    // a synthesized suspend cold entry — is reference ABI and must be present with its full signature in the reference
-    // assembly. Letting ilemit recover it from the runtime twin would make emission resolve meaning again and would also
-    // produce CIR that the scalar-reference contract cannot represent.
-    static void ResolveGenericCallRet(JsonObject node, bool instance)
-    {
-        if (node["memberRef"] is JsonObject && node.ContainsKey(ResolvedMemberReturnKey))
-        {
-            node.Remove("resolvedMemberParams");
-            return;
-        }
-        if (node.ContainsKey(ResolvedMemberReturnKey))
-            throw new InvalidOperationException(
-                "bir2cir: generic external call carries a declared-return stamp without its resolved memberRef");
-        var name = (node["method"] as JsonValue)?.GetValue<string>();
-        var ownerFqn = ReadOwnerNode(node["type"]) as TypeNode.Fqn;
-        var open = ownerFqn != null ? ResolveOwnerType(ownerFqn) : null;
-        if (open == null || name == null)
-            throw new InvalidOperationException(
-                $"bir2cir: generic external call '{ownerFqn?.Name ?? "<unknown>"}.{name ?? "<unknown>"}' "
-                + "does not resolve to a declaration in the reference set");
-        var arity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
-        var argCount = (node["args"] as JsonArray)?.Count ?? 0;
-        var sig = (node["resolvedMemberParams"] as JsonArray)?.Select(TypeJson.Read).ToList();
-        // THE DESCRIPTOR DECIDES, and it decides FIRST. Taking a lone same-name candidate without asking whether the
-        // descriptor selects it is how a `string Make<T>(string)` on the class answered for an `I.Make<T>(int)`
-        // reached through an interface — a return read off a member the emitter does not link.
-        if (sig != null && sig.Count == argCount && !sig.Any(t => t == null))
-        {
-            // This vector describes the selected OPEN declaration, not the call's argument values. Closing an
-            // owner variable here makes M(T) and M(int) coincide on C<int> and repeats overload resolution after
-            // the frontend has already selected one. Compare in the declaration frame before constructing its owner.
-            var win = SelectedGenericDeclaration(open, name, arity, instance, sig);
-            if (win != null)
-            {
-                // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
-                // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
-                node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
-                if (instance)
-                {
-                    var dispatch = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
-                    node["dispatch"] = dispatch;
-                    node["receiverMode"] = open.IsValueType ? "address" : "value";
-                    if (dispatch == "constrained")
-                        node["memberRef"] = MemberRefJson(ConstrainedSlot(win, open), MemberRefNode.Kinds.Method,
-                            open, ownerFqn.Args);
-                }
-                StampResolvedMethodTypeParameters(node, win);
-                StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
-                StampResolvedMemberReturn(node, win.ReturnType);
-            }
-            else
-                throw new InvalidOperationException(
-                    $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' has no unique declaration "
-                    + "matching its frontend-resolved parameter vector in the reference set");
-            // The descriptor is this resolution's INPUT — it selects among the candidates above — and inputs do
-            // not belong in the output. Leaving it made the reference travel beside the thing it replaced, which
-            // is the arrangement every other node just stopped carrying.
-            node.Remove("resolvedMemberParams");
-            return;
-        }
-        // No usable descriptor means there is no resolved identity to consume. A unique name/arity candidate is not
-        // an identity and must not become one merely because today's target happens to expose only one overload.
-        throw new InvalidOperationException(
-            $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' carries no usable "
-            + "frontend-resolved parameter vector");
     }
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
@@ -496,61 +163,6 @@ static partial class ClrMemberResolution
         return scored.Count == 1 ? scored[0].c : null;
     }
 
-    // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
-
-    // A bound CLR method reference names an instance method on clrType.
-    // resolvedMemberParams selects its declaration and this pass authors the
-    // exact memberRef. The virtual fact chooses ldftn versus ldvirtftn; it does
-    // not participate in overload selection.
-    static void ResolveBoundClrDelegate(JsonObject node)
-    {
-        if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;
-        var open = ResolveOwnerType(ownerFqn);
-        if (open == null)
-            throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type");
-        var name = (node["method"] as JsonValue)?.GetValue<string>();
-        var argNodes = ReadArgTypes(node);
-        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
-        var cands = Candidates(open, name, argNodes, ownerFqn.Args,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(IsPublicOrProtected)
-            .Where(m => m.IsGenericMethodDefinition
-                ? m.GetGenericArguments().Length == methodArity
-                : methodArity == 0)
-            .ToList();
-        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
-            $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
-        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
-        StampResolvedMethodTypeParameters(node, win);
-        StampResolvedMemberReturn(node, win.ReturnType);
-        node.Remove("argTypes");
-    }
-
-    static void ResolveClrStaticDelegate(JsonObject node)
-    {
-        if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;
-        var open = ResolveOwnerType(ownerFqn);
-        if (open == null)
-            throw new InvalidOperationException(
-                $"bir2cir: newClrStaticDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type");
-        var name = (node["method"] as JsonValue)?.GetValue<string>();
-        var argNodes = ReadArgTypes(node);
-        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
-        var cands = Candidates(open, name, argNodes, ownerFqn.Args,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            .Where(IsPublicOrProtected)
-            .Where(m => m.IsGenericMethodDefinition
-                ? m.GetGenericArguments().Length == methodArity
-                : methodArity == 0)
-            .ToList();
-        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
-            $"newClrStaticDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
-        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
-        StampResolvedMethodTypeParameters(node, win);
-        StampResolvedMemberReturn(node, win.ReturnType);
-        node.Remove("argTypes");
-    }
-
     // ---- shared resolution ---------------------------------------------------------------------
 
     // Resolve the owner's OPEN definition off the ref.dll — via ResolveRefType, which (unlike ResolveNetType) does NOT
@@ -575,12 +187,6 @@ static partial class ClrMemberResolution
         if (ownerFqn.Name.Contains('`')) return refs.ResolveRefType(ownerFqn.Name, 0);
         return RefDef(ownerFqn.Name, ownerFqn.Args?.Length ?? 0, refs);
     }
-
-    // The structured TypeNode carried by an owner slot.
-    static TypeNode ReadOwnerNode(JsonNode typeSlot) => TypeJson.Read(typeSlot);
-
-    static List<TypeNode> ReadArgTypes(JsonObject node) =>
-        (node["argTypes"] as JsonArray)?.Where(x => x != null).Select(TypeJson.Read).ToList() ?? new List<TypeNode>();
 
     // DefaultArgSplice runs before NetInteropBinding, but it must read defaults from the exact MethodDef this pass will
     // later put in memberRef. Match in the selected declaration/projection frame; a second applicability search here
@@ -1124,23 +730,6 @@ static partial class ClrMemberResolution
     // A pass-to-pass fact, NOT a CIR key: ForeignNullableGenericCrossing reads it and strips it, so nothing reaches
     // the emitter that the emitter does not consume.
     internal const string ResolvedMemberReturnKey = "resolvedMemberReturn";
-
-    // ALWAYS stamped where a foreign declaration is established, INCLUDING for `void`. A missing stamp and a
-    // genuinely void member were otherwise the same observation, so nothing could tell an omission from a fact —
-    // and an omission is exactly what let a generic method's and a field's declared type go unchecked. With `void`
-    // written explicitly, `CheckStamped` can assert the invariant mechanically.
-    static void StampResolvedMemberReturn(JsonObject node, Type declaredReturn)
-        => node[ResolvedMemberReturnKey] = TypeJson.Write(
-            declaredReturn == null || declaredReturn == typeof(void)
-                ? new TypeNode.Fqn("void")
-                : MemberSigOf(declaredReturn));
-
-    static JsonArray MemberSig(ParameterInfo[] ps)
-    {
-        var arr = new JsonArray();
-        foreach (var p in ps) arr.Add(TypeJson.Write(MemberSigOf(p.ParameterType)));
-        return arr;
-    }
 
     // A resolved OPEN-def member's param Type -> its declared-param TypeNode in the CLR-lowered vocabulary (BCL FullName
     // spellings, matching S1's lowered resolvedMemberParams). A class/method generic param -> a positional tv; a delegate keeps its

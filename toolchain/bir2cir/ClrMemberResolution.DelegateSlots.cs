@@ -53,44 +53,6 @@ static partial class ClrMemberResolution
     // MaterializeDelegateSlots and never written to CIR.
     const string DelegateSlotKey = "dotktDelegateSlot";
 
-    internal static bool HasDeclaredDelegateSlot(JsonObject construction) =>
-        construction.ContainsKey(DelegateSlotKey);
-
-    /// <summary>
-    /// Mark every delegate construction among <paramref name="call"/>'s arguments with the delegate its
-    /// parameter declares.
-    /// </summary>
-    static void StampDelegateArgumentTargets(JsonObject call, MethodInfo method, TypeNode[] ownerArgs,
-        string argumentKey = "args")
-    {
-        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
-            ?? Array.Empty<TypeNode>();
-        if (methodArgs.Any(t => t == null)) return;
-        // A parameter vector that cannot be CLOSED names no slot. Every resolver above already refuses to select a
-        // generic declaration whose type arguments the site does not state, but the completeness of the
-        // substitution is this rule's own precondition — a leftover callee type variable here would be read as one
-        // of the CALLER's, and the construction would be pointed at a delegate that is not the parameter's.
-        if (method.IsGenericMethodDefinition && methodArgs.Length != method.GetGenericArguments().Length) return;
-        StampDelegateArgumentTargets(call, method.GetParameters(), ownerArgs, methodArgs, argumentKey);
-    }
-
-    static void StampDelegateArgumentTargets(JsonObject call, ParameterInfo[] parameters,
-        TypeNode[] ownerArgs, TypeNode[] methodArgs, string argumentKey = "args")
-        => StampDelegateArgumentTargets(call,
-            parameters.Select(parameter => RefTypeOf(parameter.ParameterType)).ToArray(), ownerArgs, methodArgs,
-            argumentKey);
-
-    static void StampDelegateArgumentTargets(JsonObject call, TypeNode[] parameters,
-        TypeNode[] ownerArgs, TypeNode[] methodArgs, string argumentKey = "args")
-    {
-        if (call[argumentKey] is not JsonArray args || parameters.Length != args.Count) return;
-        for (var i = 0; i < parameters.Length; i++)
-        {
-            if (args[i] is not JsonObject arg) continue;
-            MarkDelegateSlot(arg, CloseDelegateArgumentSlot(parameters[i], ownerArgs, methodArgs));
-        }
-    }
-
     static TypeNode CloseDelegateArgumentSlot(TypeNode parameter, TypeNode[] ownerArgs, TypeNode[] methodArgs)
         => SubstituteMethodTypeArgs(SupertypeGraph.SubstOwnerTvs(parameter, ownerArgs), methodArgs);
 
