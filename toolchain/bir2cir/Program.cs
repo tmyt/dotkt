@@ -1013,7 +1013,7 @@ sealed class Pipeline
         // owning BIR. The remaining structural owners consume those exact facts.
 
         // Storage and lexical access have completed on owning BIR. These
-        // transport markers stay until the strict address handoff above has
+        // transport markers stay until LoadBirInputs' strict address handoff has
         // validated the selected native declarations; they are consumed now.
         FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root), preserveExactOuter: true);
 

@@ -131,6 +131,8 @@ static partial class NullableTvErasureCallRealign
                 var declared = variable.Type.OrDefault();
                 if (declared != null && initializer != null && !initializer.Equals(declared))
                 {
+                    // Platform nullability is flexible: retain the actual
+                    // initializer representation rather than inserting a seam.
                     if (declared is TypeNode.Oblivious platform && (initializer.Equals(platform.Of)
                         || initializer is TypeNode.Nullable nullable && nullable.Of.Equals(platform.Of)))
                         variable.Type = BirGraphValue.CopyType(initializer);
@@ -282,6 +284,8 @@ static partial class NullableTvErasureCallRealign
             case BirForEach loop:
             {
                 loop.Src = SourceUseEdge(loop.Src, context, out _);
+                // The iteration owner selected erasure and element narrowing
+                // together. Do not rederive elem from the flowed source here.
                 if (loop.Var.HasValue && loop.Elem.HasValue) context.Env[loop.Var.Value] = loop.Elem.Value;
                 SourceUseStatements(loop.Body.OrEmpty(), context); return node;
             }

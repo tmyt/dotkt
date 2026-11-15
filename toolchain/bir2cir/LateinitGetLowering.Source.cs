@@ -2,6 +2,8 @@ using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
+// Resolve the lateinit null-check's failure path to an ordinary construction.
+// The same exact constructor binder handles it; ilemit only evaluates and throws.
 static partial class LateinitGetLowering
 {
     internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)

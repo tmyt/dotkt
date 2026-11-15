@@ -71,10 +71,6 @@ static partial class NullableTvErasureCallRealign
         public bool[] ParamsRefused;
     }
 
-    // Pass-local hand-off from UnsafeAccessor synthesis to the one late declaration-index refresh below. It is
-    // consumed while indexing and must not survive into CIR or round-trip metadata.
-    public const string NullableErasureOwnershipKnownKey = "nullableErasureOwnershipKnown";
-
     // Local owner/top-level declarations, captured across ALL roots BEFORE the per-file DEF-side EraseNullableTv
     // mutates declarations in place. ALL members are stored (not only erasure-affected ones): re-deriving `get_v`
     // on a rewritten `Ref<object>` receiver needs the plain `tv{type,0}` declaration too. Ordinary methods still

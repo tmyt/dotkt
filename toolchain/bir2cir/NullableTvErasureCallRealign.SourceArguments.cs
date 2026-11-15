@@ -36,6 +36,8 @@ static partial class NullableTvErasureCallRealign
                 ? Subst(NullableGenericErasure.EraseNullableTv(declarations[index], _isValue), ownerArguments, methodArguments) : null;
             SourceRetypeConstruction(arguments[index], target);
             arguments[index] = (IBirExpression)SourceUseEval((BirGraphValue)arguments[index], context, out types[index]);
+            // A selected CLR declaration owns its exact physical slot. Kotlin
+            // descriptors need a real object-erasure seam before coercion.
             if (target == null && !refused && descriptor != null && descriptor[index] is { } slot
                 && IsBareObject(types[index]) && Subst(slot, ownerArguments, methodArguments) is { } closed
                 && (clrBound || NeedsObjectSeam(closed))) target = closed;
@@ -63,6 +65,8 @@ static partial class NullableTvErasureCallRealign
                 array.Elem = BirGraphValue.CopyType(((TypeNode.Array)target).Elem); break;
             case BirNewArrayInit array when RetypeArrayElement(array.Elem.OrDefault(), target):
                 array.Elem = BirGraphValue.CopyType(((TypeNode.Array)target).Elem); break;
+            // A selected delegate signature is authoritative; a void-returning
+            // target cannot acquire a value merely from its expected function type.
             case BirNewDelegate construction when !construction.Sig.HasValue
                 && RetypeDelegate(construction.FuncType.OrDefault(), target):
                 construction.FuncType = BirGraphValue.CopyType(target); break;
@@ -75,6 +79,8 @@ static partial class NullableTvErasureCallRealign
         => source is TypeNode.Fqn from && target is TypeNode.Fqn to
             && SameClassifier(from, to) && !from.Equals(to) && IsObjectErasureOf(to, from);
 
+    // Only an erased element-storage seam changes array construction. Ordinary
+    // reference-array covariance must not change the allocated runtime array type.
     static bool RetypeArrayElement(TypeNode element, TypeNode target)
         => target is TypeNode.Array to && IsBareObject(to.Elem) && element != null && !element.Equals(to.Elem)
             && IsObjectErasureOf(to.Elem, element) && NeedsObjectSeam(element);
