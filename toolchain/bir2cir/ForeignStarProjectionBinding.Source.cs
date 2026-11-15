@@ -29,7 +29,23 @@ static partial class ForeignStarProjectionBinding
     {
         _localClrAliases = localClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _projectValueType = projectValueType;
-        BeginBinding(localExistentialOwners, CollectClosedViewHints(roots, refs), resetUsage: true);
+        return BindSourceRoots(roots, localExistentialOwners, refs, resetUsage: true,
+            admitMaterialized: null, projectMaterialized);
+    }
+
+    internal static IReadOnlyList<SourceMaterialization> ApplyLate(IReadOnlyList<BirFileDeclaration> roots,
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
+        Action<BirFileDeclaration, IReadOnlyList<BirClassDefinition>> admitMaterialized,
+        Action<IReadOnlyList<BirClassDefinition>> projectMaterialized)
+        => BindSourceRoots(roots, localExistentialOwners, refs, resetUsage: false,
+            admitMaterialized ?? throw new ArgumentNullException(nameof(admitMaterialized)), projectMaterialized);
+
+    static IReadOnlyList<SourceMaterialization> BindSourceRoots(IReadOnlyList<BirFileDeclaration> roots,
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs, bool resetUsage,
+        Action<BirFileDeclaration, IReadOnlyList<BirClassDefinition>> admitMaterialized,
+        Action<IReadOnlyList<BirClassDefinition>> projectMaterialized)
+    {
+        BeginBinding(localExistentialOwners, CollectClosedViewHints(roots, refs), resetUsage);
         void Names(BirGraphValue node)
         {
             if (node is IBirExecutablePayload) return;
@@ -42,14 +58,7 @@ static partial class ForeignStarProjectionBinding
         {
             var synthesized = new HashSet<BirClosureDefinition>(ReferenceEqualityComparer.Instance);
             Walk(new BirGraphSlot(() => file, _ => throw new InvalidOperationException("A file is not an expression")));
-            var occurrences = new List<ClosureSynthesis.MaterializedOccurrence>();
-            Find(new BirGraphSlot(() => file, _ => throw new InvalidOperationException("A file is not an expression")), default);
-            var materialized = ClosureSynthesis.ApplyMaterialized(file, occurrences, refs);
-            // Only these new declarations receive the narrow late projection.
-            // Replaying the file would revisit intentionally opaque Holder<*>.
-            projectMaterialized(materialized.AppendedTypes);
-            foreach (var type in materialized.AppendedTypes) SharedSyntheticSynthesis.DropSyntheticTypeArgs(type);
-            result.Add(new(file, materialized.AppendedTypes));
+            result.Add(MaterializeSourceAdapters(file, synthesized, refs, admitMaterialized, projectMaterialized));
 
             void Walk(BirGraphSlot slot)
             {
@@ -66,32 +75,51 @@ static partial class ForeignStarProjectionBinding
                     variable.Type = BirGraphValue.CopyType(initial);
                     _dependentLocalTypes[variable.Name.Value] = initial;
                 }
-                var replacement = RewriteSourceClassifier(node, refs)
+                var replacement = (_bindProjectedHelpers ? RewriteSourceStaticHelper(node, refs) : null)
+                    ?? RewriteSourceClassifier(node, refs)
                     ?? RewriteSourceCall(node, refs, synthesized);
                 if (replacement == null) return;
                 UsedRuntimeFallback = true;
                 slot.Replace((BirGraphValue)replacement);
             }
 
-            void Find(BirGraphSlot slot, ClosureSynthesis.CaptureContext context)
-            {
-                var node = slot.Value;
-                if (node is null or IBirExecutablePayload) return;
-                context = ClosureSynthesis.ContextFor(node, context);
-                if (node is BirNewClosure { SynthClass.HasValue: true } closure
-                    && synthesized.Contains(closure.SynthClass.Value))
-                {
-                    occurrences.Add(new(slot, context));
-                    return;
-                }
-                node.VisitChildSlots(child => Find(child, context));
-            }
         }
         return result;
     }
 
-    // Shared selection facts do not own executable operands. Both renderers
-    // consume this exact reflection selector and its declaration-frame keys.
+    static SourceMaterialization MaterializeSourceAdapters(BirFileDeclaration file,
+        HashSet<BirClosureDefinition> synthesized, ReferenceMetadataIndex refs,
+        Action<BirFileDeclaration, IReadOnlyList<BirClassDefinition>> admitMaterialized,
+        Action<IReadOnlyList<BirClassDefinition>> projectMaterialized)
+    {
+        var occurrences = new List<ClosureSynthesis.MaterializedOccurrence>();
+        Find(new BirGraphSlot(() => file, _ => throw new InvalidOperationException("A file is not an expression")), default);
+        var materialized = ClosureSynthesis.ApplyMaterialized(file, occurrences, refs);
+        // Report the exact already-attached records before their narrow
+        // projection can require declaration/proof bindings. Initial entry's
+        // null admission retains its original report-after-project order.
+        admitMaterialized?.Invoke(file, materialized.AppendedTypes);
+        projectMaterialized(materialized.AppendedTypes);
+        foreach (var type in materialized.AppendedTypes) SharedSyntheticSynthesis.DropSyntheticTypeArgs(type);
+        return new(file, materialized.AppendedTypes);
+
+        void Find(BirGraphSlot slot, ClosureSynthesis.CaptureContext context)
+        {
+            var node = slot.Value;
+            if (node is null or IBirExecutablePayload) return;
+            context = ClosureSynthesis.ContextFor(node, context);
+            if (node is BirNewClosure { SynthClass.HasValue: true } closure
+                && synthesized.Contains(closure.SynthClass.Value))
+            {
+                occurrences.Add(new(slot, context));
+                return;
+            }
+            node.VisitChildSlots(child => Find(child, context));
+        }
+    }
+
+    // Selection facts do not own executable operands. Rendering consumes this
+    // exact reflection selector and its declaration-frame keys.
     sealed record ForeignMember(string OpenType, TypeNode DeclaringView, int Token,
         string RuntimeName, string[] RuntimeParameterKeys, TypeNode DeclarationReturn,
         bool ReturnsVoid, MethodInfo Method, bool IsField);
@@ -200,7 +228,7 @@ static partial class ForeignStarProjectionBinding
             value.OwnerType.OrDefault(), value.Recv.OrDefault(), receiver => value.Recv = Expr(receiver),
             value.Sig.OrDefault() ?? value.ArgTypes.OrDefault() ?? value.ResolvedMemberParams.OrDefault(),
             value.TypeArgs.OrEmpty(), value.Args.OrEmpty(), null, value.Ret.OrDefault() ?? BirNodeType.Of(value)),
-        BirNativeInstance value => new(value.Tag, value.Method.OrDefault(), null, false,
+        BirNativeInstance value => new(value.Tag, value.Method.OrDefault(), value.Prop.OrDefault(), false,
             value.Type.OrDefault(), value.Recv.OrDefault(), receiver => value.Recv = Expr(receiver),
             value._foreignDeclarationSignature.OrDefault()?.Types.ToArray() ?? value.Sig.OrDefault()
                 ?? value.ArgTypes.OrDefault() ?? value.ResolvedMemberParams.OrDefault(),
