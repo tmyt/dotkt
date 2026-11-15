@@ -35,12 +35,11 @@ static partial class DeclarationSignatureIdentity
         var replacement = new TypeNode.Fqn("System.String");
         var parameter = new BirParameter { NominalParameterSignatureIdentity = variable,
             GenericParameterSignatureBounds = new TypeNode[] { variable } };
-        var physical = parameter.ToDom();
         TypeNode Rewrite(TypeNode type) => type == variable ? replacement : type;
         RewriteParameterFacts(parameter, Rewrite);
-        RewriteParameterFacts(physical, Rewrite);
-        if (!System.Text.Json.Nodes.JsonNode.DeepEquals(parameter.ToDom(), physical))
-            throw new InvalidOperationException("Owning signature fact writer disagreed with continuing physical facts");
+        if (parameter.NominalParameterSignatureIdentity.Value != replacement
+            || parameter.GenericParameterSignatureBounds.Value.Single() != replacement)
+            throw new InvalidOperationException("Owning signature fact writer lost its selected type facts");
         var absent = new BirParameter { GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Null };
         RewriteParameterFacts(absent, Rewrite);
         if (absent.NominalParameterSignatureIdentity.IsPresent || !absent.GenericParameterSignatureBounds.IsNull)

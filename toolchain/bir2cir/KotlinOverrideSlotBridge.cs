@@ -568,22 +568,6 @@ static partial class KotlinOverrideSlotBridge
         return MaterializedExecutable.Normalize(bridge);
     }
 
-    internal static JsonObject BuildSignatureBridge(Def owner, JsonObject implementation, TypeNode[] signature,
-        TypeNode result, string name, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-    {
-        // Reuse the ordinary override conversion/forwarding boundary. Identity modifiers belong only to the
-        // emitted method signature; arguments and conversions keep the underlying CLR value representation.
-        var valueImplementation = implementation.DeepClone().AsObject();
-        valueImplementation["inheritedDeclarationSignature"] = FunctionSignatureIdentity.Signature(
-            (JsonArray)implementation["params"]);
-        foreach (var parameter in ((JsonArray)valueImplementation["params"]).OfType<JsonObject>())
-            parameter["type"] = TypeJson.Write(SignatureValueTypes.Of(TypeJson.Read(parameter["type"])));
-        var bridge = BuildBridge(owner, valueImplementation, signature.Select(SignatureValueTypes.Of).ToArray(),
-            result, name, isValue, refs);
-        for (var index = 0; index < signature.Length; index++)
-            bridge["params"][index]["type"] = TypeJson.Write(signature[index]);
-        return bridge;
-    }
 
     // Preserve the Kotlin value type represented by a physical bridge slot through both metadata channels:
     // `[KotlinNullableGeneric]` carries its type tree and the NRT byte carries its outer nullability. Reference-side

@@ -54,19 +54,22 @@ static partial class KotlinOverrideSlotBridge
                 && ReferenceEquals(implementation.Body.Value,body) && ReferenceEquals(derived.Methods.Value.Single(),implementation),
                 "selected renamed class/interface slot changed source identity/body");
             Require(implementation.SignatureOverrideDeclarations.Value.SequenceEqual(new[] { "selected-base" }),"selected local ID handoff lost");
-            // The real late signature owner must still retarget this exact selected relation.
-            var projected=file.ToDom();
-            var modified=TypeJson.Write(new TypeNode.Mod(false,new TypeNode.Fqn("SignatureMarker"),obj));
-            projected["types"][1]["methods"][0]["params"][0]["type"]=modified.DeepClone();
-            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { projected },
-                new Dictionary<string,System.Text.Json.Nodes.JsonArray> { ["selected-body"]=new(modified) },references,_=>false);
-            var members=projected["types"][1]["methods"].AsArray();
-            var relation=isInterface ? "clrInterfaceImpls" : "clrBaseImpls";
-            Require(members.Count==2 && members[0][relation].AsArray().Count==0
-                && TypeJson.Read(members[1]["params"][0]["type"])==obj
-                && members[1][relation].AsArray().Count==1
-                && members[1][relation][0]["member"].GetValue<string>()=="NativeAccept",
-                "genuine late nominal-signature repair lost selected MethodImpl");
+            // The owning signature owner retargets this SAME selected relation.
+            var modified=new TypeNode.Mod(false,new TypeNode.Fqn("SignatureMarker"),obj);
+            implementation.Params.Value[0].Type=modified;
+            var retired=new List<BirMethodImpl>();
+            DeclarationSignatureIdentity.BindSelectedOverridesSource(new[] { file },
+                new DeclarationSignatureIdentity.SignatureAllocationPlan(new Dictionary<string,TypeNode[]> {
+                    ["selected-body"]=new TypeNode[] { modified },
+                }),references,_=>false,(_,_,_)=> { },_=> { },actual=>retired.Add(actual));
+            var members=derived.Methods.Value;
+            var originalRelations=isInterface ? members[0].ClrInterfaceImpls.Value : members[0].ClrBaseImpls.Value;
+            var bridgeRelations=isInterface ? members[1].ClrInterfaceImpls.Value : members[1].ClrBaseImpls.Value;
+            Require(members.Length==2 && originalRelations.Length==0
+                && members[1].Params.Value[0].Type.Value==obj && bridgeRelations.Length==1
+                && bridgeRelations[0].Member.Value=="NativeAccept"
+                && retired.Count==1 && ReferenceEquals(retired[0],descriptor),
+                "owning nominal-signature repair lost selected MethodImpl or exact retirement");
         }
 
         // Pin the final owner's capability lookup to the SAME actual source handle, not equal record values.

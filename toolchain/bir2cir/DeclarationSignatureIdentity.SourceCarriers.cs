@@ -19,8 +19,8 @@ static partial class DeclarationSignatureIdentity
             case BirInheritedDefaultMethod method: method.SignatureOverrideDeclarations = default; break;
             case BirInheritedClassMethod method: method.SignatureOverrideDeclarations = default; break;
         }
-        // Allocation belongs to a later DOM physical phase and cannot exist on
-        // this source profile. Opaque carrier bodies remain untouched here.
+        // Source carriers freeze before physical allocation. Its later facts
+        // do not belong to this source profile; opaque bodies stay untouched.
         node.VisitChildren(RemoveCapturedFacts);
     }
 }
