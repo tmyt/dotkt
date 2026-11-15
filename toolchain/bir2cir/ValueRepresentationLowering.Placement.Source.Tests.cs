@@ -82,6 +82,17 @@ sealed partial class ValueRepresentationLowering
             && actual.Owner.Methods.Value.Length == 3 && ReferenceEquals(actual.Owner.Methods.Value[1], actual.Moved)
             && actual.Owner.CapturedTypeParams.Value.Length == 1 && actual.Owner.TypeParams.Value.Length == 1,
             "actual MOVE or captured-prefix split did not occur");
+        // Lexical access runs after placement and can append an actual accessor
+        // to either the remaining facade or a MOVE destination. Its explicit
+        // publication extends only that current tail, not original membership.
+        var facadeAccessor = Ordinary("facadeAccessor", "facade-accessor", new TypeNode.Fqn("kotlin.Unit"));
+        var ownerAccessor = Ordinary("ownerAccessor", "owner-accessor", new TypeNode.Fqn("kotlin.Unit"));
+        actual.File.Methods = actual.File.Methods.Value.Append(facadeAccessor).ToArray();
+        actual.Transitions.PublishMethods(actual.File, null, new[] { facadeAccessor });
+        actual.Owner.Methods = actual.Owner.Methods.Value.Append(ownerAccessor).ToArray();
+        actual.Transitions.PublishMethods(actual.File, actual.Owner, new[] { ownerAccessor });
+        Reject(() => actual.Transitions.PublishMethods(actual.File, actual.Owner, new[] { ownerAccessor }),
+            "a duplicate publication after placement");
         var dom = actual.File.ToDom(actual.Transitions.Projection.ObserveProjection);
         actual.Transitions.Projection.ProjectRetiredForests();
         actual.Bindings.BindProjected();
@@ -90,6 +101,12 @@ sealed partial class ValueRepresentationLowering
         actual.Values.BindDomDeclarations(new[] { dom }, retired, actual.Transitions.Projection);
         var uncheckedIndex = UncheckedGenericCastReturnErasure.BindDomDeclarations(actual.Pending, new[] { dom },
             retired, declarations: actual.Transitions.Projection);
+        Require(actual.Transitions.Projection.MaterializedMethods.Count == 2
+            && actual.Transitions.Projection.MaterializedMethods.Contains(dom["methods"][2].AsObject())
+            && actual.Transitions.Projection.MaterializedMethods.Contains(dom["types"][1]["methods"][3].AsObject())
+            && !actual.Bindings.SourceLocalDeclarations.ContainsKey(("MovesFile", "facade-accessor"))
+            && !actual.Bindings.SourceLocalDeclarations.ContainsKey(("MoveOwner", "owner-accessor")),
+            "post-placement publication recaptured source eligibility or lost actual generated methods");
         Require(ReferenceEquals(uncheckedIndex.ByIdentity["moved"].Method, dom["types"][1]["methods"][1])
             && ReferenceEquals(uncheckedIndex.ByIdentity["staying"].Method, dom["methods"][0])
             && uncheckedIndex.ByIdentity["moved"].Owner == "MovesFile" && uncheckedIndex.ByIdentity["moved"].TopLevel
@@ -132,6 +149,12 @@ sealed partial class ValueRepresentationLowering
         reordered.File.Methods = reordered.File.Methods.Value.Reverse().ToArray();
         _ = reordered.File.ToDom(reordered.Transitions.Projection.ObserveProjection);
         Reject(reordered.Transitions.Projection.ProjectRetiredForests, "an unreported retained-vector reorder");
+        var unpublished = Fixture();
+        TypeOwnershipLowering.ApplyAll(new[] { unpublished.File }, unpublished.Transitions.MoveMethods);
+        unpublished.Owner.Methods = unpublished.Owner.Methods.Value
+            .Append(Ordinary("unreported", "unreported", new TypeNode.Fqn("kotlin.Unit"))).ToArray();
+        _ = unpublished.File.ToDom(unpublished.Transitions.Projection.ObserveProjection);
+        Reject(unpublished.Transitions.Projection.ProjectRetiredForests, "an unreported destination append after MOVE");
         Console.WriteLine("[owning placement continuation] self-test OK (actual MOVE, original semantic/native frames, repeated IDs and strict addresses)");
     }
 }

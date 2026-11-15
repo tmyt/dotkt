@@ -13,7 +13,7 @@ sealed class SourceDeclarationProjection
     internal sealed class MethodPlacement
     {
         internal BirFunctionDeclaration[] Before { get; }
-        internal BirFunctionDeclaration[] After { get; }
+        internal BirFunctionDeclaration[] After { get; private set; }
         internal IReadOnlyList<TypeOwnershipLowering.SourceMethodMove> Moves { get; }
         readonly Dictionary<BirFunctionDeclaration, TypeOwnershipLowering.SourceMethodMove> moved;
         internal MethodPlacement(BirFunctionDeclaration[] before, BirFunctionDeclaration[] after,
@@ -25,6 +25,7 @@ sealed class SourceDeclarationProjection
         }
         internal bool TryMove(BirFunctionDeclaration method, out TypeOwnershipLowering.SourceMethodMove move)
             => moved.TryGetValue(method, out move);
+        internal void Append(BirFunctionDeclaration[] next) => After = next;
     }
     readonly CurrentDeclarationBindings bindings;
     readonly BirFileDeclaration[] roots;
@@ -79,9 +80,29 @@ sealed class SourceDeclarationProjection
         foreach (var type in removed) RetireForest((BirGraphValue)type);
     }
 
-    internal void PublishMethods(IReadOnlyList<BirFunctionDeclaration> appended)
+    internal void PublishMethods(BirFileDeclaration file, IBirTypeDeclaration owner,
+        IReadOnlyList<BirFunctionDeclaration> appended)
     {
-        if (projected || appended.Any(method => !published.Add(method))) throw Mismatch();
+        if (projected || released || !types.ContainsKey(file)
+            || appended.Distinct(ReferenceEqualityComparer.Instance).Count() != appended.Count
+            || appended.Any(published.Contains)) throw Mismatch();
+        MethodPlacement placement = null;
+        BirFunctionDeclaration[] next = null;
+        if (owner == null && placements.TryGetValue(file, out placement))
+        {
+            next = placement.After.Concat(appended).ToArray();
+            if (!file.Methods.OrEmpty().SequenceEqual(next, ReferenceEqualityComparer.Instance)) throw Mismatch();
+        }
+        else if (owner != null && placementTargets.TryGetValue(owner, out var methods))
+        {
+            next = methods.Concat(appended).ToArray();
+            if (!owner.Methods.OrEmpty().SequenceEqual(next, ReferenceEqualityComparer.Instance)) throw Mismatch();
+        }
+        // Publication is a producer-reported tail extension of the same actual
+        // owner. Before/Moves and all original source memberships stay frozen.
+        foreach (var method in appended) published.Add(method);
+        if (placement != null) placement.Append(next);
+        else if (next != null) placementTargets[owner] = next;
     }
 
     // These are owning-edge edits, not declaration births or retirements. The

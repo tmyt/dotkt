@@ -86,7 +86,7 @@ static partial class SuspendColdLowering
                 || !CurrentMethods(file, owner).SequenceEqual(next, ReferenceEqualityComparer.Instance)) throw Mismatch();
             methodVectors[key] = row with { Continuing = next };
             foreach (var method in appended) Admit(method);
-            Projection.PublishMethods(appended);
+            Projection.PublishMethods(file, owner, appended);
         }
 
         internal override void PublishTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended)
@@ -100,7 +100,7 @@ static partial class SuspendColdLowering
                 var methods = type.Methods.OrEmpty();
                 var row = new MethodVector(file, type, methods.ToArray());
                 if (!methodVectors.TryAdd((BirGraphValue)type, row)) throw Mismatch();
-                Projection.PublishMethods(methods);
+                Projection.PublishMethods(file, type, methods);
             }
         }
 
