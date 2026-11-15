@@ -3,6 +3,10 @@ using DotKt.Bir.Lowering;
 
 static partial class ConstructedMemberReturnSubstitution
 {
+    // Final owner binding closes only this actual changed-owner work item, not
+    // its descendants or any independently captured declaration frame.
+    internal static void ApplyCall(BirGraphValue node) => ApplySourceCall(node);
+
     internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)
     {
         foreach (var root in roots) ApplySourceMaterialized(root);

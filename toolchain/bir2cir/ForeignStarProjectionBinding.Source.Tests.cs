@@ -19,9 +19,11 @@ static partial class ForeignStarProjectionBinding
         var property = new BirPropertyGet { Type = list, Name = "Count", Ret = Int,
             Recv = Expr(new BirLocal { Name = "preferred" }),
             _foreignDeclarationSignature = SourceTypeVector.Create(Array.Empty<TypeNode>()) };
+        var methodProperty = new BirNativeInstance { Type = list, Method = "Count", Prop = "get", Ret = Int,
+            Sig = Array.Empty<TypeNode>(), Recv = Expr(new BirLocal { Name = "preferred" }) };
         var statements = new IBirStatement[] {
             new BirVariable { Name = "preferred", Type = list, Init = Expr(new BirCast { Type = exactList, E = Expr(new BirLocal { Name = "input" }) }) },
-            SourceStatement(classifier), SourceStatement(count), SourceStatement(property),
+            SourceStatement(classifier), SourceStatement(count), SourceStatement(property), SourceStatement(methodProperty),
         };
         var method = new BirFunctionDeclaration { Name = "foreign", Params = Array.Empty<BirParameter>(),
             Ret = new TypeNode.Fqn("kotlin.Unit"), Body = statements };

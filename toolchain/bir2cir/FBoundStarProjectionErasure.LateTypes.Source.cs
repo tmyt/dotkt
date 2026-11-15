@@ -41,9 +41,7 @@ static partial class FBoundStarProjectionErasure
     internal static CurrentPhysicalTypeView RewriteLateTypesSource(IReadOnlyList<BirFileDeclaration> roots,
         CarrierRealizationContext realization, AliasDeclarationTransitions aliases = null)
     {
-        var current = CurrentPhysicalTypeView.Capture(roots, realization.Bindings);
-        realization.Values.RegisterCurrentPhysicalOwners(current.Definitions.Keys, current.LocalClrAliases);
-        realization.NativeProofs.RegisterCurrentSourceDefinitions(current);
+        var current = RefreshCurrentPhysicalTypesSource(roots, realization);
         var projection = CarrierProjectionContext.ForCurrentSource(realization, current, aliases);
         var state = new SourceRewriteState(realization, (_, _) => null, current, projection);
         NormalizeRedundantProjections(roots, realization.References);
@@ -52,6 +50,18 @@ static partial class FBoundStarProjectionErasure
                 if (!ReferenceEquals(replacement, root))
                     throw new InvalidOperationException("Late carrier projection replaced a file declaration");
             }), new(), state, null, typesOnly: true);
+        return current;
+    }
+
+    // Late producers report actual new declarations before projecting them.
+    // Refresh only physical membership here; never replay the original graph's
+    // type rewrites or reselect source eligibility after a materialization.
+    internal static CurrentPhysicalTypeView RefreshCurrentPhysicalTypesSource(
+        IReadOnlyList<BirFileDeclaration> roots, CarrierRealizationContext realization)
+    {
+        var current = CurrentPhysicalTypeView.Capture(roots, realization.Bindings);
+        realization.Values.RegisterCurrentPhysicalOwners(current.Definitions.Keys, current.LocalClrAliases);
+        realization.NativeProofs.RegisterCurrentSourceDefinitions(current);
         return current;
     }
 }

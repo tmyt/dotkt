@@ -4,6 +4,9 @@ using DotKt.Cir;
 
 static partial class KotlinPropertyAccessors
 {
+    internal static bool IsPhysicalSlotBridge(BirFunctionDeclaration declaration) =>
+        IsPhysicalSlotBridge(declaration.PhysicalSlotBridge.OrDefault());
+
     // The readers describe existing declaration facts. Both owning representations
     // use this one association/signature/carrier decision, including late bridges.
     sealed record AccessorFacts(string Name, string Association, string Role, int Arity,

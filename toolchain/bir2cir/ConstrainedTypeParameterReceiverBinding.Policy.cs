@@ -1,15 +1,8 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 static partial class ConstrainedTypeParameterReceiverBinding
 {
     readonly record struct ConstraintSlot(TypeNode[] Retained, TypeNode[] Erased);
-
-    static ConstraintSlot[] ConstraintFrame(JsonArray parameters) => parameters == null ? Array.Empty<ConstraintSlot>()
-        : parameters.Select(parameter => parameter is JsonObject declaration
-            ? new ConstraintSlot((declaration["constraints"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>(),
-                (declaration[FBoundStarProjectionErasure.ErasedInnerConstraintKey] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>())
-            : new ConstraintSlot(Array.Empty<TypeNode>(), Array.Empty<TypeNode>())).ToArray();
 
     static IEnumerable<(TypeNode.Fqn Constraint, bool Erased)> ConstraintDeclarations(
         TypeNode.Tv start, IReadOnlyList<ConstraintSlot> owner, IReadOnlyList<ConstraintSlot> method)

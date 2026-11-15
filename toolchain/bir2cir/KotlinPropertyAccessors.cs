@@ -67,9 +67,11 @@ static partial class KotlinPropertyAccessors
     // selected property call may bind to.  It deliberately carries the source identity for MethodSemantics and
     // round-trip metadata, so every source-declaration index must exclude it by this explicit physical-role fact.
     internal static bool IsPhysicalSlotBridge(JsonObject declaration) =>
-        declaration[PhysicalSlotBridgeKey] is JsonValue value
+        IsPhysicalSlotBridge(declaration[PhysicalSlotBridgeKey] is JsonValue value
         && value.TryGetValue<bool>(out var physicalSlotBridge)
-        && physicalSlotBridge;
+        && physicalSlotBridge);
+
+    internal static bool IsPhysicalSlotBridge(bool physicalSlotBridge) => physicalSlotBridge;
 
     internal static void PreserveCallIdentity(JsonObject call, string sourceName, string kind)
     {

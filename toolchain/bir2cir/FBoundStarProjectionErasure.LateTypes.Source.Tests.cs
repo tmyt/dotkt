@@ -73,7 +73,44 @@ static partial class FBoundStarProjectionErasure
                 && ReferenceEquals(projection.OwnerFrame(projection.Owners["LateGeneric"]), frame)
                 && !context.Projection.ProjectionCanChangeConstruction(new TypeNode.Fqn("LateGeneric", new TypeNode[] { text })),
                 "current-first variance/frame lookup reused frozen early or last-duplicate facts");
-            file.Types = new IBirTypeDeclaration[] { generic, machine, currentGeneric };
+
+            // Late Foreign materialization attaches/admit its exact class
+            // before narrow projection. The current physical header can differ
+            // from the original eligibility owner without becoming a new owner.
+            var currentApplication = new TypeNode.Fqn("LateGeneric", new TypeNode[] { text, text });
+            Require(context.Projection.Rewrite(currentApplication) == carrier
+                && projection.Rewrite(currentApplication) == currentApplication,
+                "late materialization regression does not distinguish early/current projection clocks");
+            var adapterMethod = new BirFunctionDeclaration { Name = "invoke", Params = Array.Empty<BirParameter>(),
+                Ret = currentApplication, RetKotlinType = currentApplication, Body = Array.Empty<IBirStatement>() };
+            var adapterConstructor = new BirConstructor { Params = Array.Empty<BirParameter>(), Body = Array.Empty<IBirStatement>() };
+            var adapterFields = new[] { new BirFieldDeclaration { Name = "value", Type = currentApplication, KotlinType = currentApplication } };
+            var adapterParameters = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { native } } };
+            var adapter = new BirClassDefinition { Name = "LateAdapter", Kind = "class", Generated = true,
+                TypeParams = adapterParameters, Fields = adapterFields, Ctors = new[] { adapterConstructor }, Methods = new[] { adapterMethod } };
+            file.Types = file.Types.Value.Append(adapter).ToArray();
+            Reject(() => CurrentPhysicalTypeView.Capture(roots, context.Bindings));
+            var adapterBinding = context.Bindings.GetSource(adapter);
+            context.Bindings.GetSource(adapterConstructor);
+            context.Bindings.GetSource(adapterMethod);
+            var materializedCurrent = RefreshCurrentPhysicalTypesSource(roots, context);
+            var materializedProjection = CarrierProjectionContext.ForCurrentSource(context, materializedCurrent);
+            ProjectMaterializedTypesSource(new[] { adapter }, context, materializedCurrent, materializedProjection);
+            Require(ReferenceEquals(materializedCurrent.Definitions["LateAdapter"], adapter)
+                && ReferenceEquals(materializedCurrent.Bindings["LateAdapter"], adapterBinding)
+                && ReferenceEquals(materializedCurrent.Definitions["LateGeneric"], currentGeneric)
+                && ReferenceEquals(materializedProjection.OwnerFrame(materializedProjection.Owners["LateGeneric"]), frame)
+                && adapterFields[0].Type.Value == currentApplication && adapterMethod.Ret.Value == currentApplication
+                && adapterFields[0].KotlinType.Value == currentApplication && adapterMethod.RetKotlinType.Value == currentApplication
+                && ReferenceEquals(adapter.TypeParams.Value, adapterParameters)
+                && adapterParameters[0].Constraints.Value.Single() == native
+                && context.NativeProofs.IsPhysicalConstraint(adapterBinding, 0, native)
+                && ReferenceEquals(context.Bindings.SourceDefinitions, oldDefinitions)
+                && ReferenceEquals(context.Bindings.SourceLocalDeclarations, oldDeclarations)
+                && !oldDefinitions.ContainsKey("LateAdapter") && !oldDeclarations.ContainsKey(("LateAdapter", "invoke"))
+                && !context.Owners.ContainsKey("LateAdapter"),
+                "reported late class used early projection, lost its own frame/native proof, or recaptured source eligibility");
+            file.Types = new IBirTypeDeclaration[] { generic, machine, currentGeneric, adapter };
 
             // Final override synthesis occurs between the two real calls. The
             // second pass observes its exact newly attached declaration.
@@ -95,7 +132,7 @@ static partial class FBoundStarProjectionErasure
             context.Bindings.BindProjected();
             var physicalBridge = bridgeBinding.Physical;
             Require(context.NativeProofs.IsPhysicalConstraint(physicalBridge["typeParams"][0]["constraints"].AsArray(), native)
-                && ReferenceEquals(physical["types"][3], physicalBridge), "physical proof continuation changed at the frontier");
+                && ReferenceEquals(physical["types"][4], physicalBridge), "physical proof continuation changed at the frontier");
             BindRealizationContinuation(context, finalCurrent);
             Require(ReferenceEquals(context.Values.LocalDeclaration("LateBridge"), physicalBridge)
                 && ReferenceEquals(context.Values.LocalDeclaration("LateMachine"), machineBinding.Physical)

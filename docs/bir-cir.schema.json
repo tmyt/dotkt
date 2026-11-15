@@ -367,6 +367,7 @@
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
         "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "_erasedConstraintDispatch": { "type": "boolean" }, "_exactExistentialBridgeOwnerCall": { "type": "boolean" },
+        "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
         "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
       } },
@@ -2146,6 +2147,15 @@
     },
     "cirConstrainedCallNode": {
       "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": {
+        "super": { "type": "boolean" },
+        "memberVisibility": { "type": "string" },
+        "memberOwnerTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "memberMethodTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Method", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "memberSignature": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "memberReturnType": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "$ref": "#/$defs/type" },
+        "prop": { "type": "string" }, "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
+        "shapeTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "_exactExistentialBridgeOwnerCall": { "type": "boolean" },
         "declarationReferencedIntrinsic": { "type": "boolean" },
         "nullablePendingWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
         "dotktDeclarationIdentityBound": { "type": "boolean" }, "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -2276,6 +2286,7 @@
     },
     "cirNativeInstanceNode": {
       "type": "object", "x-dotkt-model": { "name": "CirNativeInstance", "domain": "cirExecutable", "roles": ["expression"], "loweringProperties": {
+        "prop": { "type": "string" },
         "kotlinHashStorageSignature": { "type": "boolean" },
         "suspendCall": { "type": "boolean" }, "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } }, "_capturedGenericResult": { "$ref": "#/$defs/type" },
         "_erasedConstraintDispatch": { "type": "boolean" }, "resolvedMemberParams": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },

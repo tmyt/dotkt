@@ -1,12 +1,11 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
 static partial class ExactMutableViewDispatch
 {
-    // One guard/evaluation plan, two owning renderers. The receiver is captured
-    // before eligibility and the native test. The source renderer can then
+    // One guard/evaluation plan. The receiver is captured
+    // before eligibility and the native test. The owning renderer can then
     // capture ordinary arguments once before the selected branch reads them.
     static T RenderView<T>(ViewRenderer<T> render, T receiver, TypeNode.Fqn view, int family, TypeNode result,
         Func<T, T> direct, Func<T, T> fallback, TypeNode authoredSlot)
