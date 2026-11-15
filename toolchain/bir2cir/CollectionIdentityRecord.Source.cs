@@ -4,6 +4,36 @@ using DotKt.Cir;
 
 static partial class CollectionIdentityRecord
 {
+    internal static void RecordMemberSlots(BirFileDeclaration file)
+    {
+        void Parameters(IEnumerable<BirParameter> parameters)
+        {
+            foreach (var parameter in parameters)
+                if (parameter.Type.HasValue && NestsCollapsingReadonly(parameter.Type.Value))
+                    parameter.CollIdentity = BirGraphValue.CopyType(parameter.Type.Value);
+        }
+        void Members(IEnumerable<BirFunctionDeclaration> methods, IEnumerable<BirConstructor> constructors,
+            IEnumerable<BirFieldDeclaration> fields, IEnumerable<BirPropertyDeclaration> properties)
+        {
+            foreach (var method in methods)
+            {
+                if (method.Ret.HasValue && NestsCollapsingReadonly(method.Ret.Value))
+                    method.CollIdentityRet = BirGraphValue.CopyType(method.Ret.Value);
+                Parameters(method.Params.OrEmpty());
+            }
+            foreach (var constructor in constructors) Parameters(constructor.Params.OrEmpty());
+            foreach (var property in properties)
+                if (property.Type.HasValue && NestsCollapsingReadonly(property.Type.Value))
+                    property.CollIdentity = BirGraphValue.CopyType(property.Type.Value);
+            foreach (var field in fields)
+                if (field.Type.HasValue && NestsCollapsingReadonly(field.Type.Value))
+                    field.CollIdentity = BirGraphValue.CopyType(field.Type.Value);
+        }
+        Members(file.Methods.OrEmpty(), Array.Empty<BirConstructor>(), file.Fields.OrEmpty(), file.Properties.OrEmpty());
+        foreach (var owner in file.Types.OrEmpty())
+            Members(owner.Methods.OrEmpty(), owner.Ctors.OrEmpty(), owner.Fields.OrEmpty(), owner.Properties.OrEmpty());
+    }
+
     internal static void RecordTypeEdges(BirFileDeclaration file)
     {
         foreach (var declaration in file.Types.OrEmpty())

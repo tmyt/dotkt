@@ -1,7 +1,6 @@
 // Shared scalar suspend policy and the declaration-binding context-read leaf.
 // Owning named and lambda execution is implemented by SourceFunGen and its
 // compilation-scoped SuspendModuleContext; no DOM body engine lives here.
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 static partial class SuspendColdLowering
@@ -56,13 +55,6 @@ static partial class SuspendColdLowering
         TypeNode.Oblivious oblivious => IsSuspendFunctionType(oblivious.Of),
         _ => false,
     };
-    static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
-
-    internal static bool IsCoroutineContextRead(JsonObject o) =>
-        IsCoroutineContextRead(Str(o["k"]), Str(o[KotlinPropertyAccessors.SourceNameKey]),
-            Str(o[KotlinPropertyAccessors.KindKey]), Str(o["method"]), Str(o["prop"]),
-            o["args"] is JsonArray arguments ? arguments.Count : null);
-
     internal static bool IsCoroutineContextRead(string kind, string preservedName, string preservedKind,
         string method, string propertyKind, int? argumentCount) => kind == "callStatic"
         && (preservedName == "coroutineContext" && preservedKind == "get"

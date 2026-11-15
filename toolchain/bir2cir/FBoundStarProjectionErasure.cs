@@ -1279,20 +1279,22 @@ static partial class FBoundStarProjectionErasure
         if (protectExactCast) call["_exactBridgeCast"] = true;
     }
 
+    static readonly HashSet<string> TransientMarkerKeys = new(StringComparer.Ordinal)
+    {
+        "_exactBridgeCast", "reifiedTypeOperand", ExactBridgeOwnerCallKey,
+        ExactOuterKey, DelegationOuterSlotKey, GenericRepresentationPolicy.NativeLocationKey,
+        GenericRepresentationPolicy.FieldAddressKey, GenericRepresentationPolicy.PhysicalDeclarationSignatureKey,
+        InnerFactoryArgumentsKey,
+    };
+
+    // These scalar transport facts survive until the strict address handoff.
+    // Generated graph/type visitors do not expose them as semantic child slots.
     static void RemoveTransientMarkers(JsonNode node)
     {
         switch (node)
         {
             case JsonObject obj:
-                obj.Remove("_exactBridgeCast");
-                obj.Remove("reifiedTypeOperand");
-                obj.Remove(ExactBridgeOwnerCallKey);
-                obj.Remove(ExactOuterKey);
-                obj.Remove(DelegationOuterSlotKey);
-                obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
-                obj.Remove(GenericRepresentationPolicy.FieldAddressKey);
-                obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
-                obj.Remove(InnerFactoryArgumentsKey);
+                foreach (var field in TransientMarkerKeys) obj.Remove(field);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value);
                 break;

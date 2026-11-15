@@ -487,114 +487,35 @@ static partial class ClrMemberResolution
 
     static void ResolveReferencedStaticCall(JsonObject node, string context)
     {
-        // Preserve a MethodDef selected by authoritative declaration identity. Other
-        // calls still follow their existing representation-binding path: a preliminary
-        // reference-surface binding is not necessarily the final runtime binding.
-        if (node["memberRef"] is JsonObject
-            && node[DeclarationIdentityBoundKey]?.GetValue<bool>() == true) return;
-        // An instance call states its owner as `ownerType`; a static one as `owner`, or `calleeOwner` when a
-        // lowering rebuilt the node. All three name the same thing — the type that declares the member.
-        var ownerNode = (node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall" ? node["iface"]
-            : node["owner"] is JsonNode owner && owner.GetValueKind() != System.Text.Json.JsonValueKind.Null
-            ? owner
-            : node["calleeOwner"] ?? node["ownerType"];
-        if (ReadOwnerNode(ownerNode) is not TypeNode.Fqn ownerFqn
-            || (node["method"] as JsonValue)?.TryGetValue<string>(out var name) != true
-            || node["sig"] is not JsonArray sig)
-            return;
-        // A type this compilation emits stays on the local axis (#395). The search can otherwise answer from the
-        // shipped twin, which for a stdlib self-build is the PREVIOUS build of the assembly being produced.
-        // A canonical runtime synthetic is present in the input only as a representation template.  App CIR omits
-        // that duplicate declaration and ilemit links the shipped TypeDef, so its calls belong to the external axis.
-        // Every other locally-authored type keeps source-wins precedence, generated or not.
-        if (_localTypes.Contains(ownerFqn.Name) && !_externalCanonicalTypes.Contains(ownerFqn.Name))
+        var kind = (node["k"] as JsonValue)?.GetValue<string>();
+        var owner = kind == "constrainedCall" ? node["iface"]
+            : node["owner"] is JsonNode explicitOwner && explicitOwner.GetValueKind() != System.Text.Json.JsonValueKind.Null
+                ? explicitOwner : node["calleeOwner"] ?? node["ownerType"];
+        var input = new ReferencedCallInput(kind, ReadOwnerNode(owner),
+            (node["method"] as JsonValue)?.GetValue<string>(), (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToArray(),
+            (node["typeArgs"] as JsonArray)?.Count ?? 0,
+            (node[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>(),
+            node["memberRef"] is JsonObject && node[DeclarationIdentityBoundKey]?.GetValue<bool>() == true,
+            (node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshot) == true ? snapshot : null,
+            (node[KotlinPropertyAccessors.SourceNameKey] as JsonValue)?.GetValue<string>(),
+            (node[KotlinPropertyAccessors.KindKey] as JsonValue)?.GetValue<string>(),
+            (node["prop"] as JsonValue)?.GetValue<string>(), (node["super"] as JsonValue)?.GetValue<bool>() == true);
+        var plan = PlanReferencedCall(input, context, _refs, _localTypes, _externalCanonicalTypes, _localDeclarationIds);
+        if (plan.PropertySelected)
         {
-            // An inline/member-extension reshape can temporarily put a referenced declaration identity on a call
-            // through a local wrapper owner. That call remains on the established local substitution path; retaining
-            // the external identity past this boundary would make ApplyLocal treat it as an unallocated local
-            // MethodDef. Preserve only identities that actually belong to this emission unit.
-            if ((node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var localAxisIdentity) == true
-                && !_localDeclarationIds.Contains(localAxisIdentity))
-                node.Remove(DeclarationIdentityBinding.Key);
-            return;
-        }
-        if ((node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var carriedIdentity) == true
-            && _localDeclarationIds.Contains(carriedIdentity))
-            return;
-        var callSig = (node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
-            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot)
-                ? snapshot : sig.Select(TypeJson.Read).ToArray();
-        if (callSig.Any(type => type == null)) return;
-        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
-        // A referenced extension-property accessor can still arrive here with its preserved source-property identity
-        // (or, before preservation, the Kotlin name plus `prop` role). Ask the reference index for the accessor's
-        // physical name, exactly as the reshape does; without it the search is for a member that does not exist under
-        // that spelling.
-        KotlinPropertyAccessors.TryCallIdentity(node, out var sourcePropertyName, out var accessorKind);
-        var propertyAccessorResolved = false;
-        if (accessorKind is "get" or "set")
-        {
-            if (!_refs.TryKotlinPropertyAccessor(ownerFqn.Name, sourcePropertyName, accessorKind, callSig.Length, methodArity,
-                    callSig, ownerFqn.Args ?? Array.Empty<TypeNode>(), out var physicalAccessor, out var accessorVirtual))
-                return;
-            KotlinPropertyAccessors.PreserveCallIdentity(node, sourcePropertyName, accessorKind);
+            KotlinPropertyAccessors.PreserveCallIdentity(node, plan.PropertyName, plan.PropertyKind);
             node.Remove("prop");
-            node["method"] = physicalAccessor;
-            // A virtual declaration remains a non-virtual call operand when Kotlin selected `super`. The declaration
-            // flag describes its slot; it must not overwrite the dispatch decision already carried by the call.
-            if (accessorVirtual && (node["super"] as JsonValue)?.GetValue<bool>() != true)
-                node["virtual"] = true;
-            name = physicalAccessor;
-            propertyAccessorResolved = true;
+            node["method"] = plan.PhysicalName;
+            if (plan.SetVirtual) node["virtual"] = true;
         }
-        var isStatic = node["k"]?.GetValue<string>() is "callStatic" or "newDelegate";
-        // Property accessors already crossed their dedicated PropertyInfo/MethodSemantics association above. Keep
-        // their established accessor-signature path: it also owns compiler-added parameters such as reified
-        // nullability witnesses, which are not part of the Kotlin property-call vector at this point.
-        if (!propertyAccessorResolved
-            && (node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var declarationId) == true)
-        {
-            var callOwner = ResolveOwnerType(ownerFqn)
-                ?? throw new InvalidOperationException($"bir2cir: selected call owner '{ownerFqn.Name}' does not resolve");
-            if (!_refs.TryDeclarationIdentityMethod(
-                    declarationId, methodArity, isStatic, callSig, callOwner, ownerFqn.Args, out var selectedSignature,
-                    out var selectedDeclaration, out var selectedOwner, out var failure))
-                throw new InvalidOperationException(
-                    $"bir2cir: {context} [{node["k"]?.GetValue<string>()} {ownerFqn.Name}.{name}]: "
-                    + $"frontend declaration identity '{declarationId}' {failure}");
-            node["sig"] = new JsonArray(selectedSignature.Select(TypeJson.Write).ToArray());
-            // Identity selects the MethodDef, not the receiver's instantiation of its declaring type.
-            // Project through the actual call owner (Leaf : Middle<String>, for example), rather than
-            // applying Leaf's empty argument vector directly to Middle<T>.
-            var selectedReference = MemberRefOf(selectedDeclaration, MemberRefNode.Kinds.Method,
-                callOwner, ownerFqn.Args);
-            node["memberRef"] = selectedReference.Write();
-            node[DeclarationIdentityBoundKey] = true;
-            StampResolvedMethodTypeParameters(node, selectedDeclaration);
-            if ((node["k"] as JsonValue)?.GetValue<string>() == "constrainedCall")
-                StampResolvedMemberReturn(node, selectedDeclaration.ReturnType);
-            StampDelegateArgumentTargets(node, selectedDeclaration,
-                (selectedReference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>());
-            // The source descriptor has served selection. The exact physical signature/memberRef now owns
-            // the call; retaining argTypes would send an unmaterialized source frame into CLR type lowering.
-            node.Remove("argTypes");
-            node.Remove(DeclarationIdentityBinding.Key);
-            return;
-        }
-        if (propertyAccessorResolved)
-            node.Remove(DeclarationIdentityBinding.Key);
-        if (!_refs.TryResolveStaticMemberSignature(
-                ownerFqn.Name, name, methodArity, isStatic, callSig,
-                ownerFqn.Args ?? Array.Empty<TypeNode>(), out var declarationSig,
-                out var declaration, out var declaringOwner))
-            return;
-        node["sig"] = new JsonArray(declarationSig.Select(TypeJson.Write).ToArray());
-        // A previously-compiled DotKt assembly is another assembly: its members are external, and the reason
-        // this call kept a parameter vector rather than an identity was only that the vector was all this
-        // resolution used to return.
-        node["memberRef"] = MemberRefJson(declaration, MemberRefNode.Kinds.Method, declaringOwner, ownerFqn.Args);
-        StampResolvedMethodTypeParameters(node, declaration);
-        StampDelegateArgumentTargets(node, declaration, ownerFqn.Args ?? Array.Empty<TypeNode>());
+        if (plan.ClearIdentity) node.Remove(DeclarationIdentityBinding.Key);
+        if (plan.Signature == null) return;
+        node["sig"] = new JsonArray(plan.Signature.Select(TypeJson.Write).ToArray());
+        node["memberRef"] = plan.Reference.Write();
+        if (plan.IdentityBound) node[DeclarationIdentityBoundKey] = true;
+        StampResolvedMethodTypeParameters(node, plan.Declaration);
+        if (plan.StampReturn) StampResolvedMemberReturn(node, plan.Declaration.ReturnType);
+        StampDelegateArgumentTargets(node, plan.Declaration, plan.DelegateOwnerArguments);
         node.Remove("argTypes");
     }
 

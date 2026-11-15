@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // COMPREHENSIVE reference-nullable strip (#37/#48). ilemit's MapType asserts that a `{t:nullable}` node it maps has a
@@ -22,40 +21,10 @@ using DotKt.Bir;
 // Runs on the SEMANTIC tree (kotlin.* names) AFTER DeclNullableFlags (so the NRT byte walk still saw the nullability)
 // and BEFORE BirTypeLowering — the oracle is unambiguous on the semantic names, and USAGE positions get ONLY the bare
 // strip, never an NRT byte (nullability at a type usage is compile-time-only, not NRT-annotated).
-static class ReferenceNullableStrip
+static partial class ReferenceNullableStrip
 {
     internal static void FunctionSelfTest() => FunctionRewriteTests.Check("reference nullable strip",
         type => Strip(type, _ => false));
-
-    public static void Apply(JsonNode node, ValueTypeOracle isValue)
-    {
-        switch (node)
-        {
-            case JsonObject o:
-                // Preserve a reference null literal before removing its nullable wrapper. In particular,
-                // Unit? null is not the non-null Unit literal, whose physical representation is different.
-                if (o["k"]?.GetValue<string>() == "const" && o.ContainsKey("value") && o["value"] == null
-                    && TypeJson.Read(o["type"]) is TypeNode.Nullable literal && !IsValueInner(literal.Of, isValue))
-                    o["type"] = TypeJson.Fqn("kotlin.Nothing");
-                foreach (var key in o.Select(kv => kv.Key).ToList())
-                {
-                    var child = o[key];
-                    if (child == null) continue;
-                    if (TypeJson.Read(child) is TypeNode t) o[key] = TypeJson.Write(Strip(t, isValue));
-                    else Apply(child, isValue);
-                }
-                break;
-            case JsonArray a:
-                for (var i = 0; i < a.Count; i++)
-                {
-                    var child = a[i];
-                    if (child == null) continue;
-                    if (TypeJson.Read(child) is TypeNode t) a[i] = TypeJson.Write(Strip(t, isValue));
-                    else Apply(child, isValue);
-                }
-                break;
-        }
-    }
 
     // Recursively strip reference nullables within a Type: a `Nullable` with a value inner keeps its wrapper; a
     // `Nullable` with a reference/tv/generic/array/fn inner collapses to the (recursively-stripped) bare inner,

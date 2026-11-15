@@ -42,20 +42,26 @@ static partial class ClrMemberResolution
 
     internal static void StampResolvedMethodTypeParameters(JsonObject node, MethodInfo method)
     {
-        method = OpenDeclarationOf(method);
-        if (node["typeArgs"] is not JsonArray typeArgs || typeArgs.Count == 0 ||
-            !method.IsGenericMethodDefinition)
+        var parameters = ResolvedMethodTypeParameters(method, (node["typeArgs"] as JsonArray)?.Count ?? 0);
+        if (parameters == null)
         {
             node.Remove(ResolvedMethodTypeParamsKey);
             return;
         }
-        var parameters = method.GetGenericArguments();
-        if (parameters.Length != typeArgs.Count)
-            throw new InvalidOperationException(
-                $"bir2cir: resolved generic method '{method.DeclaringType?.FullName}.{method.Name}' declares " +
-                $"{parameters.Length} type parameter(s), but the use carries {typeArgs.Count} argument(s)");
         node[ResolvedMethodTypeParamsKey] = new JsonArray(
             parameters.Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+    }
+
+    static Type[] ResolvedMethodTypeParameters(MethodInfo method, int argumentCount)
+    {
+        method = OpenDeclarationOf(method);
+        if (argumentCount == 0 || !method.IsGenericMethodDefinition) return null;
+        var parameters = method.GetGenericArguments();
+        if (parameters.Length != argumentCount)
+            throw new InvalidOperationException(
+                $"bir2cir: resolved generic method '{method.DeclaringType?.FullName}.{method.Name}' declares " +
+                $"{parameters.Length} type parameter(s), but the use carries {argumentCount} argument(s)");
+        return parameters;
     }
 
     /// <summary>The scalar reference for a resolved method/constructor, ready to be stamped on a node.</summary>

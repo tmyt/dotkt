@@ -42,8 +42,7 @@ static partial class ExternalGenericConstraintValidation
                 use.Clear();
             }
             node.VisitOwnChildSlots((field, _, slot) => {
-                if (!ForeignDeclarationTypeKeys.Contains(field)
-                    && (field != "argTypes" || node is BirNew))
+                if (UseSiteTypeField(field, node is BirNew))
                     WalkResolvedSource(slot.Value, field, nextTypes, nextMethods);
             });
         }
@@ -54,7 +53,7 @@ static partial class ExternalGenericConstraintValidation
     }
 
     static ConstraintFacts SourceConstraintDeclaration(BirTypeParameter declaration) =>
-        new(declaration.SpecialConstraints.OrEmpty(), declaration.Constraints.OrEmpty());
+        declaration == null ? null : new(declaration.SpecialConstraints.OrEmpty(), declaration.Constraints.OrEmpty());
 
     sealed record ResolvedUse(BirTypeParameter[] Declarations, OptionalField<TypeNode[]> Arguments,
         BirMemberReference Member, string Method, Action Clear);

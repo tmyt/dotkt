@@ -25,6 +25,9 @@ static partial class ExternalGenericConstraintValidation
         ClrMemberResolution.ResolvedMethodTypeParamsKey,
     };
 
+    static bool UseSiteTypeField(string field, bool construction) =>
+        !ForeignDeclarationTypeKeys.Contains(field) && (field != "argTypes" || construction);
+
     public sealed partial class Prepared
     {
         readonly ReferenceMetadataIndex _refs;
@@ -44,59 +47,6 @@ static partial class ExternalGenericConstraintValidation
             _localTypes = localTypes;
         }
 
-        public void Apply(JsonNode root) =>
-            Walk(root, null, Array.Empty<ParameterFacts>(), Array.Empty<ParameterFacts>(), _refs, _isValueFqn,
-                _localEnums, _localTypes, _declarationCache);
-    }
-
-    static void Walk(JsonNode node, string incomingKey, ParameterFacts[] typeParameters,
-        ParameterFacts[] methodParameters,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
-        IReadOnlyDictionary<string, LocalTypeFacts> localTypes, IDictionary<string, ConstraintFacts[]> declarationCache)
-    {
-        if (node is JsonArray array)
-        {
-            foreach (var value in array)
-                if (value is not null)
-                    Walk(value, incomingKey, typeParameters, methodParameters, refs, isValueFqn, localEnums,
-                        localTypes, declarationCache);
-            return;
-        }
-        if (node is not JsonObject o) return;
-
-        // A scalar memberRef is already a resolved foreign declaration identity. Its open declaring/parameter/return
-        // types belong to that declaration, exactly like the descriptor vectors skipped below.
-        if (o.ContainsKey("assembly") && o.ContainsKey("declaringType") && o.ContainsKey("genericArity") &&
-            o.ContainsKey("returnType") && MemberRefNode.Kinds.IsKnown(Str(o["kind"])))
-            return;
-
-        if (o["t"] is JsonValue)
-        {
-            if (TypeJson.Read(o) is TypeNode type)
-                ValidateType(type, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
-                    declarationCache);
-            return;
-        }
-
-        var nextTypeParameters = typeParameters;
-        var nextMethodParameters = methodParameters;
-        if (Str(o["kind"]) is string kind && IsTypeKind(kind))
-            nextTypeParameters = ReadParameterFacts(TypeParameterFrame.CloneDeclarations(o), refs, isValueFqn,
-                localEnums, localTypes);
-        if (incomingKey == "methods")
-            nextMethodParameters = ReadParameterFacts(o["typeParams"], refs, isValueFqn, localEnums, localTypes);
-        else if (incomingKey == "ctors")
-            nextMethodParameters = Array.Empty<ParameterFacts>();
-
-        var nodeKind = Str(o["k"]);
-        foreach (var pair in o.ToList())
-        {
-            if (pair.Value is null || ForeignDeclarationTypeKeys.Contains(pair.Key) ||
-                pair.Key == "argTypes" && nodeKind != "new")
-                continue;
-            Walk(pair.Value, pair.Key, nextTypeParameters, nextMethodParameters, refs, isValueFqn, localEnums,
-                localTypes, declarationCache);
-        }
     }
 
     static void ValidateType(TypeNode type, ParameterFacts[] typeParameters, ParameterFacts[] methodParameters,
@@ -241,13 +191,6 @@ static partial class ExternalGenericConstraintValidation
         }
     }
 
-    static ParameterFacts[] ReadParameterFacts(JsonNode node, ReferenceMetadataIndex refs,
-        ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
-        IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
-    {
-        return ReadParameterFacts(ReadConstraintDeclarations(node as JsonArray), refs, isValueFqn, localEnums, localTypes);
-    }
-
     static ConstraintFacts ReadConstraintDeclaration(JsonObject declaration) => new(
         (declaration["specialConstraints"] as JsonArray)?.Select(Str).Where(value => value != null).ToArray() ?? [],
         (declaration["constraints"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? []);
@@ -312,5 +255,4 @@ static partial class ExternalGenericConstraintValidation
     };
 
     static string Str(JsonNode node) => (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
-    static bool Bool(JsonNode node) => (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
 }

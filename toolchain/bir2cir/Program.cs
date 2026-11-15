@@ -147,6 +147,15 @@ static class Bir2Cir
                 StarProjectionBoundLowering.SourcePreparationSelfTest();
                 ExternalGenericConstraintValidation.SourcePreparationSelfTest();
                 CollectionBclSlotSynthesis.SourcePreparationSelfTest();
+                ValueRepresentationLowering.SourceTypesSelfTest();
+                DeclNullableFlags.SourceSelfTest();
+                CollectionIdentityRecord.MemberSlotsSourceSelfTest();
+                ReifiedNullabilityWitnessLowering.FinalSignatureSourceSelfTest();
+                ClrMemberResolution.ReferencedSourceSelfTest();
+                ReferenceNullableStrip.SourceSelfTest();
+                StdlibSubstituteTypeParams.SourceSelfTest();
+                StarProjectionBoundLowering.SourceSelfTest();
+                ExternalGenericConstraintValidation.SourceSelfTest();
                 MaterializedBirPayload.SelfTest();
                 InlineBirStashTests.SelfTest();
                 InlineExpansion.SelfTestHygiene();
@@ -932,6 +941,7 @@ sealed class Pipeline
         foreach (var source in captured) ClrMemberResolution.EnsurePlainCallDescriptors(source);
         ClrMemberResolution.ResolveLocalDelegateTargetsSource(captured, refs,
             localCarriers: localExistentialOwners);
+        var starProjectionBounds = StarProjectionBoundLowering.CollectTypeParamBounds(captured);
         var physicalPreparation = new PhysicalAbiPreparation(
             AnySlotRebind.CollectLocalTypes(captured).Keys.ToHashSet(StringComparer.Ordinal),
             (appBuild ? captured.SelectMany(file => file.Types.OrEmpty())
@@ -940,15 +950,15 @@ sealed class Pipeline
                     && ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name)
                     && refs.PhysicalTypeNamed(name) != null) : Enumerable.Empty<string>())
                 .ToHashSet(StringComparer.Ordinal),
-            StarProjectionBoundLowering.CollectTypeParamBounds(captured),
             ExternalGenericConstraintValidation.Prepare(captured, refs, isValueFqn, enums.Basic),
             MemberCallSubstitution.CollectLocalPropertyAccessors(captured),
             new SourceModuleIndex(captured, refs.Aliases));
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(captured,
             carrierRealization.Declarations.PhysicalDeclarationSources);
         if (!referenceBuild) CollectionBclSlotSynthesis.RecordContracts(captured, refs);
-        foreach (var source in captured)
+        for (var sourcePosition = 0; sourcePosition < captured.Length; sourcePosition++)
         {
+            var source = captured[sourcePosition];
             // The coroutine ABI is monomorphic except for exact lexical and
             // enclosing receiver frames. Consume outer facts only after erasure.
             ContinuationErasure.Apply(source, refs);
@@ -959,6 +969,33 @@ sealed class Pipeline
             // Body retirement must precede projection while actual registered
             // owners remain attached. Signatures and opaque metadata survive.
             if (referenceBuild) RefBodySquash.Squash(source, suspendTransitions.RetireDiscardedSubtree);
+
+            // Finish exact referenced selection while Kotlin descriptors still
+            // distinguish declarations with the same physical erasure. Hidden
+            // witnesses complete the already selected declaration signature.
+            ClrMemberResolution.EnsurePlainCallDescriptors(source);
+            ReifiedNullabilityWitnessLowering.FinalizeCallSignatures(source);
+            DeclarationIdentityBinding.BindReferenced(source, refs,
+                physicalPreparation.Declarations.DeclarationIds, preserveForScalarResolution: appBuild);
+            if (appBuild)
+                ClrMemberResolution.ResolveReferencedStaticCalls(source, refs,
+                    physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
+                    physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[sourcePosition].Path));
+
+            // Record source identity and NRT before stripping reference-nullable
+            // wrappers. Nullable Unit retains its distinct value-returning ABI.
+            valueRepresentations.RecordSourceTypes(source);
+            DeclNullableFlags.Apply(source, isValueFqn,
+                type => BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, physicalPreparation.EmittedLocalTypes, referenceBuild, refs.NullableTypeFrames),
+                type => refs.Aliases.ContainsKey(type.Name));
+            ReferenceNullableStrip.Apply(source, isValueFqn);
+            if (substituteStdlibBuild) StdlibSubstituteTypeParams.Apply(source);
+            StarProjectionBoundLowering.Apply(source, starProjectionBounds, refs);
+            // Reuse the pre-erasure Prepared/cache: foreign declarations retain
+            // their own generic frames, unlike constructed use-site TypeSpecs.
+            physicalPreparation.GenericConstraints.Apply(source);
+            if (appBuild) CollectionIdentityRecord.RecordMemberSlots(source);
         }
 
         for (var index = 0; index < captured.Length; index++)
@@ -967,7 +1004,7 @@ sealed class Pipeline
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
             // continuing projection, after slots, placement, exact generic uses,
-            // storage, lexical access and pre-type ABI finishing. Retired facts
+            // storage, lexical access, exact signatures and constraints. Retired facts
             // use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
@@ -1061,7 +1098,6 @@ sealed class Pipeline
         var physicalPreparation = module.Preparation.PhysicalAbi;
         var emittedLocalTypes = physicalPreparation.EmittedLocalTypes;
         var externalCanonicalTypes = physicalPreparation.ExternalCanonicalTypes;
-        var starProjBounds = physicalPreparation.StarProjectionBounds;
         var externalGenericConstraintValidation = physicalPreparation.GenericConstraints;
         var localPropertyAccessors = physicalPreparation.PropertyAccessors;
         // PHASE 2 — per-file type lowering onwards.
@@ -1078,72 +1114,9 @@ sealed class Pipeline
         var declarationCollisionAliases = physicalPreparation.Declarations.CollisionAliases;
         foreach (var (substituted, outputName) in staged)
         {
-            // Coroutine ABI, exact receiver alignment, iteration and reference
-            // body retirement have completed on owning BIR before this frontier.
-            // Resolve an attributed callStatic to the referenced declaration while its Kotlin descriptor still
-            // distinguishes shapes that share one CLR erasure (`T?` vs object, function-return `T?` vs object).
-            // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
-            // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
-            ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
-            // Signature-shaping passes above operate on Kotlin-visible parameters and may rebuild `sig` from the
-            // semantic declaration carrier. Re-append the already-materialized hidden nullable witnesses now, at the
-            // final physical-binding boundary, so exact reference resolution sees the actual MethodDef signature.
-            ReifiedNullabilityWitnessLowering.FinalizeCallSignatures(substituted);
-            // Fail closed if a late materialization introduced an identity-bearing external call after the early
-            // binding boundary; the same authoritative ID lookup applies and no erased overload search is permitted.
-            DeclarationIdentityBinding.BindReferenced(substituted, refs, finalLocalDeclarationIds,
-                preserveForScalarResolution: attributeTopLevelOwner);
-            if (attributeTopLevelOwner)
-                ClrMemberResolution.ResolveReferencedStaticCalls(
-                    substituted, refs, emittedLocalTypes, externalCanonicalTypes,
-                    finalLocalDeclarationIds, outputName);
-            // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
-            // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
-            // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).
-            // Count only arguments retained by the selected physical head, preserving the source annotation
-            // wrappers on those arguments. The reference build must query its own representation as well.
-            // Capture complete source slots before reference-nullable stripping. The exact KotlinType carrier
-            // owns nested and outer nullability; NRT flags alone cannot restore a projected nominal source type.
-            valueRepresentations.RecordSourceTypes(substituted);
-            DeclNullableFlags.Apply(substituted, isValueFqn,
-                type => BirTypeLowering.AnnotationArguments(type, refs.Aliases, isValueFqn,
-                    refs.PhysicalTypeNames, emittedLocalTypes, _options.RefBuild, refs.NullableTypeFrames),
-                type => refs.Aliases.ContainsKey(type.Name));
-            // COMPREHENSIVE reference-nullable strip (#37/#48): remove EVERY `{t:nullable,of:<reference>}` from the whole
-            // tree — decl slots AND usage positions (owner generic type-args, argTypes/typeArgs, cast/expression types)
-            // that LowerNode walks as generic JSON without routing through LowerType. ilemit's MapType asserts a value
-            // inner, so a reference nullable in ANY position (a `Continuation<Any?>` owner arg crashed the ref emit) must
-            // be gone. Runs AFTER DeclNullableFlags (byte walk already captured the semantic nullability) and BEFORE type
-            // lowering (oracle unambiguous on kotlin.* names). Value/struct/enum `{t:nullable}` stays for ilemit;
-            // Unit? remains until type lowering distinguishes its value ABI from Unit's void convention.
-            ReferenceNullableStrip.Apply(substituted, isValueFqn);
-            // #66 — RUNTIME stdlib build only: remove the `kotlin.Comparable` upper bound that substituted CLR
-            // primitives cannot satisfy, plus `in` declaration-site variance that the CLR rejects for the realized
-            // signature. kotc emits pure-Kotlin type params in every build (ref==rt BIR); this pass removes only the
-            // constraints/variance incompatible with the runtime stdlib's substituted CLR shape. Runs
-            // BEFORE BirTypeLowering (the constraint is still the pure `kotlin.Comparable` token here).
-            if (_options.SubstituteStdlibBuild) StdlibSubstituteTypeParams.Apply(substituted);
-            // STAR-PROJECTION BOUND LOWERING (#2): a `T<*>` on a self-ref-bounded generic (`Key<E : Element>`) that kotc
-            // erased to `Key<object>` violates `E : Element` (illegal reified CLR instantiation). Repoint the objectish
-            // arg to the type-param BOUND (`Key<Element>`), reading the constraint from the in-assembly declaration (its
-            // self-build) or refs.TvBound (a referenced owner). ALL builds, BEFORE BirTypeLowering (still kotlin.Any /
-            // dotted Kotlin FQNs here), so ref.dll + rt.dll + app agree on the corrected signature.
-            StarProjectionBoundLowering.Apply(substituted, starProjBounds, refs);
-            // A reference KLIB can express ordinary nominal generic bounds, but not ECMA's class/struct/new() flags;
-            // projecting the implicit ValueType/Enum rows as Kotlin bounds is worse, because no Kotlin value inhabits
-            // those CLR root classifiers. Validate that physical half against the authoritative reference metadata
-            // after every BIR-space splice/retyping/star-bound rewrite has settled the constructed arguments and before
-            // type lowering erases their Kotlin/value identities. Foreign declaration descriptors are deliberately not
-            // use-site TypeSpecs and retain their own generic frames. The frontend remains the owner of nominal bounds.
-            externalGenericConstraintValidation.Apply(substituted);
-            // #29 ROUND-TRIP RECORD: before the type transform collapses a nested read-only `kotlin.collections.List/
-            // Set/Collection` (Root V) to its invariant sibling `IList`/`ICollection` — colliding with the mutable
-            // sibling's own alias and losing the Kotlin read-only-vs-mutable identity — stash the PRE-collapse Kotlin
-            // type of each affected declaration position as an opaque string. Member slots use
-            // [KotlinCollectionIdentity]; type edges and bounds merge into [KotlinSupertypes]. dll2klib therefore
-            // restores `List` vs `MutableList` cross-module in both channels. APP builds only (the collapse is
-            // non-ref; only an app-emitted library is dll2klib-re-consumed). Runs on kotlin.* names before lowering.
-            if (attributeTopLevelOwner) CollectionIdentityRecord.RecordMemberSlots(substituted);
+            // Exact call signatures, source metadata, reference nullability,
+            // generic constraints and member collection identity are finished
+            // on owning BIR. Physical property/type allocation continues here.
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
@@ -1645,7 +1618,6 @@ sealed record ModulePreparation(TypedModuleInventory Inventory, EnumPreparation 
     PhysicalAbiPreparation PhysicalAbi);
 sealed record PhysicalAbiPreparation(HashSet<string> EmittedLocalTypes,
     HashSet<string> ExternalCanonicalTypes,
-    IReadOnlyDictionary<string, TypeNode[]> StarProjectionBounds,
     ExternalGenericConstraintValidation.Prepared GenericConstraints,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
         IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> PropertyAccessors,
