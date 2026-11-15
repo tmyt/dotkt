@@ -206,6 +206,7 @@ static class Bir2Cir
                 PublishedApiTypeVisibilityLowering.SelfTestSourceVisibility();
                 ComparableBridgeSynthesis.SourceSelfTest();
                 ContinuationErasure.SelfTest();
+                ContinuationErasure.StrictFrontierSelfTest();
                 ReferenceNullableStrip.FunctionSelfTest();
                 StarProjectionBoundLowering.FunctionSelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
