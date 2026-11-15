@@ -6,6 +6,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
 {
     internal static void ResolvedPropertiesSelfTest()
     {
+        SourceParameterCloneSelfTest();
         var variable = new TypeNode.Tv("method", 0);
         var contract = new TypeNode.Fqn("Probe.Contract", Array.Empty<TypeNode>());
         var integer = new TypeNode.Fqn("System.Int32");
