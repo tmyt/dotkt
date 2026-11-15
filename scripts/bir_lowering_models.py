@@ -826,8 +826,11 @@ def outputs(root, definitions):
                 # These selected-instance declaration/dispatch facts have no
                 # static-call field. The producer authors the new target; they
                 # must not survive this structural move as facts about it.
+                # The foreign vector likewise describes the selected instance
+                # declaration, not the producer-authored static target.
                 "overrides", "clrOwnerResolved", "static", "_erasedConstraintDispatch",
-                "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature"}
+                "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature",
+                "_foreignDeclarationSignature"}
     model += ["// Structural move only; the producer authors the new selected target.",
               "internal static class BirCallConversion", "{",
               "    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source) => new()", "    {"]

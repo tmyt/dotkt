@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -10,35 +9,35 @@ static partial class ConstrainedTypeParameterReceiverBinding
 {
     internal static void AritySnapshotSelfTest()
     {
-        var root = JsonNode.Parse("""
-          {"types":[{"name":"Plain","types":[{"name":"Nested","typeParams":[{"name":"T"}]}]},
-                    {"name":"Duplicate","typeParams":[{"name":"T"}]},
-                    {"name":"Duplicate","typeParams":[]},
-                    {"name":"Receiver","typeParams":[{"name":"T"}]}]}
-          """);
+        var nested = new BirClassDefinition { Name = "Nested", TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Plain" }, nested,
+            new BirClassDefinition { Name = "Duplicate", TypeParams = new[] { new BirTypeParameter { Name = "T" } } },
+            new BirClassDefinition { Name = "Duplicate", TypeParams = Array.Empty<BirTypeParameter>() },
+            new BirClassDefinition { Name = "Receiver", TypeParams = new[] { new BirTypeParameter { Name = "T" } } },
+        } };
         var roots = new[] { root };
-        var snapshot = CollectTypeArity(roots);
+        var snapshot = CollectSourceTypeArity(roots);
         if (snapshot.Count != 4 || snapshot["Plain"] != 0 || snapshot["Nested"] != 1
             || snapshot["Duplicate"] != 0 || snapshot["Receiver"] != 1)
-            throw new InvalidOperationException("Declaration arities lost nested types or traversal-order overwrite");
+            throw new InvalidOperationException("Declaration arities lost placed types or traversal-order overwrite");
 
         // Each dispatch phase rebuilds its index. A new snapshot observes added/removed/renamed types and changed
         // parameter counts, while the old snapshot remains a value (no retained root or hidden cache).
-        var declarations = root["types"].AsArray();
-        var nested = declarations[0]["types"][0].AsObject();
-        nested["name"] = "Renamed";
-        nested["typeParams"].AsArray().Add(new TypeParameterDeclaration("U").ToDom());
-        nested["capturedTypeParams"] = new JsonArray(new JsonObject { ["name"] = "Outer" });
-        declarations.RemoveAt(2);
-        declarations.Add(new JsonObject { ["name"] = "Added", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "A" }) });
-        var rebuilt = CollectTypeArity(roots);
+        nested.Name = "Renamed";
+        nested.TypeParams = nested.TypeParams.Value.Append(new BirTypeParameter { Name = "U" }).ToArray();
+        nested.CapturedTypeParams = new[] { new BirTypeParameter { Name = "Outer" } };
+        root.Types = root.Types.Value.Where((_, index) => index != 3).Append(new BirClassDefinition {
+            Name = "Added", TypeParams = new[] { new BirTypeParameter { Name = "A" } },
+        }).ToArray();
+        var rebuilt = CollectSourceTypeArity(roots);
         if (snapshot.ContainsKey("Renamed") || snapshot.ContainsKey("Added") || snapshot["Nested"] != 1
             || rebuilt.ContainsKey("Nested") || rebuilt["Renamed"] != 3 || rebuilt["Added"] != 1
             || rebuilt["Duplicate"] != 1
             || ClosedOwner(new TypeNode.Fqn("Duplicate"), rebuilt) != null
             || ClosedOwner(new TypeNode.Fqn("Duplicate"), snapshot) == null)
             throw new InvalidOperationException("Declaration arity snapshot was not rebuilt across structural mutation");
-        if (CollectTypeArity(Array.Empty<JsonNode>()).Any())
+        if (CollectSourceTypeArity(Array.Empty<BirFileDeclaration>()).Any())
             throw new InvalidOperationException("Declaration arities leaked into a later compilation");
         ContinuationClosingSelfTest();
         Console.WriteLine("[declaration arities] self-test OK (owning continuation, physical frame, nested/order, mutation/rebuild, isolation)");
@@ -83,13 +82,9 @@ static partial class ConstrainedTypeParameterReceiverBinding
             || !ReferenceEquals(owner.KotlinSupertypesPre.Value, facts) || parameters[0].Type.Value != variable)
             throw new InvalidOperationException("Index-free owning continuation lost physical frame, bound or actual declarations");
 
-        // The later physical closing phase remains a genuine DOM consumer.
-        // Exercise its null-arity close-only guards, not a retired DOM oracle.
-        var physical = file.ToDom();
-        CloseOpenOwners(new JsonNode[] { physical });
-        var body = physical["types"][0]["methods"][0]["body"];
-        if (TypeJson.Read(body[0]["expr"]["ownerType"]) != expected
-            || TypeJson.Read(body[1]["expr"]["type"]) != expected)
-            throw new InvalidOperationException("Late close-only binding read a missing dispatch arity or changed the selected owner");
+        // Reenter the actual phase-one owner without a phase-two arity input.
+        CloseOpenOwners(new[] { file });
+        if (call.OwnerType.Value != expected || accessor.Type.Value != expected)
+            throw new InvalidOperationException("Close-only binding changed an already selected physical owner");
     }
 }

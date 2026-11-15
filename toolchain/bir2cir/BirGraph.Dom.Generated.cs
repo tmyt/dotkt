@@ -935,6 +935,7 @@ internal static class BirGraphDom
                 case "functionCallSignature": break;
                 case "_erasedConstraintDispatch": break;
                 case "_exactExistentialBridgeOwnerCall": break;
+                case "_foreignDeclarationSignature": break;
                 case "_capturedGenericArgument": break;
                 case "_capturedGenericResult": break;
                 case "_capturedGenericTarget": break;
@@ -994,6 +995,7 @@ internal static class BirGraphDom
             FunctionCallSignature = Field<TypeNode[]>(fields, "functionCallSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             _erasedConstraintDispatch = Field<bool>(fields, "_erasedConstraintDispatch", value => value!.GetValue<bool>()),
             _exactExistentialBridgeOwnerCall = Field<bool>(fields, "_exactExistentialBridgeOwnerCall", value => value!.GetValue<bool>()),
+            _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
             _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
             _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _capturedGenericTarget = Field<string>(fields, "_capturedGenericTarget", value => value!.GetValue<string>()),
@@ -4397,6 +4399,17 @@ internal static class BirGraphDom
                 case "declarationId": break;
                 case "virtual": break;
                 case "argTypes": break;
+                case "super": break;
+                case "memberVisibility": break;
+                case "memberOwnerTypeParams": break;
+                case "memberMethodTypeParams": break;
+                case "memberSignature": break;
+                case "memberReturnType": break;
+                case "prop": break;
+                case "propertyName": break;
+                case "propertyAccessor": break;
+                case "shapeTypes": break;
+                case "_exactExistentialBridgeOwnerCall": break;
                 case "declarationReferencedIntrinsic": break;
                 case "nullablePendingWitnesses": break;
                 case "dotktDeclarationIdentityBound": break;
@@ -4428,6 +4441,17 @@ internal static class BirGraphDom
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             Virtual = Field<bool>(fields, "virtual", value => value!.GetValue<bool>()),
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            MemberVisibility = Field<string>(fields, "memberVisibility", value => value!.GetValue<string>()),
+            MemberOwnerTypeParams = Field<BirTypeParameter[]>(fields, "memberOwnerTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
+            MemberMethodTypeParams = Field<BirTypeParameter[]>(fields, "memberMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
+            MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            Prop = Field<string>(fields, "prop", value => value!.GetValue<string>()),
+            PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
+            PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),
+            ShapeTypes = Field<TypeNode[]>(fields, "shapeTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            _exactExistentialBridgeOwnerCall = Field<bool>(fields, "_exactExistentialBridgeOwnerCall", value => value!.GetValue<bool>()),
             DeclarationReferencedIntrinsic = Field<bool>(fields, "declarationReferencedIntrinsic", value => value!.GetValue<bool>()),
             NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
@@ -4709,6 +4733,7 @@ internal static class BirGraphDom
                 case "argTypes": break;
                 case "sty": break;
                 case "super": break;
+                case "prop": break;
                 case "kotlinHashStorageSignature": break;
                 case "suspendCall": break;
                 case "_capturedGenericArgument": break;
@@ -4738,6 +4763,7 @@ internal static class BirGraphDom
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Sty = Field<TypeNode>(fields, "sty", value => TypeNode.Read(value) ?? throw new FormatException()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
+            Prop = Field<string>(fields, "prop", value => value!.GetValue<string>()),
             KotlinHashStorageSignature = Field<bool>(fields, "kotlinHashStorageSignature", value => value!.GetValue<bool>()),
             SuspendCall = Field<bool>(fields, "suspendCall", value => value!.GetValue<bool>()),
             _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
