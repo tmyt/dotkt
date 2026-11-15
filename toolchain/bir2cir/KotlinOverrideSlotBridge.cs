@@ -63,6 +63,9 @@ using Def = SupertypeGraph.Def;
 // unfilled slot does.
 static partial class KotlinOverrideSlotBridge
 {
+    // The owning phases preserve three clocks: declaration moves before erasure/body realignment,
+    // suspend value obligations before Cold/Task projection, and final MethodImpl allocation after
+    // existential interfaces and both physical suspend declarations exist.
     enum Phase { DeclarationMoves, SuspendValueBridges, PhysicalBridges }
 
     internal static void SelfTest()
@@ -70,20 +73,6 @@ static partial class KotlinOverrideSlotBridge
         SourceDeclarationSelfTest();
         RepresentationSourceSelfTest();
     }
-
-    // The ordinary erasure halves run at different points because their inputs are valid at different points.
-    // Suspend Unit result adapters have an additional pre-cold phase: the generic slot's value obligation must
-    // survive Task projection, while the ordinary late half still owns each original declaration's cold slots.
-    //
-    // The DECLARATION MOVE (a nested position no cast reaches) must land before the erasure sweep and the use-side
-    // realign: those are what retype the body that reads the moved parameter, and a slot moved after them leaves the
-    // body reading it at the type it used to have — verifiably wrong IL.
-    //
-    // The BRIDGE must land after the star-projection erasure, because that pass ADDS supertypes: a `G<*>` anywhere in
-    // the compilation gives `G` a synthesized existential view whose slots an implementer must fill too, and a
-    // bridge built before it exists would carry a MethodImpl for the constructed interface and leave the existential
-    // one unimplemented. Nothing between the two points can introduce a new nested move — an existential view's slots
-    // are copies of the erased ones — so the halves do not race.
 
     static TypeNode DeclaredSlot(TypeNode type, ValueTypeOracle isValue, bool physical) =>
         physical ? type : NullableGenericErasure.EraseNullableTv(type, isValue);
@@ -443,16 +432,10 @@ static partial class KotlinOverrideSlotBridge
     }
 
 
-    // The bridge: the slot's exact signature. Local Kotlin defaults forward virtually so a further-derived override
-    // still runs; a referenced CLR DIM is called non-virtually to avoid redispatch to the colliding class method.
-    // Each argument is narrowed out of the slot's `object` into the declared type
-    // (`unbox.any` for a value, `castclass` for a reference) and the result widened back.
-    // Physical slot bridges freeze their implementation descriptor. The separate late signature-allocation
-    // forwarder still leaves its conversions to the ordinary representation policy.
-    internal static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
-        ValueTypeOracle isValue, ReferenceMetadataIndex refs, TypeNode.Fqn callOwner = null,
-        bool virtualCall = true, string callMember = null, bool unitValueReturn = false,
-        bool physicalImplementation = false)
+    // The genuine late DSI forwarder keeps the original value ABI beneath its identity modifiers.
+    // It calls this owner's selected body virtually; conversions still belong to representation policy.
+    static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
+        ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
         var declParams = impl["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -473,14 +456,14 @@ static partial class KotlinOverrideSlotBridge
                     ? new JsonObject
                     {
                         ["k"] = "nullableWrap",
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
                         ["elem"] = TypeJson.Write(nullable.Of),
                         ["e"] = new JsonObject { ["k"] = "local", ["name"] = pn },
                     }
                     : new JsonObject
                     {
                         ["k"] = "cast",
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
                         ["type"] = TypeJson.Write(declT),
                         ["e"] = new JsonObject { ["k"] = "local", ["name"] = pn },
                     });
@@ -495,31 +478,28 @@ static partial class KotlinOverrideSlotBridge
 
         var implRet = TypeJson.Read(impl["ret"]);
         var ownArgs = ClassOwnArgs(cls);
-        var owner = callOwner ?? new TypeNode.Fqn(cls.Name, ownArgs.Length == 0 ? null : ownArgs);
+        var owner = new TypeNode.Fqn(cls.Name, ownArgs.Length == 0 ? null : ownArgs);
         var call = new JsonObject
         {
             ["k"] = "callInstance",
             ["ownerType"] = TypeJson.Write(owner),
-            ["virtual"] = virtualCall,
+            ["virtual"] = true,
             // Synthesized by bir2cir with its exact CLR declaration owner: the later inherited-owner pass must not
             // reinterpret it as an ordinary Kotlin receiver call and rebind it to the slot this bridge implements.
             ["clrOwnerResolved"] = true,
-            [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
+            [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
             ["recv"] = new JsonObject { ["k"] = "this" },
-            ["method"] = callMember ?? Str(impl["name"]),
+            ["method"] = Str(impl["name"]),
             ["sig"] = callSig,
             ["calleeParams"] = impl["inheritedDeclarationSignature"]?.DeepClone()
                 ?? FunctionSignatureIdentity.Signature(declParams),
-            // The implementation has already been instantiated in this bridge's owner frame, including inherited
-            // and default targets. Preserve that call-site result rather than substituting the target owner twice.
+            // Preserve the selected body's result in this owner's current physical frame.
             ["sty"] = TypeJson.Write(implRet),
             ["dynRet"] = TypeJson.Write(implRet),
             ["ret"] = TypeJson.Write(implRet),
             ["args"] = callArgs,
         };
-        if (impl["inheritedDeclarationId"] is JsonNode declarationId)
-            call[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
-        else if (impl[DeclarationIdentityBinding.Key] is JsonNode implementationId)
+        if (impl[DeclarationIdentityBinding.Key] is JsonNode implementationId)
             call[DeclarationIdentityBinding.Key] = implementationId.DeepClone();
         if (IsSuspendMethod(impl)) call["suspendCall"] = true;
         if (impl["typeParams"] is JsonArray methodTps && methodTps.Count > 0)
@@ -530,7 +510,7 @@ static partial class KotlinOverrideSlotBridge
         }
         var body = new JsonArray();
         var retCarried = false;
-        if (IsVoid(slotRet) && !unitValueReturn)
+        if (IsVoid(slotRet))
             body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = call });
         else
         {
@@ -542,12 +522,12 @@ static partial class KotlinOverrideSlotBridge
                     ? new JsonObject
                     {
                         ["k"] = "nullableValue",
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation,
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
                         ["elem"] = TypeJson.Write(nullable.Of),
                         ["e"] = value,
                     }
                     : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(slotRet), ["e"] = value,
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = physicalImplementation };
+                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false };
                 retCarried = true;
             }
             body.Add(new JsonObject { ["k"] = "return", ["value"] = value });
@@ -575,7 +555,6 @@ static partial class KotlinOverrideSlotBridge
         };
         if (cls.Kind == "interface")
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
-        if (unitValueReturn) bridge[BirTypeLowering.ValueReturnKey] = true;
         if (IsSuspendMethod(impl))
         {
             bridge["mods"] = new JsonObject { ["suspend"] = true };

@@ -21,9 +21,10 @@ static partial class KotlinOverrideSlotBridge
             Owner=new TypeNode.Fqn(owner), Member=member, Kind="method", DeclarationId=id,
         };
         void Apply(IReadOnlyList<BirFileDeclaration> files,
-            Action<BirFileDeclaration,IBirTypeDeclaration,BirFunctionDeclaration,BirGraphValue> callback=null)
+            Action<BirFileDeclaration,IBirTypeDeclaration,BirFunctionDeclaration,BirGraphValue> callback=null,
+            IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> covariant=null)
             => ApplyAll(files,_=>false,references,files.SelectMany(file=>file.Types.OrEmpty()).Select(type=>type.Name.Value).ToHashSet(),
-                false,new GenericRepresentationPolicy(new Dictionary<string,string>()),null,null,_=>true,callback);
+                false,new GenericRepresentationPolicy(new Dictionary<string,string>()),covariant,null,_=>true,callback);
 
         foreach (var isInterface in new[] { false,true })
         {
@@ -60,8 +61,58 @@ static partial class KotlinOverrideSlotBridge
             DeclarationSignatureIdentity.BindSelectedOverrides(new[] { projected },
                 new Dictionary<string,System.Text.Json.Nodes.JsonArray> { ["selected-body"]=new(modified) },references,_=>false);
             var members=projected["types"][1]["methods"].AsArray();
-            Require(members.Count==2 && members[1][isInterface ? "clrInterfaceImpls" : "clrBaseImpls"].AsArray().Count==1,
+            var relation=isInterface ? "clrInterfaceImpls" : "clrBaseImpls";
+            Require(members.Count==2 && members[0][relation].AsArray().Count==0
+                && TypeJson.Read(members[1]["params"][0]["type"])==obj
+                && members[1][relation].AsArray().Count==1
+                && members[1][relation][0]["member"].GetValue<string>()=="NativeAccept",
                 "genuine late nominal-signature repair lost selected MethodImpl");
+        }
+
+        // Pin the final owner's capability lookup to the SAME actual source handle, not equal record values.
+        // With no matching capability the object seam must publish its authored bridge before the descriptor.
+        {
+            var slot=Method("accept","object-slot",boolean,obj); slot.Abstract=true; slot.Body=default;
+            var contract=new BirInterfaceDefinition { Kind="interface",Name="ObjectSink",Methods=new[] { slot } };
+            var implementation=Method("accept","string-body",boolean,text);
+            implementation.Overrides=new[] { Edge("ObjectSink","accept","object-slot") };
+            var originalBody=implementation.Body.Value;
+            var owner=new BirClassDefinition { Kind="class",Name="StringSink",Methods=new[] { implementation },
+                Interfaces=new TypeNode[] { new TypeNode.Fqn("ObjectSink") } };
+            var file=new BirFileDeclaration { Types=new IBirTypeDeclaration[] { contract,owner } };
+            var key=CovariantInterfaceReturnBridge.DescriptorKey(new TypeNode.Fqn("ObjectSink"),"accept",0,
+                new TypeNode[] { obj },boolean,references,_=>false);
+            var capabilities=new HashSet<CovariantInterfaceReturnBridge.SourceBridgedSlot>(new CovariantInterfaceReturnBridge.SourceSlotComparer()) {
+                new(implementation,key),
+            };
+            Apply(new[] { file },(_,_,_,_)=>throw new InvalidOperationException("A selected covariant capability materialized a duplicate final slot"),capabilities);
+            Require(owner.Methods.Value.Length==1 && ReferenceEquals(owner.Methods.Value[0],implementation),
+                "matching covariant source handle did not suppress final allocation");
+            var foreign=implementation with { };
+            Require(!ReferenceEquals(foreign,implementation) && foreign.Equals(implementation),"reference-identity probe no longer has equal record values");
+            capabilities.Clear(); capabilities.Add(new(foreign,key));
+            var order=new List<string>();
+            BirFunctionDeclaration published=null;
+            Apply(new[] { file },(actualFile,actualOwner,method,descriptor)=> {
+                Require(ReferenceEquals(actualFile,file) && ReferenceEquals(actualOwner,owner),"bridge publication selected another owner/file");
+                if (method!=null)
+                {
+                    Require(descriptor==null && published==null && owner.Methods.Value.Length==2
+                        && ReferenceEquals(owner.Methods.Value[^1],method) && method.PhysicalSlotBridge.Value
+                        && method.ClrInterfaceImpls.Value.Length==0,"bridge callback did not observe the exact completed append");
+                    published=method; order.Add("method");
+                }
+                else
+                {
+                    Require(published!=null && descriptor is BirMethodImpl exact
+                        && ReferenceEquals(published.ClrInterfaceImpls.Value.Single(),exact),"descriptor callback preceded its actual attachment");
+                    order.Add("descriptor");
+                }
+            },capabilities);
+            Require(order.SequenceEqual(new[] { "method","descriptor" }) && published!=null
+                && published.ClrInterfaceImpls.Value.Single().Member.Value=="accept"
+                && ReferenceEquals(owner.Methods.Value[0],implementation) && ReferenceEquals(implementation.Body.Value,originalBody),
+                "foreign covariant handle suppressed allocation or publication copied the continuing body");
         }
 
         // A single selected source declaration has two CURRENT physical obligations after Cold.

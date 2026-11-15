@@ -217,6 +217,8 @@ static partial class KotlinOverrideSlotBridge
                     declarations.Add(slot.SelectedLocal);
                 }
             }
+            // An inherited selection is metadata, not a MethodDef here: even an exact slot needs
+            // a real forwarding body rather than a descriptor attached to that temporary header.
             if (!needsSignature && definition.Kind != "interface" && selectedBody == null)
             {
                 implementation.SetVirtual();
@@ -232,14 +234,21 @@ static partial class KotlinOverrideSlotBridge
                     DeclarationSignatureIdentity.RecordSelectedImplementationSlot(implementation.Source,slot.SelectedLocal.Source);
                 return;
             }
+            // Interfaces implement inherited slots through private-final MethodImpl bodies. Do not
+            // replace an authored overridable DIM, or invent a forwarding body for an abstract one.
             if (definition.Kind == "interface" && implementation.Abstract) return;
             implementation.SetVirtual();
             string PhysicalKey(TypeNode type) => SupertypeGraph.TypeKey(context.Physical(type));
+            // CLR method generic arity is part of the slot identity (ECMA-335 I.8.6.1.6).
+            // The selected BODY is part of sharing identity too: equal erased A<Int>/B<String>
+            // slots can forward to different overloads, and must not share the first body's cast.
             var key = slot.IdentityName + "`" + implementation.Arity + "("
                 + string.Join(",",(slot.Signature ?? slot.Parameters).Select(PhysicalKey)) + ")->" + PhysicalKey(slot.Return)
                 + "{" + implementation.Name + "<" + SourceMethodTypeParameterShapeKey(implementation.TypeParameters,ownArguments)
                 + ">(" + string.Join(",",implementation.Parameters.Select(parameter => parameter.Type is {} type ? SupertypeGraph.TypeKey(type) : "?")) + ")}";
             if (selectedBody != null) key += "[body-owner:" + SupertypeGraph.TypeKey(selectedBody.Owner) + "]";
+            // CoreCLR does not permit one private-final interface body to implement both declarations
+            // in an inherited interface chain. Classes may share a body across independent slots.
             if (definition.Kind == "interface") key += "[slot:" + SupertypeGraph.TypeKey(slot.DescriptorSpec) + "::" + slot.DescriptorMember + "]";
             if (slot.UnitValueReturn) key += "[value-return]";
             if (!bridges.TryGetValue(key,out var bridge))

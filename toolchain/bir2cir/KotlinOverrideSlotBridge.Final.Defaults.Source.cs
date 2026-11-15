@@ -236,10 +236,14 @@ static partial class KotlinOverrideSlotBridge
     static bool HasFinalSourceCollision(Def definition,IBirTypeDeclaration declaration,string member,int arity,
         TypeNode[] parameters,TypeNode result,FinalSourceContext context,bool includeNonVirtual)
     {
+        // CLR prefers an ordinary class method over a selected DIM. The exact MethodImpl repair
+        // protects that default even when the colliding public method is inherited from a base.
         bool Collision(IBirTypeDeclaration owner,TypeNode[] arguments)
         {
             foreach (var method in owner.Methods.OrEmpty())
             {
+                // Match ilemit's MethodAttributes.Virtual projection. A nonvirtual collision matters
+                // only when the selected DIM is publicly callable, not beside a private-final body.
                 if (method.Static.OrDefault() || method.Name.OrDefault()!=member || KotlinPropertyAccessors.TryIdentity(method,out _,out _)
                     || method.Vis.OrDefault() is not (null or "public") || method.TypeParams.OrEmpty().Length!=arity
                     || !method.Params.HasValue || method.Params.Value.Length!=parameters.Length || !method.Ret.HasValue
