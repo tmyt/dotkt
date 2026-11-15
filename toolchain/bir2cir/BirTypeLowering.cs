@@ -537,7 +537,7 @@ static partial class BirTypeLowering
             new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"), Array.Empty<TypeNode>()),
         });
         var selected = new BirMemberReference { DeclaringType = owner, Name = "selected" };
-        var call = new BirNativeInstance { OwnerType = owner, MemberRef = selected };
+        var call = new BirCallInstance { OwnerType = owner, MemberRef = selected };
         Apply(new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
             Body = new IBirStatement[] { new BirExpressionStatement { Expr = call } },
         } } }, new PhysicalTypeContext(false));
