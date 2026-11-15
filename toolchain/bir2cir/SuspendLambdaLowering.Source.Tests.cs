@@ -94,7 +94,31 @@ static partial class SuspendLambdaLowering
             && nestedDeclaration.TypeArgs.Value[0] == integer
             && nestedDeclaration._suspendDeclarationTypeArgs.Value[0] is TypeNode.Tv { Scope: "type", I: 0 },
             "in-place owner application crossed a referenced or nested declaration frame");
-        Console.WriteLine("[typed suspend lambdas] self-test OK (lambda-only Stage0, nested append order, exact MOVE/retirement, complete owner prefix, caller dependencies, in-place frame ownership)");
+        var denseSlot = new TypeNode.Tv("type", 0);
+        var enclosingSlot = new TypeNode.Tv("type", 1);
+        var importedSlot = new TypeNode.Tv("method", 0);
+        var denseParameter = new BirLambdaParameter { Name = "value", Type = denseSlot };
+        var denseCapture = new BirCaptureDescriptor { Name = "captured", Type = enclosingSlot };
+        var denseValue = new BirLocal { Name = "outer", Sty = enclosingSlot };
+        var denseRead = new BirLocal { Name = "value", Sty = denseSlot };
+        var denseBody = new IBirStatement[] { new BirReturn { Value = denseRead } };
+        var denseLambda = new BirNewSuspendLambda { Arity = 1, TypeFrame = "dense",
+            TypeParams = new[] { new BirTypeParameter { Name = "D" } }, TypeArgs = new TypeNode[] { enclosingSlot },
+            Params = new[] { denseParameter }, Captures = new[] { denseCapture },
+            CapValues = new IBirExpression[] { denseValue }, Body = denseBody, SuspendRet = denseSlot,
+            FuncType = new TypeNode.Fn(true, enclosingSlot, Array.Empty<TypeNode>()), Sty = enclosingSlot };
+        TypedExecutableFrames.SubstituteInPlace(denseLambda, Array.Empty<TypeNode>(), 0,
+            new TypeNode[] { new TypeNode.Fqn("kotlin.String"), importedSlot });
+        Require(denseLambda.SuspendRet.Value == denseSlot && denseParameter.Type.Value == denseSlot
+            && denseRead.Sty.Value == denseSlot && ReferenceEquals(denseLambda.Body.Value, denseBody)
+            && ReferenceEquals(denseLambda.Params.Value[0], denseParameter)
+            && denseLambda.TypeArgs.Value[0] == importedSlot
+            && ReferenceEquals(denseLambda.Captures.Value[0], denseCapture) && denseCapture.Type.Value == importedSlot
+            && ReferenceEquals(denseLambda.CapValues.Value[0], denseValue) && denseValue.Sty.Value == importedSlot
+            && denseLambda.FuncType.Value is TypeNode.Fn { Ret: var denseFunctionResult } && denseFunctionResult == importedSlot
+            && denseLambda.Sty.Value == importedSlot && !denseLambda._suspendDeclarationTypeArgs.IsPresent,
+            "intrinsic instantiation mixed an unspliced dense declaration frame with its enclosing capture/application frame");
+        Console.WriteLine("[typed suspend lambdas] self-test OK (lambda-only Stage0, nested append order, exact MOVE/retirement, complete owner prefix, caller dependencies, in-place and dense frame ownership)");
     }
 
     sealed class LambdaSourceTestTransitions : SuspendColdLowering.SourceDeclarationTransitions

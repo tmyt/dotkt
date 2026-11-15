@@ -11,6 +11,16 @@ static partial class SuspendColdLowering
             if (!condition) throw new InvalidOperationException("Typed suspend declarations: " + message);
         }
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var metadataFile = new BirFileDeclaration { FileClass = "MetadataOnly",
+            Methods = Array.Empty<BirFunctionDeclaration>(), Types = Array.Empty<IBirTypeDeclaration>() };
+        var metadataContext = new SuspendModuleContext(new[] { metadataFile },
+            ReferenceMetadataIndex.Build(Array.Empty<string>()), new HashSet<string>(), false,
+            new Dictionary<string, string>(), _ => false, null, null, null, new DeclarationTestTransitions());
+        ApplyNamedSource(metadataContext);
+        SuspendLambdaLowering.ApplyAll(metadataContext);
+        Require(metadataContext.Stage0Complete && metadataContext.NamedEntries.Count == 0
+            && metadataFile.Methods.Value.Length == 0 && metadataFile.Types.Value.Length == 0,
+            "a module without suspend declarations or values required an unused continuation ABI");
         var any = new TypeNode.Fqn("kotlin.Any");
         var sourceReturn = new TypeNode.Nullable(new TypeNode.Tv("method", 0));
         var source = new BirFunctionDeclaration {

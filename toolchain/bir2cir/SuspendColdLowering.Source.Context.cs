@@ -24,7 +24,8 @@ static partial class SuspendColdLowering
         internal IReadOnlyDictionary<string, TypeNode> CalleeReturns { get; }
         internal IReadOnlyDictionary<string, TypeNode> MethodReturns { get; }
         internal IReadOnlyDictionary<string, TypeNode> FieldTypes { get; }
-        internal TypeNode ContinuationStar { get; }
+        TypeNode continuationStar;
+        internal TypeNode ContinuationStar => continuationStar ??= ResolveContinuationStar();
         internal bool ContinuationBaseIsLocal => EmittedTypeNames.Contains(ContinuationImplFqn);
         internal HashSet<IBirTypeDeclaration> ConsumedIntrinsicClosures { get; } = new(ReferenceEqualityComparer.Instance);
         internal IReadOnlyDictionary<string, BirTypeParameter[]> LambdaOwnerParameters { get; private set; }
@@ -44,12 +45,6 @@ static partial class SuspendColdLowering
             SourceSignatures = sourceSignatures; PhysicalParameterIndices = physicalParameterIndices;
             PhysicalDeclarationSources = physicalDeclarationSources;
             Transitions = transitions ?? throw new ArgumentNullException(nameof(transitions));
-            const string continuation = "kotlin.coroutines.Continuation";
-            var carrier = existentialOwners.GetValueOrDefault(continuation);
-            if (carrier == null) references.TryExistentialPhysicalOwner(continuation, out carrier);
-            ContinuationStar = new TypeNode.Fqn(carrier ?? throw new InvalidOperationException(
-                "suspend lowering requires the trusted Continuation<*> existential ABI"));
-
             var entries = new List<SourceNamedEntry>();
             var closures = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
             var helpers = new List<SourceHelperDeclaration>();
@@ -97,6 +92,15 @@ static partial class SuspendColdLowering
                     if (field.Name.HasValue && field.Type.HasValue)
                         fieldTypes[(owner ?? "") + "#" + field.Name.Value] = field.Type.Value;
             }
+        }
+
+        TypeNode ResolveContinuationStar()
+        {
+            const string continuation = "kotlin.coroutines.Continuation";
+            var carrier = ExistentialOwners.GetValueOrDefault(continuation);
+            if (carrier == null) References.TryExistentialPhysicalOwner(continuation, out carrier);
+            return new TypeNode.Fqn(carrier ?? throw new InvalidOperationException(
+                "suspend lowering requires the trusted Continuation<*> existential ABI"));
         }
 
         // Stage0 is unconditional, including a module containing only suspend-lambda values.

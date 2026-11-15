@@ -10,10 +10,11 @@ using DotKt.Bir;
 // Task bridge). Two mechanisms in that pass leave the `suspend` modifier on a declaration that still reaches this
 // point, and BOTH are stdlib-self-build only:
 //
-//   * the self-build RETAINS the original declaration beside its cold entry (ApplyAll's `!baseIsLocal` removal gate) —
+//   * the self-build RETAINS the original declaration beside its cold entry (ApplyNamedSource removes it only when
+//     SuspendModuleContext.ContinuationBaseIsLocal is false) —
 //     kotc's pre-ignition @RestrictsSuspension builder path (`sequence{}`/`iterator{}`) still calls SequenceScope's
 //     yield/yieldAll by name, so the Kotlin-shaped slot must stay declared;
-//   * the admit gate excludes an `inline` suspend fun outside an app build (IsColdCandidate / IsMemberColdCandidate) —
+//   * IsSourceColdCandidate excludes an `inline` suspend fun outside an app build —
 //     that is how the coroutine PRIMITIVES, whose call sites are reconstructed inline instead, keep their standalone
 //     declarations.
 //
