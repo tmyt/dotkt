@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Shared scalar CLR representation policy. The owning graph projection in the
 // Source partial applies this same engine through generated physical slot roles.
@@ -523,61 +525,60 @@ static partial class BirTypeLowering
             || Equal(unit, VoidType, value: true))
             throw new InvalidOperationException("Slot comparison lost the distinction between Unit values and void returns");
         Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
-        var accessor = Lower(JsonNode.Parse("""
-            {"getRet":{"t":"fqn","name":"kotlin.Int"},
-             "setRet":{"t":"fqn","name":"kotlin.Unit"}}
-            """), refBuild: false,
-            aliases: new Dictionary<string, string> { ["kotlin.Int"] = "System.Int32" });
-        if (TypeJson.Read(accessor["getRet"]) != new TypeNode.Fqn("System.Int32")
-            || TypeJson.Read(accessor["setRet"]) != VoidType)
+        var accessor = new BirPropertyDeclaration {
+            GetRet = new TypeNode.Fqn("kotlin.Int"), SetRet = unit,
+        };
+        Apply(new BirFileDeclaration { Properties = new[] { accessor } }, new PhysicalTypeContext(false,
+            aliases: new Dictionary<string, string> { ["kotlin.Int"] = "System.Int32" }));
+        if (accessor.GetRet.Value != new TypeNode.Fqn("System.Int32") || accessor.SetRet.Value != VoidType)
             throw new InvalidOperationException("Accessor return descriptors did not follow CLR return lowering");
-        var owner = TypeNode.Write(new TypeNode.Fqn("Box", new TypeNode[]
+        var owner = new TypeNode.Fqn("Box", new TypeNode[]
         {
             new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"), Array.Empty<TypeNode>()),
-        }));
-        var call = Lower(new JsonObject
-        {
-            ["ownerType"] = owner.DeepClone(),
-            ["memberRef"] = new JsonObject { ["declaringType"] = owner, ["name"] = "selected" },
-        }, refBuild: false);
-        if (TypeJson.Read(call["ownerType"]) != TypeJson.Read(call["memberRef"]["declaringType"])
-            || TypeJson.Read(call["memberRef"]["declaringType"]) is not TypeNode.Fqn
+        });
+        var selected = new BirMemberReference { DeclaringType = owner, Name = "selected" };
+        var call = new BirNativeInstance { OwnerType = owner, MemberRef = selected };
+        Apply(new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            Body = new IBirStatement[] { new BirExpressionStatement { Expr = call } },
+        } } }, new PhysicalTypeContext(false));
+        if (call.OwnerType.Value != selected.DeclaringType.Value
+            || selected.DeclaringType.Value is not TypeNode.Fqn
                 { Args: [TypeNode.Fn { Clr: "System.Action" }] }
-            || call["memberRef"]["name"]?.GetValue<string>() != "selected")
+            || selected.Name.Value != "selected" || !ReferenceEquals(call.MemberRef.Value, selected))
             throw new InvalidOperationException("Selected member owner lost physical function-family lowering");
     }
 
     internal static void SelfTestMethodImplMetadata()
     {
-        var suspendFn = JsonNode.Parse("""{"t":"fn","suspend":true,"params":[],"ret":{"t":"fqn","name":"kotlin.Unit"}}""");
-        var nothing = TypeNode.Write(new TypeNode.Fqn("kotlin.Nothing"));
+        var suspendFn = new TypeNode.Fn(true, new TypeNode.Fqn("kotlin.Unit"), Array.Empty<TypeNode>());
+        var nothing = new TypeNode.Fqn("kotlin.Nothing");
         foreach (var carrier in new[] { "clrInterfaceImpls", "clrBaseImpls" })
-        foreach (var ret in new[] { suspendFn, nothing })
+        foreach (var ret in new TypeNode[] { suspendFn, nothing })
         foreach (var stashed in new[] { false, true })
         {
-            var descriptor = new JsonObject
-            {
-                ["owner"] = TypeNode.Write(new TypeNode.Fqn("Slot")),
-                ["member"] = "read", ["arity"] = 0, ["params"] = new JsonArray(),
-                ["ret"] = ret.DeepClone(),
+            var descriptor = new BirMethodImpl {
+                Owner = new TypeNode.Fqn("Slot"), Member = "read", Arity = 0,
+                Params = Array.Empty<TypeNode>(), Ret = ret,
             };
-            var method = new JsonObject
-            {
-                ["name"] = "read", ["params"] = new JsonArray(), ["ret"] = ret.DeepClone(),
-                [carrier] = new JsonArray(descriptor),
+            var method = new BirFunctionDeclaration {
+                Name = "read", Params = Array.Empty<BirParameter>(), Ret = ret,
             };
+            if (carrier == "clrInterfaceImpls") method.ClrInterfaceImpls = new[] { descriptor };
+            else method.ClrBaseImpls = new[] { descriptor };
             if (stashed && ReferenceEquals(ret, suspendFn))
-            {
-                descriptor[NullableGenericErasure.RetSuspendFnPre] = ret.ToJsonString();
-                method[NullableGenericErasure.RetSuspendFnPre] = ret.ToJsonString();
-            }
-            var lowered = Lower(method, refBuild: false,
-                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" });
-            var slot = lowered[carrier][0].AsObject();
-            var fact = ReferenceEquals(ret, suspendFn) ? "retSuspendFnType" : "retNothing";
-            if (lowered[fact] == null || slot.Count != 5
-                || slot["ret"]?["name"]?.GetValue<string>() != "object")
-                throw new InvalidOperationException($"MethodImpl must retain only physical slot facts while declarations retain Kotlin return metadata: {lowered}");
+                method.RetSuspendFnTypePre = suspendFn;
+            Apply(new BirFileDeclaration { Methods = new[] { method } }, new PhysicalTypeContext(false,
+                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" }));
+            var slot = descriptor.ToDom().AsObject();
+            var hasFact = ReferenceEquals(ret, suspendFn)
+                ? method.RetSuspendFnType.HasValue && TypeNodeDataEquality.Equal(method.RetSuspendFnType.Value, suspendFn)
+                : method.RetNothing.OrDefault();
+            if (!hasFact || method.RetSuspendFnTypePre.IsPresent || slot.Count != 5
+                || descriptor.Owner.Value != new TypeNode.Fqn("Slot") || descriptor.Member.Value != "read"
+                || descriptor.Arity.Value != 0 || descriptor.Params.Value.Length != 0
+                || descriptor.Ret.Value != new TypeNode.Fqn("object")
+                || slot.ContainsKey("retSuspendFnType") || slot.ContainsKey("retNothing"))
+                throw new InvalidOperationException("MethodImpl must retain only physical slot facts while declarations retain Kotlin return metadata");
         }
         Console.WriteLine("[MethodImpl metadata] self-test OK (interface/base slots, suspend/Nothing declaration facts)");
     }
