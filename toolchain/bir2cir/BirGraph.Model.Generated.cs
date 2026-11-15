@@ -27,6 +27,12 @@ internal sealed record EventPropertySourceFacts : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -149,6 +155,12 @@ internal sealed record BirRoundtripDeclarationIdentity : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
@@ -269,6 +281,12 @@ internal sealed record BirInnerConstructorFactory : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Inner.HasValue) { visit((string)Inner.Value); }
@@ -374,6 +392,12 @@ internal sealed record CapturedGenericArgument : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -473,6 +497,12 @@ internal sealed record BirOpaqueBytes : BirGraphValue, IBirAttributeValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -568,6 +598,12 @@ internal sealed record BirStaticCarrier : BirGraphValue
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -674,6 +710,12 @@ internal sealed record BirCompanionCarrier : BirGraphValue
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -796,6 +838,17 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -934,6 +987,20 @@ internal sealed record BirFileDeclaration : BirGraphValue
         if (AssemblyAttrs.HasValue) { for (var index0 = 0; index0 < AssemblyAttrs.Value.Length; index0++) { var at0 = index0; var child0 = AssemblyAttrs.Value[at0]; visit("assemblyAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)AssemblyAttrs.Value[at0]!, replacement => AssemblyAttrs.Value[at0] = (BirAttribute)replacement)); } }
         if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; visit("attrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
         if (Pos.HasValue) { visit("pos", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; child("fields", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirFieldDeclaration)replacement)); } }
+        if (Methods.HasValue) { for (var index0 = 0; index0 < Methods.Value.Length; index0++) { var at0 = index0; var child0 = Methods.Value[at0]; child("methods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Methods.Value[at0]!, replacement => Methods.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+        if (Properties.HasValue) { for (var index0 = 0; index0 < Properties.Value.Length; index0++) { var at0 = index0; var child0 = Properties.Value[at0]; child("properties", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Properties.Value[at0]!, replacement => Properties.Value[at0] = (BirPropertyDeclaration)replacement)); } }
+        if (Types.HasValue) { for (var index0 = 0; index0 < Types.Value.Length; index0++) { var at0 = index0; var child0 = Types.Value[at0]; child("types", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Types.Value[at0]!, replacement => Types.Value[at0] = (IBirTypeDeclaration)replacement)); } }
+        if (RefTypes.HasValue) { for (var index0 = 0; index0 < RefTypes.Value.Length; index0++) { var at0 = index0; var child0 = RefTypes.Value[at0]; child("refTypes", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RefTypes.Value[at0]!, replacement => RefTypes.Value[at0] = (BirRefTypeDeclaration)replacement)); } }
+        if (AssemblyAttrs.HasValue) { for (var index0 = 0; index0 < AssemblyAttrs.Value.Length; index0++) { var at0 = index0; var child0 = AssemblyAttrs.Value[at0]; child("assemblyAttrs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)AssemblyAttrs.Value[at0]!, replacement => AssemblyAttrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -1161,6 +1228,14 @@ internal sealed record BirBinaryOperation : BirGraphNode, IBirExpression, IBirAt
         if (Lhs.HasValue) { visit("lhs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Lhs.Value!, replacement => Lhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Rhs.HasValue) { visit("rhs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Rhs.Value!, replacement => Rhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Lhs.HasValue) { child("lhs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Lhs.Value!, replacement => Lhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Rhs.HasValue) { child("rhs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Rhs.Value!, replacement => Rhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Op.HasValue) { visit((string)Op.Value); }
@@ -1318,6 +1393,24 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         if (KotlinRuntimeTypeWitness.HasValue) { visit("kotlinRuntimeTypeWitness", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (KotlinClassifierPredicate.HasValue) { visit("kotlinClassifierPredicate", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinClassifierPredicate.Value!, replacement => KotlinClassifierPredicate = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+        if (KotlinTypeWitness.HasValue) { child("kotlinTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinRuntimeTypeWitness.HasValue) { child("kotlinRuntimeTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinClassifierPredicate.HasValue) { child("kotlinClassifierPredicate", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinClassifierPredicate.Value!, replacement => KotlinClassifierPredicate = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+        FunctionValueRestoration = default;
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -1555,6 +1648,22 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
         if (KotlinClassifierPredicate.HasValue) { visit("kotlinClassifierPredicate", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinClassifierPredicate.Value!, replacement => KotlinClassifierPredicate = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (NullWitness.HasValue) { visit("nullWitness", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)NullWitness.Value!, replacement => NullWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinTypeWitness.HasValue) { child("kotlinTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinRuntimeTypeWitness.HasValue) { child("kotlinRuntimeTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinClassifierPredicate.HasValue) { child("kotlinClassifierPredicate", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinClassifierPredicate.Value!, replacement => KotlinClassifierPredicate = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (NullWitness.HasValue) { child("nullWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)NullWitness.Value!, replacement => NullWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -1762,6 +1871,21 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         if (KotlinRuntimeTypeWitness.HasValue) { visit("kotlinRuntimeTypeWitness", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (KotlinClassifierPredicate.HasValue) { visit("kotlinClassifierPredicate", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinClassifierPredicate.Value!, replacement => KotlinClassifierPredicate = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinTypeWitness.HasValue) { child("kotlinTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinRuntimeTypeWitness.HasValue) { child("kotlinRuntimeTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (KotlinClassifierPredicate.HasValue) { child("kotlinClassifierPredicate", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinClassifierPredicate.Value!, replacement => KotlinClassifierPredicate = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -1945,6 +2069,15 @@ internal sealed record BirSafeValueCast : BirGraphNode, IBirExpression, IBirAttr
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (CtorRef.HasValue) { visit("ctorRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (CtorRef.HasValue) { child("ctorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -2082,6 +2215,13 @@ internal sealed record BirConcat : BirGraphNode, IBirExpression, IBirAttributeVa
     {
         if (Parts.HasValue) { for (var index0 = 0; index0 < Parts.Value.Length; index0++) { var at0 = index0; var child0 = Parts.Value[at0]; visit("parts", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Parts.Value[at0]!, replacement => Parts.Value[at0] = (IBirExpression)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Parts.HasValue) { for (var index0 = 0; index0 < Parts.Value.Length; index0++) { var at0 = index0; var child0 = Parts.Value[at0]; child("parts", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Parts.Value[at0]!, replacement => Parts.Value[at0] = (IBirExpression)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -2190,6 +2330,13 @@ internal sealed record BirRuntimeClass : BirGraphNode, IBirExpression, IBirAttri
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -2306,6 +2453,15 @@ internal sealed record BirNullableWrap : BirGraphNode, IBirExpression, IBirAttri
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (CtorRef.HasValue) { visit("ctorRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (CtorRef.HasValue) { child("ctorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -2457,6 +2613,16 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Index.HasValue) { visit("index", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Array.HasValue) { child("array", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Index.HasValue) { child("index", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -2617,6 +2783,16 @@ internal sealed record BirArraySet : BirGraphNode, IBirExpression, IBirAttribute
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Array.HasValue) { child("array", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Index.HasValue) { child("index", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -2768,6 +2944,13 @@ internal sealed record BirArrayLength : BirGraphNode, IBirExpression, IBirAttrib
     {
         if (Array.HasValue) { visit("array", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Array.HasValue) { child("array", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -2888,6 +3071,18 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (Elems.HasValue) { for (var index0 = 0; index0 < Elems.Value.Length; index0++) { var at0 = index0; var child0 = Elems.Value[at0]; visit("elems", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Elems.Value[at0]!, replacement => Elems.Value[at0] = (IBirExpression)replacement)); } }
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Elems.HasValue) { for (var index0 = 0; index0 < Elems.Value.Length; index0++) { var at0 = index0; var child0 = Elems.Value[at0]; child("elems", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Elems.Value[at0]!, replacement => Elems.Value[at0] = (IBirExpression)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -3031,6 +3226,14 @@ internal sealed record BirNewArraySized : BirGraphNode, IBirExpression, IBirAttr
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (Size.HasValue) { visit("size", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Size.Value!, replacement => Size = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Size.HasValue) { child("size", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Size.Value!, replacement => Size = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -3166,6 +3369,17 @@ internal sealed record BirNewArrayInit : BirGraphNode, IBirExpression, IBirAttri
         if (Init.HasValue) { visit("init", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Init.Value!, replacement => Init = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (InvokeRef.HasValue) { visit("invokeRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(rewrite("funcType", BirGenericFrameRole.Lexical, FuncType.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Size.HasValue) { child("size", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Size.Value!, replacement => Size = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Init.HasValue) { child("init", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Init.Value!, replacement => Init = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (InvokeRef.HasValue) { child("invokeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -3332,6 +3546,13 @@ internal sealed record BirSpreadPart : BirGraphValue
     {
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -3453,6 +3674,18 @@ internal sealed record BirSpreadConcat : BirGraphNode, IBirExpression, IBirAttri
         if (AddRef.HasValue) { visit("addRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)AddRef.Value!, replacement => AddRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (AddRangeRef.HasValue) { visit("addRangeRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)AddRangeRef.Value!, replacement => AddRangeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (ToArrayRef.HasValue) { visit("toArrayRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ToArrayRef.Value!, replacement => ToArrayRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Parts.HasValue) { for (var index0 = 0; index0 < Parts.Value.Length; index0++) { var at0 = index0; var child0 = Parts.Value[at0]; child("parts", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Parts.Value[at0]!, replacement => Parts.Value[at0] = (BirSpreadPart)replacement)); } }
+        if (CtorRef.HasValue) { child("ctorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AddRef.HasValue) { child("addRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)AddRef.Value!, replacement => AddRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AddRangeRef.HasValue) { child("addRangeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)AddRangeRef.Value!, replacement => AddRangeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (ToArrayRef.HasValue) { child("toArrayRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ToArrayRef.Value!, replacement => ToArrayRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -3640,6 +3873,17 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -3766,6 +4010,18 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -3909,6 +4165,19 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Values.HasValue) { for (var index0 = 0; index0 < Values.Value.Length; index0++) { var at0 = index0; var child0 = Values.Value[at0]; visit("values", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Values.Value[at0]!, replacement => Values.Value[at0] = (BirPhysicalEnumValue)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Values.HasValue) { for (var index0 = 0; index0 < Values.Value.Length; index0++) { var at0 = index0; var child0 = Values.Value[at0]; child("values", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Values.Value[at0]!, replacement => Values.Value[at0] = (BirPhysicalEnumValue)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -4065,6 +4334,18 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Arg.HasValue) { visit("arg", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Arg.Value!, replacement => Arg = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Arg.HasValue) { child("arg", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Arg.Value!, replacement => Arg = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -4208,6 +4489,18 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Arg.HasValue) { visit("arg", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Arg.Value!, replacement => Arg = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Arg.HasValue) { child("arg", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Arg.Value!, replacement => Arg = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -4363,6 +4656,18 @@ internal sealed record BirCallBinding : BirGraphValue
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Expr.HasValue) { visit("expr", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Expr.HasValue) { child("expr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -4525,6 +4830,19 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
         if (Bindings.HasValue) { for (var index0 = 0; index0 < Bindings.Value.Length; index0++) { var at0 = index0; var child0 = Bindings.Value[at0]; visit("bindings", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Bindings.Value[at0]!, replacement => Bindings.Value[at0] = (BirCallBinding)replacement)); } }
         if (Expr.HasValue) { visit("expr", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Bindings.HasValue) { for (var index0 = 0; index0 < Bindings.Value.Length; index0++) { var at0 = index0; var child0 = Bindings.Value[at0]; child("bindings", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Bindings.Value[at0]!, replacement => Bindings.Value[at0] = (BirCallBinding)replacement)); } }
+        if (Expr.HasValue) { child("expr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -4673,6 +4991,12 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -4774,6 +5098,13 @@ internal sealed record BirOverride : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(rewrite("owner", BirGenericFrameRole.Lexical, Owner.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(type("owner", BirPhysicalTypeRole.Owner, Owner.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -5030,6 +5361,44 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (DynRet.HasValue) DynRet = OptionalField<TypeNode>.Of(rewrite("dynRet", BirGenericFrameRole.Lexical, DynRet.Value));
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(type("owner", BirPhysicalTypeRole.Owner, Owner.Value));
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (ShapeTypes.HasValue) ShapeTypes = OptionalField<TypeNode[]>.Of(vector("shapeTypes", BirPhysicalTypeRole.Structural, ShapeTypes.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (AwaitResult.HasValue) AwaitResult = OptionalField<TypeNode>.Of(type("awaitResult", BirPhysicalTypeRole.Structural, AwaitResult.Value));
+        if (CalleeOwner.HasValue) CalleeOwner = OptionalField<TypeNode>.Of(type("calleeOwner", BirPhysicalTypeRole.Value, CalleeOwner.Value));
+        if (DefaultOwnerType.HasValue) DefaultOwnerType = OptionalField<TypeNode>.Of(type("defaultOwnerType", BirPhysicalTypeRole.Structural, DefaultOwnerType.Value));
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberMethodTypeParams.HasValue) { for (var index0 = 0; index0 < MemberMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberMethodTypeParams.Value[at0]; child("memberMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberMethodTypeParams.Value[at0]!, replacement => MemberMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(vector("memberSignature", BirPhysicalTypeRole.Value, MemberSignature.Value));
+        if (MemberReturnType.HasValue) MemberReturnType = OptionalField<TypeNode>.Of(type("memberReturnType", BirPhysicalTypeRole.Structural, MemberReturnType.Value));
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (NullablePendingWitnesses.HasValue) { for (var index0 = 0; index0 < NullablePendingWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = NullablePendingWitnesses.Value[at0]; child("nullablePendingWitnesses", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)NullablePendingWitnesses.Value[at0]!, replacement => NullablePendingWitnesses.Value[at0] = (IBirExpression)replacement)); } }
+        if (FunctionCallSignature.HasValue) FunctionCallSignature = OptionalField<TypeNode[]>.Of(vector("functionCallSignature", BirPhysicalTypeRole.Structural, FunctionCallSignature.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (CalleeRet.HasValue) CalleeRet = OptionalField<TypeNode>.Of(type("calleeRet", BirPhysicalTypeRole.Structural, CalleeRet.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (DynRet.HasValue) DynRet = OptionalField<TypeNode>.Of(type("dynRet", BirPhysicalTypeRole.Return, DynRet.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+        RetSuspendFnTypePre = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -5750,6 +6119,44 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (ShapeTypes.HasValue) ShapeTypes = OptionalField<TypeNode[]>.Of(vector("shapeTypes", BirPhysicalTypeRole.Structural, ShapeTypes.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (DynRet.HasValue) DynRet = OptionalField<TypeNode>.Of(type("dynRet", BirPhysicalTypeRole.Return, DynRet.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (AwaitResult.HasValue) AwaitResult = OptionalField<TypeNode>.Of(type("awaitResult", BirPhysicalTypeRole.Structural, AwaitResult.Value));
+        if (DefaultOwnerType.HasValue) DefaultOwnerType = OptionalField<TypeNode>.Of(type("defaultOwnerType", BirPhysicalTypeRole.Structural, DefaultOwnerType.Value));
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberMethodTypeParams.HasValue) { for (var index0 = 0; index0 < MemberMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberMethodTypeParams.Value[at0]; child("memberMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberMethodTypeParams.Value[at0]!, replacement => MemberMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(vector("memberSignature", BirPhysicalTypeRole.Value, MemberSignature.Value));
+        if (MemberReturnType.HasValue) MemberReturnType = OptionalField<TypeNode>.Of(type("memberReturnType", BirPhysicalTypeRole.Structural, MemberReturnType.Value));
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (NullablePendingWitnesses.HasValue) { for (var index0 = 0; index0 < NullablePendingWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = NullablePendingWitnesses.Value[at0]; child("nullablePendingWitnesses", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)NullablePendingWitnesses.Value[at0]!, replacement => NullablePendingWitnesses.Value[at0] = (IBirExpression)replacement)); } }
+        if (FunctionCallSignature.HasValue) FunctionCallSignature = OptionalField<TypeNode[]>.Of(vector("functionCallSignature", BirPhysicalTypeRole.Structural, FunctionCallSignature.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (CalleeRet.HasValue) CalleeRet = OptionalField<TypeNode>.Of(type("calleeRet", BirPhysicalTypeRole.Structural, CalleeRet.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Overrides = default;
+        Sty = default;
+        RetSuspendFnTypePre = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -6375,6 +6782,21 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+        RetSuspendFnTypePre = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -6625,6 +7047,30 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite("calleeParams", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(type("memberType", BirPhysicalTypeRole.Structural, MemberType.Value));
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+        RetSuspendFnTypePre = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -7009,6 +7455,22 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(rewrite("memberType", BirGenericFrameRole.ReferencedDeclaration, MemberType.Value));
         if (FieldRef.HasValue) { visit("fieldRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(type("memberType", BirPhysicalTypeRole.Structural, MemberType.Value));
+        if (FieldRef.HasValue) { child("fieldRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+        RetSuspendFnTypePre = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -7287,6 +7749,25 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(type("memberType", BirPhysicalTypeRole.Structural, MemberType.Value));
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -7620,6 +8101,17 @@ internal sealed record BirStaticFieldSet : BirGraphNode, IBirExpression, IBirAtt
         if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(rewrite("memberType", BirGenericFrameRole.ReferencedDeclaration, MemberType.Value));
         if (FieldRef.HasValue) { visit("fieldRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(type("memberType", BirPhysicalTypeRole.Structural, MemberType.Value));
+        if (FieldRef.HasValue) { child("fieldRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)OwnerType.Value, visit); }
@@ -7848,6 +8340,24 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Exception.HasValue) { visit("exception", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Exception.Value!, replacement => Exception = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (FieldRef.HasValue) { visit("fieldRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(type("memberType", BirPhysicalTypeRole.Structural, MemberType.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Exception.HasValue) { child("exception", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Exception.Value!, replacement => Exception = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (FieldRef.HasValue) { child("fieldRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -8109,6 +8619,14 @@ internal sealed record BirLateinitIsInitialized : BirGraphNode, IBirExpression, 
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(rewrite("ownerType", BirGenericFrameRole.Lexical, OwnerType.Value));
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (LateinitDeclarationId.HasValue) { visit((string)LateinitDeclarationId.Value); }
@@ -8257,6 +8775,12 @@ internal sealed record BirModifiers : BirGraphValue
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -8430,6 +8954,13 @@ internal sealed record BirDefaultBody : BirGraphValue
     {
         if (Body.HasValue) { visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value!, replacement => Body = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Body.HasValue) { child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value!, replacement => Body = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -8549,6 +9080,16 @@ internal sealed record BirConstructorAdapterPayload : BirGraphValue, IBirExecuta
         if (Statements.HasValue) { for (var index0 = 0; index0 < Statements.Value.Length; index0++) { var at0 = index0; var child0 = Statements.Value[at0]; visit("statements", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Statements.Value[at0]!, replacement => Statements.Value[at0] = (IBirStatement)replacement)); } }
         if (Arguments.HasValue) { for (var index0 = 0; index0 < Arguments.Value.Length; index0++) { var at0 = index0; var child0 = Arguments.Value[at0]; visit("arguments", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Arguments.Value[at0]!, replacement => Arguments.Value[at0] = (IBirExpression)replacement)); } }
         if (TerminalSignature.HasValue) TerminalSignature = OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => rewrite("terminalSignature", BirGenericFrameRole.Lexical, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Signature.HasValue) Signature = OptionalField<TypeNode[]>.Of(vector("signature", BirPhysicalTypeRole.Structural, Signature.Value));
+        if (Statements.HasValue) { for (var index0 = 0; index0 < Statements.Value.Length; index0++) { var at0 = index0; var child0 = Statements.Value[at0]; child("statements", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Statements.Value[at0]!, replacement => Statements.Value[at0] = (IBirStatement)replacement)); } }
+        if (Arguments.HasValue) { for (var index0 = 0; index0 < Arguments.Value.Length; index0++) { var at0 = index0; var child0 = Arguments.Value[at0]; child("arguments", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Arguments.Value[at0]!, replacement => Arguments.Value[at0] = (IBirExpression)replacement)); } }
+        if (TerminalSignature.HasValue) TerminalSignature = OptionalField<TypeNode[]>.Of(vector("terminalSignature", BirPhysicalTypeRole.Structural, TerminalSignature.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -8729,6 +9270,21 @@ internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Lifted.HasValue) { for (var index0 = 0; index0 < Lifted.Value.Length; index0++) { var at0 = index0; var child0 = Lifted.Value[at0]; visit("lifted", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Lifted.Value[at0]!, replacement => Lifted.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (Lifted.HasValue) { for (var index0 = 0; index0 < Lifted.Value.Length; index0++) { var at0 = index0; var child0 = Lifted.Value[at0]; child("lifted", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Lifted.Value[at0]!, replacement => Lifted.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        RetSuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -8948,6 +9504,18 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirAttributeValue>.Of((IBirAttributeValue)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirAttributeValue>.Of((IBirAttributeValue)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Kind.HasValue) { visit((string)Kind.Value); }
@@ -9100,6 +9668,17 @@ internal sealed record BirAttribute : BirGraphValue
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit("args", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirAttributeValue)replacement)); } }
         if (NamedArgs.HasValue) { for (var index0 = 0; index0 < NamedArgs.Value.Length; index0++) { var at0 = index0; var child0 = NamedArgs.Value[at0]; visit("namedArgs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)NamedArgs.Value[at0]!, replacement => NamedArgs.Value[at0] = (BirAttributeNamedArgument)replacement)); } }
         if (MemberRef.HasValue) { visit("memberRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Attr.HasValue) Attr = OptionalField<TypeNode>.Of(type("attr", BirPhysicalTypeRole.Structural, Attr.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirAttributeValue)replacement)); } }
+        if (NamedArgs.HasValue) { for (var index0 = 0; index0 < NamedArgs.Value.Length; index0++) { var at0 = index0; var child0 = NamedArgs.Value[at0]; child("namedArgs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)NamedArgs.Value[at0]!, replacement => NamedArgs.Value[at0] = (BirAttributeNamedArgument)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -9312,6 +9891,26 @@ internal sealed record BirParameter : BirGraphValue
         if (NominalParameterSignatureIdentity.HasValue) NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(rewrite("nominalParameterSignatureIdentity", BirGenericFrameRole.Lexical, NominalParameterSignatureIdentity.Value));
         if (GenericParameterSignatureBounds.HasValue) GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => rewrite("genericParameterSignatureBounds", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (SuspendFnType.HasValue) SuspendFnType = OptionalField<TypeNode>.Of(rewrite("suspendFnType", BirGenericFrameRole.Lexical, SuspendFnType.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (Default.HasValue) { child("default", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Default.Value!, replacement => Default = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (DefaultBir.HasValue) { child("defaultBir", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DefaultBir.Value!, replacement => DefaultBir = OptionalField<BirDefaultBody>.Of((BirDefaultBody)replacement))); }
+        if (SharedCellType.HasValue) SharedCellType = OptionalField<TypeNode>.Of(type("sharedCellType", BirPhysicalTypeRole.Structural, SharedCellType.Value));
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (FunctionSignatureType.HasValue) FunctionSignatureType = OptionalField<TypeNode>.Of(type("functionSignatureType", BirPhysicalTypeRole.Value, FunctionSignatureType.Value));
+        if (NominalParameterSignatureIdentity.HasValue) NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(type("nominalParameterSignatureIdentity", BirPhysicalTypeRole.Structural, NominalParameterSignatureIdentity.Value));
+        if (GenericParameterSignatureBounds.HasValue) GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(vector("genericParameterSignatureBounds", BirPhysicalTypeRole.Structural, GenericParameterSignatureBounds.Value));
+        if (SuspendFnType.HasValue) SuspendFnType = OptionalField<TypeNode>.Of(type("suspendFnType", BirPhysicalTypeRole.Structural, SuspendFnType.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -9607,6 +10206,14 @@ internal sealed record BirDefaultCarrier : BirGraphNode, IBirExpression, IBirAtt
         if (Expr.HasValue) { visit("expr", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Lifted.HasValue) { for (var index0 = 0; index0 < Lifted.Value.Length; index0++) { var at0 = index0; var child0 = Lifted.Value[at0]; visit("lifted", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Lifted.Value[at0]!, replacement => Lifted.Value[at0] = (BirFunctionDeclaration)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Expr.HasValue) { child("expr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Lifted.HasValue) { for (var index0 = 0; index0 < Lifted.Value.Length; index0++) { var at0 = index0; var child0 = Lifted.Value[at0]; child("lifted", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Lifted.Value[at0]!, replacement => Lifted.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -9730,6 +10337,13 @@ internal sealed record BirLocalFunction : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Decl.HasValue) { visit("decl", BirGenericFrameRole.LocalDeclaration, new BirGraphSlot(() => (BirGraphValue)Decl.Value!, replacement => Decl = OptionalField<BirFunctionDeclaration>.Of((BirFunctionDeclaration)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Decl.HasValue) { child("decl", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Decl.Value!, replacement => Decl = OptionalField<BirFunctionDeclaration>.Of((BirFunctionDeclaration)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -9855,6 +10469,15 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(rewrite("owner", BirGenericFrameRole.Lexical, Owner.Value));
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit("typeParams", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite("sig", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(type("owner", BirPhysicalTypeRole.Owner, Owner.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -10006,6 +10629,12 @@ internal sealed record BirDeclarationPosition : BirGraphValue
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -10241,6 +10870,45 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; visit("clrBaseImpls", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { visit("pinvoke", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
         if (RetSuspendFnType.HasValue) RetSuspendFnType = OptionalField<TypeNode>.Of(rewrite("retSuspendFnType", BirGenericFrameRole.Lexical, RetSuspendFnType.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", (DotktValueReturn.OrDefault() ? BirPhysicalTypeRole.Value : BirPhysicalTypeRole.Return), Ret.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (SuspendRet.HasValue) SuspendRet = OptionalField<TypeNode>.Of(type("suspendRet", BirPhysicalTypeRole.Return, SuspendRet.Value));
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+        if (_syntheticTypeArgs.HasValue) _syntheticTypeArgs = OptionalField<TypeNode[]>.Of(vector("_syntheticTypeArgs", BirPhysicalTypeRole.Structural, _syntheticTypeArgs.Value));
+        if (RoundtripDeclarationIdentity.HasValue) { child("roundtripDeclarationIdentity", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RoundtripDeclarationIdentity.Value!, replacement => RoundtripDeclarationIdentity = OptionalField<BirRoundtripDeclarationIdentity>.Of((BirRoundtripDeclarationIdentity)replacement))); }
+        if (ExistentialInnerConstructorFactory.HasValue) { child("existentialInnerConstructorFactory", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ExistentialInnerConstructorFactory.Value!, replacement => ExistentialInnerConstructorFactory = OptionalField<BirInnerConstructorFactory>.Of((BirInnerConstructorFactory)replacement))); }
+        if (PendingOverrideOwner.HasValue) PendingOverrideOwner = OptionalField<TypeNode>.Of(type("pendingOverrideOwner", BirPhysicalTypeRole.Structural, PendingOverrideOwner.Value));
+        if (PendingOverrideReturn.HasValue) PendingOverrideReturn = OptionalField<TypeNode>.Of(type("pendingOverrideReturn", BirPhysicalTypeRole.Structural, PendingOverrideReturn.Value));
+        if (KotlinPropertyAccessorCarrier.HasValue) { child("kotlinPropertyAccessorCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinPropertyAccessorCarrier.Value!, replacement => KotlinPropertyAccessorCarrier = OptionalField<EventPropertySourceFacts>.Of((EventPropertySourceFacts)replacement))); }
+        if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; child("retAttrs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (ClrOverrideRef.HasValue) { child("clrOverrideRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrOverrideRef.Value!, replacement => ClrOverrideRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (ClrInterfaceImpls.HasValue) { for (var index0 = 0; index0 < ClrInterfaceImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrInterfaceImpls.Value[at0]; child("clrInterfaceImpls", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrInterfaceImpls.Value[at0]!, replacement => ClrInterfaceImpls.Value[at0] = (BirMethodImpl)replacement)); } }
+        if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; child("clrBaseImpls", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
+        if (Pinvoke.HasValue) { child("pinvoke", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
+        if (RetSuspendFnType.HasValue) RetSuspendFnType = OptionalField<TypeNode>.Of(type("retSuspendFnType", BirPhysicalTypeRole.Structural, RetSuspendFnType.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Overrides = default;
+        FakeOverride = default;
+        InheritedImplementation = default;
+        RetSuspendFnTypePre = default;
+        ExistentialSourceMember = default;
+        SuspendTaskResult = default;
+        SuspendSourceParams = default;
+        SuspendSourceRet = default;
+        DotktValueReturn = default;
+        KotlinSourceMember = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -11010,6 +11678,23 @@ internal sealed record BirConstructor : BirGraphValue
         if (PreStmts.HasValue) { for (var index0 = 0; index0 < PreStmts.Value.Length; index0++) { var at0 = index0; var child0 = PreStmts.Value[at0]; visit("preStmts", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)PreStmts.Value[at0]!, replacement => PreStmts.Value[at0] = (IBirStatement)replacement)); } }
         if (Pos.HasValue) { visit("pos", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (BaseArgs.HasValue) { for (var index0 = 0; index0 < BaseArgs.Value.Length; index0++) { var at0 = index0; var child0 = BaseArgs.Value[at0]; child("baseArgs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)BaseArgs.Value[at0]!, replacement => BaseArgs.Value[at0] = (IBirExpression)replacement)); } }
+        if (DelegationSig.HasValue) DelegationSig = OptionalField<TypeNode[]>.Of(vector("delegationSig", BirPhysicalTypeRole.Value, DelegationSig.Value));
+        if (ThisArgs.HasValue) { for (var index0 = 0; index0 < ThisArgs.Value.Length; index0++) { var at0 = index0; var child0 = ThisArgs.Value[at0]; child("thisArgs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ThisArgs.Value[at0]!, replacement => ThisArgs.Value[at0] = (IBirExpression)replacement)); } }
+        if (DelegationBindings.HasValue) { for (var index0 = 0; index0 < DelegationBindings.Value.Length; index0++) { var at0 = index0; var child0 = DelegationBindings.Value[at0]; child("delegationBindings", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DelegationBindings.Value[at0]!, replacement => DelegationBindings.Value[at0] = (BirCallBinding)replacement)); } }
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (RoundtripDeclarationIdentity.HasValue) { child("roundtripDeclarationIdentity", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RoundtripDeclarationIdentity.Value!, replacement => RoundtripDeclarationIdentity = OptionalField<BirRoundtripDeclarationIdentity>.Of((BirRoundtripDeclarationIdentity)replacement))); }
+        if (BaseCtorRef.HasValue) { child("baseCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)BaseCtorRef.Value!, replacement => BaseCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (PreStmts.HasValue) { for (var index0 = 0; index0 < PreStmts.Value.Length; index0++) { var at0 = index0; var child0 = PreStmts.Value[at0]; child("preStmts", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)PreStmts.Value[at0]!, replacement => PreStmts.Value[at0] = (IBirStatement)replacement)); } }
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (DelegationSig.HasValue) { foreach (var item0 in DelegationSig.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
@@ -11345,6 +12030,21 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         if (SuspendFnType.HasValue) SuspendFnType = OptionalField<TypeNode>.Of(rewrite("suspendFnType", BirGenericFrameRole.Lexical, SuspendFnType.Value));
         if (Pos.HasValue) { visit("pos", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Init.HasValue) { child("init", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Init.Value!, replacement => Init = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (SuspendFnType.HasValue) SuspendFnType = OptionalField<TypeNode>.Of(type("suspendFnType", BirPhysicalTypeRole.Structural, SuspendFnType.Value));
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -11646,6 +12346,14 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit("typeParams", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -11829,6 +12537,27 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         if (Mods.HasValue) { visit("mods", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
         if (Recv.HasValue) Recv = OptionalField<TypeNode>.Of(rewrite("recv", BirGenericFrameRole.Lexical, Recv.Value));
         if (Pos.HasValue) { visit("pos", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (GetSig.HasValue) GetSig = OptionalField<TypeNode[]>.Of(vector("getSig", BirPhysicalTypeRole.Value, GetSig.Value));
+        if (GetRet.HasValue) GetRet = OptionalField<TypeNode>.Of(type("getRet", BirPhysicalTypeRole.Return, GetRet.Value));
+        if (SetSig.HasValue) SetSig = OptionalField<TypeNode[]>.Of(vector("setSig", BirPhysicalTypeRole.Value, SetSig.Value));
+        if (SetRet.HasValue) SetRet = OptionalField<TypeNode>.Of(type("setRet", BirPhysicalTypeRole.Return, SetRet.Value));
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (SuspendFnType.HasValue) SuspendFnType = OptionalField<TypeNode>.Of(type("suspendFnType", BirPhysicalTypeRole.Structural, SuspendFnType.Value));
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (Recv.HasValue) Recv = OptionalField<TypeNode>.Of(type("recv", BirPhysicalTypeRole.Structural, Recv.Value));
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Overrides = default;
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -12220,6 +12949,37 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; visit("params", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; visit("retAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Base.HasValue) Base = OptionalField<TypeNode>.Of(type("base", BirPhysicalTypeRole.Value, Base.Value));
+        if (Interfaces.HasValue) Interfaces = OptionalField<TypeNode[]>.Of(vector("interfaces", BirPhysicalTypeRole.Interfaces, Interfaces.Value));
+        if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; child("fields", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirFieldDeclaration)replacement)); } }
+        if (Ctors.HasValue) { for (var index0 = 0; index0 < Ctors.Value.Length; index0++) { var at0 = index0; var child0 = Ctors.Value[at0]; child("ctors", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ctors.Value[at0]!, replacement => Ctors.Value[at0] = (BirConstructor)replacement)); } }
+        if (Methods.HasValue) { for (var index0 = 0; index0 < Methods.Value.Length; index0++) { var at0 = index0; var child0 = Methods.Value[at0]; child("methods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Methods.Value[at0]!, replacement => Methods.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+        if (Properties.HasValue) { for (var index0 = 0; index0 < Properties.Value.Length; index0++) { var at0 = index0; var child0 = Properties.Value[at0]; child("properties", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Properties.Value[at0]!, replacement => Properties.Value[at0] = (BirPropertyDeclaration)replacement)); } }
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (StaticCarrier.HasValue) { child("staticCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)StaticCarrier.Value!, replacement => StaticCarrier = OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)replacement))); }
+        if (CompanionCarrier.HasValue) { child("companionCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CompanionCarrier.Value!, replacement => CompanionCarrier = OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)replacement))); }
+        if (ManagedReferenceContract.HasValue) { child("managedReferenceContract", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ManagedReferenceContract.Value!, replacement => ManagedReferenceContract = OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)replacement))); }
+        if (CapturedTypeParams.HasValue) { for (var index0 = 0; index0 < CapturedTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = CapturedTypeParams.Value[at0]; child("capturedTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CapturedTypeParams.Value[at0]!, replacement => CapturedTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+        if (InterfaceSlotRefs.HasValue) { for (var index0 = 0; index0 < InterfaceSlotRefs.Value.Length; index0++) { var at0 = index0; var child0 = InterfaceSlotRefs.Value[at0]; child("interfaceSlotRefs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InterfaceSlotRefs.Value[at0]!, replacement => InterfaceSlotRefs.Value[at0] = (BirInterfaceSlotSet)replacement)); } }
+        if (ClrEvents.HasValue) { for (var index0 = 0; index0 < ClrEvents.Value.Length; index0++) { var at0 = index0; var child0 = ClrEvents.Value[at0]; child("clrEvents", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrEvents.Value[at0]!, replacement => ClrEvents.Value[at0] = (BirClrEventBacking)replacement)); } }
+        if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(type("underlying", BirPhysicalTypeRole.Structural, Underlying.Value));
+        if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; child("entries", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirEnumEntryDeclaration)replacement)); } }
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; child("retAttrs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        InheritedDefaultMethods = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -12688,6 +13448,13 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
     {
         if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; visit("attrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -12816,6 +13583,12 @@ internal sealed record BirManagedReferenceContract : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Owner.HasValue) { visit((string)Owner.Value); }
@@ -12926,6 +13699,13 @@ internal sealed record BirClrEnumDeclaration : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(rewrite("underlying", BirGenericFrameRole.Lexical, Underlying.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(type("underlying", BirPhysicalTypeRole.Structural, Underlying.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -13094,6 +13874,34 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; visit("params", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; visit("retAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (ClrEnum.HasValue) { child("clrEnum", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrEnum.Value!, replacement => ClrEnum = OptionalField<BirClrEnumDeclaration>.Of((BirClrEnumDeclaration)replacement))); }
+        if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; child("entries", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirEnumEntryDeclaration)replacement)); } }
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+        if (StaticCarrier.HasValue) { child("staticCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)StaticCarrier.Value!, replacement => StaticCarrier = OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)replacement))); }
+        if (CompanionCarrier.HasValue) { child("companionCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CompanionCarrier.Value!, replacement => CompanionCarrier = OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)replacement))); }
+        if (BasicEnum.HasValue) { child("basicEnum", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)BasicEnum.Value!, replacement => BasicEnum = OptionalField<BirBasicEnumCarrier>.Of((BirBasicEnumCarrier)replacement))); }
+        if (Base.HasValue) Base = OptionalField<TypeNode>.Of(type("base", BirPhysicalTypeRole.Value, Base.Value));
+        if (Interfaces.HasValue) Interfaces = OptionalField<TypeNode[]>.Of(vector("interfaces", BirPhysicalTypeRole.Interfaces, Interfaces.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (CapturedTypeParams.HasValue) { for (var index0 = 0; index0 < CapturedTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = CapturedTypeParams.Value[at0]; child("capturedTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CapturedTypeParams.Value[at0]!, replacement => CapturedTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; child("fields", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirFieldDeclaration)replacement)); } }
+        if (Ctors.HasValue) { for (var index0 = 0; index0 < Ctors.Value.Length; index0++) { var at0 = index0; var child0 = Ctors.Value[at0]; child("ctors", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ctors.Value[at0]!, replacement => Ctors.Value[at0] = (BirConstructor)replacement)); } }
+        if (Methods.HasValue) { for (var index0 = 0; index0 < Methods.Value.Length; index0++) { var at0 = index0; var child0 = Methods.Value[at0]; child("methods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Methods.Value[at0]!, replacement => Methods.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+        if (Properties.HasValue) { for (var index0 = 0; index0 < Properties.Value.Length; index0++) { var at0 = index0; var child0 = Properties.Value[at0]; child("properties", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Properties.Value[at0]!, replacement => Properties.Value[at0] = (BirPropertyDeclaration)replacement)); } }
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (InterfaceSlotRefs.HasValue) { for (var index0 = 0; index0 < InterfaceSlotRefs.Value.Length; index0++) { var at0 = index0; var child0 = InterfaceSlotRefs.Value[at0]; child("interfaceSlotRefs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InterfaceSlotRefs.Value[at0]!, replacement => InterfaceSlotRefs.Value[at0] = (BirInterfaceSlotSet)replacement)); } }
+        if (ClrEvents.HasValue) { for (var index0 = 0; index0 < ClrEvents.Value.Length; index0++) { var at0 = index0; var child0 = ClrEvents.Value[at0]; child("clrEvents", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrEvents.Value[at0]!, replacement => ClrEvents.Value[at0] = (BirClrEventBacking)replacement)); } }
+        if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(type("underlying", BirPhysicalTypeRole.Structural, Underlying.Value));
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; child("retAttrs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -13620,6 +14428,41 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; visit("params", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; visit("retAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Base.HasValue) Base = OptionalField<TypeNode>.Of(type("base", BirPhysicalTypeRole.Value, Base.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Interfaces.HasValue) Interfaces = OptionalField<TypeNode[]>.Of(vector("interfaces", BirPhysicalTypeRole.Interfaces, Interfaces.Value));
+        if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; child("fields", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirFieldDeclaration)replacement)); } }
+        if (Ctors.HasValue) { for (var index0 = 0; index0 < Ctors.Value.Length; index0++) { var at0 = index0; var child0 = Ctors.Value[at0]; child("ctors", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ctors.Value[at0]!, replacement => Ctors.Value[at0] = (BirConstructor)replacement)); } }
+        if (Methods.HasValue) { for (var index0 = 0; index0 < Methods.Value.Length; index0++) { var at0 = index0; var child0 = Methods.Value[at0]; child("methods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Methods.Value[at0]!, replacement => Methods.Value[at0] = (BirFunctionDeclaration)replacement)); } }
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (Properties.HasValue) { for (var index0 = 0; index0 < Properties.Value.Length; index0++) { var at0 = index0; var child0 = Properties.Value[at0]; child("properties", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Properties.Value[at0]!, replacement => Properties.Value[at0] = (BirPropertyDeclaration)replacement)); } }
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (Pos.HasValue) { child("pos", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pos.Value!, replacement => Pos = OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)replacement))); }
+        if (KotlinCompanion.HasValue) { child("kotlinCompanion", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinCompanion.Value!, replacement => KotlinCompanion = OptionalField<BirKotlinCompanion>.Of((BirKotlinCompanion)replacement))); }
+        if (ClrEvents.HasValue) { for (var index0 = 0; index0 < ClrEvents.Value.Length; index0++) { var at0 = index0; var child0 = ClrEvents.Value[at0]; child("clrEvents", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrEvents.Value[at0]!, replacement => ClrEvents.Value[at0] = (BirClrEventBacking)replacement)); } }
+        if (ClrEventForwarders.HasValue) { for (var index0 = 0; index0 < ClrEventForwarders.Value.Length; index0++) { var at0 = index0; var child0 = ClrEventForwarders.Value[at0]; child("clrEventForwarders", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrEventForwarders.Value[at0]!, replacement => ClrEventForwarders.Value[at0] = (BirClrEventForwarder)replacement)); } }
+        if (RichEnum.HasValue) { child("richEnum", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RichEnum.Value!, replacement => RichEnum = OptionalField<BirRichEnumDeclaration>.Of((BirRichEnumDeclaration)replacement))); }
+        if (StaticCarrier.HasValue) { child("staticCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)StaticCarrier.Value!, replacement => StaticCarrier = OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)replacement))); }
+        if (CompanionCarrier.HasValue) { child("companionCarrier", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CompanionCarrier.Value!, replacement => CompanionCarrier = OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)replacement))); }
+        if (CapturedTypeParams.HasValue) { for (var index0 = 0; index0 < CapturedTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = CapturedTypeParams.Value[at0]; child("capturedTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CapturedTypeParams.Value[at0]!, replacement => CapturedTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (InterfaceSlotRefs.HasValue) { for (var index0 = 0; index0 < InterfaceSlotRefs.Value.Length; index0++) { var at0 = index0; var child0 = InterfaceSlotRefs.Value[at0]; child("interfaceSlotRefs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InterfaceSlotRefs.Value[at0]!, replacement => InterfaceSlotRefs.Value[at0] = (BirInterfaceSlotSet)replacement)); } }
+        if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(type("underlying", BirPhysicalTypeRole.Structural, Underlying.Value));
+        if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; child("entries", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirEnumEntryDeclaration)replacement)); } }
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (RetAttrs.HasValue) { for (var index0 = 0; index0 < RetAttrs.Value.Length; index0++) { var at0 = index0; var child0 = RetAttrs.Value[at0]; child("retAttrs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RetAttrs.Value[at0]!, replacement => RetAttrs.Value[at0] = (BirAttribute)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        InheritedDefaultAccessors = default;
+        InheritedDefaultMethods = default;
+        InheritedClassMethods = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -14154,6 +14997,12 @@ internal sealed record BirKotlinCompanion : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Owner.HasValue) { visit((string)Owner.Value); }
@@ -14257,6 +15106,12 @@ internal sealed record BirRichEnumEntry : BirGraphValue
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -14363,6 +15218,13 @@ internal sealed record BirRichEnumDeclaration : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; visit("entries", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirRichEnumEntry)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; child("entries", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirRichEnumEntry)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -14502,6 +15364,20 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; visit("overrides", BirGenericFrameRole.OverrideDeclaration, new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
         if (Implementation.HasValue) { visit("implementation", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Implementation.Value!, replacement => Implementation = OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Params.HasValue) Params = OptionalField<TypeNode[]>.Of(vector("params", BirPhysicalTypeRole.Value, Params.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Implementation.HasValue) { child("implementation", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Implementation.Value!, replacement => Implementation = OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Overrides = default;
+        RetSuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -14697,6 +15573,20 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; visit("overrides", BirGenericFrameRole.OverrideDeclaration, new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
         if (Implementation.HasValue) { visit("implementation", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Implementation.Value!, replacement => Implementation = OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Params.HasValue) Params = OptionalField<TypeNode[]>.Of(vector("params", BirPhysicalTypeRole.Value, Params.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Implementation.HasValue) { child("implementation", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Implementation.Value!, replacement => Implementation = OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Overrides = default;
+        RetSuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -14895,6 +15785,22 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         if (Mods.HasValue) { visit("mods", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; visit("overrides", BirGenericFrameRole.OverrideDeclaration, new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
         if (InheritedImplementation.HasValue) { visit("inheritedImplementation", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)InheritedImplementation.Value!, replacement => InheritedImplementation = OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Overrides = default;
+        InheritedImplementation = default;
+        RetSuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -15146,6 +16052,15 @@ internal sealed record BirClrEventBacking : BirGraphValue
         if (ClassOverrideOwner.HasValue) ClassOverrideOwner = OptionalField<TypeNode>.Of(rewrite("classOverrideOwner", BirGenericFrameRole.Lexical, ClassOverrideOwner.Value));
         if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(rewrite("delegateType", BirGenericFrameRole.Lexical, DelegateType.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (HandlerType.HasValue) HandlerType = OptionalField<TypeNode>.Of(type("handlerType", BirPhysicalTypeRole.Structural, HandlerType.Value));
+        if (ClassOverrideOwner.HasValue) ClassOverrideOwner = OptionalField<TypeNode>.Of(type("classOverrideOwner", BirPhysicalTypeRole.Structural, ClassOverrideOwner.Value));
+        if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(type("delegateType", BirPhysicalTypeRole.Value, DelegateType.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (K.HasValue) { visit((string)K.Value); }
@@ -15314,6 +16229,14 @@ internal sealed record BirClrEventForwarder : BirGraphValue
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(rewrite("ownerType", BirGenericFrameRole.Lexical, OwnerType.Value));
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -15444,6 +16367,12 @@ internal sealed record BirClrEventAccessor : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Kind.HasValue) { visit((string)Kind.Value); }
@@ -15557,6 +16486,16 @@ internal sealed record BirNewSam : BirGraphNode, IBirExpression, IBirAttributeVa
         if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; visit("captures", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (IBirExpression)replacement)); } }
         if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => rewrite("typeArgs", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (SynthClass.HasValue) { visit("synthClass", BirGenericFrameRole.SyntheticDeclaration, new BirGraphSlot(() => (BirGraphValue)SynthClass.Value!, replacement => SynthClass = OptionalField<BirClassDefinition>.Of((BirClassDefinition)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (SamType.HasValue) SamType = OptionalField<TypeNode>.Of(type("samType", BirPhysicalTypeRole.Value, SamType.Value));
+        if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; child("captures", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (IBirExpression)replacement)); } }
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (SynthClass.HasValue) { child("synthClass", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)SynthClass.Value!, replacement => SynthClass = OptionalField<BirClassDefinition>.Of((BirClassDefinition)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -15723,6 +16662,19 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(rewrite("funcType", BirGenericFrameRole.Lexical, FuncType.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -15876,6 +16828,17 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -16043,6 +17006,21 @@ internal sealed record BirClosureDefinition : BirGraphValue
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit("typeParams", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Fields.HasValue) { for (var index0 = 0; index0 < Fields.Value.Length; index0++) { var at0 = index0; var child0 = Fields.Value[at0]; child("fields", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Fields.Value[at0]!, replacement => Fields.Value[at0] = (BirCaptureDescriptor)replacement)); } }
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        RetSuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -16297,6 +17275,20 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(rewrite("dotktDelegateSlot", BirGenericFrameRole.Lexical, DotktDelegateSlot.Value));
         if (DelegateCtorRef.HasValue) { visit("delegateCtorRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)DelegateCtorRef.Value!, replacement => DelegateCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite("calleeParams", BirGenericFrameRole.Lexical, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (ClosureType.HasValue) ClosureType = OptionalField<TypeNode>.Of(type("closureType", BirPhysicalTypeRole.Value, ClosureType.Value));
+        if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; child("captures", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (IBirExpression)replacement)); } }
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (SynthClass.HasValue) { child("synthClass", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)SynthClass.Value!, replacement => SynthClass = OptionalField<BirClosureDefinition>.Of((BirClosureDefinition)replacement))); }
+        if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(type("dotktDelegateSlot", BirPhysicalTypeRole.Structural, DotktDelegateSlot.Value));
+        if (DelegateCtorRef.HasValue) { child("delegateCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DelegateCtorRef.Value!, replacement => DelegateCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -16556,6 +17548,24 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite("calleeParams", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (CalleeOwner.HasValue) CalleeOwner = OptionalField<TypeNode>.Of(type("calleeOwner", BirPhysicalTypeRole.Value, CalleeOwner.Value));
+        if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(type("dotktDelegateSlot", BirPhysicalTypeRole.Structural, DotktDelegateSlot.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (DelegateCtorRef.HasValue) { child("delegateCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DelegateCtorRef.Value!, replacement => DelegateCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CalleeRet.HasValue) CalleeRet = OptionalField<TypeNode>.Of(type("calleeRet", BirPhysicalTypeRole.Structural, CalleeRet.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -16879,6 +17889,25 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         if (_suspendDeclarationTypeArgs.HasValue) _suspendDeclarationTypeArgs = OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => rewrite("_suspendDeclarationTypeArgs", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; child("captures", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (BirCaptureDescriptor)replacement)); } }
+        if (CapValues.HasValue) { for (var index0 = 0; index0 < CapValues.Value.Length; index0++) { var at0 = index0; var child0 = CapValues.Value[at0]; if (child0 is not null) { child("capValues", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CapValues.Value[at0]!, replacement => CapValues.Value[at0] = (IBirExpression)replacement)); } } }
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
+        if (SuspendRet.HasValue) SuspendRet = OptionalField<TypeNode>.Of(type("suspendRet", BirPhysicalTypeRole.Return, SuspendRet.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (_suspendDeclarationTypeArgs.HasValue) _suspendDeclarationTypeArgs = OptionalField<TypeNode[]>.Of(vector("_suspendDeclarationTypeArgs", BirPhysicalTypeRole.Structural, _suspendDeclarationTypeArgs.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -17178,6 +18207,21 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; visit("overrides", BirGenericFrameRole.OverrideDeclaration, new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
         if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(rewrite("ret", BirGenericFrameRole.Lexical, Ret.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+        Overrides = default;
+        SuspendFnTypePre = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -17391,6 +18435,19 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit("args", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -17579,6 +18636,25 @@ internal sealed record BirLambdaParameter : BirGraphValue
         if (FunctionSignatureType.HasValue) FunctionSignatureType = OptionalField<TypeNode>.Of(rewrite("functionSignatureType", BirGenericFrameRole.Lexical, FunctionSignatureType.Value));
         if (NominalParameterSignatureIdentity.HasValue) NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(rewrite("nominalParameterSignatureIdentity", BirGenericFrameRole.Lexical, NominalParameterSignatureIdentity.Value));
         if (GenericParameterSignatureBounds.HasValue) GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => rewrite("genericParameterSignatureBounds", BirGenericFrameRole.Lexical, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Mods.HasValue) { child("mods", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Mods.Value!, replacement => Mods = OptionalField<BirModifiers>.Of((BirModifiers)replacement))); }
+        if (Default.HasValue) { child("default", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Default.Value!, replacement => Default = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (DefaultBir.HasValue) { child("defaultBir", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DefaultBir.Value!, replacement => DefaultBir = OptionalField<BirDefaultBody>.Of((BirDefaultBody)replacement))); }
+        if (SharedCellType.HasValue) SharedCellType = OptionalField<TypeNode>.Of(type("sharedCellType", BirPhysicalTypeRole.Structural, SharedCellType.Value));
+        if (Attrs.HasValue) { for (var index0 = 0; index0 < Attrs.Value.Length; index0++) { var at0 = index0; var child0 = Attrs.Value[at0]; child("attrs", BirPhysicalTypeRole.Attributes, new BirGraphSlot(() => (BirGraphValue)Attrs.Value[at0]!, replacement => Attrs.Value[at0] = (BirAttribute)replacement)); } }
+        if (FunctionSignatureType.HasValue) FunctionSignatureType = OptionalField<TypeNode>.Of(type("functionSignatureType", BirPhysicalTypeRole.Value, FunctionSignatureType.Value));
+        if (NominalParameterSignatureIdentity.HasValue) NominalParameterSignatureIdentity = OptionalField<TypeNode>.Of(type("nominalParameterSignatureIdentity", BirPhysicalTypeRole.Structural, NominalParameterSignatureIdentity.Value));
+        if (GenericParameterSignatureBounds.HasValue) GenericParameterSignatureBounds = OptionalField<TypeNode[]>.Of(vector("genericParameterSignatureBounds", BirPhysicalTypeRole.Structural, GenericParameterSignatureBounds.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -17859,6 +18935,20 @@ internal sealed record BirInlineCapture : BirGraphValue
         if (SharedCellType.HasValue) SharedCellType = OptionalField<TypeNode>.Of(rewrite("sharedCellType", BirGenericFrameRole.Lexical, SharedCellType.Value));
         if (SharedCellTypeParams.HasValue) { for (var index0 = 0; index0 < SharedCellTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = SharedCellTypeParams.Value[at0]; visit("sharedCellTypeParams", BirGenericFrameRole.SharedCaptureDeclaration, new BirGraphSlot(() => (BirGraphValue)SharedCellTypeParams.Value[at0]!, replacement => SharedCellTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (SharedCellType.HasValue) SharedCellType = OptionalField<TypeNode>.Of(type("sharedCellType", BirPhysicalTypeRole.Structural, SharedCellType.Value));
+        if (SharedCellTypeParams.HasValue) { for (var index0 = 0; index0 < SharedCellTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = SharedCellTypeParams.Value[at0]; child("sharedCellTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)SharedCellTypeParams.Value[at0]!, replacement => SharedCellTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -18041,6 +19131,16 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Result.HasValue) { visit("result", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Params.HasValue) { for (var index0 = 0; index0 < Params.Value.Length; index0++) { var at0 = index0; var child0 = Params.Value[at0]; child("params", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Params.Value[at0]!, replacement => Params.Value[at0] = (BirLambdaParameter)replacement)); } }
+        if (Captures.HasValue) { for (var index0 = 0; index0 < Captures.Value.Length; index0++) { var at0 = index0; var child0 = Captures.Value[at0]; child("captures", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Captures.Value[at0]!, replacement => Captures.Value[at0] = (BirInlineCapture)replacement)); } }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (Result.HasValue) { child("result", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -18213,6 +19313,14 @@ internal sealed record BirStackAllocation : BirGraphNode, IBirExpression, IBirAt
         if (Count.HasValue) { visit("count", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Count.Value!, replacement => Count = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Count.HasValue) { child("count", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Count.Value!, replacement => Count = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -18343,6 +19451,16 @@ internal sealed record BirStackGet : BirGraphNode, IBirExpression, IBirAttribute
         if (Len.HasValue) { visit("len", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Len.Value!, replacement => Len = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Index.HasValue) { visit("index", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Ptr.HasValue) { child("ptr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Len.HasValue) { child("len", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Len.Value!, replacement => Len = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Index.HasValue) { child("index", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -18504,6 +19622,17 @@ internal sealed record BirStackSet : BirGraphNode, IBirExpression, IBirAttribute
         if (Index.HasValue) { visit("index", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Ptr.HasValue) { child("ptr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Len.HasValue) { child("len", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Len.Value!, replacement => Len = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Index.HasValue) { child("index", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Index.Value!, replacement => Index = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -18676,6 +19805,15 @@ internal sealed record BirStackAsSpan : BirGraphNode, IBirExpression, IBirAttrib
         if (Len.HasValue) { visit("len", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Len.Value!, replacement => Len = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Ptr.HasValue) { child("ptr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Len.HasValue) { child("len", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Len.Value!, replacement => Len = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -18821,6 +19959,16 @@ internal sealed record BirInlineReceivers : BirGraphValue
         if (Dispatch.HasValue) { visit("dispatch", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Dispatch.Value!, replacement => Dispatch = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (DispatchTypeArgs.HasValue) DispatchTypeArgs = OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => rewrite("dispatchTypeArgs", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (DispatchOwnerTypeArgs.HasValue) DispatchOwnerTypeArgs = OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => rewrite("dispatchOwnerTypeArgs", BirGenericFrameRole.Lexical, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Extension.HasValue) { child("extension", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Extension.Value!, replacement => Extension = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Dispatch.HasValue) { child("dispatch", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Dispatch.Value!, replacement => Dispatch = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (DispatchTypeArgs.HasValue) DispatchTypeArgs = OptionalField<TypeNode[]>.Of(vector("dispatchTypeArgs", BirPhysicalTypeRole.Structural, DispatchTypeArgs.Value));
+        if (DispatchOwnerTypeArgs.HasValue) DispatchOwnerTypeArgs = OptionalField<TypeNode[]>.Of(vector("dispatchOwnerTypeArgs", BirPhysicalTypeRole.Structural, DispatchOwnerTypeArgs.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -19001,6 +20149,20 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         if (RetType.HasValue) RetType = OptionalField<TypeNode>.Of(rewrite("retType", BirGenericFrameRole.Lexical, RetType.Value));
         if (ParamSig.HasValue) ParamSig = OptionalField<TypeNode[]>.Of(ParamSig.Value.Select(item0 => rewrite("paramSig", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (PreparedDefaults.HasValue) { for (var index0 = 0; index0 < PreparedDefaults.Value.Length; index0++) { var at0 = index0; var child0 = PreparedDefaults.Value[at0]; if (child0 is not null) { visit("preparedDefaults", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)PreparedDefaults.Value[at0]!, replacement => PreparedDefaults.Value[at0] = (IBirExpression)replacement)); } } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Callee.HasValue) Callee = OptionalField<TypeNode>.Of(type("callee", BirPhysicalTypeRole.Structural, Callee.Value));
+        if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(type("owner", BirPhysicalTypeRole.Owner, Owner.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (Recvs.HasValue) { child("recvs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recvs.Value!, replacement => Recvs = OptionalField<BirInlineReceivers>.Of((BirInlineReceivers)replacement))); }
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; if (child0 is not null) { child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } } }
+        if (RetType.HasValue) RetType = OptionalField<TypeNode>.Of(type("retType", BirPhysicalTypeRole.Structural, RetType.Value));
+        if (ParamSig.HasValue) ParamSig = OptionalField<TypeNode[]>.Of(vector("paramSig", BirPhysicalTypeRole.Structural, ParamSig.Value));
+        if (PreparedDefaults.HasValue) { for (var index0 = 0; index0 < PreparedDefaults.Value.Length; index0++) { var at0 = index0; var child0 = PreparedDefaults.Value[at0]; if (child0 is not null) { child("preparedDefaults", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)PreparedDefaults.Value[at0]!, replacement => PreparedDefaults.Value[at0] = (IBirExpression)replacement)); } } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -19309,6 +20471,32 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         if (InvokeRef.HasValue) { visit("invokeRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (CalleeOwner.HasValue) CalleeOwner = OptionalField<TypeNode>.Of(type("calleeOwner", BirPhysicalTypeRole.Value, CalleeOwner.Value));
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberMethodTypeParams.HasValue) { for (var index0 = 0; index0 < MemberMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberMethodTypeParams.Value[at0]; child("memberMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberMethodTypeParams.Value[at0]!, replacement => MemberMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(vector("memberSignature", BirPhysicalTypeRole.Value, MemberSignature.Value));
+        if (MemberReturnType.HasValue) MemberReturnType = OptionalField<TypeNode>.Of(type("memberReturnType", BirPhysicalTypeRole.Structural, MemberReturnType.Value));
+        if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(type("dotktDelegateSlot", BirPhysicalTypeRole.Structural, DotktDelegateSlot.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (DelegateCtorRef.HasValue) { child("delegateCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DelegateCtorRef.Value!, replacement => DelegateCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CalleeRet.HasValue) CalleeRet = OptionalField<TypeNode>.Of(type("calleeRet", BirPhysicalTypeRole.Structural, CalleeRet.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (InvokeRef.HasValue) { child("invokeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -19730,6 +20918,13 @@ internal sealed record BirByRefOf : BirGraphNode, IBirExpression, IBirAttributeV
     {
         if (Inner.HasValue) { visit("inner", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Inner.Value!, replacement => Inner = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Inner.HasValue) { child("inner", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Inner.Value!, replacement => Inner = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -19844,6 +21039,14 @@ internal sealed record BirByRefLoad : BirGraphNode, IBirExpression, IBirAttribut
     {
         if (Ptr.HasValue) { visit("ptr", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Ptr.HasValue) { child("ptr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -19982,6 +21185,15 @@ internal sealed record BirByRefStore : BirGraphNode, IBirExpression, IBirAttribu
         if (Ptr.HasValue) { visit("ptr", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Ptr.HasValue) { child("ptr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Ptr.Value!, replacement => Ptr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -20127,6 +21339,13 @@ internal sealed record BirReturnExpression : BirGraphNode, IBirExpression, IBirA
     {
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -20235,6 +21454,12 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Of.HasValue) { visit((string)Of.Value); }
@@ -20334,6 +21559,13 @@ internal sealed record BirPropertyFunction : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Iface.HasValue) Iface = OptionalField<TypeNode>.Of(rewrite("iface", BirGenericFrameRole.Lexical, Iface.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Iface.HasValue) Iface = OptionalField<TypeNode>.Of(type("iface", BirPhysicalTypeRole.Value, Iface.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -20449,6 +21681,17 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -20574,6 +21817,14 @@ internal sealed record BirObjectEquals : BirGraphNode, IBirExpression, IBirAttri
         if (Lhs.HasValue) { visit("lhs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Lhs.Value!, replacement => Lhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Rhs.HasValue) { visit("rhs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Rhs.Value!, replacement => Rhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Lhs.HasValue) { child("lhs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Lhs.Value!, replacement => Lhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Rhs.HasValue) { child("rhs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Rhs.Value!, replacement => Rhs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -20697,6 +21948,13 @@ internal sealed record BirExpressionStatement : BirGraphNode, IBirStatement
     {
         if (Expr.HasValue) { visit("expr", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Expr.HasValue) { child("expr", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Expr.Value!, replacement => Expr = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -20805,6 +22063,13 @@ internal sealed record BirThrowExpression : BirGraphNode, IBirExpression, IBirAt
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -20915,6 +22180,13 @@ internal sealed record BirUnaryOperation : BirGraphNode, IBirExpression, IBirAtt
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -21047,6 +22319,21 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
         if (Then.HasValue) { visit("then", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Then.Value!, replacement => Then = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Else.HasValue) { visit("else", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Else.Value!, replacement => Else = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Cond.HasValue) { child("cond", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Then.HasValue) { child("then", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Then.Value!, replacement => Then = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Else.HasValue) { child("else", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Else.Value!, replacement => Else = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -21231,6 +22518,15 @@ internal sealed record BirNullableHasValue : BirGraphNode, IBirExpression, IBirA
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (HasValueRef.HasValue) { visit("hasValueRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)HasValueRef.Value!, replacement => HasValueRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (HasValueRef.HasValue) { child("hasValueRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)HasValueRef.Value!, replacement => HasValueRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -21374,6 +22670,15 @@ internal sealed record BirNullableValue : BirGraphNode, IBirExpression, IBirAttr
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (ValueRef.HasValue) { visit("valueRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ValueRef.Value!, replacement => ValueRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (ValueRef.HasValue) { child("valueRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ValueRef.Value!, replacement => ValueRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -21526,6 +22831,17 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -21668,6 +22984,18 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Values.HasValue) { for (var index0 = 0; index0 < Values.Value.Length; index0++) { var at0 = index0; var child0 = Values.Value[at0]; visit("values", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Values.Value[at0]!, replacement => Values.Value[at0] = (BirPhysicalEnumValue)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Values.HasValue) { for (var index0 = 0; index0 < Values.Value.Length; index0++) { var at0 = index0; var child0 = Values.Value[at0]; child("values", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Values.Value[at0]!, replacement => Values.Value[at0] = (BirPhysicalEnumValue)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -21807,6 +23135,14 @@ internal sealed record BirCompanionValue : BirGraphNode, IBirExpression, IBirAtt
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(rewrite("ownerType", BirGenericFrameRole.Lexical, OwnerType.Value));
         if (CompanionType.HasValue) CompanionType = OptionalField<TypeNode>.Of(rewrite("companionType", BirGenericFrameRole.Lexical, CompanionType.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (CompanionType.HasValue) CompanionType = OptionalField<TypeNode>.Of(type("companionType", BirPhysicalTypeRole.Structural, CompanionType.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (OwnerType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)OwnerType.Value, visit); }
@@ -21943,6 +23279,17 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -22068,6 +23415,14 @@ internal sealed record BirNullableNull : BirGraphNode, IBirExpression, IBirAttri
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
         if (CtorRef.HasValue) { visit("ctorRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (CtorRef.HasValue) { child("ctorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Elem.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Elem.Value, visit); }
@@ -22190,6 +23545,12 @@ internal sealed record BirDefaultParameter : BirGraphNode, IBirExpression, IBirA
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -22285,6 +23646,12 @@ internal sealed record BirDefaultReceiver : BirGraphNode, IBirExpression, IBirAt
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -22392,6 +23759,16 @@ internal sealed record BirBindingReference : BirGraphNode, IBirExpression, IBirA
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -22515,6 +23892,14 @@ internal sealed record BirLocalFunctionReference : BirGraphNode, IBirExpression,
     {
         if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(rewrite("funcType", BirGenericFrameRole.Lexical, FuncType.Value));
         if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => rewrite("typeArgs", BirGenericFrameRole.Lexical, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -22665,6 +24050,21 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         if (Result.HasValue) { visit("result", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Stmts.HasValue) { for (var index0 = 0; index0 < Stmts.Value.Length; index0++) { var at0 = index0; var child0 = Stmts.Value[at0]; child("stmts", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Stmts.Value[at0]!, replacement => Stmts.Value[at0] = (IBirStatement)replacement)); } }
+        if (Result.HasValue) { child("result", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Result.Value!, replacement => Result = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -22893,6 +24293,28 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (MemberRef.HasValue) { visit("memberRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (PropertyFunction.HasValue) { child("propertyFunction", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)PropertyFunction.Value!, replacement => PropertyFunction = OptionalField<BirPropertyFunction>.Of((BirPropertyFunction)replacement))); }
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberMethodTypeParams.HasValue) { for (var index0 = 0; index0 < MemberMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberMethodTypeParams.Value[at0]; child("memberMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberMethodTypeParams.Value[at0]!, replacement => MemberMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(vector("memberSignature", BirPhysicalTypeRole.Value, MemberSignature.Value));
+        if (MemberReturnType.HasValue) MemberReturnType = OptionalField<TypeNode>.Of(type("memberReturnType", BirPhysicalTypeRole.Structural, MemberReturnType.Value));
+        if (NullablePendingWitnesses.HasValue) { for (var index0 = 0; index0 < NullablePendingWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = NullablePendingWitnesses.Value[at0]; child("nullablePendingWitnesses", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)NullablePendingWitnesses.Value[at0]!, replacement => NullablePendingWitnesses.Value[at0] = (IBirExpression)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -23190,6 +24612,13 @@ internal sealed record BirThrow : BirGraphNode, IBirStatement
     {
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -23298,6 +24727,13 @@ internal sealed record BirIf : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Branches.HasValue) { for (var index0 = 0; index0 < Branches.Value.Length; index0++) { var at0 = index0; var child0 = Branches.Value[at0]; visit("branches", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Branches.Value[at0]!, replacement => Branches.Value[at0] = (BirBranch)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Branches.HasValue) { for (var index0 = 0; index0 < Branches.Value.Length; index0++) { var at0 = index0; var child0 = Branches.Value[at0]; child("branches", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Branches.Value[at0]!, replacement => Branches.Value[at0] = (BirBranch)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -23408,6 +24844,13 @@ internal sealed record BirReturn : BirGraphNode, IBirStatement
     {
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -23517,6 +24960,13 @@ internal sealed record BirSetLocal : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Value.HasValue) { visit("value", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -23681,6 +25131,24 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => rewrite("calleeParams", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberType.HasValue) MemberType = OptionalField<TypeNode>.Of(type("memberType", BirPhysicalTypeRole.Structural, MemberType.Value));
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -23983,6 +25451,13 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
     {
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -24099,6 +25574,13 @@ internal sealed record BirBranchIf : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Cond.HasValue) { visit("cond", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Cond.HasValue) { child("cond", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -24221,6 +25703,14 @@ internal sealed record BirCatch : BirGraphValue
     {
         if (ExcType.HasValue) ExcType = OptionalField<TypeNode>.Of(rewrite("excType", BirGenericFrameRole.Lexical, ExcType.Value));
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (ExcType.HasValue) ExcType = OptionalField<TypeNode>.Of(type("excType", BirPhysicalTypeRole.Value, ExcType.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -24365,6 +25855,20 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Catches.HasValue) { for (var index0 = 0; index0 < Catches.Value.Length; index0++) { var at0 = index0; var child0 = Catches.Value[at0]; visit("catches", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Catches.Value[at0]!, replacement => Catches.Value[at0] = (BirCatch)replacement)); } }
         if (Finally.HasValue) { for (var index0 = 0; index0 < Finally.Value.Length; index0++) { var at0 = index0; var child0 = Finally.Value[at0]; visit("finally", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Finally.Value[at0]!, replacement => Finally.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (Catches.HasValue) { for (var index0 = 0; index0 < Catches.Value.Length; index0++) { var at0 = index0; var child0 = Catches.Value[at0]; child("catches", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Catches.Value[at0]!, replacement => Catches.Value[at0] = (BirCatch)replacement)); } }
+        if (Finally.HasValue) { for (var index0 = 0; index0 < Finally.Value.Length; index0++) { var at0 = index0; var child0 = Finally.Value[at0]; child("finally", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Finally.Value[at0]!, replacement => Finally.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -24542,6 +26046,15 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(rewrite("elem", BirGenericFrameRole.Lexical, Elem.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Array.HasValue) { child("array", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Array.Value!, replacement => Array = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Label.HasValue) { visit((string)Label.Value); }
@@ -24710,6 +26223,17 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
         if (SrcType.HasValue) SrcType = OptionalField<TypeNode>.Of(rewrite("srcType", BirGenericFrameRole.Lexical, SrcType.Value));
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (Fallback.HasValue) { visit("fallback", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Fallback.Value!, replacement => Fallback = OptionalField<BirBlock>.Of((BirBlock)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Src.HasValue) { child("src", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Src.Value!, replacement => Src = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (SrcType.HasValue) SrcType = OptionalField<TypeNode>.Of(type("srcType", BirPhysicalTypeRole.Structural, SrcType.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (Fallback.HasValue) { child("fallback", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Fallback.Value!, replacement => Fallback = OptionalField<BirBlock>.Of((BirBlock)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -24906,6 +26430,18 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Init.HasValue) { visit("init", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Init.Value!, replacement => Init = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Init.HasValue) { child("init", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Init.Value!, replacement => Init = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        SuspendFnTypePre = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -25069,6 +26605,17 @@ internal sealed record BirLocal : BirGraphNode, IBirExpression, IBirAttributeVal
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -25208,6 +26755,16 @@ internal sealed record BirThis : BirGraphNode, IBirExpression, IBirAttributeValu
     {
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -25321,6 +26878,13 @@ internal sealed record BirSourcePoint : BirGraphNode, IBirStatement
     {
         if (Span.HasValue) { visit("span", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Span.Value!, replacement => Span = OptionalField<BirSourceSpan>.Of((BirSourceSpan)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Span.HasValue) { child("span", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Span.Value!, replacement => Span = OptionalField<BirSourceSpan>.Of((BirSourceSpan)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -25431,6 +26995,12 @@ internal sealed record BirBreak : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Label.HasValue) { visit((string)Label.Value); }
@@ -25535,6 +27105,12 @@ internal sealed record BirContinue : BirGraphNode, IBirStatement
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -25642,6 +27218,12 @@ internal sealed record BirGoto : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -25742,6 +27324,12 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -25839,6 +27427,13 @@ internal sealed record BirBasicEnumCarrier : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; visit("entries", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirBasicEnumCarrierEntry)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Entries.HasValue) { for (var index0 = 0; index0 < Entries.Value.Length; index0++) { var at0 = index0; var child0 = Entries.Value[at0]; child("entries", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Entries.Value[at0]!, replacement => Entries.Value[at0] = (BirBasicEnumCarrierEntry)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -25951,6 +27546,12 @@ internal sealed record BirBasicEnumCarrierEntry : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Name.HasValue) { visit((string)Name.Value); }
@@ -26056,6 +27657,12 @@ internal sealed record BirSourceSpan : BirGraphValue
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
     }
     public override void VisitStringFields(Action<string> visit)
@@ -26170,6 +27777,14 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
     {
         if (Cond.HasValue) { visit("cond", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Cond.HasValue) { child("cond", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -26315,6 +27930,15 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
         if (From.HasValue) { visit("from", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)From.Value!, replacement => From = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (To.HasValue) { visit("to", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)To.Value!, replacement => To = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (From.HasValue) { child("from", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)From.Value!, replacement => From = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (To.HasValue) { child("to", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)To.Value!, replacement => To = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -26494,6 +28118,16 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         if (AccessOwner.HasValue) AccessOwner = OptionalField<TypeNode>.Of(rewrite("accessOwner", BirGenericFrameRole.Lexical, AccessOwner.Value));
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
         if (RangeType.HasValue) RangeType = OptionalField<TypeNode>.Of(rewrite("rangeType", BirGenericFrameRole.Lexical, RangeType.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Range.HasValue) { child("range", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Range.Value!, replacement => Range = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (AccessOwner.HasValue) AccessOwner = OptionalField<TypeNode>.Of(type("accessOwner", BirPhysicalTypeRole.Value, AccessOwner.Value));
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (RangeType.HasValue) RangeType = OptionalField<TypeNode>.Of(type("rangeType", BirPhysicalTypeRole.Structural, RangeType.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -26680,6 +28314,14 @@ internal sealed record BirConvert : BirGraphNode, IBirExpression, IBirAttributeV
         if (To.HasValue) To = OptionalField<TypeNode>.Of(rewrite("to", BirGenericFrameRole.Lexical, To.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (To.HasValue) To = OptionalField<TypeNode>.Of(type("to", BirPhysicalTypeRole.Value, To.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (To.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)To.Value, visit); }
@@ -26818,6 +28460,20 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
         if (CtorRef.HasValue) { visit("ctorRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (AddRef.HasValue) { visit("addRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)AddRef.Value!, replacement => AddRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.GenericArgument, Elem.Value));
+        if (Elems.HasValue) { for (var index0 = 0; index0 < Elems.Value.Length; index0++) { var at0 = index0; var child0 = Elems.Value[at0]; child("elems", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Elems.Value[at0]!, replacement => Elems.Value[at0] = (IBirExpression)replacement)); } }
+        if (CtorRef.HasValue) { child("ctorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CtorRef.Value!, replacement => CtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AddRef.HasValue) { child("addRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)AddRef.Value!, replacement => AddRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -27010,6 +28666,19 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => rewrite("memberSignature", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(vector("memberSignature", BirPhysicalTypeRole.Value, MemberSignature.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -27305,6 +28974,39 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(rewrite("_capturedGenericResult", BirGenericFrameRole.Lexical, _capturedGenericResult.Value));
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Iface.HasValue) Iface = OptionalField<TypeNode>.Of(type("iface", BirPhysicalTypeRole.Value, Iface.Value));
+        if (RecvType.HasValue) RecvType = OptionalField<TypeNode>.Of(type("recvType", BirPhysicalTypeRole.Value, RecvType.Value));
+        if (CalleeRet.HasValue) CalleeRet = OptionalField<TypeNode>.Of(type("calleeRet", BirPhysicalTypeRole.Structural, CalleeRet.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (MemberOwnerTypeParams.HasValue) { for (var index0 = 0; index0 < MemberOwnerTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberOwnerTypeParams.Value[at0]; child("memberOwnerTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberOwnerTypeParams.Value[at0]!, replacement => MemberOwnerTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberMethodTypeParams.HasValue) { for (var index0 = 0; index0 < MemberMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = MemberMethodTypeParams.Value[at0]; child("memberMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberMethodTypeParams.Value[at0]!, replacement => MemberMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberSignature.HasValue) MemberSignature = OptionalField<TypeNode[]>.Of(vector("memberSignature", BirPhysicalTypeRole.Value, MemberSignature.Value));
+        if (MemberReturnType.HasValue) MemberReturnType = OptionalField<TypeNode>.Of(type("memberReturnType", BirPhysicalTypeRole.Structural, MemberReturnType.Value));
+        if (ShapeTypes.HasValue) ShapeTypes = OptionalField<TypeNode[]>.Of(vector("shapeTypes", BirPhysicalTypeRole.Structural, ShapeTypes.Value));
+        if (NullablePendingWitnesses.HasValue) { for (var index0 = 0; index0 < NullablePendingWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = NullablePendingWitnesses.Value[at0]; child("nullablePendingWitnesses", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)NullablePendingWitnesses.Value[at0]!, replacement => NullablePendingWitnesses.Value[at0] = (IBirExpression)replacement)); } }
+        if (FunctionCallSignature.HasValue) FunctionCallSignature = OptionalField<TypeNode[]>.Of(vector("functionCallSignature", BirPhysicalTypeRole.Structural, FunctionCallSignature.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -27834,6 +29536,26 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -28140,6 +29862,27 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -28428,6 +30171,13 @@ internal sealed record BirClrStaticField : BirGraphNode, IBirExpression, IBirAtt
     {
         if (FieldRef.HasValue) { visit("fieldRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (FieldRef.HasValue) { child("fieldRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)FieldRef.Value!, replacement => FieldRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
     }
@@ -28549,6 +30299,17 @@ internal sealed record BirEventAccessorBody : BirGraphNode, IBirStatement
         if (CombineRef.HasValue) { visit("combineRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CombineRef.Value!, replacement => CombineRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (RemoveRef.HasValue) { visit("removeRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)RemoveRef.Value!, replacement => RemoveRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (CompareExchangeRef.HasValue) { visit("compareExchangeRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CompareExchangeRef.Value!, replacement => CompareExchangeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(type("delegateType", BirPhysicalTypeRole.Value, DelegateType.Value));
+        if (InvokeRef.HasValue) { child("invokeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CombineRef.HasValue) { child("combineRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CombineRef.Value!, replacement => CombineRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (RemoveRef.HasValue) { child("removeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)RemoveRef.Value!, replacement => RemoveRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CompareExchangeRef.HasValue) { child("compareExchangeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CompareExchangeRef.Value!, replacement => CompareExchangeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -28771,6 +30532,22 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(rewrite("delegateType", BirGenericFrameRole.Lexical, DelegateType.Value));
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Handler.HasValue) { child("handler", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Handler.Value!, replacement => Handler = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(type("delegateType", BirPhysicalTypeRole.Value, DelegateType.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -29083,6 +30860,22 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(rewrite("delegateType", BirGenericFrameRole.Lexical, DelegateType.Value));
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Handler.HasValue) { child("handler", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Handler.Value!, replacement => Handler = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (DelegateType.HasValue) DelegateType = OptionalField<TypeNode>.Of(type("delegateType", BirPhysicalTypeRole.Value, DelegateType.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -29418,6 +31211,31 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
     }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
@@ -29835,6 +31653,31 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -30232,6 +32075,27 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", BirPhysicalTypeRole.Return, Ret.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -30604,6 +32468,27 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Value.HasValue) { child("value", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Value.Value!, replacement => Value = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; child("_capturedGenericArgument", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
+        if (_capturedGenericResult.HasValue) _capturedGenericResult = OptionalField<TypeNode>.Of(type("_capturedGenericResult", BirPhysicalTypeRole.Value, _capturedGenericResult.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -30934,6 +32819,20 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         if (InvokeRef.HasValue) { visit("invokeRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (InvokeRef.HasValue) { child("invokeRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)InvokeRef.Value!, replacement => InvokeRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        Sty = default;
+    }
     public override void ClearResultTypeStamp() => Sty = default;
     public override void VisitStringFields(Action<string> visit)
     {
@@ -31111,6 +33010,15 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
         if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(rewrite("underlying", BirGenericFrameRole.Lexical, Underlying.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Underlying.HasValue) Underlying = OptionalField<TypeNode>.Of(type("underlying", BirPhysicalTypeRole.Structural, Underlying.Value));
+        if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
@@ -31267,6 +33175,20 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         if (CurrentRef.HasValue) { visit("currentRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CurrentRef.Value!, replacement => CurrentRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (CurrentErasedRef.HasValue) { visit("currentErasedRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)CurrentErasedRef.Value!, replacement => CurrentErasedRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (MoveNextRef.HasValue) { visit("moveNextRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)MoveNextRef.Value!, replacement => MoveNextRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Elem.HasValue) Elem = OptionalField<TypeNode>.Of(type("elem", BirPhysicalTypeRole.Value, Elem.Value));
+        if (Src.HasValue) { child("src", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Src.Value!, replacement => Src = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+        if (EnumerableGetRef.HasValue) { child("enumerableGetRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)EnumerableGetRef.Value!, replacement => EnumerableGetRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (EnumerableGetErasedRef.HasValue) { child("enumerableGetErasedRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)EnumerableGetErasedRef.Value!, replacement => EnumerableGetErasedRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CurrentRef.HasValue) { child("currentRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CurrentRef.Value!, replacement => CurrentRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (CurrentErasedRef.HasValue) { child("currentErasedRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)CurrentErasedRef.Value!, replacement => CurrentErasedRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (MoveNextRef.HasValue) { child("moveNextRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MoveNextRef.Value!, replacement => MoveNextRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -31556,6 +33478,26 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(rewrite("dotktDelegateSlot", BirGenericFrameRole.Lexical, DotktDelegateSlot.Value));
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (ClrType.HasValue) ClrType = OptionalField<TypeNode>.Of(type("clrType", BirPhysicalTypeRole.Value, ClrType.Value));
+        if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (DelegateCtorRef.HasValue) { child("delegateCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DelegateCtorRef.Value!, replacement => DelegateCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(type("dotktDelegateSlot", BirPhysicalTypeRole.Structural, DotktDelegateSlot.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -31917,6 +33859,26 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (FuncType.HasValue) FuncType = OptionalField<TypeNode>.Of(type("funcType", BirPhysicalTypeRole.Delegate, FuncType.Value));
+        if (ClrType.HasValue) ClrType = OptionalField<TypeNode>.Of(type("clrType", BirPhysicalTypeRole.Value, ClrType.Value));
+        if (TypeArgs.HasValue) TypeArgs = OptionalField<TypeNode[]>.Of(vector("typeArgs", BirPhysicalTypeRole.GenericArgument, TypeArgs.Value));
+        if (DelegateCtorRef.HasValue) { child("delegateCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)DelegateCtorRef.Value!, replacement => DelegateCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+        if (AccessorOwner.HasValue) AccessorOwner = OptionalField<TypeNode>.Of(type("accessorOwner", BirPhysicalTypeRole.Value, AccessorOwner.Value));
+        if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
+        if (CalleeParams.HasValue) CalleeParams = OptionalField<TypeNode[]>.Of(vector("calleeParams", BirPhysicalTypeRole.Value, CalleeParams.Value));
+        if (ArgTypes.HasValue) ArgTypes = OptionalField<TypeNode[]>.Of(vector("argTypes", BirPhysicalTypeRole.Value, ArgTypes.Value));
+        if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (DotktDelegateSlot.HasValue) DotktDelegateSlot = OptionalField<TypeNode>.Of(type("dotktDelegateSlot", BirPhysicalTypeRole.Structural, DotktDelegateSlot.Value));
+        if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
+        if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (FuncType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)FuncType.Value, visit); }
@@ -32219,6 +34181,14 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
         if (Count.HasValue) { visit("count", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Count.Value!, replacement => Count = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Count.HasValue) { child("count", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Count.Value!, replacement => Count = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Var.HasValue) { visit((string)Var.Value); }
@@ -32372,6 +34342,15 @@ internal sealed record BirPInvoke : BirGraphValue
         if (CallingConventionType.HasValue) CallingConventionType = OptionalField<TypeNode>.Of(rewrite("callingConventionType", BirGenericFrameRole.Lexical, CallingConventionType.Value));
         if (CharSetType.HasValue) CharSetType = OptionalField<TypeNode>.Of(rewrite("charSetType", BirGenericFrameRole.Lexical, CharSetType.Value));
         if (AttributeCtorRef.HasValue) { visit("attributeCtorRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)AttributeCtorRef.Value!, replacement => AttributeCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (CallingConventionType.HasValue) CallingConventionType = OptionalField<TypeNode>.Of(type("callingConventionType", BirPhysicalTypeRole.Structural, CallingConventionType.Value));
+        if (CharSetType.HasValue) CharSetType = OptionalField<TypeNode>.Of(type("charSetType", BirPhysicalTypeRole.Structural, CharSetType.Value));
+        if (AttributeCtorRef.HasValue) { child("attributeCtorRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)AttributeCtorRef.Value!, replacement => AttributeCtorRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -32563,6 +34542,21 @@ internal sealed record BirMethodImpl : BirGraphValue
         if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; visit("typeParams", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
         if (MemberRef.HasValue) { visit("memberRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(type("owner", BirPhysicalTypeRole.Owner, Owner.Value));
+        if (Params.HasValue) Params = OptionalField<TypeNode[]>.Of(vector("params", BirPhysicalTypeRole.Value, Params.Value));
+        if (Ret.HasValue) Ret = OptionalField<TypeNode>.Of(type("ret", (DotktValueReturn.OrDefault() ? BirPhysicalTypeRole.Value : BirPhysicalTypeRole.Return), Ret.Value));
+        if (TypeParams.HasValue) { for (var index0 = 0; index0 < TypeParams.Value.Length; index0++) { var at0 = index0; var child0 = TypeParams.Value[at0]; child("typeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)TypeParams.Value[at0]!, replacement => TypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (MemberRef.HasValue) { child("memberRef", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
+    }
+    public override void ConsumePhysicalSourceFacts()
+    {
+        DotktValueReturn = default;
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Owner.Value, visit); }
@@ -32747,6 +34741,14 @@ internal sealed record BirInterfaceSlotSet : BirGraphValue
         if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(rewrite("owner", BirGenericFrameRole.Lexical, Owner.Value));
         if (Slots.HasValue) { for (var index0 = 0; index0 < Slots.Value.Length; index0++) { var at0 = index0; var child0 = Slots.Value[at0]; visit("slots", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Slots.Value[at0]!, replacement => Slots.Value[at0] = (BirMemberReference)replacement)); } }
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Owner.HasValue) Owner = OptionalField<TypeNode>.Of(type("owner", BirPhysicalTypeRole.Owner, Owner.Value));
+        if (Slots.HasValue) { for (var index0 = 0; index0 < Slots.Value.Length; index0++) { var at0 = index0; var child0 = Slots.Value[at0]; child("slots", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Slots.Value[at0]!, replacement => Slots.Value[at0] = (BirMemberReference)replacement)); } }
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Owner.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Owner.Value, visit); }
@@ -32873,6 +34875,14 @@ internal sealed record BirBranch : BirGraphValue
     {
         if (Cond.HasValue) { visit("cond", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; visit("body", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Cond.HasValue) { child("cond", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Cond.Value!, replacement => Cond = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
+        if (Body.HasValue) { for (var index0 = 0; index0 < Body.Value.Length; index0++) { var at0 = index0; var child0 = Body.Value[at0]; child("body", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Body.Value[at0]!, replacement => Body.Value[at0] = (IBirStatement)replacement)); } }
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -33004,6 +35014,12 @@ internal sealed record BirPhysicalEnumValue : BirGraphValue
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
     }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
     public override void VisitStringFields(Action<string> visit)
     {
         if (Underlying.HasValue) { visit((string)Underlying.Value); }
@@ -33116,6 +35132,14 @@ internal sealed record BirTypeParameter : BirGraphValue
     {
         if (Constraints.HasValue) Constraints = OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => rewrite("constraints", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (ErasedInnerConstraints.HasValue) ErasedInnerConstraints = OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => rewrite("erasedInnerConstraints", BirGenericFrameRole.Lexical, item0)).ToArray());
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (Constraints.HasValue) Constraints = OptionalField<TypeNode[]>.Of(vector("constraints", BirPhysicalTypeRole.Value, Constraints.Value));
+        if (ErasedInnerConstraints.HasValue) ErasedInnerConstraints = OptionalField<TypeNode[]>.Of(vector("erasedInnerConstraints", BirPhysicalTypeRole.Structural, ErasedInnerConstraints.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -33281,6 +35305,15 @@ internal sealed record BirMemberReference : BirGraphValue
         if (DeclaringType.HasValue) DeclaringType = OptionalField<TypeNode>.Of(rewrite("declaringType", BirGenericFrameRole.Lexical, DeclaringType.Value));
         if (ParameterTypes.HasValue) ParameterTypes = OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => rewrite("parameterTypes", BirGenericFrameRole.Lexical, item0)).ToArray());
         if (ReturnType.HasValue) ReturnType = OptionalField<TypeNode>.Of(rewrite("returnType", BirGenericFrameRole.Lexical, ReturnType.Value));
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+        if (DeclaringType.HasValue) DeclaringType = OptionalField<TypeNode>.Of(type("declaringType", BirPhysicalTypeRole.Owner, DeclaringType.Value));
+        if (ParameterTypes.HasValue) ParameterTypes = OptionalField<TypeNode[]>.Of(vector("parameterTypes", BirPhysicalTypeRole.Value, ParameterTypes.Value));
+        if (ReturnType.HasValue) ReturnType = OptionalField<TypeNode>.Of(type("returnType", BirPhysicalTypeRole.Structural, ReturnType.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -33623,5 +35656,74 @@ internal static class BirCallConversion
         CalleeParams = source.CalleeParams,
         ResolvedMemberParams = source.ResolvedMemberParams,
         ResolvedMemberReturn = source.ResolvedMemberReturn,
+    };
+}
+
+// Exact shared domain of the physical projection, generated from the maintained profile.
+internal static class BirPhysicalTypeProfile
+{
+    internal static IReadOnlySet<string> ValueFields { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "type",
+        "ownerType",
+        "calleeOwner",
+        "ret",
+        "suspendRet",
+        "base",
+        "interfaces",
+        "argTypes",
+        "delegationSig",
+        "memberSignature",
+        "calleeParams",
+        "functionSignatureType",
+        "dynRet",
+        "funcType",
+        "typeArgs",
+        "constraints",
+        "recvType",
+        "iface",
+        "excType",
+        "_capturedGenericResult",
+        "iterType",
+        "accessOwner",
+        "accessorOwner",
+        "elem",
+        "samType",
+        "closureType",
+        "resolvedMemberParams",
+        "elemType",
+        "accType",
+        "clrType",
+        "tupleType",
+        "parameterTypes",
+        "delegateType",
+        "params",
+    };
+    internal static IReadOnlySet<string> ReturnFields { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "ret",
+        "dynRet",
+        "suspendRet",
+        "getRet",
+        "setRet",
+    };
+    internal static IReadOnlySet<string> ConsumedFields { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "kotlinSourceMember",
+        "dotktValueReturn",
+        "functionValueRestoration",
+        "overrides",
+        "fakeOverride",
+        "inheritedImplementation",
+        "inheritedDefaultAccessors",
+        "inheritedDefaultMethods",
+        "inheritedClassMethods",
+        "suspendSourceParams",
+        "suspendSourceRet",
+        "suspendTaskResult",
+        "existentialSourceMember",
+        "sty",
+        "suspendFnTypePre",
+        "retSuspendFnTypePre",
     };
 }

@@ -132,7 +132,12 @@
       "oneOf": [{ "$ref": "#/$defs/birClassDefinition" }, { "$ref": "#/$defs/birInterfaceDefinition" }, { "$ref": "#/$defs/birEnumDefinition" }]
     },
     "birFileDeclaration": {
-      "type": "object", "x-dotkt-model": { "name": "BirFileDeclaration", "domain": "birCoreValues", "loweringProperties": {
+      "type": "object", "x-dotkt-model": { "name": "BirFileDeclaration", "domain": "birCoreValues", "physicalProjection": {
+        "$comment": "The existing physical type owner's exact field domain. Unlisted structured TypeNode fields retain structural traversal, not blanket type lowering. Encoded codecs/facts remain opaque. params is a value vector only when the maintained field is TypeNode[]; declaration parameter records remain children. memberSignature is the exact constructor declaration vector, not a source-name inference.",
+        "valueFields": ["type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig", "memberSignature", "calleeParams", "functionSignatureType", "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType", "_capturedGenericResult", "iterType", "accessOwner", "accessorOwner", "elem", "samType", "closureType", "resolvedMemberParams", "elemType", "accType", "clrType", "tupleType", "parameterTypes", "delegateType", "params"],
+        "returnFields": ["ret", "dynRet", "suspendRet", "getRet", "setRet"],
+        "consumedFields": ["kotlinSourceMember", "dotktValueReturn", "functionValueRestoration", "overrides", "fakeOverride", "inheritedImplementation", "inheritedDefaultAccessors", "inheritedDefaultMethods", "inheritedClassMethods", "suspendSourceParams", "suspendSourceRet", "suspendTaskResult", "existentialSourceMember", "sty", "suspendFnTypePre", "retSuspendFnTypePre"]
+      }, "loweringProperties": {
         "roundtripMetadataPending": { "type": "boolean" },
         "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
         "attrs": { "x-dotkt-representation-role": "Attributes", "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },

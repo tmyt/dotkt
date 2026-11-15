@@ -215,29 +215,7 @@ static partial class BirTypeLowering
     // that may carry a kotlin.*-looking string but are NOT types (name/value/var/method/id/kind/...) are
     // deliberately excluded — lowering them would corrupt a declaration name or a string literal. `sig` (a
     // comma-joined type list) and `attrs` (attribute applications) get their own handling below.
-    static readonly HashSet<string> TypeKeys = new(StringComparer.Ordinal)
-    {
-        // signature positions (the original TypeProperties set)
-        "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig",
-        // BIR-only exact constructor declaration vector.  UnsafeAccessor consumes it when it rewrites the edge;
-        // otherwise same-unit constructor binding consumes its physically-lowered form after this pass.
-        "memberSignature", "calleeParams", FunctionSignatureIdentity.Key,
-        // expression / statement type positions
-        "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
-        "_capturedGenericResult",
-        "iterType", "accessOwner", "accessorOwner", "elem",
-        "samType", "closureType",
-        // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
-        // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
-        "resolvedMemberParams",
-        // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
-        "elemType", "accType", "clrType", "tupleType", "parameterTypes", "delegateType",
-        // A MethodImpl descriptor's parameter vector (`clrInterfaceImpls`/`clrBaseImpls`) is a RAW array of type
-        // nodes, and ilemit matches it against a method builder keyed by LOWERED declaration params — so it has to
-        // arrive in the same vocabulary. A declaration's own `params` are `{name, type}` objects rather than type
-        // nodes, so they take the ordinary recursive walk exactly as before; only the raw vector changes.
-        "params",
-    };
+    static readonly IReadOnlySet<string> TypeKeys = DotKt.Bir.Lowering.BirPhysicalTypeProfile.ValueFields;
 
     // The RETURN-slot keys. kotlin.Unit is the ONE position-dependent token: kotc's birType change made it emit
     // bare "kotlin.Unit" everywhere (it was "void" in a return slot before). A Unit RETURN is the Kotlin "no value"
@@ -254,10 +232,7 @@ static partial class BirTypeLowering
     // Continuation<T>) — e.g. a callInstance carries ret+dynRet, a newSuspendLambda carries ret+suspendRet. This is
     // the return-position parallel to `TypeKeys` (value-position types). (Dead keys `selRet`/`returnType` — 0 BIR
     // emit, no value ever read — were removed in #37 m5.)
-    static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
-    {
-        "ret", "dynRet", "suspendRet", "getRet", "setRet",
-    };
+    static readonly IReadOnlySet<string> ReturnKeys = DotKt.Bir.Lowering.BirPhysicalTypeProfile.ReturnFields;
 
     static string AliasBcl(string fqn, PhysicalTypeContext context) =>
         context.Aliases.TryGetValue(fqn, out var bcl) ? bcl : null;

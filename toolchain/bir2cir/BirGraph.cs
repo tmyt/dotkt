@@ -60,6 +60,13 @@ internal abstract record BirGraphValue
     public abstract void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit);
+    // Physical projection has a narrower domain than generic/type traversal.
+    // The maintained profile assigns each actual field; encoded facts stay opaque.
+    public abstract void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child);
+    public virtual void ConsumePhysicalSourceFacts() { }
     public abstract void VisitOwnChildSlots(Action<string, BirGenericFrameRole, BirGraphSlot> visit);
     public virtual void ClearResultTypeStamp() { }
     public abstract void VisitStringFields(Action<string> visit);
@@ -176,6 +183,11 @@ internal enum BirRepresentationRole
 {
     Lexical, ValueType, TypeArguments, Element, Return, ResultStamp, DeclaredMemberType,
     Declaration, Constraint, Foreign, TypeParameterDeclarations, Attributes, InheritedImplementation,
+}
+
+internal enum BirPhysicalTypeRole
+{
+    Structural, Value, Return, Owner, Delegate, GenericArgument, Interfaces, Attributes,
 }
 
 internal enum BirRepresentationParameterRole { Owner, Method, SharedCell }
