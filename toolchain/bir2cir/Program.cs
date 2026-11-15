@@ -794,6 +794,9 @@ sealed class Pipeline
             inventory.EmittedTypeFqns, appBuild, localExistentialOwners, isValueFqn, signatures,
             scalarSlots.Parameters, carrierRealization.Declarations.PhysicalDeclarationSources,
             suspendTransitions);
+        // Named Cold also runs in reference builds: the selected id|cold
+        // MethodDef must exist in the reference twin before bodies are squashed.
+        // Lambda bodies need no reference-build state-machine materialization.
         SuspendColdLowering.ApplyNamedSource(suspendModule);
         if (!referenceBuild) SuspendLambdaLowering.ApplyAll(suspendModule);
 
@@ -888,10 +891,10 @@ sealed class Pipeline
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
         var covariantBridgedSlots = module.Preparation.CovariantBridgedSlots;
 
-        // Named Cold and suspend-lambda materialization have already completed
-        // module-wide in the owning prefix, before the sole DOM frontier.
+        // Named Cold and, in non-reference builds, suspend-lambda materialization
+        // have completed module-wide in the owning prefix before the DOM frontier.
 
-        // PHASE 1.7a — RESIDUAL SUSPEND DECLARATIONS. The two phases above leave the `suspend` modifier on exactly the
+        // PHASE 1.7a — RESIDUAL SUSPEND DECLARATIONS. The owning suspend phases leave the `suspend` modifier on exactly the
         // declarations the stdlib self-build retains without a state machine (the Kotlin surface kept beside its cold
         // entry, and the inline coroutine primitives whose call sites are reconstructed inline). Those have no
         // state-machine body, so bir2cir states their physical one — an explicit call-time throw — instead of letting a
@@ -921,8 +924,8 @@ sealed class Pipeline
         // Task member AND a continuation cold entry, and each is a distinct CLR slot. SuspendColdLowering carries the
         // source `overrides` proof onto both generated declarations (renaming it for the cold member), so this single
         // rule emits one exact bridge/MethodImpl per physical obligation without teaching ilemit suspend semantics.
-        // Ref builds skip suspend lowering and normalize their logical declaration here; app and rt builds normalize
-        // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
+        // All builds normalize their final selected Task/cold declarations here; reference bodies are squashed later.
+        // Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
             staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild, genericRepresentations,
             covariantBridgedSlots, localExistentialOwners);
