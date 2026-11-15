@@ -90,7 +90,7 @@ static class PhysicalIdentityConsumptionTests
                 if (change == "continuing-id") method.DeclarationId = "invented";
                 if (change == "metadata-target-replaced-after-seal")
                     method.RoundtripDeclarationIdentity = (BirRoundtripDeclarationIdentity)metadata.DeepClone();
-                if (validator == "value") values.CompleteSourceContinuation(roots, projection);
+                if (validator == "value") values.CompleteSourceContinuation(roots, null, projection);
                 else
                 {
                     UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, roots, null, projection);

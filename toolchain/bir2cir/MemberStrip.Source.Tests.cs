@@ -65,7 +65,7 @@ static partial class MemberStrip
             throw new InvalidOperationException("Typed MemberStrip lost exact retirements, source vectors, property association or exclusions");
         declarations.SealSourceContinuations();
         generic.CompleteSourceContinuation(roots, null, declarations);
-        values.CompleteSourceContinuation(roots, declarations);
+        values.CompleteSourceContinuation(roots, null, declarations);
         UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, roots, null, declarations);
         if (!declarations.IsRetired(captured) || declarations.IsRetired(survivor)
             || !ReferenceEquals(owner.Methods.Value[0], survivor)

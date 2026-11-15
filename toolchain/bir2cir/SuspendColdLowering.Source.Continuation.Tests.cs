@@ -94,7 +94,7 @@ static partial class SuspendColdLowering
             && ReferenceEquals(originalDonor.Source, continuing.Donor),
             "nested retired donor lost its actual containing forest");
         continuing.Generic.CompleteSourceContinuation(new[] { continuing.File }, null, continuing.Transitions.Projection);
-        continuing.Values.CompleteSourceContinuation(new[] { continuing.File }, continuing.Transitions.Projection);
+        continuing.Values.CompleteSourceContinuation(new[] { continuing.File }, null, continuing.Transitions.Projection);
         UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(continuing.Unchecked, new[] { continuing.File },
             null, continuing.Transitions.Projection);
         Require(continuingFacts.SourceMethod == null && continuingFacts.Return == variable
@@ -116,7 +116,7 @@ static partial class SuspendColdLowering
             && ReferenceEquals(retiredType.Owner.Methods.Value[0], retiredType.Method),
             "retired type did not retain its actual member ownership");
         retiredType.Generic.CompleteSourceContinuation(new[] { retiredType.File }, null, retiredType.Transitions.Projection);
-        retiredType.Values.CompleteSourceContinuation(new[] { retiredType.File }, retiredType.Transitions.Projection);
+        retiredType.Values.CompleteSourceContinuation(new[] { retiredType.File }, null, retiredType.Transitions.Projection);
         UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(retiredType.Unchecked, new[] { retiredType.File },
             null, retiredType.Transitions.Projection);
         Require(retiredFacts.SourceMethod == null && retiredFacts.Return == variable
