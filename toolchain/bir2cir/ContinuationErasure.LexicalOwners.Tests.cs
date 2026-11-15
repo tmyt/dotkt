@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class ContinuationErasure
 {
@@ -15,38 +17,46 @@ static partial class ContinuationErasure
             var tv = new TypeNode.Tv("type", 0);
             var exact = new TypeNode.Fqn(selected, new TypeNode[] { tv });
             var erased = new TypeNode.Fqn(selected, AnyArg);
-            JsonNode Type(TypeNode type) => TypeJson.Write(type);
-            var root = JsonNode.Parse("""
-              {"fileClass":"LexicalAbiProbe","types":[{"kind":"class","name":"REPLACED","typeParams":[{"name":"T"}],
-                "fields":[],"ctors":[{"params":[],"body":[]}],
-                "methods":[{"name":"use","params":[],"ret":{"t":"fqn","name":"kotlin.Unit"},"body":[]}]}]}
-              """)!;
+            IBirExpression This() => new BirThis { Sty = exact };
+            BirExpressionStatement Expr(IBirExpression value) => new() { Expr = OptionalField<IBirExpression>.Of(value) };
+            BirConstant Zero() => new() { Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(0) };
+            var method = new BirFunctionDeclaration { Name = "use", Ret = new TypeNode.Fqn("kotlin.Unit"),
+                Params = new[] { new BirParameter { Name = "peer", Type = exact } }, Body = new IBirStatement[] {
+                    Expr(new BirCallInstance { OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()) }),
+                    Expr(new BirFieldGet { OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()) }),
+                    new BirSetField { OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()), Value = Zero() },
+                    Expr(new BirFieldSetExpression { OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()), Value = Zero() }),
+                    Expr(new BirLateinitGet { OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()) }),
+                    Expr(new BirCallInstance { OwnerType = exact, Recv = new BirLocal { Name = "peer", Sty = exact } }),
+                    Expr(new BirStaticFieldGet { OwnerType = exact }),
+                    Expr(new BirNew { Type = exact, Args = Array.Empty<IBirExpression>(), ArgTypes = Array.Empty<TypeNode>() }),
+                } };
+            var forward = new BirFunctionDeclaration { Name = "forward", Params = Array.Empty<BirParameter>(),
+                Ret = new TypeNode.Fqn("kotlin.Unit"), Body = new IBirStatement[] { Expr(new BirCallInstance {
+                    OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()), _exactExistentialBridgeOwnerCall = true,
+                }) } };
+            var sourceOwner = new BirClassDefinition { Kind = "class", Name = owner,
+                TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Fields = Array.Empty<BirFieldDeclaration>(),
+                Ctors = new[] { new BirConstructor { Params = Array.Empty<BirParameter>(), Body = new IBirStatement[] {
+                    new BirSetField { OwnerType = new TypeNode.Fqn(owner), Recv = new BirThis(), Value = Zero() },
+                } } }, Methods = new[] { method, forward } };
+            var sourceChild = new BirClassDefinition { Kind = "class", Name = "Child",
+                TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Interfaces = new TypeNode[] { exact },
+                Methods = new[] { new BirFunctionDeclaration { Name = "inherited", Params = Array.Empty<BirParameter>(),
+                    Ret = new TypeNode.Fqn("kotlin.Unit"), ClrInterfaceImpls = new[] {
+                        new BirMethodImpl { Owner = exact, Arity = 0, Params = new TypeNode[] { exact }, Ret = exact },
+                    }, Body = new IBirStatement[] { Expr(new BirCallInstance {
+                        OwnerType = exact, Recv = OptionalField<IBirExpression>.Of(This()),
+                    }) } } } };
+            var source = new BirFileDeclaration { FileClass = "LexicalAbiProbe", Types = new IBirTypeDeclaration[] { sourceOwner, sourceChild } };
+            GenericSelfInstantiation.ApplyAll(new[] { source });
+            // Only the continuing late erasure is DOM-owned; the replaced self-owner binder is typed.
+            var root = source.ToDom();
             var declaration = root["types"][0].AsObject();
-            declaration["name"] = owner;
             var body = declaration["methods"][0]["body"].AsArray();
-            foreach (var kind in new[] { "callInstance", "field", "setField", "setFieldExpr", "lateinitGet" })
-                body.Add(new JsonObject { ["k"] = kind, ["ownerType"] = Type(exact),
-                    ["recv"] = new JsonObject { ["k"] = "this", ["sty"] = Type(exact) } });
             var ctor = declaration["ctors"][0]["body"].AsArray();
-            ctor.Add(new JsonObject { ["k"] = "setField", ["ownerType"] = TypeJson.Fqn(owner),
-                ["recv"] = new JsonObject { ["k"] = "this" } });
-            body.Add(new JsonObject { ["k"] = "callInstance", ["ownerType"] = Type(exact),
-                ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "peer", ["sty"] = Type(exact) } });
-            body.Add(new JsonObject { ["k"] = "staticField", ["ownerType"] = Type(exact) });
-            body.Add(new JsonObject { ["k"] = "new", ["type"] = Type(exact) });
-            declaration["methods"][0]["params"].AsArray().Add(new JsonObject { ["name"] = "peer", ["type"] = Type(exact) });
-            var forwarding = new JsonObject { ["name"] = "forward", ["params"] = new JsonArray(),
-                ["body"] = new JsonArray(new JsonObject { ["k"] = "callInstance", ["ownerType"] = Type(exact),
-                    ["recv"] = new JsonObject { ["k"] = "this" }, [FBoundStarProjectionErasure.ExactBridgeOwnerCallKey] = true }) };
-            declaration["methods"].AsArray().Add(forwarding);
-            var child = new JsonObject { ["kind"] = "class", ["name"] = "Child", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-                ["interfaces"] = new JsonArray(Type(exact)), ["methods"] = new JsonArray(new JsonObject {
-                    ["name"] = "inherited", ["params"] = new JsonArray(), ["clrInterfaceImpls"] = new JsonArray(
-                        new JsonObject { ["owner"] = Type(exact), ["params"] = new JsonArray(Type(exact)), ["ret"] = Type(exact) }),
-                    ["body"] = new JsonArray(new JsonObject { ["k"] = "callInstance", ["ownerType"] = Type(exact),
-                        ["recv"] = new JsonObject { ["k"] = "this" } }) }) };
-            root["types"].AsArray().Add(child);
-            GenericSelfInstantiation.ApplyAll(new[] { root });
+            var forwarding = declaration["methods"][1];
+            var child = root["types"][1];
             FBoundStarProjectionErasure.RemoveTransientFacts(new[] { root }, preserveExactOuter: true);
             Apply(root, names);
             void Equal(JsonNode value, TypeNode expected, string role)
@@ -55,18 +65,19 @@ static partial class ContinuationErasure
             }
             for (var i = 0; i < 5; i++)
             {
-                Equal(body[i]["ownerType"], exact, "own member owner");
-                Equal(body[i]["recv"]["sty"], exact, "implicit this stamp");
+                var access = body[i]["expr"] ?? body[i];
+                Equal(access["ownerType"], exact, "own member owner");
+                Equal(access["recv"]["sty"], exact, "implicit this stamp");
             }
             Equal(ctor[0]["ownerType"], new TypeNode.Fqn(owner, new TypeNode[] { tv }), "constructor field owner");
-            Equal(forwarding["body"][0]["ownerType"], exact, "exact forwarding target");
-            Equal(body[5]["ownerType"], erased, "ordinary peer owner");
-            Equal(body[5]["recv"]["sty"], erased, "ordinary peer value");
-            Equal(body[6]["ownerType"], erased, "static owner");
-            Equal(body[7]["type"], erased, "allocation ABI");
+            Equal(forwarding["body"][0]["expr"]["ownerType"], exact, "exact forwarding target");
+            Equal(body[5]["expr"]["ownerType"], erased, "ordinary peer owner");
+            Equal(body[5]["expr"]["recv"]["sty"], erased, "ordinary peer value");
+            Equal(body[6]["expr"]["ownerType"], erased, "static owner");
+            Equal(body[7]["expr"]["type"], erased, "allocation ABI");
             Equal(declaration["methods"][0]["params"][0]["type"], erased, "parameter ABI");
             Equal(child["interfaces"][0], erased, "implemented ancestor ABI");
-            Equal(child["methods"][0]["body"][0]["ownerType"], erased, "inherited this target");
+            Equal(child["methods"][0]["body"][0]["expr"]["ownerType"], erased, "inherited this target");
             var descriptor = child["methods"][0]["clrInterfaceImpls"][0];
             Equal(descriptor["owner"], erased, "MethodImpl owner");
             Equal(descriptor["params"][0], erased, "MethodImpl parameter");
