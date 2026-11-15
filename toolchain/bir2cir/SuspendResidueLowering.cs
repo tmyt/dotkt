@@ -36,7 +36,7 @@ using DotKt.Bir;
 // the cold lowering above, and RoundtripMetadata's [KotlinFunction(Suspend)] stamp — so DropModifier removes it once
 // that stamp is written. CIR describes a physical CLR graph; ilemit has no coroutine semantics to apply to the flag,
 // and IrSanity refuses one that survives.
-static class SuspendResidueLowering
+static partial class SuspendResidueLowering
 {
     // Author the physical body of every un-lowered suspend declaration (or refuse one in an app build). Runs after
     // BOTH suspend phases and before type lowering, so its nodes flow through BirTypeLowering and ClrMemberResolution
