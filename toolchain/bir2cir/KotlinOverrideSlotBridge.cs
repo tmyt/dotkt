@@ -535,8 +535,6 @@ static partial class KotlinOverrideSlotBridge
             selectedFacts?.Add(candidate, selected.DomFact);
         }
     }
-    }
-
 
     static bool SameSelectedSuspendDeclaration(IReadOnlyList<JsonObject> projections)
         => SameSelectedSuspendDeclaration(projections.Select(projection => new OverrideMethod(projection)).ToArray());
