@@ -303,6 +303,14 @@
       "properties": { "k": { "const": "objMethod" }, "method": { "type": "string", "enum": ["hashCode", "toString", "equals"] }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "arg": { "$ref": "#/$defs/birExpressionNode" } },
       "required": ["k", "method", "recv"], "additionalProperties": false
     },
+    "birExternalMemberBinding": {
+      "type": "object", "x-dotkt-model": { "name": "BirExternalMemberBinding", "domain": "birCoreValues" },
+      "properties": {
+        "owner": { "type": "string", "x-dotkt-csharp-type": "SourceDeclarationType", "x-dotkt-csharp-codec": "SourceDeclarationType", "x-dotkt-json-content": "#/$defs/type", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "$comment": "Canonical TypeNode text from trusted projection metadata, forwarded unchanged by kotc and decoded once by the BIR boundary into an immutable declaration-frame TypeNode." },
+        "member": { "type": "string" }
+      },
+      "required": ["owner", "member"], "additionalProperties": false
+    },
     "birCallBinding": {
       "type": "object", "x-dotkt-model": { "name": "BirCallBinding", "domain": "birCoreValues", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true } } },
       "properties": {
@@ -379,6 +387,7 @@
       } },
       "properties": {
         "companionCall": { "type": "boolean" },
+        "externalMember": { "$ref": "#/$defs/birExternalMemberBinding", "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-frame-role": "ReferencedDeclaration" },
         "k": { "const": "callInstance" }, "ownerType": { "$ref": "#/$defs/type" }, "virtual": { "type": "boolean" },
         "recv": { "$ref": "#/$defs/birExpressionNode" }, "method": { "type": "string" }, "prop": { "type": "string" },
         "sig": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "typeArgs": { "x-dotkt-representation-role": "TypeArguments", "type": "array", "items": { "$ref": "#/$defs/type" } },

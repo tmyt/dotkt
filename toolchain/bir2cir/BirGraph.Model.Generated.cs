@@ -4634,6 +4634,111 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
     }
 }
 
+internal sealed record BirExternalMemberBinding : BirGraphValue
+{
+    public OptionalField<SourceDeclarationType> Owner { get; set; }
+    public OptionalField<string> Member { get; set; }
+    public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
+    {
+    }
+    public override void RewriteOwnTypeFieldsInPlace(
+        Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite)
+    {
+    }
+    public override void RewriteOwnFieldsInPlace(
+        Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
+        Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override void RewritePhysicalFieldsInPlace(
+        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
+        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
+        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
+    {
+    }
+    public override void VisitStringFields(Action<string> visit)
+    {
+        if (Member.HasValue) { visit((string)Member.Value); }
+    }
+    public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
+    {
+    }
+    public override void VisitChildren(Action<BirGraphValue> visit)
+    {
+    }
+    public override void VisitChildSlots(Action<BirGraphSlot> visit)
+    {
+    }
+    public override void VisitOwnChildSlots(
+        Action<string, BirGenericFrameRole, BirGraphSlot> visit)
+    {
+    }
+    public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
+    {
+    };
+    public override BirGraphValue DeepClone() => this with
+    {
+    };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
+    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
+    {
+    };
+    public override BirGraphValue RewriteGenericFrame(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
+    {
+    };
+    public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
+    {
+    }
+    public override void VisitGenericFrame(
+        Action<BirGenericFrameRole, TypeNode> type,
+        Action<BirGenericFrameRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteGenericFrameInPlace(
+        Func<BirGenericFrameRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteRepresentationInPlace(
+        Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
+        Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
+    {
+    }
+    public override void RewriteOwnershipInPlace(
+        Func<BirOwnershipRole, TypeNode, TypeNode> type,
+        Action<BirOwnershipRole, BirGraphValue> child)
+    {
+    }
+    public override bool StructurallyEquals(BirGraphValue other)
+        => other is BirExternalMemberBinding value
+            && EqualField(Owner, value.Owner, (left, right) => EqualityComparer<SourceDeclarationType>.Default.Equals(left, right))
+            && EqualField(Member, value.Member, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
+    public override void WriteJson(Utf8JsonWriter writer)
+    {
+        writer.WriteStartObject();
+        WriteOptional(writer, "owner", Owner, (writer, value) => { SourceDeclarationType.Write(writer, value); });
+        WriteOptional(writer, "member", Member, (writer, value) => { writer.WriteStringValue(value); });
+        writer.WriteEndObject();
+    }
+    public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
+    {
+        var result = new JsonObject();
+        if (Owner.IsPresent) result["owner"] = Owner.IsNull ? null : SourceDeclarationType.ToDom(Owner.Value);
+        if (Member.IsPresent) result["member"] = Member.IsNull ? null : JsonValue.Create(Member.Value);
+        projected?.Invoke(this, result);
+        return result;
+    }
+}
+
 internal sealed record BirCallBinding : BirGraphValue
 {
     public OptionalField<string> Id { get; set; }
@@ -5988,6 +6093,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
 {
     public override string Tag => "callInstance";
     public OptionalField<bool> CompanionCall { get; set; }
+    public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
     public OptionalField<TypeNode> OwnerType { get; set; }
     public OptionalField<bool> Virtual { get; set; }
     public OptionalField<IBirExpression> Recv { get; set; }
@@ -6108,6 +6214,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
+        if (ExternalMember.HasValue) { visit("externalMember", BirGenericFrameRole.ReferencedDeclaration, new BirGraphSlot(() => (BirGraphValue)ExternalMember.Value!, replacement => ExternalMember = OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)replacement))); }
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(rewrite("ownerType", BirGenericFrameRole.Lexical, OwnerType.Value));
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite("sig", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
@@ -6142,6 +6249,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
         Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
+        if (ExternalMember.HasValue) { child("externalMember", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ExternalMember.Value!, replacement => ExternalMember = OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)replacement))); }
         if (OwnerType.HasValue) OwnerType = OptionalField<TypeNode>.Of(type("ownerType", BirPhysicalTypeRole.Owner, OwnerType.Value));
         if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Sig.HasValue) Sig = OptionalField<TypeNode[]>.Of(vector("sig", BirPhysicalTypeRole.Value, Sig.Value));
@@ -6231,6 +6339,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
+        if (ExternalMember.HasValue) { visit((BirGraphValue)ExternalMember.Value); }
         if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
         if (Overrides.HasValue) { foreach (var item0 in Overrides.Value) { visit((BirGraphValue)item0); } }
@@ -6243,6 +6352,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     }
     public override void VisitChildSlots(Action<BirGraphSlot> visit)
     {
+        if (ExternalMember.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)ExternalMember.Value!, replacement => ExternalMember = OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)replacement))); }
         if (Recv.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
@@ -6256,6 +6366,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public override void VisitOwnChildSlots(
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
+        if (ExternalMember.HasValue) { visit("externalMember", BirGenericFrameRole.ReferencedDeclaration, new BirGraphSlot(() => (BirGraphValue)ExternalMember.Value!, replacement => ExternalMember = OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)replacement))); }
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit("args", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
         if (Overrides.HasValue) { for (var index0 = 0; index0 < Overrides.Value.Length; index0++) { var at0 = index0; var child0 = Overrides.Value[at0]; visit("overrides", BirGenericFrameRole.OverrideDeclaration, new BirGraphSlot(() => (BirGraphValue)Overrides.Value[at0]!, replacement => Overrides.Value[at0] = (BirOverride)replacement)); } }
@@ -6268,6 +6379,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
+        ExternalMember = ExternalMember.HasValue ? OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)rewrite((BirGraphValue)ExternalMember.Value)) : ExternalMember,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
         Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)rewrite((BirGraphValue)item0)).ToArray()) : Overrides,
@@ -6280,6 +6392,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     };
     public override BirGraphValue DeepClone() => this with
     {
+        ExternalMember = ExternalMember.HasValue ? OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)((BirGraphValue)ExternalMember.Value).DeepClone()) : ExternalMember,
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone()) : Recv,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
@@ -6315,6 +6428,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     {
         var result = this with
         {
+            ExternalMember = ExternalMember.HasValue ? OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)((BirGraphValue)ExternalMember.Value).DeepClone(born)) : ExternalMember,
             OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
             Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
             Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
@@ -6375,6 +6489,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
         Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
+        ExternalMember = ExternalMember.HasValue ? OptionalField<BirExternalMemberBinding>.Of((BirExternalMemberBinding)child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)ExternalMember.Value)) : ExternalMember,
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)) : OwnerType,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : Sig,
@@ -6432,6 +6547,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Action<BirGenericFrameRole, TypeNode> type,
         Action<BirGenericFrameRole, BirGraphValue> child)
     {
+        if (ExternalMember.HasValue) { child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)ExternalMember.Value); }
         if (OwnerType.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)OwnerType.Value); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { type(BirGenericFrameRole.ReferencedDeclaration, (TypeNode)item0); } }
@@ -6467,6 +6583,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirGraphValue> child)
     {
+        if (ExternalMember.HasValue) { child(BirGenericFrameRole.ReferencedDeclaration, (BirGraphValue)ExternalMember.Value); }
         if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, OwnerType.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()); }
@@ -6502,6 +6619,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
+        if (ExternalMember.HasValue) { child(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)ExternalMember.Value); }
         if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, OwnerType.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Declaration, item0)).ToArray()); }
@@ -6535,6 +6653,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
         Action<BirOwnershipRole, BirGraphValue> child)
     {
+        if (ExternalMember.HasValue) { child(BirOwnershipRole.MemberDescriptor, (BirGraphValue)ExternalMember.Value); }
         if (OwnerType.HasValue) { OwnerType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, OwnerType.Value)); }
         if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Sig.HasValue) { Sig = OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
@@ -6575,6 +6694,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirCallInstance value
             && EqualField(CompanionCall, value.CompanionCall, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(ExternalMember, value.ExternalMember, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(OwnerType, value.OwnerType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(Virtual, value.Virtual, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Recv, value.Recv, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -6635,6 +6755,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         writer.WriteStartObject();
         writer.WriteString("k", "callInstance");
         WriteOptional(writer, "companionCall", CompanionCall, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "externalMember", ExternalMember, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "ownerType", OwnerType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "virtual", Virtual, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "recv", Recv, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -6697,6 +6818,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         var result = new JsonObject();
         result["k"] = "callInstance";
         if (CompanionCall.IsPresent) result["companionCall"] = CompanionCall.IsNull ? null : JsonValue.Create(CompanionCall.Value);
+        if (ExternalMember.IsPresent) result["externalMember"] = ExternalMember.IsNull ? null : ((BirGraphValue)ExternalMember.Value).ToDom(projected);
         if (OwnerType.IsPresent) result["ownerType"] = OwnerType.IsNull ? null : TypeNode.Write(OwnerType.Value);
         if (Virtual.IsPresent) result["virtual"] = Virtual.IsNull ? null : JsonValue.Create(Virtual.Value);
         if (Recv.IsPresent) result["recv"] = Recv.IsNull ? null : ((BirGraphValue)Recv.Value).ToDom(projected);
@@ -35703,47 +35825,52 @@ internal static class BirGraphNameFields
 // Structural move only; the producer authors the new selected target.
 internal static class BirCallConversion
 {
-    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source) => new()
+    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source)
     {
-        CompanionCall = source.CompanionCall,
-        Method = source.Method,
-        Prop = source.Prop,
-        Sig = source.Sig,
-        TypeArgs = source.TypeArgs,
-        ArgTypes = source.ArgTypes,
-        DynRet = source.DynRet,
-        Ret = source.Ret,
-        Args = source.Args,
-        SuspendCall = source.SuspendCall,
-        ClrAwaitBridge = source.ClrAwaitBridge,
-        AwaitResult = source.AwaitResult,
-        AnySlot = source.AnySlot,
-        CompanionReceiver = source.CompanionReceiver,
-        DefaultDeclarationId = source.DefaultDeclarationId,
-        DefaultOwnerType = source.DefaultOwnerType,
-        DotktFrontendDeclarationConsumed = source.DotktFrontendDeclarationConsumed,
-        ClrFlagsOperation = source.ClrFlagsOperation,
-        Sty = source.Sty,
-        MemberMethodTypeParams = source.MemberMethodTypeParams,
-        MemberSignature = source.MemberSignature,
-        MemberReturnType = source.MemberReturnType,
-        _erasedValueVariable = source._erasedValueVariable,
-        RetSuspendFnTypePre = source.RetSuspendFnTypePre,
-        _innerFactoryArguments = source._innerFactoryArguments,
-        DeclarationReferencedIntrinsic = source.DeclarationReferencedIntrinsic,
-        _resolvedMethodTypeParams = source._resolvedMethodTypeParams,
-        NullableWitnessCount = source.NullableWitnessCount,
-        NullablePendingWitnesses = source.NullablePendingWitnesses,
-        DotktDeclarationIdentityBound = source.DotktDeclarationIdentityBound,
-        PropertyName = source.PropertyName,
-        PropertyAccessor = source.PropertyAccessor,
-        FunctionCallSignature = source.FunctionCallSignature,
-        _capturedGenericArgument = source._capturedGenericArgument,
-        _capturedGenericResult = source._capturedGenericResult,
-        _capturedGenericTarget = source._capturedGenericTarget,
-        CalleeRet = source.CalleeRet,
-        CalleeParams = source.CalleeParams,
-        ResolvedMemberParams = source.ResolvedMemberParams,
-        ResolvedMemberReturn = source.ResolvedMemberReturn,
-    };
+        // Native binding must first transfer this selected declaration into its physical target.
+        if (source.ExternalMember.IsPresent) throw new InvalidOperationException("Unconsumed selected external member at static-call authoring");
+        return new()
+        {
+            CompanionCall = source.CompanionCall,
+            Method = source.Method,
+            Prop = source.Prop,
+            Sig = source.Sig,
+            TypeArgs = source.TypeArgs,
+            ArgTypes = source.ArgTypes,
+            DynRet = source.DynRet,
+            Ret = source.Ret,
+            Args = source.Args,
+            SuspendCall = source.SuspendCall,
+            ClrAwaitBridge = source.ClrAwaitBridge,
+            AwaitResult = source.AwaitResult,
+            AnySlot = source.AnySlot,
+            CompanionReceiver = source.CompanionReceiver,
+            DefaultDeclarationId = source.DefaultDeclarationId,
+            DefaultOwnerType = source.DefaultOwnerType,
+            DotktFrontendDeclarationConsumed = source.DotktFrontendDeclarationConsumed,
+            ClrFlagsOperation = source.ClrFlagsOperation,
+            Sty = source.Sty,
+            MemberMethodTypeParams = source.MemberMethodTypeParams,
+            MemberSignature = source.MemberSignature,
+            MemberReturnType = source.MemberReturnType,
+            _erasedValueVariable = source._erasedValueVariable,
+            RetSuspendFnTypePre = source.RetSuspendFnTypePre,
+            _innerFactoryArguments = source._innerFactoryArguments,
+            DeclarationReferencedIntrinsic = source.DeclarationReferencedIntrinsic,
+            _resolvedMethodTypeParams = source._resolvedMethodTypeParams,
+            NullableWitnessCount = source.NullableWitnessCount,
+            NullablePendingWitnesses = source.NullablePendingWitnesses,
+            DotktDeclarationIdentityBound = source.DotktDeclarationIdentityBound,
+            PropertyName = source.PropertyName,
+            PropertyAccessor = source.PropertyAccessor,
+            FunctionCallSignature = source.FunctionCallSignature,
+            _capturedGenericArgument = source._capturedGenericArgument,
+            _capturedGenericResult = source._capturedGenericResult,
+            _capturedGenericTarget = source._capturedGenericTarget,
+            CalleeRet = source.CalleeRet,
+            CalleeParams = source.CalleeParams,
+            ResolvedMemberParams = source.ResolvedMemberParams,
+            ResolvedMemberReturn = source.ResolvedMemberReturn,
+        };
+    }
 }

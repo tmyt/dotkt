@@ -6,6 +6,7 @@ static partial class NetInteropBinding
 {
     internal static void TypedSelfTest()
     {
+        SelectedExternalMemberSelfTest();
         var refs = ReferenceMetadataIndex.Build(new[] {
             typeof(object).Assembly.Location, typeof(System.Numerics.Vector3).Assembly.Location,
             typeof(Console).Assembly.Location, typeof(System.Collections.ObjectModel.KeyedCollection<,>).Assembly.Location,
