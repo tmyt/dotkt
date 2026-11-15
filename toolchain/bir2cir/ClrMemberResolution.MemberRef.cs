@@ -60,10 +60,6 @@ static partial class ClrMemberResolution
         return MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots);
     }
 
-    internal static JsonNode MemberRefJson(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
-        bool? ownerArgumentsAreMethodSlots = null)
-        => MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots).Write();
-
     // Use the same complete projection for a native type test and its selected MemberRef.
     internal static TypeNode.Fqn PhysicalInstanceView(ReferenceMetadataIndex refs, TypeNode.Fqn view)
     {
