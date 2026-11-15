@@ -2,6 +2,8 @@ using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
+// Explicit Kotlin semantic owners select CLR nesting here. Inner outer-parameter
+// declarations become physical captured slots; ilemit emits that layout one-to-one.
 static partial class TypeOwnershipLowering
 {
     internal sealed record SourceMethodMove(BirFunctionDeclaration Method, int SourceOrdinal,
