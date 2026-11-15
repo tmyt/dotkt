@@ -155,6 +155,7 @@ static partial class FBoundStarProjectionErasure
         root.ToDom((source, actual) => { if (!ReferenceEquals(source, donor)) missingBindings.ObserveProjection(source, actual); });
         Reject(missingBindings.BindProjected);
         Require(root.StructurallyEquals(currentBeforePlanning), "proof planning mutated the continuing typed graph");
+        NativeProofPlacementSourceSelfTest();
         Console.WriteLine("[owning native proof plan] self-test OK (source/physical constraints, fixed-point demand, native witnesses, ID-less handoff, live late rows and independent transfers)");
     }
 }

@@ -151,18 +151,25 @@ static partial class FBoundStarProjectionErasure
             ? IsTypeDefinition(declaration.Physical) : declaration.Source is IBirTypeDeclaration type && IsTypeDefinition(type.Kind.OrDefault());
 
         static IReadOnlyList<BirTypeParameter> SourceParameters(BirGraphValue source) => source switch {
-            IBirTypeDeclaration value => value.TypeParams.OrEmpty(), BirFunctionDeclaration value => value.TypeParams.OrEmpty(),
+            IBirTypeDeclaration value => TypeParameterFrame.Declarations(value).ToArray(), BirFunctionDeclaration value => value.TypeParams.OrEmpty(),
             BirMethodImpl value => value.TypeParams.OrEmpty(),
             BirNewSuspendLambda value => value.TypeParams.OrEmpty(), BirClosureDefinition value => value.TypeParams.OrEmpty(),
             BirFileDeclaration or BirConstructor or BirInlineLambda => Array.Empty<BirTypeParameter>(),
             _ => throw new InvalidOperationException("Unaccounted native proof declaration: " + source.GetType().Name),
         };
 
-        static IReadOnlyList<TypeNode[]> Constraints(DeclarationBinding declaration) => declaration.IsPhysical
-            ? ((declaration.Physical["typeParams"] as JsonArray)?.Select(parameter =>
-                (parameter?["constraints"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>()).ToArray()
-                ?? Array.Empty<TypeNode[]>())
-            : SourceParameters(declaration.Source).Select(parameter => parameter.Constraints.OrEmpty()).ToArray();
+        static IReadOnlyList<TypeNode[]> Constraints(DeclarationBinding declaration)
+        {
+            if (!declaration.IsPhysical)
+                return SourceParameters(declaration.Source).Select(parameter => parameter.Constraints.OrEmpty()).ToArray();
+            var physical = declaration.Physical;
+            // Placement separates declaration-owned captures without changing !N.
+            // Callable and MethodImpl generic frames have no enclosing prefix.
+            var parameters = TypeDeclaration(declaration) ? TypeParameterFrame.Declarations(physical)
+                : (physical["typeParams"] as JsonArray)?.AsEnumerable() ?? Enumerable.Empty<JsonNode>();
+            return parameters.Select(parameter =>
+                (parameter?["constraints"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? Array.Empty<TypeNode>()).ToArray();
+        }
 
         static NullableRepresentationFrame Frame(DeclarationBinding declaration) => declaration.IsPhysical
             ? TypeDeclaration(declaration) ? KotlinSupertypesRecord.ReadNullableFrame(declaration.Physical)
