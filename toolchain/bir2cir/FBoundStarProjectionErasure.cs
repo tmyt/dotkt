@@ -1279,20 +1279,26 @@ static partial class FBoundStarProjectionErasure
         if (protectExactCast) call["_exactBridgeCast"] = true;
     }
 
+    static readonly HashSet<string> TransientMarkerKeys = new(StringComparer.Ordinal)
+    {
+        "_exactBridgeCast", "reifiedTypeOperand", ExactBridgeOwnerCallKey,
+        ExactOuterKey, DelegationOuterSlotKey, GenericRepresentationPolicy.NativeLocationKey,
+        GenericRepresentationPolicy.FieldAddressKey, GenericRepresentationPolicy.PhysicalDeclarationSignatureKey,
+        InnerFactoryArgumentsKey,
+    };
+
+    // Owners moved before the strict address handoff still see its transport
+    // anchors. Their semantic domain excludes precisely what this cleanup
+    // consumes afterwards; do not turn these anchors into extra use-site types.
+    internal static bool IsTransientMarker(string field) => TransientMarkerKeys.Contains(field);
+
     static void RemoveTransientMarkers(JsonNode node, bool preserveExactOuter = false)
     {
         switch (node)
         {
             case JsonObject obj:
-                obj.Remove("_exactBridgeCast");
-                obj.Remove("reifiedTypeOperand");
-                obj.Remove(ExactBridgeOwnerCallKey);
-                if (!preserveExactOuter) obj.Remove(ExactOuterKey);
-                obj.Remove(DelegationOuterSlotKey);
-                obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
-                obj.Remove(GenericRepresentationPolicy.FieldAddressKey);
-                obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
-                obj.Remove(InnerFactoryArgumentsKey);
+                foreach (var field in TransientMarkerKeys)
+                    if (!preserveExactOuter || field != ExactOuterKey) obj.Remove(field);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
                 break;
