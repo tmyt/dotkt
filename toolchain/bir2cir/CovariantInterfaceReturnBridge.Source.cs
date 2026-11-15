@@ -5,7 +5,7 @@ using DotKt.Cir;
 static partial class CovariantInterfaceReturnBridge
 {
     internal readonly record struct SourceBridgedSlot(BirFunctionDeclaration Implementation, string Descriptor);
-    sealed class SourceSlotComparer : IEqualityComparer<SourceBridgedSlot>
+    internal sealed class SourceSlotComparer : IEqualityComparer<SourceBridgedSlot>
     {
         public bool Equals(SourceBridgedSlot left, SourceBridgedSlot right)
             => ReferenceEquals(left.Implementation, right.Implementation) && left.Descriptor == right.Descriptor;

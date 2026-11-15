@@ -1,7 +1,4 @@
-using System;
-using System.Collections.Generic;
 using System.Text.Json.Nodes;
-using DotKt.Bir;
 
 // bir2cir — the PHYSICAL BODY of a suspend declaration the cold-core lowering deliberately does not lower, and the
 // disposal of the Kotlin `suspend` modifier at the CIR boundary.
@@ -37,56 +34,8 @@ using DotKt.Bir;
 // the cold lowering above, and RoundtripMetadata's [KotlinFunction(Suspend)] stamp — so DropModifier removes it once
 // that stamp is written. CIR describes a physical CLR graph; ilemit has no coroutine semantics to apply to the flag,
 // and IrSanity refuses one that survives.
-static class SuspendResidueLowering
+static partial class SuspendResidueLowering
 {
-    // Author the physical body of every un-lowered suspend declaration (or refuse one in an app build). Runs after
-    // BOTH suspend phases and before type lowering, so its nodes flow through BirTypeLowering and ClrMemberResolution
-    // like any other bir2cir-authored call.
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, bool appBuild)
-    {
-        foreach (var root in roots)
-        {
-            if (root is not JsonObject file) continue;
-            StubMethods(file["methods"] as JsonArray, Str(file["fileClass"]) ?? "?", appBuild);
-            StubTypes(file["types"] as JsonArray, appBuild);
-        }
-    }
-
-    static void StubTypes(JsonArray types, bool appBuild)
-    {
-        if (types == null) return;
-        foreach (var t in types)
-        {
-            if (t is not JsonObject type) continue;
-            StubMethods(type["methods"] as JsonArray, Str(type["name"]) ?? "?", appBuild);
-            StubTypes(type["types"] as JsonArray, appBuild);   // nested types (local/object/companion)
-        }
-    }
-
-    static void StubMethods(JsonArray methods, string owner, bool appBuild)
-    {
-        if (methods == null) return;
-        foreach (var m in methods)
-        {
-            if (m is not JsonObject method || !IsSuspend(method)) continue;
-            var name = Str(method["name"]) ?? "?";
-            if (appBuild)
-                throw new NotSupportedException(
-                    $"bir2cir: suspend-lowering: '{owner}.{name}' reached CIR still carrying the `suspend` modifier. "
-                    + "Every suspend declaration in an application build is transformed into its cold Continuation "
-                    + "shape (state machine + `$dotkt_suspend` cold entry + public Task bridge), and a shape the "
-                    + "classifier refuses gets a call-time-throw COLD ENTRY rather than a retained original — so this "
-                    + "is a cold-lowering MISS, not a supported residue.");
-            // An ABSTRACT declaration declares a slot and no body — there is nothing to author, and authoring one
-            // would contradict the declaration (ilemit refuses IL for an abstract slot).
-            if (Bool(method["abstract"]) || method["body"] is not JsonArray) continue;
-            method["body"] = ThrowStubBody(
-                $"{owner}.{name}: this suspend declaration has no state-machine body — bir2cir's cold-core coroutine "
-                + "lowering leaves it un-lowered in a standard-library build. It is compile-time surface only and cannot be invoked.");
-            method["bodyTerminates"] = true;
-        }
-    }
-
     // Remove the Kotlin-only `suspend` modifier from every method of a lowered file. Called after PrepareMetadata
     // grants declaration obligations; eligible methods transfer the exact scalar to the typed metadata completion.
     public static void DropModifier(JsonNode root)
@@ -120,35 +69,4 @@ static class SuspendResidueLowering
             }
     }
 
-    // `throw new System.NotSupportedException("<msg>")` — one statement, in the pre-lowering vocabulary the rest of the
-    // pipeline expects: BirTypeLowering lowers the kotlin.String slots and ClrMemberResolution binds the exact ctor.
-    static JsonArray ThrowStubBody(string msg) => new()
-    {
-        new JsonObject
-        {
-            ["k"] = "throw",
-            ["value"] = new JsonObject
-            {
-                ["k"] = "newClr",
-                ["type"] = TypeJson.Fqn("System.NotSupportedException"),
-                ["argTypes"] = new JsonArray { TypeJson.Fqn("kotlin.String") },
-                ["args"] = new JsonArray
-                {
-                    new JsonObject
-                    {
-                        ["k"] = "const",
-                        ["type"] = TypeJson.Fqn("kotlin.String"),
-                        ["value"] = msg,
-                    },
-                },
-            },
-        },
-    };
-
-    static bool IsSuspend(JsonObject method) =>
-        method["mods"] is JsonObject mods && Bool(mods["suspend"]);
-
-    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
-
-    static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }

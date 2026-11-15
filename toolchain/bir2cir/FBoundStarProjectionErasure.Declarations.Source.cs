@@ -82,10 +82,15 @@ static partial class FBoundStarProjectionErasure
     }
 
     static IReadOnlyDictionary<string, string> CollectLocalClrAliases(CurrentDeclarationBindings declarations)
+        => CollectLocalClrAliases(declarations.SourceDefinitions.Select(pair =>
+            new KeyValuePair<string, IBirTypeDeclaration>(pair.Key, (IBirTypeDeclaration)pair.Value.Source)));
+
+    static IReadOnlyDictionary<string, string> CollectLocalClrAliases(
+        IEnumerable<KeyValuePair<string, IBirTypeDeclaration>> definitions)
     {
         var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (name, binding) in declarations.SourceDefinitions)
-        foreach (var attribute in ((IBirTypeDeclaration)binding.Source).Attrs.OrEmpty())
+        foreach (var (name, definition) in definitions)
+        foreach (var attribute in definition.Attrs.OrEmpty())
         {
             if (attribute.Attr.OrDefault() is not TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }) continue;
             var target = attribute.Args.OrDefault() is [BirConstant { Value.HasValue: true, Value.Value: BirLiteral.TextLiteral text }]

@@ -85,27 +85,6 @@ static partial class RoundtripMetadata
         Append(declaration, Marker(CallableVisibilityLowering.Carrier, StringArg(BirCarrier.JsonV1),
             BytesArg(Convert.ToBase64String(VisibilityContent(visibility)))));
 
-    // ---------------------------------------------------------------------------------------------------------------
-    // Validate logical suspend-result facts before physical representation discards their source modifier.
-    // ---------------------------------------------------------------------------------------------------------------
-    public static void RequireSuspendResults(IEnumerable<JsonNode> roots)
-    {
-        foreach (var root in roots) RequireSuspendResults(root);
-    }
-
-    static void RequireSuspendResults(JsonNode node)
-    {
-        if (node is not JsonObject obj) return;
-        if (obj["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>())
-                if (ModFlag(method, "suspend") &&
-                    (method["suspendResult"] as JsonValue)?.TryGetValue<string>(out _) != true)
-                    throw new InvalidOperationException(
-                        $"suspend declaration '{method["name"]}' did not preserve its logical result");
-        if (obj["types"] is JsonArray types)
-            foreach (var type in types) RequireSuspendResults(type);
-    }
-
     static bool HasAttr(JsonObject declaration, string attributeName) =>
         declaration["attrs"] is JsonArray attrs && attrs.OfType<JsonObject>().Any(attribute =>
             TypeJson.OwnerName(attribute["attr"]) == attributeName);

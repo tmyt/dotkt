@@ -20,28 +20,20 @@ static partial class DeclarationSignatureIdentity
     internal const string AllocationMetadataKey = "signatureAllocation";
     static readonly Dictionary<string, BirClassDefinition> Markers = new(StringComparer.Ordinal);
     static readonly HashSet<(bool Required, string Owner, int Arity)> ReferencedModifiers = new();
-    static readonly Dictionary<string, List<(JsonObject Descriptor, bool IsInterface)>> PhysicalSlots = new(StringComparer.Ordinal);
+    static readonly Dictionary<string, List<(BirMethodImpl Descriptor, bool IsInterface)>> PhysicalSlots = new(StringComparer.Ordinal);
     static string MarkerOwner;
-
-    // The producer has already selected this implementation relation. Keep its declaration IDs through late
-    // signature allocation even when the original value signatures allowed an implicit CLR interface match.
-    internal static void RecordSelectedImplementationSlot(JsonObject implementation, JsonObject slot)
-    {
-        var id = Text(slot[DeclarationIdentityBinding.Key]);
-        if (id == null) return;
-        if (implementation[OverrideEdgesKey] is not JsonArray edges)
-            implementation[OverrideEdgesKey] = edges = new JsonArray();
-        if (!edges.Select(Text).Contains(id, StringComparer.Ordinal)) edges.Add(id);
-    }
 
     // The physical override pass has already selected a native slot. Keep its exact descriptor in memory rather
     // than inventing a Kotlin identity or sending a physical owner frame through another semantic rewrite.
-    internal static void RecordSelectedPhysicalSlot(JsonObject implementation, JsonObject descriptor, bool isInterface)
+    internal static void RecordSelectedPhysicalSlot(BirFunctionDeclaration implementation, BirMethodImpl descriptor, bool isInterface)
+        => RecordSelectedPhysicalSlot(implementation.DeclarationId.OrDefault(), descriptor, isInterface);
+
+    static void RecordSelectedPhysicalSlot(string id, BirMethodImpl descriptor, bool isInterface)
     {
-        if (Text(implementation[DeclarationIdentityBinding.Key]) is not string id) return;
+        if (id == null) return;
         if (!PhysicalSlots.TryGetValue(id, out var slots)) PhysicalSlots[id] = slots = new();
-        if (!slots.Any(slot => slot.IsInterface == isInterface && JsonNode.DeepEquals(slot.Descriptor, descriptor)))
-            slots.Add((descriptor.DeepClone().AsObject(), isInterface));
+        if (!slots.Any(slot => slot.IsInterface == isInterface && slot.Descriptor.StructurallyEquals(descriptor)))
+            slots.Add(((BirMethodImpl)descriptor.DeepClone(), isInterface));
     }
 
     public static BirFileDeclaration[] Capture(IEnumerable<BirFileDeclaration> roots)
@@ -303,7 +295,11 @@ static partial class DeclarationSignatureIdentity
                 if (Text(method[DeclarationIdentityBinding.Key]) is string sourceId && plan.ContainsKey(sourceId)
                     && PhysicalSlots.TryGetValue(sourceId, out var selectedPhysicalSlots))
                     foreach (var slot in selectedPhysicalSlots)
-                        BindSlot(owner, method, slot.Descriptor, slot.IsInterface, slot.Descriptor.ToJsonString());
+                    {
+                        // This genuine late DOM consumer materializes only its already-selected metadata leaf.
+                        var descriptor = slot.Descriptor.ToDom();
+                        BindSlot(owner, method, descriptor, slot.IsInterface, descriptor.ToJsonString());
+                    }
                 method.Remove(OverrideEdgesKey);
             }
     }
@@ -598,7 +594,12 @@ static partial class DeclarationSignatureIdentity
         static BirFileDeclaration CaptureSourceFixture(JsonNode source) => Capture(new[] {
             BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(source.ToJsonString(JsonOptions.Indented))),
         })[0];
-        static JsonObject CaptureFixture(JsonNode source) => CaptureSourceFixture(source).ToDom();
+        static JsonObject CaptureFixtureToDom(JsonNode source, Action<BirFileDeclaration> beforeProjection = null)
+        {
+            var captured = CaptureSourceFixture(source);
+            beforeProjection?.Invoke(captured);
+            return captured.ToDom();
+        }
         var source = JsonNode.Parse("""
         {"fileClass":"BoundSignatureProbe","types":[],"methods":[
           {"name":"keep","declarationId":"comparable","typeParams":[{"name":"C","constraints":[
@@ -613,7 +614,7 @@ static partial class DeclarationSignatureIdentity
         JsonArray ProjectMode(bool referenceBuild)
         {
             var root = source.DeepClone();
-            root = CaptureFixture(root);
+            root = CaptureFixtureToDom(root);
             root = ComparableRepresentationLowering.ApplyFixtures(new[] { root }, referenceBuild)[0];
             var plan = Plan(new[] { root });
             if (plan.Count != 2) throw new InvalidOperationException("Upper-bound overloads were not allocated");
@@ -723,7 +724,7 @@ static partial class DeclarationSignatureIdentity
                 new JsonObject { ["name"] = "VirtualSignatureBody", ["kind"] = "class",
                     ["interfaces"] = new JsonArray(TypeJson.Fqn("VirtualSignatureSlot")),
                     ["methods"] = implementations, ["ctors"] = constructors }) };
-        virtualRoot = CaptureFixture(virtualRoot);
+        virtualRoot = CaptureFixtureToDom(virtualRoot);
         slots = virtualRoot["types"][0]["methods"].AsArray();
         implementations = virtualRoot["types"][1]["methods"].AsArray();
         constructors = virtualRoot["types"][1]["ctors"].AsArray();
@@ -746,7 +747,7 @@ static partial class DeclarationSignatureIdentity
         if (implementations.Count != 2
             || implementations.OfType<JsonObject>().Any(method => method["clrInterfaceImpls"]?.AsArray().Count != 1))
             throw new InvalidOperationException("A selected virtual override lost its exact MethodImpl descriptor");
-        var implicitRoot = JsonNode.Parse("""
+        var implicitSource = JsonNode.Parse("""
         {"fileClass":"ImplicitSignatureProbe","methods":[],"types":[
           {"name":"ImplicitSlot","kind":"interface","methods":[
             {"name":"keep","declarationId":"implicit-slot","virtual":true,"abstract":true,
@@ -760,35 +761,43 @@ static partial class DeclarationSignatureIdentity
              "params":[{"name":"value","type":{"t":"fqn","name":"LogicalRight"}}],
              "ret":{"t":"fqn","name":"System.String"}}]}]}
         """).AsObject();
-        implicitRoot = CaptureFixture(implicitRoot);
-        var implicitSlot = implicitRoot["types"][0]["methods"][0].AsObject();
-        var implicitBodies = implicitRoot["types"][1]["methods"].AsArray();
-        RecordSelectedImplementationSlot(implicitBodies[0].AsObject(), implicitSlot);
-        foreach (var method in implicitBodies.OfType<JsonObject>())
-            method["params"][0]["type"] = TypeJson.Fqn("System.Object");
-        var implicitPlan = Plan(new[] { implicitRoot });
-        if (implicitPlan.Count != 2 || implicitPlan.ContainsKey("implicit-slot"))
-            throw new InvalidOperationException("An implicit slot test did not isolate a body-only signature allocation");
-        Apply(new[] { implicitRoot }, implicitPlan);
-        BindSelectedOverrides(new[] { implicitRoot }, implicitPlan, null, _ => false);
-        if (implicitBodies.Count != 3
-            || !JsonNode.DeepEquals(implicitBodies[2]["params"][0]["type"], implicitSlot["params"][0]["type"])
-            || implicitBodies[2]["clrInterfaceImpls"]?.AsArray().Count != 1
-            || implicitBodies[2]["clrInterfaceImpls"][0]["member"]?.GetValue<string>() != "keep")
-            throw new InvalidOperationException("A late signature allocation lost its previously selected implicit slot");
-        foreach (var nativeInterface in new[] { false, true })
-            RecordSelectedPhysicalSlot(implicitBodies[0].AsObject(), new JsonObject {
-                ["owner"] = TypeJson.Fqn(nativeInterface ? "NativeSlot" : "NativeBase"),
-                ["member"] = "keep", ["arity"] = 0,
-                ["params"] = new JsonArray(TypeJson.Fqn("System.Object")),
-                ["ret"] = TypeJson.Fqn("System.String"),
-            }, nativeInterface);
-        BindSelectedOverrides(new[] { implicitRoot }, implicitPlan, null, _ => false);
-        if (implicitBodies.Count != 5 || implicitBodies[0]["clrInterfaceImpls"]?.AsArray().Count != 0
-            || implicitBodies[0]["clrBaseImpls"]?.AsArray().Count != 0
-            || !JsonNode.DeepEquals(implicitBodies[3]["params"][0]["type"], TypeJson.Fqn("System.Object"))
-            || !JsonNode.DeepEquals(implicitBodies[4]["params"][0]["type"], TypeJson.Fqn("System.Object")))
-            throw new InvalidOperationException("A late source allocation lost its selected exact native base/interface slots");
+        foreach (var includeNative in new[] { false, true })
+        {
+            // The real typed producers run on the captured declarations, before the one projection.
+            // Each case starts fresh so the late consumer never has to replay producer selection.
+            var implicitRoot = CaptureFixtureToDom(implicitSource, captured => {
+                var selectedSlot = captured.Types.Value[0].Methods.Value[0];
+                var selectedBody = captured.Types.Value[1].Methods.Value[0];
+                RecordSelectedImplementationSlot(selectedBody, selectedSlot);
+                if (includeNative)
+                    foreach (var nativeInterface in new[] { false, true })
+                        RecordSelectedPhysicalSlot(selectedBody, new BirMethodImpl {
+                            Owner = new TypeNode.Fqn(nativeInterface ? "NativeSlot" : "NativeBase"),
+                            Member = "keep", Arity = 0,
+                            Params = new TypeNode[] { new TypeNode.Fqn("System.Object") },
+                            Ret = new TypeNode.Fqn("System.String"),
+                        }, nativeInterface);
+            });
+            var implicitSlot = implicitRoot["types"][0]["methods"][0].AsObject();
+            var implicitBodies = implicitRoot["types"][1]["methods"].AsArray();
+            foreach (var method in implicitBodies.OfType<JsonObject>())
+                method["params"][0]["type"] = TypeJson.Fqn("System.Object");
+            var implicitPlan = Plan(new[] { implicitRoot });
+            if (implicitPlan.Count != 2 || implicitPlan.ContainsKey("implicit-slot"))
+                throw new InvalidOperationException("An implicit slot test did not isolate a body-only signature allocation");
+            Apply(new[] { implicitRoot }, implicitPlan);
+            BindSelectedOverrides(new[] { implicitRoot }, implicitPlan, null, _ => false);
+            if (implicitBodies.Count != (includeNative ? 5 : 3)
+                || !JsonNode.DeepEquals(implicitBodies[2]["params"][0]["type"], implicitSlot["params"][0]["type"])
+                || implicitBodies[2]["clrInterfaceImpls"]?.AsArray().Count != 1
+                || implicitBodies[2]["clrInterfaceImpls"][0]["member"]?.GetValue<string>() != "keep")
+                throw new InvalidOperationException("A late signature allocation lost its previously selected implicit slot");
+            if (includeNative && (implicitBodies[0]["clrInterfaceImpls"]?.AsArray().Count != 0
+                || implicitBodies[0]["clrBaseImpls"]?.AsArray().Count != 0
+                || !JsonNode.DeepEquals(implicitBodies[3]["params"][0]["type"], TypeJson.Fqn("System.Object"))
+                || !JsonNode.DeepEquals(implicitBodies[4]["params"][0]["type"], TypeJson.Fqn("System.Object"))))
+                throw new InvalidOperationException("A late source allocation lost its selected exact native base/interface slots");
+        }
         Console.Error.WriteLine("[declaration signatures] self-test OK (source bounds, nominal aliases, twin modes, value/signature separation, source carriers)");
     }
 }

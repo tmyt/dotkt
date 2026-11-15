@@ -637,7 +637,6 @@ static partial class KotlinOverrideSlotBridge
         return false;
     }
 
-    static string ResolveSlotName(OverrideMethod method, ReferenceMetadataIndex references) => method.Source != null
-        ? DeclarationRename.ResolveSlot(method.Source, references)
-        : DeclarationRename.ResolveSlot(method.Dom, method.Dom["overrides"].AsArray(), references);
+    static string ResolveSlotName(OverrideMethod method, ReferenceMetadataIndex references)
+        => DeclarationRename.ResolveSlot(method.Source, references);
 }

@@ -14,6 +14,7 @@ static partial class FBoundStarProjectionErasure
     internal sealed class CarrierProjectionContext
     {
         readonly Func<string, ProjectionDeclaration> declaration;
+        readonly CurrentPhysicalTypeView currentPhysical;
         internal CurrentDeclarationPreparation Preparation { get; }
         internal IReadOnlyDictionary<string, Owner> Owners { get; }
         internal ReferenceMetadataIndex References { get; }
@@ -23,11 +24,13 @@ static partial class FBoundStarProjectionErasure
 
         CarrierProjectionContext(CurrentDeclarationPreparation preparation, IReadOnlyDictionary<string, Owner> owners,
             ReferenceMetadataIndex references, GenericRepresentationPolicy values, NativeProofPlan nativeProofs,
-            IReadOnlyDictionary<string, string> aliases, Func<string, ProjectionDeclaration> declaration)
+            IReadOnlyDictionary<string, string> aliases, Func<string, ProjectionDeclaration> declaration,
+            CurrentPhysicalTypeView currentPhysical = null)
         {
             Preparation = preparation; Owners = owners; References = references;
             Values = values; NativeProofs = nativeProofs; LocalClrAliases = aliases;
             this.declaration = declaration;
+            this.currentPhysical = currentPhysical;
         }
 
         internal static CarrierProjectionContext ForSource(CarrierDemandPlan demand, ReferenceMetadataIndex references,
@@ -52,6 +55,24 @@ static partial class FBoundStarProjectionErasure
                     (current["typeParams"] as JsonArray)?.Select(parameter => Str((parameter as JsonObject)?["variance"])).ToArray(),
                     KotlinSupertypesRecord.ReadNullableFrame(current)) : null);
 
+        internal static CarrierProjectionContext ForCurrentSource(CarrierRealizationContext realization,
+            CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases = null)
+        {
+            var original = ForSource(realization.Demand, realization.References, aliases);
+            ProjectionDeclaration Read(string name) => current.Definitions.TryGetValue(name, out var actual)
+                ? ReadSource(AliasDeclarationTransitions.ReadLogicalHeaderFacts(actual))
+                : original.LocalDeclaration(name);
+            // Only the already allocated, needed names are exported by the old
+            // continuation. Their current physical records supply owner frames.
+            var owners = realization.Owners.Values.Where(owner => owner.Needed).ToDictionary(owner => owner.Name,
+                owner => current.Bindings.TryGetValue(owner.Name, out var binding)
+                    ? new Owner(new GenericOwner(owner.Name, binding, null,
+                        current.Definitions[owner.Name].TypeParams.OrEmpty().Length, true)) { ErasedName = owner.ErasedName }
+                    : new Owner { Name = owner.Name, ErasedName = owner.ErasedName, Needed = true }, StringComparer.Ordinal);
+            return new(realization.Preparation, owners, realization.References, realization.Values,
+                realization.NativeProofs, current.LocalClrAliases, Read, current);
+        }
+
         static ProjectionDeclaration ReadSource(AliasDeclarationTransitions.LogicalHeaderFacts header) => new(
             header.Kind.OrDefault(), IsSourceGeneric(header.Name.OrDefault(), header.Generated.OrDefault(),
                 header.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }),
@@ -67,9 +88,12 @@ static partial class FBoundStarProjectionErasure
 
         ProjectionDeclaration LocalDeclaration(string name) => declaration(name);
 
-        internal NullableRepresentationFrame OwnerFrame(Owner owner) => owner.DefinitionBinding is { IsPhysical: false } source
-            ? NullableRepresentationViews.TypeFacts(source.Source)?.NullableFrame
-            : KotlinSupertypesRecord.ReadNullableFrame(owner.Def);
+        internal NullableRepresentationFrame OwnerFrame(Owner owner) => currentPhysical != null
+            ? currentPhysical.Definitions.TryGetValue(owner.Name, out var actual)
+                ? NullableRepresentationViews.TypeFacts((BirGraphValue)actual)?.NullableFrame : null
+            : owner.DefinitionBinding is { IsPhysical: false } source
+                ? NullableRepresentationViews.TypeFacts(source.Source)?.NullableFrame
+                : KotlinSupertypesRecord.ReadNullableFrame(owner.Def);
 
         internal TypeNode Rewrite(TypeNode type, bool boundDeclaration = false,
             bool preserveConstructedHead = false, bool preserveArrayShape = false)

@@ -20,7 +20,9 @@ static partial class FBoundStarProjectionErasure
             (declaration != null ? Rows(declaration) : MethodRows(identity)).ContainsKey(index);
 
         internal bool IsPhysicalConstraint(DeclarationBinding declaration, int index, TypeNode bound) =>
-            IsRequiredPhysicalConstraint(Rows(declaration), index, bound);
+            IsRequiredPhysicalConstraint(declaration != null && rows.TryGetValue(declaration, out var original) ? original
+                : declaration != null && lateSourceTypes.TryGetValue(declaration, out var physical) ? physical
+                    : Rows(declaration), index, bound);
 
         internal bool IsPhysicalConstraint(BirFunctionDeclaration declaration, int index, TypeNode bound) =>
             IsRequiredPhysicalConstraint(Rows(bindings.GetCapturedSource(declaration)), index, bound);
