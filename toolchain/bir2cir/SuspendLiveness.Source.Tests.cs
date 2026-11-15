@@ -99,9 +99,12 @@ static partial class SuspendLiveness
         Check(SourceHasSuspension(inline, true) && !SourceHasSuspension(inline, false)
             && inlineBody.FirstSuspensionAcross("outside") == "inlineLoop", "inline-loop own/wide suspension scopes diverged");
         var header = Declare("header"); header.Type = new TypeNode.Fqn("kotlin.Boolean"); header.Init = Boolean();
-        var structured = Analyze(new IBirStatement[] { header, Declare("perIteration"),
+        // Analyze consumes the normalized body: a surviving structured loop is
+        // suspension-free. Its header is needed after the preceding resume,
+        // while each iteration defines its own value before the backedge read.
+        var structured = Analyze(new IBirStatement[] { header, Declare("perIteration"), Eval(Suspend("structured")),
             new BirWhile { Label = "loop", Cond = Read("header"), Body = new IBirStatement[] {
-                Set("perIteration", Number()), Eval(Read("perIteration")), Eval(Suspend("structured")),
+                Set("perIteration", Number()), Eval(Read("perIteration")),
                 new BirContinue { Label = "loop" },
             } } });
         Check(structured.FirstSuspensionAcross("header") == "structured" && !structured.LivesAcrossSuspension("perIteration"),
