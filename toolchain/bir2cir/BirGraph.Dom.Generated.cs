@@ -1708,6 +1708,8 @@ internal static class BirGraphDom
                 case "nullableGenericRet": break;
                 case "nullableGenericSuspendRet": break;
                 case "declarationSourceName": break;
+                case "declarationSignatureAllocation": break;
+                case "declarationSemanticSignature": break;
                 case "kotlinSourceMember": break;
                 case "pendingOverrideOwner": break;
                 case "pendingOverrideReturn": break;
@@ -1801,6 +1803,8 @@ internal static class BirGraphDom
             NullableGenericRet = Field<TypeNode>(fields, "nullableGenericRet", value => TypeNode.Parse(value!.GetValue<string>())),
             NullableGenericSuspendRet = Field<TypeNode>(fields, "nullableGenericSuspendRet", value => TypeNode.Parse(value!.GetValue<string>())),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
+            DeclarationSignatureAllocation = Field<bool>(fields, "declarationSignatureAllocation", value => value!.GetValue<bool>()),
+            DeclarationSemanticSignature = Field<SourceDeclarationSignature>(fields, "declarationSemanticSignature", value => SourceDeclarationSignature.Read(value!)),
             KotlinSourceMember = Field<string>(fields, "kotlinSourceMember", value => value!.GetValue<string>()),
             PendingOverrideOwner = Field<TypeNode>(fields, "pendingOverrideOwner", value => TypeNode.Read(value) ?? throw new FormatException()),
             PendingOverrideReturn = Field<TypeNode>(fields, "pendingOverrideReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
@@ -1848,6 +1852,7 @@ internal static class BirGraphDom
                 case "vis": break;
                 case "attrs": break;
                 case "body": break;
+                case "declarationSignatureAllocation": break;
                 case "roundtripMetadataPending": break;
                 case "roundtripDeclarationIdentity": break;
                 case "baseCtorRef": break;
@@ -1870,6 +1875,7 @@ internal static class BirGraphDom
             Vis = Field<string>(fields, "vis", value => value!.GetValue<string>()),
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             Body = Field<IBirStatement[]>(fields, "body", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
+            DeclarationSignatureAllocation = Field<bool>(fields, "declarationSignatureAllocation", value => value!.GetValue<bool>()),
             RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
             RoundtripDeclarationIdentity = Field<BirRoundtripDeclarationIdentity>(fields, "roundtripDeclarationIdentity", value => ReadBirRoundtripDeclarationIdentity(value!)),
             BaseCtorRef = Field<BirMemberReference>(fields, "baseCtorRef", value => ReadBirMemberReference(value!)),

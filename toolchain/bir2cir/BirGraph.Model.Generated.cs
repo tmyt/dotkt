@@ -10788,6 +10788,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<TypeNode> NullableGenericRet { get; set; }
     public OptionalField<TypeNode> NullableGenericSuspendRet { get; set; }
     public OptionalField<string> DeclarationSourceName { get; set; }
+    public OptionalField<bool> DeclarationSignatureAllocation { get; set; }
+    public OptionalField<SourceDeclarationSignature> DeclarationSemanticSignature { get; set; }
     public OptionalField<string> KotlinSourceMember { get; set; }
     public OptionalField<TypeNode> PendingOverrideOwner { get; set; }
     public OptionalField<TypeNode> PendingOverrideReturn { get; set; }
@@ -11415,6 +11417,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(NullableGenericRet, value.NullableGenericRet, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(NullableGenericSuspendRet, value.NullableGenericSuspendRet, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(DeclarationSourceName, value.DeclarationSourceName, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(DeclarationSignatureAllocation, value.DeclarationSignatureAllocation, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(DeclarationSemanticSignature, value.DeclarationSemanticSignature, (left, right) => left.SameContent(right))
             && EqualField(KotlinSourceMember, value.KotlinSourceMember, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(PendingOverrideOwner, value.PendingOverrideOwner, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(PendingOverrideReturn, value.PendingOverrideReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -11507,6 +11511,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "nullableGenericRet", NullableGenericRet, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "nullableGenericSuspendRet", NullableGenericSuspendRet, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "declarationSourceName", DeclarationSourceName, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "declarationSignatureAllocation", DeclarationSignatureAllocation, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "declarationSemanticSignature", DeclarationSemanticSignature, (writer, value) => { SourceDeclarationSignature.Write(writer, value); });
         WriteOptional(writer, "kotlinSourceMember", KotlinSourceMember, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "pendingOverrideOwner", PendingOverrideOwner, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "pendingOverrideReturn", PendingOverrideReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
@@ -11601,6 +11607,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (NullableGenericRet.IsPresent) result["nullableGenericRet"] = NullableGenericRet.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGenericRet.Value));
         if (NullableGenericSuspendRet.IsPresent) result["nullableGenericSuspendRet"] = NullableGenericSuspendRet.IsNull ? null : JsonValue.Create(TypeNode.ToJson(NullableGenericSuspendRet.Value));
         if (DeclarationSourceName.IsPresent) result["declarationSourceName"] = DeclarationSourceName.IsNull ? null : JsonValue.Create(DeclarationSourceName.Value);
+        if (DeclarationSignatureAllocation.IsPresent) result["declarationSignatureAllocation"] = DeclarationSignatureAllocation.IsNull ? null : JsonValue.Create(DeclarationSignatureAllocation.Value);
+        if (DeclarationSemanticSignature.IsPresent) result["declarationSemanticSignature"] = DeclarationSemanticSignature.IsNull ? null : SourceDeclarationSignature.ToDom(DeclarationSemanticSignature.Value);
         if (KotlinSourceMember.IsPresent) result["kotlinSourceMember"] = KotlinSourceMember.IsNull ? null : JsonValue.Create(KotlinSourceMember.Value);
         if (PendingOverrideOwner.IsPresent) result["pendingOverrideOwner"] = PendingOverrideOwner.IsNull ? null : TypeNode.Write(PendingOverrideOwner.Value);
         if (PendingOverrideReturn.IsPresent) result["pendingOverrideReturn"] = PendingOverrideReturn.IsNull ? null : TypeNode.Write(PendingOverrideReturn.Value);
@@ -11646,6 +11654,7 @@ internal sealed record BirConstructor : BirGraphValue
     public OptionalField<string> Vis { get; set; }
     public OptionalField<BirAttribute[]> Attrs { get; set; }
     public OptionalField<IBirStatement[]> Body { get; set; }
+    public OptionalField<bool> DeclarationSignatureAllocation { get; set; }
     public OptionalField<bool> RoundtripMetadataPending { get; set; }
     public OptionalField<BirRoundtripDeclarationIdentity> RoundtripDeclarationIdentity { get; set; }
     public OptionalField<BirMemberReference> BaseCtorRef { get; set; }
@@ -11917,6 +11926,7 @@ internal sealed record BirConstructor : BirGraphValue
             && EqualField(Vis, value.Vis, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Attrs, value.Attrs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Body, value.Body, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(DeclarationSignatureAllocation, value.DeclarationSignatureAllocation, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RoundtripMetadataPending, value.RoundtripMetadataPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RoundtripDeclarationIdentity, value.RoundtripDeclarationIdentity, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(BaseCtorRef, value.BaseCtorRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -11938,6 +11948,7 @@ internal sealed record BirConstructor : BirGraphValue
         WriteOptional(writer, "vis", Vis, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "body", Body, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "declarationSignatureAllocation", DeclarationSignatureAllocation, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "roundtripMetadataPending", RoundtripMetadataPending, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "roundtripDeclarationIdentity", RoundtripDeclarationIdentity, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "baseCtorRef", BaseCtorRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -11961,6 +11972,7 @@ internal sealed record BirConstructor : BirGraphValue
         if (Vis.IsPresent) result["vis"] = Vis.IsNull ? null : JsonValue.Create(Vis.Value);
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (Body.IsPresent) result["body"] = Body.IsNull ? null : new JsonArray(Body.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (DeclarationSignatureAllocation.IsPresent) result["declarationSignatureAllocation"] = DeclarationSignatureAllocation.IsNull ? null : JsonValue.Create(DeclarationSignatureAllocation.Value);
         if (RoundtripMetadataPending.IsPresent) result["roundtripMetadataPending"] = RoundtripMetadataPending.IsNull ? null : JsonValue.Create(RoundtripMetadataPending.Value);
         if (RoundtripDeclarationIdentity.IsPresent) result["roundtripDeclarationIdentity"] = RoundtripDeclarationIdentity.IsNull ? null : ((BirGraphValue)RoundtripDeclarationIdentity.Value).ToDom(projected);
         if (BaseCtorRef.IsPresent) result["baseCtorRef"] = BaseCtorRef.IsNull ? null : ((BirGraphValue)BaseCtorRef.Value).ToDom(projected);
