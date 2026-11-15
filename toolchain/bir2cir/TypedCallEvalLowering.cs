@@ -86,6 +86,18 @@ static class TypedCallEvalLowering
     internal static (IBirStatement[] Stmts, Dictionary<string, IBirExpression> Repl) Materialise(
         BirCallBinding[] bindings, IReadOnlyList<BirGraphValue> readers, string site,
         ValueTypeOracle isValue = null)
+        => MaterialiseCore(bindings, readers, site, isValue, null, owned: false);
+
+    // The source planner owns these occurrences. Moving an operand into a local
+    // must not clone a registered declaration nested inside that operand.
+    internal static (IBirStatement[] Stmts, Dictionary<string, IBirExpression> Repl) MaterialiseOwned(
+        BirCallBinding[] bindings, IReadOnlyList<BirGraphValue> readers, string site,
+        bool[] force, ValueTypeOracle isValue)
+        => MaterialiseCore(bindings, readers, site, isValue, force, owned: true);
+
+    static (IBirStatement[] Stmts, Dictionary<string, IBirExpression> Repl) MaterialiseCore(
+        BirCallBinding[] bindings, IReadOnlyList<BirGraphValue> readers, string site,
+        ValueTypeOracle isValue, bool[] force, bool owned)
     {
         isValue ??= _ => false;
         var ids = bindings.Select(binding => binding.Id.Value).ToArray();
@@ -99,14 +111,21 @@ static class TypedCallEvalLowering
         foreach (var binding in bindings) CountReads(Graph(binding.Expr.Value), reads);
         var drop = bindings.Select((binding, index) => reads[ids[index]] == 0
             && ValueStability.IsDroppable((Graph(binding.Expr.Value) as BirGraphNode)?.Tag)).ToArray();
+        if (force != null && force.Length != bindings.Length)
+            throw new InvalidOperationException("A call-plan forcing vector does not match its bindings");
+        // An owning non-re-readable occurrence cannot be copied to several
+        // readers, even when a caller supplies the ordering decision.
+        if (owned && force != null)
+            force = force.Select((forced, index) => forced || reads[ids[index]] > 1).ToArray();
         var variables = CallEvalLowering.DecideMaterialisation(ids, kinds, stable, drop, reads, positions, deferred,
-            index => LocationHasPinWork(bindings[index].Expr.Value, isValue), null);
+            index => LocationHasPinWork(bindings[index].Expr.Value, isValue), force);
         var statements = new List<IBirStatement>();
         var replacements = new Dictionary<string, IBirExpression>(StringComparer.Ordinal);
         for (var index = 0; index < bindings.Length; index++)
         {
             var binding = bindings[index];
-            var value = Expr(Substitute(Graph(binding.Expr.Value), replacements));
+            var value = Expr(owned ? SubstituteOwned(Graph(binding.Expr.Value), replacements)
+                : Substitute(Graph(binding.Expr.Value), replacements));
             if (drop[index]) { replacements[ids[index]] = null; continue; }
             if (kinds[index] == "address")
             {
@@ -158,6 +177,33 @@ static class TypedCallEvalLowering
         return Replace(node.DeepClone());
     }
 
+    // A single reader receives the original occurrence. Repeated local/literal
+    // reads receive independent leaves; repeated evaluations must have been
+    // materialized by the shared decision above rather than cloning a subtree.
+    internal static BirGraphValue SubstituteOwned(BirGraphValue node,
+        IReadOnlyDictionary<string, IBirExpression> replacements)
+    {
+        if (node == null || replacements.Count == 0) return node;
+        var counts = replacements.Keys.ToDictionary(id => id, _ => 0, StringComparer.Ordinal);
+        CountReads(node, counts);
+        foreach (var (id, count) in counts)
+            if (count > 1 && replacements[id] is { } value && !IndependentRead(value))
+                throw new InvalidOperationException("An owning call-plan evaluation has multiple unmaterialized readers");
+        var moved = new HashSet<string>(StringComparer.Ordinal);
+        BirGraphValue Replace(BirGraphValue current)
+        {
+            if (current is BirBindingReference reference && replacements.TryGetValue(reference.Id.Value, out var value))
+                return value == null ? null : moved.Add(reference.Id.Value) ? Graph(value) : Graph(value).DeepClone();
+            current.VisitChildSlots(slot => slot.Replace(Replace(slot.Value)));
+            return current;
+        }
+        return Replace(node);
+    }
+
+    static bool IndependentRead(IBirExpression value) => value is BirLocal
+        || ValueStability.IsReReadable((Graph(value) as BirGraphNode)?.Tag,
+            value is BirEnumValue { Underlying.HasValue: true, PhysicalValue.HasValue: true });
+
     internal static TypeNode StaticTypeOf(BirGraphValue value) => BirNodeType.Of(value as BirGraphNode,
         node => StaticTypeOf(node), name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var element) ? element : null);
 
@@ -196,6 +242,16 @@ static class TypedCallEvalLowering
             else if (!StaysWithoutPin(Expr(slot.Value))) return true;
         }
         return false;
+    }
+
+    internal static bool IsPinnedLocation(IBirExpression location, Func<IBirExpression, bool> settled,
+        ValueTypeOracle isValue)
+    {
+        if (!IsLvalueFormer(location)) return settled(location);
+        foreach (var slot in LocationOperands(location))
+            if (IsStoragePathOperand(location, slot, isValue)
+                ? !IsPinnedLocation(Expr(slot.Value), settled, isValue) : !settled(Expr(slot.Value))) return false;
+        return true;
     }
 
     static void PinLocationOperands(IBirExpression location, List<IBirStatement> statements, ValueTypeOracle isValue)
