@@ -1,5 +1,6 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 using DeclarationBinding = CurrentDeclarationBindings.DeclarationBinding;
 
 static partial class FBoundStarProjectionErasure
@@ -11,6 +12,11 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlyDictionary<string, IBirTypeDeclaration> Definitions { get; }
         internal IReadOnlyDictionary<string, DeclarationBinding> Bindings { get; }
         internal IReadOnlyDictionary<string, string> LocalClrAliases { get; }
+
+        // The same exact bindings change addresses once; no current graph is
+        // rediscovered after the source side has been consumed.
+        internal Dictionary<string, System.Text.Json.Nodes.JsonObject> BindDefinitions() => Bindings
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Physical, StringComparer.Ordinal);
 
         CurrentPhysicalTypeView(Dictionary<string, IBirTypeDeclaration> definitions,
             Dictionary<string, DeclarationBinding> bindings, IReadOnlyDictionary<string, string> aliases)
@@ -32,7 +38,7 @@ static partial class FBoundStarProjectionErasure
         }
     }
 
-    internal static void RewriteLateTypesSource(IReadOnlyList<BirFileDeclaration> roots,
+    internal static CurrentPhysicalTypeView RewriteLateTypesSource(IReadOnlyList<BirFileDeclaration> roots,
         CarrierRealizationContext realization, AliasDeclarationTransitions aliases = null)
     {
         var current = CurrentPhysicalTypeView.Capture(roots, realization.Bindings);
@@ -46,5 +52,6 @@ static partial class FBoundStarProjectionErasure
                 if (!ReferenceEquals(replacement, root))
                     throw new InvalidOperationException("Late carrier projection replaced a file declaration");
             }), new(), state, null, typesOnly: true);
+        return current;
     }
 }
