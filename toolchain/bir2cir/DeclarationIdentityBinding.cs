@@ -29,13 +29,6 @@ static partial class DeclarationIdentityBinding
     internal static string PhysicalOnlyId(string declarationId, string role) =>
         declarationId + PhysicalOnlySuffix + "|" + role;
 
-    internal static void MarkInheritedProjection(JsonObject method, string owner, IEnumerable<string> sourceIds)
-    {
-        method[Key] = InheritedProjectionId(owner, sourceIds);
-        method["declarationSourceName"] = method["name"]!.DeepClone();
-        method["generated"] = true;
-    }
-
     internal static string InheritedProjectionId(string owner, IEnumerable<string> sourceIds)
     {
         var identities = sourceIds.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToArray();
@@ -679,15 +672,14 @@ static partial class DeclarationIdentityBinding
 
     public static void SelfTest()
     {
-        var inherited = new JsonObject {
-            ["name"] = "inherited", ["virtual"] = true,
-            ["params"] = new JsonArray(), ["ret"] = TypeJson.Fqn("void"),
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "S" }),
-            [NullableGenericErasure.MethodTypeParameterBoundsPre] = "{\"bounds\":{\"0\":[]}}",
-            [NullableRepresentationTypes.MethodFrameKey] = new NullableRepresentationFrame(1,
-                Array.Empty<int>(), storageIndices: new[] { 0 }).ToJson().ToJsonString(),
-        };
-        MarkInheritedProjection(inherited, "InheritedOwner", new[] { "selected-base", "selected-base" });
+        var inherited = new BirFunctionDeclaration {
+            Name = "inherited", Virtual = true, Generated = true, DeclarationSourceName = "inherited",
+            DeclarationId = InheritedProjectionId("InheritedOwner", new[] { "selected-base", "selected-base" }),
+            Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("void"),
+            TypeParams = new[] { new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "S" } },
+            MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> { [0] = Array.Empty<TypeNode>() }),
+            NullableRepresentationFrame = new NullableRepresentationFrame(1, Array.Empty<int>(), storageIndices: new[] { 0 }),
+        }.ToDom();
         var inheritedRoot = new JsonObject { ["fileClass"] = "InheritedOwner", ["methods"] = new JsonArray(inherited) };
         var inheritedNames = AllocatePhysicalNames(new[] { inheritedRoot }, out var inheritedCarriers);
         ApplyLocal(new[] { inheritedRoot }, inheritedNames, inheritedCarriers,

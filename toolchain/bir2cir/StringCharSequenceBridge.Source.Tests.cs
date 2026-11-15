@@ -89,6 +89,16 @@ static partial class StringCharSequenceBridge
                 && adapter.Ctors.Value[0].BaseArgs.IsNull && adapter.Ctors.Value[0].ThisArgs.IsNull
                 && adapter.Methods.Value[0].Mods.Value.Operator.Value && !adapter.Methods.Value[2].Attrs.IsPresent,
                 "single adapter declaration shape/order/presence");
+            var actualAdapter = result.AppendedTypes.Single();
+            Require(actualAdapter.Methods.Value[0].Body.Value[0] is BirReturn { Value.Value: BirNativeInstance {
+                    Type.Value: TypeNode.Fqn { Name: "System.String" }, Method.Value: "get_Chars",
+                    Ret.Value: TypeNode.Fqn { Name: "System.Char" }, Args.Value: [BirLocal { Name.Value: "index" }] } }
+                && actualAdapter.Methods.Value[3].Body.Value[0] is BirReturn { Value.Value: BirPropertyGet {
+                    Type.Value: TypeNode.Fqn { Name: "System.String" }, Name.Value: "Length" } }
+                && actualAdapter.Methods.Value[1].Body.Value[0] is BirReturn { Value.Value: BirNew {
+                    Args.Value: [BirNativeInstance { Method.Value: "Substring", Args.Value: [BirLocal { Name.Value: "startIndex" },
+                        BirBinaryOperation { Op.Value: "-", Lhs.Value: BirLocal { Name.Value: "endIndex" }, Rhs.Value: BirLocal { Name.Value: "startIndex" } }] }] } },
+                "adapter must keep CLR UTF-16 character/length and exclusive-end substring operations");
             Require(result.DelegateAdapters.Count == 0 && Apply(new BirFileDeclaration { Methods = Array.Empty<BirFunctionDeclaration>() }, null, null).AppendedTypes.Count == 0,
                 "adapter emission must remain process-wide, not per-file");
 
@@ -142,6 +152,25 @@ static partial class StringCharSequenceBridge
             Require(ReferenceEquals(((BirInlinePayload)payload).Body.Value, opaqueBody)
                 && ((BirCallStatic)((BirExpressionStatement)opaqueBody[0]).Expr.Value).Args.Value[0] is BirConstant,
                 "executable carrier must remain opaque");
+
+            _adapterEmitted = false;
+            var lateValue = Local("lateText");
+            var untouched = Text("argument");
+            var lateCall = Call(untouched, T(CharSeq));
+            var lateReturn = new BirReturn { Value = lateValue };
+            var lateMethod = new BirFunctionDeclaration { Name = "exactBridge", Ret = T(CharSeq),
+                Params = Array.Empty<BirParameter>(), Body = new IBirStatement[] {
+                    new BirVariable { Name = "lateText", Type = T("kotlin.String"), Init = Text("value") },
+                    Statement(lateCall), lateReturn,
+                } };
+            var lateFile = new BirFileDeclaration { Methods = new[] { lateMethod }, Types = Array.Empty<IBirTypeDeclaration>() };
+            var lateAdapters = ApplyMaterializedReturns(lateFile, lateMethod);
+            Require(lateAdapters is [var lateAdapter] && ReferenceEquals(lateFile.Types.Value[0], lateAdapter)
+                && lateReturn.Value.Value is BirNew { Args.Value: [var moved] } && ReferenceEquals(moved, lateValue)
+                && ReferenceEquals(lateCall.Args.Value[0], untouched) && ReferenceEquals(lateFile.Methods.Value[0], lateMethod),
+                "materialized bridge must adapt only returns, preserve scope/operands and report its actual appended adapter");
+            Require(ApplyMaterializedReturns(lateFile, lateMethod).Count == 0 && lateFile.Types.Value.Length == 1,
+                "late bridge adapter must share the process-wide emission authority");
             Console.WriteLine("[selftest] Owning String/CharSequence bridge: OK");
         }
     }
