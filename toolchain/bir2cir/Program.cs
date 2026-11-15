@@ -169,6 +169,7 @@ static class Bir2Cir
                 KotlinCollectionSlotSynthesis.SelfTest();
                 CollectionBclSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
+                KotlinOverrideSlotBridge.SuspendSourceSelfTest();
                 KotlinOverrideSlotBridge.SourceParameterSnapshotSelfTest();
                 CollectionIdentityRecord.SourceSelfTest();
                 KotlinCollectionIdentitySynthesis.SourceSelfTest();
@@ -192,6 +193,7 @@ static class Bir2Cir
                 FBoundStarProjectionErasure.ProjectionConstraintSelfTest();
                 ComparableRepresentationLowering.SelfTest();
                 ValueRepresentationLowering.SelfTest();
+                ValueRepresentationLowering.SourceSlotsSelfTest();
                 ValueRepresentationSourcePolicy.SelfTest();
                 CallableVisibilityLowering.SelfTest();
                 AliasVarianceRepresentation.SelfTest();
@@ -729,13 +731,17 @@ sealed class Pipeline
         ExistentialCaptureAlignment.ApplyAll(captured, localExistentialOwners, refs, isValueFqn, genericRepresentations,
             (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
                 nullableDeclarations, owner, field, position, arity, storage));
-        void AdmitBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
+        void BindBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
         {
             foreach (var method in appended)
             {
                 currentDeclarations.GetSource(method);
                 foreach (var implementation in method.ClrInterfaceImpls.OrEmpty()) currentDeclarations.GetSource(implementation);
             }
+        }
+        void AdmitBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
+        {
+            BindBridgeMethods(owner, appended);
             pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations);
         }
         InheritedClassInterfaceBridge.ApplyAll(captured, AdmitBridgeMethods);
@@ -756,13 +762,32 @@ sealed class Pipeline
         var continuingCovariantSlots = sourceCovariantSlots.Select(slot => (
             Implementation: currentDeclarations.GetSource(slot.Implementation), slot.Descriptor)).ToArray();
 
+        // Keep the original slot-owner clock on the owning graph. Covariant
+        // slots suppress duplicate suspend bridges using the same actual handles.
+        KotlinOverrideSlotBridge.PrepareSuspendValueBridges(captured, isValueFqn, refs,
+            inventory.EmittedTypeFqns, referenceBuild, genericRepresentations,
+            sourceCovariantSlots, pendingOverrideParameters.ReadSourceParameters(),
+            valuePolicy.HasClassifier,
+            (file, owner, method, descriptor) => {
+                if (method != null) AdmitBridgeMethods(owner, new[] { method });
+                if (descriptor != null) currentDeclarations.GetSource(descriptor);
+            });
+        pendingOverrideParameters.Complete();
+        if (!referenceBuild)
+            KotlinCollectionSlotSynthesis.ApplyAll(captured, refs, isValueFqn, valueRepresentations, BindBridgeMethods);
+        valueRepresentations.SynthesizeSlots(captured, isValueFqn, (owner, methods, properties) => {
+            currentDeclarations.RetireSourceMembers(owner, methods, properties);
+            foreach (var method in methods) RetireDeclaration(method);
+        }, BindBridgeMethods);
+        ConstructedMemberReturnSubstitution.ApplyAll(captured);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after carrier realization, capture-storage
-            // alignment and inherited/covariant bridge materialization.
+            // continuing projection, after slot synthesis and constructed-result
+            // closure, immediately before suspend state-machine materialization.
             var root = source.ToDom(currentDeclarations.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -771,17 +796,18 @@ sealed class Pipeline
         }
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
-        currentDeclarations.BindProjected();
         // Retired generated targets still supply source declaration facts. Put
         // those explicitly reported declarations through the same frontier once;
         // both continuing indexes receive the exact same detached DOM record.
         var retiredDom = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
-        foreach (var method in retiredDeclarations) retiredDom.Add(method, method.ToDom());
+        foreach (var method in retiredDeclarations)
+            retiredDom.Add(method, currentDeclarations.IsRetiredSource(method)
+                ? method.ToDom(currentDeclarations.ObserveProjection) : method.ToDom());
+        currentDeclarations.BindProjected();
         genericRepresentations.BindDomDeclarations(continuingRoots, aliasTransitions);
         valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions);
-        var overrideSourceParameters = pendingOverrideParameters.BindDom(continuingRoots);
         var covariantBridgedSlots = continuingCovariantSlots.Select(slot =>
             new CovariantInterfaceReturnBridge.BridgedSlot(slot.Implementation.Physical, slot.Descriptor)).ToHashSet();
         var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(carrierRealization);
@@ -791,7 +817,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums,
-                moduleBindings, overrideSourceParameters, carrierContinuation, covariantBridgedSlots));
+                moduleBindings, carrierContinuation, covariantBridgedSlots));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -844,37 +870,11 @@ sealed class Pipeline
         foreach (var bir in birFiles)
             staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
-        // Continue the owning prefix's selected carrier, source-parameter and
+        // Continue the owning prefix's selected carrier and
         // covariant-slot facts; do not reselect them after the frontier.
-        var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
         var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
         var covariantBridgedSlots = module.Preparation.CovariantBridgedSlots;
-
-        // Covariant bridges own their exact cold and Task slots. Prepare only the remaining suspend-result
-        // obligations, so both passes cannot claim the same interface MethodImpl.
-        KotlinOverrideSlotBridge.PrepareSuspendValueBridges(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns, _options.RefBuild,
-            genericRepresentations, covariantBridgedSlots, overrideSourceParameters);
-
-        // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: the BCL operational faces carry neither Kotlin's
-        // remove-capable `MutableIterable.iterator()` return nor `MutableCollection.removeAll`/`retainAll`/
-        // `addAll(elements)` / `MutableList.addAll(index, elements)`. A Kotlin class overriding one of them would
-        // therefore be unreachable through that face. Give each participating class the matching compiler-owned slot
-        // interface plus a private forwarding bridge carrying a resolved `clrInterfaceImpls` instruction; the
-        // `ClrCollectionDefaults` dispatchers test for those interfaces and otherwise run the BCL default. HERE, in
-        // the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity — which does not
-        // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
-        if (!_options.RefBuild)
-            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList(), refs, isValueFqn);
-        valueRepresentations.SynthesizeSlots(staged.Select(s => s.Root).ToList(), isValueFqn);
-
-        // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
-        // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
-        // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an
-        // out-of-scope TV and ilemit can only realize it as object. Later exact declaring-owner transitions discharge
-        // this same obligation locally when they change a call's owner; no module-wide repair sweep follows.
-        ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
         // extensions, instance members, static/companion members, abstract/interface members) into the cold
@@ -1756,7 +1756,6 @@ sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
     ModuleBindingSnapshots Bindings,
-    IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters,
     FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers,
     IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> CovariantBridgedSlots);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);

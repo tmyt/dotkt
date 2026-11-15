@@ -3,6 +3,11 @@ using DotKt.Bir.Lowering;
 
 static partial class ConstructedMemberReturnSubstitution
 {
+    internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)
+    {
+        foreach (var root in roots) ApplySourceMaterialized(root);
+    }
+
     internal static void ApplySourceMaterialized(BirGraphValue root)
     {
         if (root is IBirExecutablePayload) return;

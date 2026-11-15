@@ -9443,6 +9443,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<int[]> NullableWitnessIndices { get; set; }
     public OptionalField<TypeNode> SuspendResult { get; set; }
     public OptionalField<TypeNode> SuspendTaskResult { get; set; }
+    public OptionalField<bool> SuspendTaskOnlyBridge { get; set; }
     public OptionalField<bool> DotktValueReturn { get; set; }
     public OptionalField<OwnerConstraintOverrideBounds> _ownerConstraintOverrideBounds { get; set; }
     public OptionalField<OwnerConstraintDispatchBounds> _ownerConstraintDispatchBounds { get; set; }
@@ -9952,6 +9953,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(NullableWitnessIndices, value.NullableWitnessIndices, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)))
             && EqualField(SuspendResult, value.SuspendResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(SuspendTaskResult, value.SuspendTaskResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(SuspendTaskOnlyBridge, value.SuspendTaskOnlyBridge, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(DotktValueReturn, value.DotktValueReturn, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_ownerConstraintOverrideBounds, value._ownerConstraintOverrideBounds, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(_ownerConstraintDispatchBounds, value._ownerConstraintDispatchBounds, (left, right) => left.FrozenText == right.FrozenText)
@@ -10038,6 +10040,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "nullableWitnessIndices", NullableWitnessIndices, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "suspendResult", SuspendResult, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "suspendTaskResult", SuspendTaskResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "suspendTaskOnlyBridge", SuspendTaskOnlyBridge, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "dotktValueReturn", DotktValueReturn, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_ownerConstraintOverrideBounds", _ownerConstraintOverrideBounds, (writer, value) => { OwnerConstraintOverrideBounds.Write(writer, value); });
         WriteOptional(writer, "_ownerConstraintDispatchBounds", _ownerConstraintDispatchBounds, (writer, value) => { OwnerConstraintDispatchBounds.Write(writer, value); });
@@ -10126,6 +10129,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (NullableWitnessIndices.IsPresent) result["nullableWitnessIndices"] = NullableWitnessIndices.IsNull ? null : new JsonArray(NullableWitnessIndices.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (SuspendResult.IsPresent) result["suspendResult"] = SuspendResult.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendResult.Value));
         if (SuspendTaskResult.IsPresent) result["suspendTaskResult"] = SuspendTaskResult.IsNull ? null : TypeNode.Write(SuspendTaskResult.Value);
+        if (SuspendTaskOnlyBridge.IsPresent) result["suspendTaskOnlyBridge"] = SuspendTaskOnlyBridge.IsNull ? null : JsonValue.Create(SuspendTaskOnlyBridge.Value);
         if (DotktValueReturn.IsPresent) result["dotktValueReturn"] = DotktValueReturn.IsNull ? null : JsonValue.Create(DotktValueReturn.Value);
         if (_ownerConstraintOverrideBounds.IsPresent) result["_ownerConstraintOverrideBounds"] = _ownerConstraintOverrideBounds.IsNull ? null : OwnerConstraintOverrideBounds.ToDom(_ownerConstraintOverrideBounds.Value);
         if (_ownerConstraintDispatchBounds.IsPresent) result["_ownerConstraintDispatchBounds"] = _ownerConstraintDispatchBounds.IsNull ? null : OwnerConstraintDispatchBounds.ToDom(_ownerConstraintDispatchBounds.Value);

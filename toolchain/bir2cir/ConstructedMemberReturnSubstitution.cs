@@ -9,11 +9,6 @@ using DotKt.Bir.Lowering;
 // bind to the caller class's unrelated `!0` (or object fallback), producing invalid casts and signatures.
 static partial class ConstructedMemberReturnSubstitution
 {
-    public static void ApplyAll(System.Collections.Generic.IEnumerable<JsonNode> roots)
-    {
-        foreach (var root in roots) Walk(root);
-    }
-
     /// <summary>Close receiver-relative result slots in one newly synthesized executable graph.</summary>
     public static T ApplyMaterialized<T>(T root) where T : JsonNode
     {
@@ -22,7 +17,7 @@ static partial class ConstructedMemberReturnSubstitution
     }
 
     // Late inherited-owner binding closes results on the work item whose physical owner changes. Early source-owner
-    // projection leaves this to ApplyAll after inner application arguments have their physical declaration order.
+    // projection leaves this to the owning module pass after inner application arguments have their physical declaration order.
     internal static void ApplyCall(JsonObject obj)
     {
         var kind = Str(obj["k"]);

@@ -73,8 +73,7 @@ static partial class KotlinPropertyAccessors
 
     internal static void PreserveCallIdentity(JsonObject call, string sourceName, string kind)
     {
-        if (sourceName == null || kind is not ("get" or "set"))
-            throw new InvalidOperationException("incomplete Kotlin property call identity");
+        ValidateCallIdentity(sourceName, kind);
         call[SourceNameKey] = sourceName;
         call[KindKey] = kind;
     }

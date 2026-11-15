@@ -61,6 +61,11 @@ static partial class FBoundStarProjectionErasure
                     type.Interfaces.OrEmpty().OfType<TypeNode.Fqn>().ToArray()) : null,
             name => preparation.Bindings.SourceDefinitions.TryGetValue(name, out var binding)
                 && binding.Source is IBirTypeDeclaration type ? ClrVarianceFacts.FromSource(type) : null, refs);
+        internal static CarrierTypeContext ForSource(IReadOnlyDictionary<string, IBirTypeDeclaration> definitions,
+            ReferenceMetadataIndex refs) => new(
+            name => definitions.TryGetValue(name, out var type) ? new(type.Kind.OrDefault(), type.Base.OrDefault() as TypeNode.Fqn,
+                type.Interfaces.OrEmpty().OfType<TypeNode.Fqn>().ToArray()) : null,
+            name => definitions.TryGetValue(name, out var type) ? ClrVarianceFacts.FromSource(type) : null, refs);
     }
 
     static bool CanUseClrVariance(TypeNode.Fqn target, IReadOnlyList<TypeNode> sourceArguments,

@@ -5,11 +5,11 @@ using DotKt.Cir;
 
 sealed partial class ValueRepresentationLowering
 {
-    // Reuse SelfTest's actual Union binding and the same saved-bound frame on both real entry points.
-    // Prepare the typed cases before the one-way declaration handoff; run the detached materialized cases after it.
-    static Action PrepareNestedBoundGuardSelfTest(ValueRepresentationLowering policy)
+    // Both actual owning entries consume the same saved-bound policy. The
+    // independent authored inputs differ only in file versus detached-method scope.
+    static void NestedBoundGuardSelfTest(ValueRepresentationLowering policy)
     {
-        var cases = new List<(int Depth, BirFunctionDeclaration Source, JsonObject Materialized)>();
+        var cases = new List<(int Depth, BirFunctionDeclaration Source, BirFunctionDeclaration Materialized)>();
         var variable = new TypeNode.Tv("method", 0);
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         foreach (var depth in new[] { 2, 3, 4 })
@@ -26,47 +26,36 @@ sealed partial class ValueRepresentationLowering
                     [0] = new TypeNode[] { new TypeNode.Fqn("Union") } }),
                 Body = new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(operand) } },
             };
-            var materialized = method.ToDom();
+            var materialized = (BirFunctionDeclaration)method.DeepClone();
             policy.BindOperations(new BirFileDeclaration { Methods = new[] { method } });
             cases.Add((depth, method, materialized));
         }
-        return () => {
-            var differences = new List<string>();
-            foreach (var (depth, source, materialized) in cases)
-            {
-                policy.BindMaterializedOperations(materialized);
-                var typed = source.ToDom();
-                var sourceCounts = Count(typed);
-                var materializedCounts = Count(materialized);
-                var report = $"depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
-                    $"materialized nodes={materializedCounts.Nodes}, generic casts={materializedCounts.GenericCasts}, classifier blocks={materializedCounts.Blocks}";
-                Console.WriteLine("[nested bound guard] " + report);
-                if (!JsonNode.DeepEquals(typed, materialized)
-                    || sourceCounts != materializedCounts || sourceCounts.GenericCasts != depth)
-                    differences.Add(report);
-            }
-            if (differences.Count != 0)
-                throw new InvalidOperationException("Source and actual materialized nested bound guards diverged: " + string.Join("; ", differences));
-        };
+        var differences = new List<string>();
+        foreach (var (depth, source, materialized) in cases)
+        {
+            policy.BindMaterializedOperations(materialized);
+            var sourceCounts = Count(source);
+            var materializedCounts = Count(materialized);
+            var report = $"depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
+                $"materialized nodes={materializedCounts.Nodes}, generic casts={materializedCounts.GenericCasts}, classifier blocks={materializedCounts.Blocks}";
+            Console.WriteLine("[nested bound guard] " + report);
+            var expected = depth switch { 2 => (78, 2, 4), 3 => (177, 3, 10), 4 => (334, 4, 20), _ => throw new InvalidOperationException() };
+            if (!source.StructurallyEquals(materialized) || sourceCounts != materializedCounts || sourceCounts != expected)
+                differences.Add(report);
+        }
+        if (differences.Count != 0)
+            throw new InvalidOperationException("Source and actual materialized nested bound guards diverged: " + string.Join("; ", differences));
 
-        static (int Nodes, int GenericCasts, int Blocks) Count(JsonNode node)
+        static (int Nodes, int GenericCasts, int Blocks) Count(BirGraphValue node)
         {
             var nodes = 0;
             var casts = 0;
             var blocks = 0;
-            void Walk(JsonNode current)
-            {
-                if (current is JsonObject obj)
-                {
-                    var kind = Text(obj["k"]);
-                    if (kind != null) nodes++;
-                    if (kind == "cast" && TypeJson.Read(obj["type"]) is TypeNode.Tv) casts++;
-                    if (kind == "valueBlock") blocks++;
-                    foreach (var child in obj) Walk(child.Value);
-                }
-                else if (current is JsonArray array) foreach (var child in array) Walk(child);
-            }
-            Walk(node);
+            node.Visit(current => {
+                if (current is BirGraphNode) nodes++;
+                if (current is BirCast { Type.Value: TypeNode.Tv }) casts++;
+                if (current is BirValueBlock) blocks++;
+            });
             return (nodes, casts, blocks);
         }
     }

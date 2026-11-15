@@ -69,7 +69,28 @@ private class ImportedDefaultBody(private val gate: UnitGate) : DefaultUnitBase(
     override suspend fun read() { gate.pause() }
 }
 
+private abstract class NumericResultBase {
+    abstract suspend fun value(): Number
+}
+private class NumericResult : NumericResultBase() {
+    override suspend fun value(): Int = 42
+}
+
 class SuspendUnitSlotTests {
+    @TestAttribute
+    fun classifierBackedSuspendClassReturnKeepsBothSlots() {
+        val implementation = NumericResult()
+        val base: NumericResultBase = implementation
+        val widened = start { base.value().toInt() }
+        assertTrue(widened.completed)
+        assertTrue(widened.failure == null)
+        assertEquals(42, widened.value)
+        val narrow = start { implementation.value() }
+        assertTrue(narrow.completed)
+        assertTrue(narrow.failure == null)
+        assertEquals(42, narrow.value)
+    }
+
     @TestAttribute
     fun directDefaultInheritedAndAbstractImplementationsReturnUnit() {
         assertUnit(start { observe(ImmediateUnitSlot()) })

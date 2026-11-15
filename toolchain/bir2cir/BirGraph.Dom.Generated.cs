@@ -1687,6 +1687,7 @@ internal static class BirGraphDom
                 case "nullableWitnessIndices": break;
                 case "suspendResult": break;
                 case "suspendTaskResult": break;
+                case "suspendTaskOnlyBridge": break;
                 case "dotktValueReturn": break;
                 case "_ownerConstraintOverrideBounds": break;
                 case "_ownerConstraintDispatchBounds": break;
@@ -1774,6 +1775,7 @@ internal static class BirGraphDom
             NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
+            SuspendTaskOnlyBridge = Field<bool>(fields, "suspendTaskOnlyBridge", value => value!.GetValue<bool>()),
             DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
             _ownerConstraintOverrideBounds = Field<OwnerConstraintOverrideBounds>(fields, "_ownerConstraintOverrideBounds", value => OwnerConstraintOverrideBounds.ReadFrozenText(value!.GetValue<string>())),
             _ownerConstraintDispatchBounds = Field<OwnerConstraintDispatchBounds>(fields, "_ownerConstraintDispatchBounds", value => OwnerConstraintDispatchBounds.ReadFrozenText(value!.GetValue<string>())),

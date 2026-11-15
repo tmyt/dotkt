@@ -24,6 +24,8 @@ sealed class CurrentDeclarationBindings
     readonly Dictionary<BirGraphValue, DeclarationBinding> source = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<JsonObject, DeclarationBinding> physical = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirGraphValue, JsonObject> projected = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<BirFunctionDeclaration, IBirTypeDeclaration> retiredMethods = new(ReferenceEqualityComparer.Instance);
+    readonly List<(IBirTypeDeclaration Owner, BirPropertyDeclaration Property)> retiredProperties = new();
     bool bound;
     internal bool IsBound => bound;
 
@@ -83,6 +85,31 @@ sealed class CurrentDeclarationBindings
             : throw new InvalidOperationException("The declaration has no captured source occurrence");
     }
 
+    // A physical producer reports exact owned removals before detaching them.
+    // Existing proof/signature buyers keep their same captured method binding;
+    // no missing declaration is admitted or rediscovered at the frontier.
+    internal void RetireSourceMembers(IBirTypeDeclaration owner,
+        IReadOnlyList<BirFunctionDeclaration> methods, IReadOnlyList<BirPropertyDeclaration> properties)
+    {
+        if (bound) throw new InvalidOperationException("Source declaration retired after its owning frontier");
+        var methodSet = new HashSet<BirFunctionDeclaration>(methods, ReferenceEqualityComparer.Instance);
+        var propertySet = new HashSet<BirPropertyDeclaration>(properties, ReferenceEqualityComparer.Instance);
+        if (methodSet.Count != methods.Count || propertySet.Count != properties.Count
+            || methods.Any(method => !source.ContainsKey(method) || retiredMethods.ContainsKey(method)
+                || owner.Methods.OrEmpty().Count(actual => ReferenceEquals(actual, method)) != 1)
+            || properties.Any(property => retiredProperties.Any(row => ReferenceEquals(row.Property, property))
+                || owner.Properties.OrEmpty().Count(actual => ReferenceEquals(actual, property)) != 1))
+            throw new InvalidOperationException("Retirement does not name unique captured and currently owned declarations");
+        foreach (var method in methods) retiredMethods.Add(method, owner);
+        foreach (var property in properties) retiredProperties.Add((owner, property));
+    }
+
+    internal bool IsRetiredSource(BirFunctionDeclaration method)
+    {
+        if (bound) throw new InvalidOperationException("Source retirement read after its owning frontier");
+        return retiredMethods.ContainsKey(method);
+    }
+
     internal bool TryGetCapturedSource(BirGraphValue actual, out DeclarationBinding binding)
     {
         if (bound) throw new InvalidOperationException("Source declaration read after its owning frontier");
@@ -103,6 +130,9 @@ sealed class CurrentDeclarationBindings
     internal void BindProjected(IReadOnlyDictionary<BirGraphValue, JsonObject> actual)
     {
         if (bound) throw new InvalidOperationException("Declaration projection was already bound");
+        if (retiredMethods.Any(row => row.Value.Methods.OrEmpty().Any(method => ReferenceEquals(method, row.Key)))
+            || retiredProperties.Any(row => row.Owner.Properties.OrEmpty().Any(property => ReferenceEquals(property, row.Property))))
+            throw new InvalidOperationException("A retired declaration is still owned by its producer");
         var targets = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var declaration in source.Keys)
             if (!actual.TryGetValue(declaration, out var target) || target == null || !targets.Add(target))
@@ -116,6 +146,8 @@ sealed class CurrentDeclarationBindings
         }
         source.Clear();
         projected.Clear();
+        retiredMethods.Clear();
+        retiredProperties.Clear();
         bound = true;
     }
 

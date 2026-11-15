@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // CLR generics are reified and invariant, so a Kotlin star projection cannot be represented by substituting Any
 // (`G<*>` -> `G<object>`): a `G<Concrete>` value is not a `G<object>`. Give each used local generic a
@@ -673,6 +674,11 @@ static partial class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool physicalTypes = false,
         bool allowBoxing = false)
         => IsClrAssignable(source, target, CarrierTypeContext.ForDom(defs, refs), physicalTypes, allowBoxing);
+
+    internal static bool IsClrAssignable(TypeNode source, TypeNode target,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> defs, ReferenceMetadataIndex refs, bool physicalTypes = false,
+        bool allowBoxing = false)
+        => IsClrAssignable(source, target, CarrierTypeContext.ForSource(defs, refs), physicalTypes, allowBoxing);
 
     static Type ResolveClosedReferenceType(TypeNode.Fqn type, ReferenceMetadataIndex refs, bool physicalTypes = false)
     {
