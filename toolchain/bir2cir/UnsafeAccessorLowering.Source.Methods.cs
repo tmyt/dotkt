@@ -33,6 +33,8 @@ static partial class UnsafeAccessorLowering
         IReadOnlyDictionary<string, TypeNode> scope)
     {
         var edge = SourceMethodEdgeOf(node);
+        // Exact carrier bridges already own their dispatch; visibility
+        // rewriting must not turn them into ordinary accessor candidates.
         if (edge.ExactBridge) return node;
         DropSourceMemberFacts(node);
         // Selected native owner is authoritative even after a value-view cast.
@@ -50,6 +52,8 @@ static partial class UnsafeAccessorLowering
         }
         if (edge.Super)
         {
+            // A lexical this keeps its normal base dispatch. A relocated
+            // receiver needs the original host's nonvirtual forwarder instead.
             if (edge.Receiver is BirThis) return node;
             return RewriteSourceSuper(node, edge, caller, context);
         }

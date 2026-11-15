@@ -28,6 +28,8 @@ static partial class UnsafeAccessorLowering
         var edge = SourceFieldEdgeOf(node);
         DropSourceMemberFacts(node);
         if (edge.Owner is not TypeNode.Fqn owner || edge.Name == null) return node;
+        // A delegate-storage read can name an open owner while its actual
+        // receiver supplies the constructed declaring frame.
         if (owner.Args is not { Length: > 0 } && edge.Receiver is BirGraphNode receiver
             && BirNodeType.Of(receiver) is TypeNode.Fqn constructed && constructed.Name == owner.Name && constructed.Args is { Length: > 0 })
             owner = constructed;
@@ -54,6 +56,8 @@ static partial class UnsafeAccessorLowering
                 owner = selected.DeclaringType as TypeNode.Fqn
                     ?? throw new InvalidOperationException("UnsafeAccessor field has no exact declaring owner");
                 frontendType = selected.ReturnType;
+                // The selected field remains authoritative; custom modifiers
+                // do not become the accessor's Kotlin-visible value type.
                 while (frontendType is TypeNode.Mod modifier) frontendType = modifier.Of;
                 ownerParameters = referencedParameters;
             }
@@ -63,6 +67,8 @@ static partial class UnsafeAccessorLowering
         if (isPublic || context.Allows(caller, edge.Receiver, owner, target?.Vis.OrDefault() ?? edge.Visibility,
             isStatic, scope, new[] { fieldType }))
         {
+            // Retain the exact inherited FieldDef even when access is already
+            // legal, so later readers cannot reselect through a derived owner.
             if (selected != null) SetSourceSelectedField(node, owner, selected);
             return node;
         }

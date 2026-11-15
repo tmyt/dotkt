@@ -92,6 +92,8 @@ static partial class UnsafeAccessorLowering
             foreach (var ctor in caller.Constructors)
             {
                 var scope = SourceScope(ctor);
+                // Delegation operands can read locals authored by preStmts;
+                // carry that scope through both delegation and the body.
                 if (ctor.PreStmts.HasValue) scope = RewriteSourceSequence(ctor.PreStmts.Value, scope, caller, context);
                 RewriteSourceExpressions(ctor.BaseArgs.OrEmpty(), scope, caller, context);
                 RewriteSourceExpressions(ctor.ThisArgs.OrEmpty(), scope, caller, context);
@@ -184,6 +186,8 @@ static partial class UnsafeAccessorLowering
     static TypeNode SourceCallOwner(SourceHost caller, SourceAccessor definition, TypeNode.Fqn target)
         => definition.HolderName == null ? SourceSelfType(caller)
             : new TypeNode.Fqn(definition.HolderName, target.Args is { Length: > 0 } ? CopySourceTypes(target.Args) : null);
+    // Referenced native holders use the selected physical owner's complete
+    // frame, not a potentially different Kotlin projection of that owner.
     static BirTypeParameter[] SourceOwnerParameters(SourceHost host, BirTypeParameter[] semantic,
         TypeNode.Fqn owner, ReferenceMetadataIndex refs)
         => host != null ? (host.Type == null ? Array.Empty<BirTypeParameter>() : TypeParameterFrame.Declarations(host.Type).ToArray())
