@@ -35,8 +35,9 @@ set +e
 set +o pipefail
 PY="${PYTHON:-python3}"
 ILEMIT="build/ilemit-bin/ilemit.dll"
+BIR2CIR="build/bir2cir-bin/bir2cir.dll"
 SELF_OUT="build/ir-selftest-out"
-SANITY_CHECK="build/ir-sanity-check/SanityCheck.dll"
+SANITY_CHECK="build/ir-sanity-check/DotKt.Tests.SanityCheck.dll"
 
 # SELF-TEST first (tests/ir/selftest/*.cir.json): the validators check whatever is on disk, so one that silently
 # stopped checking would look exactly like a clean corpus. Each `reject-*.cir.json` is a shape the compiler must
@@ -56,6 +57,8 @@ self_rc=0; n_reject=0; n_accept=0
 rm -rf "$SELF_OUT"; mkdir -p "$SELF_OUT"
 if [ ! -f "$ILEMIT" ]; then
   echo "  SELFTEST FAIL  $ILEMIT is missing — the normative C# half cannot be asserted (run 'make ilemit')"; self_rc=1
+elif [ ! -f "$BIR2CIR" ]; then
+  echo "  SELFTEST FAIL  $BIR2CIR is missing — the owning source-stamp checkpoint cannot be asserted (run 'make bir2cir')"; self_rc=1
 elif ! dotnet build tests/ir/sanity-check/SanityCheck.csproj -c Release \
     -o build/ir-sanity-check --nologo -v:quiet; then
   echo "  SELFTEST FAIL  could not build the normative C# sanity-check host"; self_rc=1

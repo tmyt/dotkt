@@ -424,7 +424,8 @@ var constantJson = "{\"fileClass\":\"Constant\",\"fields\":[{\"name\":\"value\",
 var constantRoot = BirGraphJson.ReadFile(Encoding.UTF8.GetBytes(constantJson));
 Same(constantJson, constantRoot);
 if (constantRoot.Fields.Value[0].Constant.Value is not BirLiteral.IntegerLiteral { Value: 42 }
-    || new TypedCirProjection(new HashSet<string>()).ProjectCirField(constantRoot.Fields.Value[0]).Constant.Value is not AttributeArgument.Int32Value { Value: 42 })
+    || new TypedCirProjection(new HashSet<string>(), new BirTypeLowering.PhysicalTypeContext(false))
+        .ProjectCirField(constantRoot.Fields.Value[0]).Constant.Value is not AttributeArgument.Int32Value { Value: 42 })
     throw new Exception("An intermediate field constant was not projected from its source literal");
 foreach (var (type, literal, expected) in new (string, BirLiteral, AttributeArgument)[] {
     ("System.Int64", new BirLiteral.IntegerLiteral(long.MinValue), new AttributeArgument.Int64Value(long.MinValue)),
@@ -434,7 +435,7 @@ foreach (var (type, literal, expected) in new (string, BirLiteral, AttributeArgu
 })
 {
     var field = new BirFieldDeclaration { Name = "value", Type = new TypeNode.Fqn(type), Constant = literal };
-    var physical = new TypedCirProjection(new HashSet<string>()).ProjectCirField(field);
+    var physical = new TypedCirProjection(new HashSet<string>(), new BirTypeLowering.PhysicalTypeContext(false)).ProjectCirField(field);
     if (!expected.Equals(physical.Constant.Value))
         throw new Exception("A typed intermediate field changed literal width, bits, or null during final projection");
 }

@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using DotKt.Cir;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DotKt.Tests.BirGraph")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("DotKt.Tests.SanityCheck")]
 
 namespace DotKt.Bir.Lowering;
 

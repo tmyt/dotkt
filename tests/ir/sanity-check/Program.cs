@@ -1,9 +1,11 @@
+extern alias source;
+
 using DotKt.Bir;
 using DotKt.Cir;
-using System.Text.Json;
 
 // These are validator fixtures, not complete emit-ready assemblies. Call the normative checker in the
-// built ilemit directly: an unrelated failure later in emission must not count as sanity acceptance.
+// built ilemit (CIR) and bir2cir (source stamps) directly: an unrelated failure
+// later in emission must not count as sanity acceptance.
 if (args.Length == 0)
 {
     Console.Error.WriteLine("usage: SanityCheck [--source-stamps] <fixture>...");
@@ -17,21 +19,26 @@ try
     {
         if (sourceStamps)
         {
-            // The actual bir2cir pre-lowering checkpoint still owns current BIR stamps.
+            // The actual owning bir2cir checkpoint owns current BIR stamps.
             // Never pass a source tree through the physical CIR decoder.
-            using var source = JsonDocument.Parse(File.ReadAllBytes(file), BirJson.DocOptions);
-            IrSanity.CheckSourceStamps(new[] { source.RootElement });
+            var declaration = source::DotKt.Bir.Lowering.BirGraphJson.ReadFile(File.ReadAllBytes(file));
+            source::SourceStampSanity.Check(declaration);
         }
         else
         {
             var declaration = DeclarationJson.ReadFile(file);
             IrSanity.Check(new[] { declaration });
         }
-        Console.WriteLine($"IrSanity accepted: {file}");
+        Console.WriteLine($"{(sourceStamps ? "SourceStampSanity" : "IrSanity")} accepted: {file}");
     }
     return 0;
 }
 catch (IrSanityException ex)
+{
+    Console.Error.WriteLine($"{ex.Decl}: sanity: {ex.Message}");
+    return 1;
+}
+catch (source::DotKt.Bir.IrSanityException ex)
 {
     Console.Error.WriteLine($"{ex.Decl}: sanity: {ex.Message}");
     return 1;

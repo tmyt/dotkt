@@ -22,7 +22,7 @@
 //   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
 //   7. STAMP AGREEMENT — a node's `sty` must not name a DIFFERENT TYPE than the `ret`/`dynRet` beside it (spec §2.7:
-//      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See CheckStampAgreement for the
+//      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See StampAgrees for the
 //      accepted-equivalence set and why it is what it is.
 //   8. COLLECTION VIEW COMPLETENESS — a type stating a MUTABLE collection face also states its READ-ONLY sibling
 //      (bir-common/CollectionViewFaces.cs). This one is about a TYPE's interface set rather than a body, so it runs
@@ -35,9 +35,8 @@
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
-// scope across ALL of a type's static inits. Physical CIR walks only typed executable children. The temporary
-// DOM-backed BIR source-stamp checkpoint traverses source roots until the owning passes use typed BIR.
-using System.Text.Json;
+// scope across ALL of a type's static inits. Physical CIR walks only typed executable children. Bir2cir's
+// SourceStampSanity owns the BIR checkpoint and shares the StampAgrees relation below.
 
 namespace DotKt.Bir;
 
@@ -51,23 +50,6 @@ public sealed class IrSanityException : Exception
 
 public static partial class IrSanity
 {
-    // Run the sanity invariants over every method/ctor/static-field-initializer in the document, attributing each
-    // violation to its declaration. Every check is intra-declaration and needs no codegen state.
-    public static void CheckSourceStamps(IEnumerable<JsonElement> files)
-    {
-        foreach (var file in files)
-        {
-            var fileClass = file.TryGetProperty("fileClass", out var fc) && fc.ValueKind == JsonValueKind.String ? fc.GetString() : "?";
-            CheckContainer(fileClass, file, isInterface: false);
-            if (file.TryGetProperty("types", out var ts) && ts.ValueKind == JsonValueKind.Array)
-                foreach (var t in ts.EnumerateArray())
-                {
-                    var tn = t.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-                    var iface = t.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "interface";
-                    CheckContainer(tn, t, iface);
-                }
-        }
-    }
 
     // Check 8 — a type's stated `interfaces` must be closed under the read-only collection view. The read-only face
     // of a mutable collection is not derived by the CLR (`IList<T>` does not inherit `IReadOnlyList<T>`), so a
@@ -90,53 +72,6 @@ public static partial class IrSanity
         }
     }
 
-    // A file class OR a user type: its methods, its ctors, and its static-field-initializer group (one .cctor scope).
-    static void CheckContainer(string owner, JsonElement c, bool isInterface)
-    {
-        if (c.TryGetProperty("methods", out var ms) && ms.ValueKind == JsonValueKind.Array)
-            foreach (var m in ms.EnumerateArray()) CheckMethodDecl(owner, m);
-        if (c.TryGetProperty("ctors", out var cs) && cs.ValueKind == JsonValueKind.Array)
-            foreach (var ct in cs.EnumerateArray()) CheckCtorDecl(owner, ct);
-        // Static field initializers share ONE .cctor `_locals` scope (a temp declared in field A's init is
-        // resolvable from field B's) — check them as a single scope over the UNION of the inits.
-        if (!isInterface && c.TryGetProperty("fields", out var fs) && fs.ValueKind == JsonValueKind.Array)
-        {
-            var inits = new List<JsonElement>();
-            foreach (var f in fs.EnumerateArray())
-                if (f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null
-                    && f.TryGetProperty("static", out var st) && st.ValueKind == JsonValueKind.True)
-                    inits.Add(iv);
-            if (inits.Count > 0) CheckSourceScope(owner + "..cctor", inits, c);
-        }
-    }
-
-    static void CheckMethodDecl(string owner, JsonElement m)
-    {
-        var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-        // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
-        if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
-        if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
-        CheckSourceScope(owner + "." + name, [body], m);
-    }
-
-    static void CheckCtorDecl(string owner, JsonElement c)
-    {
-        if (!c.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
-        var roots = new List<JsonElement> { body };
-        // `preStmts` and the `: this(...)` / `: base(...)` args are emitted in the SAME frame as the body (before it),
-        // so a local declared in any of them shares the ctor's `_locals` — fold them all into the scope. `preStmts` is
-        // the delegation's call-evaluation plan lowered to `var`s (spec §2.7): it DECLARES what the args READ.
-        if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array) roots.Add(pre);
-        if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array) roots.Add(ta);
-        if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
-        CheckSourceScope(owner + "..ctor", roots, c);
-    }
-
-    // BIR source stamps are checked before physical type lowering consumes them.
-    static void CheckSourceScope(string label, List<JsonElement> roots, JsonElement declaration)
-    {
-        foreach (var root in roots) CheckSourceNode(PosPrefix(declaration) + label, root);
-    }
 
     static void CheckSuspendDecl(string label, bool suspend)
     {
@@ -174,18 +109,6 @@ public static partial class IrSanity
                 "a CIR 'pinvoke' descriptor has normalized values not represented by its pseudoFields instruction");
     }
 
-    // The #112 Phase-2 `File.kt:line: ` decl-source prefix, or "" when the decl carries no `pos`. Optional (absent =
-    // pre-#112 behavior); a synthetic decl with no source simply omits it.
-    static string PosPrefix(JsonElement decl)
-    {
-        if (decl.ValueKind != JsonValueKind.Object || !decl.TryGetProperty("pos", out var pos) || pos.ValueKind != JsonValueKind.Object)
-            return "";
-        if (!pos.TryGetProperty("f", out var f) || f.ValueKind != JsonValueKind.String) return "";
-        var file = System.IO.Path.GetFileName(f.GetString());
-        if (pos.TryGetProperty("l", out var l) && l.ValueKind == JsonValueKind.Number && l.TryGetInt32(out var line) && line >= 0)
-            return file + ":" + line + ": ";
-        return file + ": ";
-    }
 
     static void CheckDuplicateLabel(string declaration, int id, HashSet<int> seen)
     {
@@ -210,17 +133,6 @@ public static partial class IrSanity
             throw new IrSanityException(declaration, $"'for' loop has unsupported 'cmp' operator '{comparison}' (expected '<=', '<', or '>=')");
     }
 
-    static void CheckSourceNode(string declaration, JsonElement node)
-    {
-        if (node.ValueKind == JsonValueKind.Object)
-        {
-            if (node.TryGetProperty("k", out var kind) && kind.ValueKind == JsonValueKind.String)
-                CheckStampAgreement(declaration, node, kind.GetString());
-            foreach (var property in node.EnumerateObject()) CheckSourceNode(declaration, property.Value);
-        }
-        else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var item in node.EnumerateArray()) CheckSourceNode(declaration, item);
-    }
 
     // ==== CHECK 7 — `sty` vs `ret`/`dynRet` STAMP AGREEMENT (spec §2.7) ===========================================
     //
@@ -289,39 +201,6 @@ public static partial class IrSanity
     // the outcome, and the purpose of a chokepoint is the pass that has not been written yet. The cost of that choice
     // is that weakening this relation silently weakens those four repairs too, which is the reason it lives here,
     // stated once, rather than as a checker plus four restatements.
-    static readonly string[] StampSlots = { "ret", "dynRet" };
-
-    static void CheckStampAgreement(string decl, JsonElement node, string kind)
-    {
-        if (!node.TryGetProperty("sty", out var styEl) || styEl.ValueKind != JsonValueKind.Object) return;
-        var sty = TryReadType(styEl);
-        if (sty == null) return;
-        foreach (var slot in StampSlots)
-        {
-            if (!node.TryGetProperty(slot, out var otherEl) || otherEl.ValueKind != JsonValueKind.Object) continue;
-            var other = TryReadType(otherEl);
-            if (other == null || StampAgrees(sty, other)) continue;
-            throw new IrSanityException(decl,
-                $"'{kind}' carries a stale 'sty': the stamp names {TypeNode.ToJson(sty)} while its '{slot}' names "
-                + $"{TypeNode.ToJson(other)} — a pass that changes a node's result type must rewrite or delete its 'sty'");
-        }
-    }
-
-    // A malformed type node is the SCHEMA validator's business (scripts/verify-schema.py), never this gate's — an
-    // unreadable slot is SKIPPED rather than turned into a meaning violation, and rather than crashing the build with
-    // whatever exception the reader happens to raise. `TypeNode.Read` signals malformed input three different ways
-    // (FormatException for an unknown/absent `t`, KeyNotFoundException for a missing required property,
-    // InvalidOperationException for a property of the wrong JSON kind), so the catch is deliberately total: the
-    // python mirror's `isinstance` guards accept the same shapes, and a checker that is stricter than its mirror on
-    // documents neither is meant to judge is a difference with no upside. The two do still SKIP different amounts on
-    // such a document — an unreadable subtree makes this side abandon the whole node, while the mirror's guards
-    // abandon only that subtree and keep comparing the heads — which is a difference of conservatism on input the
-    // schema validator rejects first, not of the relation.
-    static TypeNode TryReadType(JsonElement e)
-    {
-        try { return TypeNode.Read(e); }
-        catch (Exception) { return null; }
-    }
 
     // The canonical token for a named type, collapsing the kotlin.* / CLR-shorthand / System.* spellings of one CLR
     // type (equivalence (b)). The alphabet is bir2cir's `BirTypeLowering.KotlinAllToClr` and ilemit's
