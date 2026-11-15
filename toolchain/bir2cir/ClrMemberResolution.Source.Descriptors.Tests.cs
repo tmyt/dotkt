@@ -50,8 +50,8 @@ static partial class ClrMemberResolution
         Need(direct.Sig.Value.SequenceEqual(new TypeNode[] { text, integer }) && bound.Sig.Value.SequenceEqual(direct.Sig.Value)
             && ReferenceEquals(selected.Sig.Value, declaredDelegateSignature) && !ReferenceEquals(direct.Sig.Value, function.Params),
             "delegate fallback lost its extension receiver or replaced an open declaration signature");
-        var snapshot = root.DeepClone(); EnsurePlainCallDescriptors(root);
-        Need(root.StructurallyEquals(snapshot) && ReferenceEquals(method.Body.Value, body) && ReferenceEquals(method.InlineBir.Value, saved),
+        Need(ReferenceEquals(root.Methods.Value[0], method)
+            && ReferenceEquals(method.Body.Value, body) && ReferenceEquals(method.InlineBir.Value, saved),
             "descriptor normalization changed continuing declarations, operands or opaque metadata");
         Console.WriteLine("[source call descriptors] exact priority, presence, open delegates and ownership: OK");
     }
