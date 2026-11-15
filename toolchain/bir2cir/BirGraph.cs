@@ -55,6 +55,11 @@ internal abstract record BirGraphValue
     // callers choose policy without rediscovering a serialized graph shape.
     public abstract void RewriteOwnTypeFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite);
+    // One maintained own-field order interleaves type slots and owning graph
+    // slots. Passes with frame-sensitive side effects must not split the loops.
+    public abstract void RewriteOwnFieldsInPlace(
+        Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
+        Action<string, BirGenericFrameRole, BirGraphSlot> visit);
     public abstract void VisitOwnChildSlots(Action<string, BirGenericFrameRole, BirGraphSlot> visit);
     public virtual void ClearResultTypeStamp() { }
     public abstract void VisitStringFields(Action<string> visit);
@@ -79,6 +84,9 @@ internal abstract record BirGraphValue
     // Snapshot ownership is stronger than Rewrite: every mutable graph/vector
     // occurrence, including opaque byte arrays and nested type arguments, copies.
     public abstract BirGraphValue DeepClone();
+    // A physical producer can author an independently evaluated occurrence
+    // while reporting its exact origin at construction, including descendants.
+    public abstract BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born);
     // Structured type slots only. Frozen source facts encoded as strings in the
     // maintained schema are opaque to this operation, as they were on the wire.
     public abstract BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite);
@@ -107,7 +115,7 @@ internal abstract record BirGraphValue
     public abstract void WriteJson(Utf8JsonWriter writer);
     // Temporary frontier to the not-yet-migrated owning passes. It builds
     // nodes directly: no serialized child, parse, or generic extension-data bag.
-    public abstract JsonObject ToDom();
+    public abstract JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null);
     public BirGraphValue Rewrite(Func<BirGraphValue, BirGraphValue> rewrite)
         => rewrite(RewriteChildren(child => child.Rewrite(rewrite)));
 

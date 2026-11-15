@@ -7,7 +7,7 @@ using DotKt.Bir;
 // An opaque value slot does not make its ordinary invariant source view unknown. Prove the
 // exact eligible native face at runtime, then call the already-selected MethodDef directly.
 // Use-site projections and CLR-variant interface tests are not such a proof.
-static class ExactMutableViewDispatch
+static partial class ExactMutableViewDispatch
 {
     static readonly TypeNode Any = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode Bool = new TypeNode.Fqn("kotlin.Boolean");
@@ -33,52 +33,50 @@ static class ExactMutableViewDispatch
 
     internal static JsonObject Wrap(JsonNode receiver, TypeNode.Fqn view, int family, TypeNode resultType,
         Func<JsonObject, JsonNode> direct, Func<JsonObject, JsonNode> fallback, TypeNode authoredSlot = null)
+        => (JsonObject)RenderView(new DomViewRenderer(), receiver, view, family, resultType,
+            value => direct((JsonObject)value), value => fallback((JsonObject)value), authoredSlot);
+
+    sealed class DomViewRenderer : ViewRenderer<JsonNode>
     {
-        var name = CallEvalLowering.FreshBindingId();
-        JsonObject Local() => new() { ["k"] = "local", ["name"] = name };
-        JsonObject Is(TypeNode type) => new() {
-            ["k"] = "isInst", ["type"] = TypeJson.Write(type), ["e"] = Local(),
+        internal override JsonNode Local(string name) => new JsonObject { ["k"] = "local", ["name"] = name };
+        internal override JsonNode Is(TypeNode type, JsonNode value) => new JsonObject {
+            ["k"] = "isInst", ["type"] = TypeJson.Write(type), ["e"] = value,
         };
-        JsonNode nativeTest = Is(view);
-        if (family == 4)
-            nativeTest = Binary("&&", Is(new TypeNode.Fqn("System.Collections.Generic.ICollection`1", view.Args)),
-                Binary("||", nativeTest, Is(new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier"))));
-        if (authoredSlot != null)
-            nativeTest = Binary("&&", new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = Is(authoredSlot) }, nativeTest);
-        var eligible = new JsonObject {
+        internal override JsonNode Binary(string op, JsonNode left, JsonNode right)
+            => ExactMutableViewDispatch.Binary(op, left, right);
+        internal override JsonNode Not(JsonNode value) => new JsonObject { ["k"] = "unaryOp", ["op"] = "!", ["e"] = value };
+        internal override JsonNode NonNull(JsonNode value) => new JsonObject {
+            ["k"] = "binOp", ["op"] = "!=", ["lhs"] = value,
+            ["rhs"] = new JsonObject {
+                ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(Any)), ["value"] = null,
+            },
+        };
+        internal override JsonNode Eligible(JsonNode receiver, TypeNode.Fqn view, int family) => new JsonObject {
             ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.ExactMutableViewCacheKt"),
             ["method"] = "canUseExactMutableView", ["typeArgs"] = new JsonArray(),
             ["sig"] = new JsonArray(TypeJson.Write(Any), TypeJson.Write(new TypeNode.Nullable(Any)), TypeJson.Fqn("kotlin.Int")),
-            ["ret"] = TypeJson.Write(Bool),
-            ["args"] = new JsonArray(Local(), new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(view) },
+            ["ret"] = TypeJson.Write(Bool), ["args"] = new JsonArray(receiver,
+                new JsonObject { ["k"] = "classRef", ["type"] = TypeJson.Write(view) },
                 new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = family }),
         };
-        // A custom interface cast may execute user code. Check immutable metadata eligibility first,
-        // and preserve a null receiver's original argument evaluation before its eventual failure.
-        var nonNull = new JsonObject { ["k"] = "binOp", ["op"] = "!=", ["lhs"] = Local(),
-            ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(Any)), ["value"] = null } };
-        var condition = Binary("&&", nonNull, Binary("&&", eligible, nativeTest));
-        var statements = new JsonArray(new JsonObject {
-            ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(Any), ["init"] = receiver.DeepClone(),
-        });
-        JsonNode result;
-        if (resultType is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void" })
+        internal override JsonNode Finish(string name, JsonNode receiver, JsonNode condition, TypeNode result,
+            bool isVoid, JsonNode direct, JsonNode fallback)
         {
-            statements.Add(new JsonObject {
-                ["k"] = "if", ["branches"] = new JsonArray(new JsonObject {
-                    ["cond"] = condition, ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = direct(Local()) }),
-                }, new JsonObject {
-                    ["else"] = true, ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = fallback(Local()) }),
-                }),
+            var statements = new JsonArray(new JsonObject {
+                ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Write(Any), ["init"] = receiver.DeepClone(),
             });
-            result = new JsonObject { ["k"] = "staticField", ["ownerType"] = TypeJson.Fqn("kotlin.Unit"), ["name"] = "INSTANCE" };
+            JsonNode expression;
+            if (isVoid)
+            {
+                statements.Add(new JsonObject { ["k"] = "if", ["branches"] = new JsonArray(
+                    new JsonObject { ["cond"] = condition, ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = direct }) },
+                    new JsonObject { ["else"] = true, ["body"] = new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = fallback }) }) });
+                expression = new JsonObject { ["k"] = "staticField", ["ownerType"] = TypeJson.Fqn("kotlin.Unit"), ["name"] = "INSTANCE" };
+            }
+            else expression = new JsonObject { ["k"] = "cond", ["type"] = TypeJson.Write(result), ["cond"] = condition,
+                ["then"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(result), ["e"] = direct }, ["else"] = fallback };
+            return new JsonObject { ["k"] = "valueBlock", ["stmts"] = statements, ["result"] = expression };
         }
-        else result = new JsonObject {
-            ["k"] = "cond", ["type"] = TypeJson.Write(resultType), ["cond"] = condition,
-            ["then"] = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(resultType), ["e"] = direct(Local()) },
-            ["else"] = fallback(Local()),
-        };
-        return new JsonObject { ["k"] = "valueBlock", ["stmts"] = statements, ["result"] = result };
     }
 
     internal static bool TryCount(JsonObject call, ReferenceMetadataIndex refs, out JsonObject rewritten)

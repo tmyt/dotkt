@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class ConstrainedTypeParameterReceiverBinding
 {
@@ -11,33 +14,13 @@ static partial class ConstrainedTypeParameterReceiverBinding
           {"types":[{"name":"Plain","types":[{"name":"Nested","typeParams":[{"name":"T"}]}]},
                     {"name":"Duplicate","typeParams":[{"name":"T"}]},
                     {"name":"Duplicate","typeParams":[]},
-                    {"name":"Receiver","typeParams":[{"name":"T","constraints":[
-                      {"t":"fqn","name":"Nested","args":[{"t":"fqn","name":"Plain"}]}]}],
-                     "methods":[{"name":"use","params":[],"body":[
-                       {"k":"callInstance","ownerType":{"t":"fqn","name":"Nested"},"name":"run",
-                        "recv":{"k":"local","name":"x","sty":{"t":"tv","scope":"type","i":0}}},
-                       {"k":"clrPropGet","type":{"t":"fqn","name":"Nested"},"name":"value",
-                        "member":"accessor","dispatch":"callvirt",
-                        "recv":{"k":"local","name":"x","sty":{"t":"tv","scope":"type","i":0}}}]}]}]}
+                    {"name":"Receiver","typeParams":[{"name":"T"}]}]}
           """);
         var roots = new[] { root };
         var snapshot = CollectTypeArity(roots);
         if (snapshot.Count != 4 || snapshot["Plain"] != 0 || snapshot["Nested"] != 1
             || snapshot["Duplicate"] != 0 || snapshot["Receiver"] != 1)
             throw new InvalidOperationException("Declaration arities lost nested types or traversal-order overwrite");
-
-        // All closing entry points agree, even when repeated. The call and resolved accessor exercise both
-        // guards that must keep close-only binding from reading its null arity argument.
-        var receiver = root["types"][3].AsObject();
-        var expected = receiver.DeepClone().AsObject();
-        CloseOpenOwners(new[] { new JsonObject { ["types"] = new JsonArray(expected) } });
-        CloseTypeOwners(receiver);
-        CloseTypeOwners(receiver);
-        var method = receiver["methods"][0].AsObject();
-        CloseMethodOwners(method, receiver, new JsonArray(), refs: null);
-        if (!JsonNode.DeepEquals(receiver, expected)
-            || TypeJson.Read(method["body"][0]["ownerType"]) != new TypeNode.Fqn("Nested", new TypeNode[] { new TypeNode.Fqn("Plain") }))
-            throw new InvalidOperationException("Index-free owner closing changed its result");
 
         // Each dispatch phase rebuilds its index. A new snapshot observes added/removed/renamed types and changed
         // parameter counts, while the old snapshot remains a value (no retained root or hidden cache).
@@ -57,6 +40,56 @@ static partial class ConstrainedTypeParameterReceiverBinding
             throw new InvalidOperationException("Declaration arity snapshot was not rebuilt across structural mutation");
         if (CollectTypeArity(Array.Empty<JsonNode>()).Any())
             throw new InvalidOperationException("Declaration arities leaked into a later compilation");
-        Console.WriteLine("[declaration arities] self-test OK (index-free closing, nested/order, mutation/rebuild, isolation)");
+        ContinuationClosingSelfTest();
+        Console.WriteLine("[declaration arities] self-test OK (owning continuation, physical frame, nested/order, mutation/rebuild, isolation)");
+    }
+
+    static void ContinuationClosingSelfTest()
+    {
+        var expected = new TypeNode.Fqn("Nested", new TypeNode[] { new TypeNode.Star() });
+        var variable = new TypeNode.Tv("type", 1);
+        var call = new BirCallInstance { OwnerType = new TypeNode.Fqn("Nested"), Method = "run",
+            Recv = new BirLocal { Name = "x" }, Args = Array.Empty<IBirExpression>() };
+        var accessor = new BirPropertyGet { Type = new TypeNode.Fqn("Nested"),
+            Member = "accessor", Accessor = "get_value", Dispatch = "callvirt", Recv = new BirLocal { Name = "x" } };
+        var statements = new IBirStatement[] {
+            new BirExpressionStatement { Expr = call }, new BirExpressionStatement { Expr = accessor },
+        };
+        var method = new BirFunctionDeclaration { Name = "use", Params = new[] { new BirParameter { Name = "x", Type = variable } },
+            TypeParams = Array.Empty<BirTypeParameter>(), Body = statements };
+        // The retained logical bound belongs to source parameter zero, whose
+        // ordinary physical slot is one. Do not recover it from the storage
+        // slot or an unprojected declaration cloned by the old DOM wrapper.
+        var frame = new NullableRepresentationFrame(1, Array.Empty<int>(), new[] { 1, 0 }, storageIndices: new[] { 0 });
+        var facts = new SourceTypeFacts(new Dictionary<int, TypeNode[]> {
+            [0] = new TypeNode[] { expected },
+        }).MergeNullableFrame(frame);
+        var owner = new BirClassDefinition { Name = "Receiver", Kind = "class", KotlinSupertypesPre = facts,
+            TypeParams = new[] { new BirTypeParameter { Name = "Storage" }, new BirTypeParameter { Name = "T" } },
+            Methods = new[] { method } };
+        var file = new BirFileDeclaration { FileClass = "ReceiverFile", Types = new IBirTypeDeclaration[] { owner } };
+        var parameters = method.Params.Value;
+        var methods = owner.Methods.Value;
+        CloseOpenOwners(new[] { file });
+        CloseTypeOwners(owner);
+        CloseTypeOwners(owner);
+        CloseMethodOwners(method, owner, Array.Empty<BirTypeParameter>(), refs: null);
+        if (call.OwnerType.Value != expected || accessor.Type.Value != expected
+            || !call._erasedConstraintDispatch.OrDefault() || !accessor._erasedConstraintDispatch.OrDefault()
+            || !ReferenceEquals(method.Body.Value, statements) || !ReferenceEquals(method.Params.Value, parameters)
+            || !ReferenceEquals(owner.Methods.Value, methods) || !ReferenceEquals(methods[0], method)
+            || !ReferenceEquals(((BirExpressionStatement)statements[0]).Expr.Value, call)
+            || !ReferenceEquals(((BirExpressionStatement)statements[1]).Expr.Value, accessor)
+            || !ReferenceEquals(owner.KotlinSupertypesPre.Value, facts) || parameters[0].Type.Value != variable)
+            throw new InvalidOperationException("Index-free owning continuation lost physical frame, bound or actual declarations");
+
+        // The later physical closing phase remains a genuine DOM consumer.
+        // Exercise its null-arity close-only guards, not a retired DOM oracle.
+        var physical = file.ToDom();
+        CloseOpenOwners(new JsonNode[] { physical });
+        var body = physical["types"][0]["methods"][0]["body"];
+        if (TypeJson.Read(body[0]["expr"]["ownerType"]) != expected
+            || TypeJson.Read(body[1]["expr"]["type"]) != expected)
+            throw new InvalidOperationException("Late close-only binding read a missing dispatch arity or changed the selected owner");
     }
 }

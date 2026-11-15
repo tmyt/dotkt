@@ -136,7 +136,7 @@ static partial class UncheckedGenericCastReturnErasure
     // name matching, body snapshot, or later replacement chasing occurs here.
     public static DeclIndex BindDomDeclarations(PendingSourceIndex pending, IReadOnlyList<JsonObject> actualRoots,
         IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null,
-        AliasDeclarationTransitions aliases = null)
+        AliasDeclarationTransitions aliases = null, SourceDeclarationProjection declarations = null)
     {
         var (roots, occurrences, index) = pending.Consume();
         if (actualRoots.Count != roots.Length) throw ProjectionMismatch();
@@ -162,6 +162,9 @@ static partial class UncheckedGenericCastReturnErasure
                 var position = occurrence.Type;
                 var reported = aliases?.TryOwner(sourceRoot.Declaration, occurrence.Type, occurrence.Owner,
                     out position, out retiredOwner) == true;
+                if (!reported && declarations != null)
+                    reported = declarations.TryOwner(sourceRoot.Declaration, occurrence.Type, occurrence.Owner,
+                        out position, out retiredOwner);
                 if (occurrence.Owner.Name.OrDefault() != occurrence.Facts.Owner) throw ProjectionMismatch();
                 JsonObject owner = null;
                 if (!retiredOwner)
@@ -188,7 +191,7 @@ static partial class UncheckedGenericCastReturnErasure
                     ? sourceRoot.Declaration.Methods.OrEmpty().Concat(sourceRoot.Declaration.Types.OrEmpty()
                         .SelectMany(type => type.Methods.OrEmpty())).Any(value => ReferenceEquals(value, occurrence.Declaration))
                     : sourceMethods.Any(value => ReferenceEquals(value, occurrence.Declaration));
-                if (retired == null || retired.Parent != null || stillOwned)
+                if (retired == null || retired.Parent != null && declarations?.IsRetired(occurrence.Declaration, retired) != true || stillOwned)
                     throw ProjectionMismatch();
                 method = retired;
             }

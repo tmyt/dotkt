@@ -49,12 +49,13 @@ static partial class GenericArrayStorageLowering
     static JsonObject RuntimeCall(ReferenceMetadataIndex refs, string owner, string name, JsonNode receiver,
         string result, string[] parameters, params JsonNode[] arguments)
     {
+        var plan = ClrMemberResolution.PlanArrayStorageCall(refs, name, parameters, owner, receiver == null);
         return new JsonObject {
             ["k"] = receiver == null ? "clrStatic" : "clrInstance", ["type"] = Type(owner), ["method"] = name,
             ["recv"] = receiver?.DeepClone(), ["args"] = new JsonArray(arguments.Select(a => a.DeepClone()).ToArray()),
             ["argTypes"] = new JsonArray(parameters.Select(Type).ToArray()),
-            ["ret"] = Type(result), ["sty"] = Type(result), ["dispatch"] = receiver == null ? "call" : "callvirt",
-            ["memberRef"] = ClrMemberResolution.ArrayStorageMethodRef(refs, name, parameters, owner, receiver == null),
+            ["ret"] = Type(result), ["sty"] = Type(result), ["dispatch"] = plan.Dispatch,
+            ["memberRef"] = plan.Reference.Write(),
         };
     }
 

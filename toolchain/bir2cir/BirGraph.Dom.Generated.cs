@@ -412,6 +412,7 @@ internal static class BirGraphDom
                 case "k": if (field.Value?.GetValue<string>() != "arrayGet") throw new FormatException(); break;
                 case "array": break;
                 case "index": break;
+                case "_erasedValueVariable": break;
                 case "elem": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirArrayGet at {source.GetPath()}");
             }
@@ -419,6 +420,7 @@ internal static class BirGraphDom
         {
             Array = Field<IBirExpression>(fields, "array", value => ReadBirExpression(value!)),
             Index = Field<IBirExpression>(fields, "index", value => ReadBirExpression(value!)),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             Elem = Field<TypeNode>(fields, "elem", value => TypeNode.Read(value) ?? throw new FormatException()),
         };
     }
@@ -748,6 +750,7 @@ internal static class BirGraphDom
                 case "kind": break;
                 case "arity": break;
                 case "declarationId": break;
+                case "physicalDeclarationId": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirOverride at {source.GetPath()}");
             }
         return new BirOverride
@@ -757,6 +760,7 @@ internal static class BirGraphDom
             Kind = Field<string>(fields, "kind", value => value!.GetValue<string>()),
             Arity = Field<int>(fields, "arity", value => value!.GetValue<int>()),
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+            PhysicalDeclarationId = Field<string>(fields, "physicalDeclarationId", value => value!.GetValue<string>()),
         };
     }
 
@@ -797,6 +801,7 @@ internal static class BirGraphDom
                 case "memberReturnType": break;
                 case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
+                case "_innerFactoryArguments": break;
                 case "declarationReferencedIntrinsic": break;
                 case "declarationReferencedFactory": break;
                 case "dotktProjectedCollection": break;
@@ -853,6 +858,7 @@ internal static class BirGraphDom
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            _innerFactoryArguments = Field<bool>(fields, "_innerFactoryArguments", value => value!.GetValue<bool>()),
             DeclarationReferencedIntrinsic = Field<bool>(fields, "declarationReferencedIntrinsic", value => value!.GetValue<bool>()),
             DeclarationReferencedFactory = Field<bool>(fields, "declarationReferencedFactory", value => value!.GetValue<bool>()),
             DotktProjectedCollection = Field<bool>(fields, "dotktProjectedCollection", value => value!.GetValue<bool>()),
@@ -918,6 +924,7 @@ internal static class BirGraphDom
                 case "memberReturnType": break;
                 case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
+                case "_innerFactoryArguments": break;
                 case "declarationReferencedIntrinsic": break;
                 case "_resolvedMethodTypeParams": break;
                 case "nullableWitnessCount": break;
@@ -976,6 +983,7 @@ internal static class BirGraphDom
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            _innerFactoryArguments = Field<bool>(fields, "_innerFactoryArguments", value => value!.GetValue<bool>()),
             DeclarationReferencedIntrinsic = Field<bool>(fields, "declarationReferencedIntrinsic", value => value!.GetValue<bool>()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
@@ -1251,6 +1259,7 @@ internal static class BirGraphDom
                 case "memberOwnerTypeParams": break;
                 case "memberType": break;
                 case "lateinitSourceName": break;
+                case "ret": break;
                 case "value": break;
                 case "exception": break;
                 case "fieldRef": break;
@@ -1269,6 +1278,7 @@ internal static class BirGraphDom
             MemberOwnerTypeParams = Field<BirTypeParameter[]>(fields, "memberOwnerTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberType = Field<TypeNode>(fields, "memberType", value => TypeNode.Read(value) ?? throw new FormatException()),
             LateinitSourceName = Field<string>(fields, "lateinitSourceName", value => value!.GetValue<string>()),
+            Ret = Field<TypeNode>(fields, "ret", value => TypeNode.Read(value) ?? throw new FormatException()),
             Value = Field<IBirExpression>(fields, "value", value => ReadBirExpression(value!)),
             Exception = Field<IBirExpression>(fields, "exception", value => ReadBirExpression(value!)),
             FieldRef = Field<BirMemberReference>(fields, "fieldRef", value => ReadBirMemberReference(value!)),
@@ -1668,6 +1678,7 @@ internal static class BirGraphDom
                 case "_syntheticTypeArgs": break;
                 case "lexicalOwnerTypeParamCount": break;
                 case "retSuspendFnTypePre": break;
+                case "existentialSourceMember": break;
                 case "roundtripMetadataPending": break;
                 case "roundtripDeclarationIdentity": break;
                 case "roundtripMethodBounds": break;
@@ -1678,6 +1689,9 @@ internal static class BirGraphDom
                 case "nullableWitnessIndices": break;
                 case "suspendResult": break;
                 case "suspendTaskResult": break;
+                case "suspendTaskOnlyBridge": break;
+                case "suspendSourceParams": break;
+                case "suspendSourceRet": break;
                 case "dotktValueReturn": break;
                 case "_ownerConstraintOverrideBounds": break;
                 case "_ownerConstraintDispatchBounds": break;
@@ -1754,6 +1768,7 @@ internal static class BirGraphDom
             _syntheticTypeArgs = Field<TypeNode[]>(fields, "_syntheticTypeArgs", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             LexicalOwnerTypeParamCount = Field<int>(fields, "lexicalOwnerTypeParamCount", value => value!.GetValue<int>()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
+            ExistentialSourceMember = Field<string>(fields, "existentialSourceMember", value => value!.GetValue<string>()),
             RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
             RoundtripDeclarationIdentity = Field<BirRoundtripDeclarationIdentity>(fields, "roundtripDeclarationIdentity", value => ReadBirRoundtripDeclarationIdentity(value!)),
             RoundtripMethodBounds = Field<SourceBoundsSnapshot>(fields, "roundtripMethodBounds", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
@@ -1764,6 +1779,9 @@ internal static class BirGraphDom
             NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
+            SuspendTaskOnlyBridge = Field<bool>(fields, "suspendTaskOnlyBridge", value => value!.GetValue<bool>()),
+            SuspendSourceParams = Field<TypeNode[]>(fields, "suspendSourceParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            SuspendSourceRet = Field<TypeNode>(fields, "suspendSourceRet", value => TypeNode.Read(value) ?? throw new FormatException()),
             DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
             _ownerConstraintOverrideBounds = Field<OwnerConstraintOverrideBounds>(fields, "_ownerConstraintOverrideBounds", value => OwnerConstraintOverrideBounds.ReadFrozenText(value!.GetValue<string>())),
             _ownerConstraintDispatchBounds = Field<OwnerConstraintDispatchBounds>(fields, "_ownerConstraintDispatchBounds", value => OwnerConstraintDispatchBounds.ReadFrozenText(value!.GetValue<string>())),

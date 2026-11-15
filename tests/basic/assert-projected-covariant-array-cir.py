@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Assert array storage, construction witnesses, and ordinary element-value carriers."""
 
-import base64
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -16,11 +19,14 @@ def objects(node):
             yield from objects(value)
 
 
-if len(sys.argv) != 2:
-    raise SystemExit("usage: assert-projected-covariant-array-cir.py <GenericsTests.cir.json>")
+if len(sys.argv) != 3:
+    raise SystemExit("usage: assert-projected-covariant-array-cir.py <GenericsTests.cir.json> <metadata-inspector.dll>")
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
+
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[2])
 
 
 def method(name):
@@ -299,7 +305,7 @@ if len(getters) != 1 or getters[0].get("ret") not in (fqn("object"), fqn("System
 if not any(node.get("k") == "cast" and node.get("type") == fqn("System.String")
            and node.get("e") is getters[0] for node in invariant_nodes):
     raise SystemExit("the invariant element's declared String result was not checked at use")
-logical_parameters = [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+logical_parameters = [decoded_types[id(attribute)]
                       for attribute in parameters[0].get("attrs", [])
                       if attribute.get("attr", {}).get("name")
                       == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]

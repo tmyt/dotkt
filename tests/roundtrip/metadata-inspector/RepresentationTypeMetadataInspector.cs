@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 using DotKt.Klib.Metadata;
 
 internal static class RepresentationTypeMetadataInspector
@@ -31,11 +32,13 @@ internal static class RepresentationTypeMetadataInspector
                 .Any(attribute => AttributeName(metadata, attribute) ==
                     "System.Runtime.CompilerServices.CompilerGeneratedAttribute"), "association definition is not trusted");
             var blob = metadata.GetBlobReader(attributes[0].Value);
-            Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "association envelope changed");
+            Require(blob.ReadUInt16() == 1, "association envelope changed");
+            var codec = blob.ReadSerializedString();
+            Require(codec == TypeNodeCarrier.Codec, "association did not use the selected TypeNode codec");
             var length = blob.ReadInt32();
             Require(length >= 0 && length <= blob.RemainingBytes - 2, "association payload length changed");
-            var source = JsonNode.Parse(blob.ReadBytes(length));
-            Require(JsonNode.DeepEquals(source, new JsonObject { ["t"] = "fqn", ["name"] = Source }),
+            var source = TypeNodeCarrier.Decode(codec!, blob.ReadBytes(length));
+            Require(source is TypeNode.Fqn { Name: Source, Args: null, Classifier: null },
                 "association does not preserve the exact Kotlin classifier");
             Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected association arguments");
             var methods = declaration.GetMethods().Select(metadata.GetMethodDefinition).ToArray();

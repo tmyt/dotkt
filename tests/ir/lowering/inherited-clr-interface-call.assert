@@ -8,7 +8,7 @@
 # The one-argument overload keeps Kotlin Boolean dispatch.
 ?any(.[] | .. | objects; ir_matches({"ownerType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"virtual":true,"recv":{"k":"local","name":"values"},"method":"$star$add$20"}))
 +"declaringType":{"t":"fqn","name":"kotlin.collections.ArrayDeque$star"},"name":"$star$add$20","genericArity":0,"returnType":{"t":"fqn","name":"void"},"callingConvention":"instance","parameterTypes":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]
-+"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6ImtvdGxpbi5jb2xsZWN0aW9ucy5BcnJheURlcXVlIiwiYXJncyI6W3sidCI6ImZxbiIsIm5hbWUiOiJrb3RsaW4uU3RyaW5nIn1dfQ=="
++"bytes":"g6F0o2ZxbqRuYW1lvWtvdGxpbi5jb2xsZWN0aW9ucy5BcnJheURlcXVlpGFyZ3ORgqF0o2ZxbqRuYW1lrWtvdGxpbi5TdHJpbmc="
 
 # The inherited one-argument add retains Kotlin Boolean dispatch through the projected collection contract.
 +"name":"clrProjectedCollAdd","genericArity":2,"returnType":{"t":"fqn","name":"System.Boolean"},"callingConvention":"static","parameterTypes":[{"t":"fqn","name":"System.Object"},{"t":"fqn","name":"System.Object"}]

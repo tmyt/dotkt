@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Assert star-copy defaults and owner-dependent results stay on exact existential carriers."""
 
-import base64
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -20,13 +23,16 @@ def clr_name(node):
     return "System.Object" if node == {"t": "fqn", "name": "object"} else node.get("name")
 
 
-if len(sys.argv) != 2:
+if len(sys.argv) != 3:
     raise SystemExit(
-        "usage: assert-star-copy-default-fields-cir.py <DefaultArgumentTests.cir.json>"
+        "usage: assert-star-copy-default-fields-cir.py <DefaultArgumentTests.cir.json> <metadata-inspector.dll>"
     )
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
+
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[2])
 
 for semantic_fact in ("dataClassCopyDefault", "generatedEqualsFieldRead"):
     if any(node.get(semantic_fact) is not None for node in objects(root)):
@@ -240,7 +246,7 @@ derived = next(item for item in root["types"] if item.get("name") == "DefaultArg
 if derived.get("base") != {"t": "fqn", "name": "DefaultArgStarBase", "args": [
         {"t": "tv", "scope": "type", "i": 1}, {"t": "tv", "scope": "type", "i": 2}]}:
     raise SystemExit(f"CIR: inherited construction lost B's ordinary/storage frames: {derived.get('base')!r}")
-logical_parameters = [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+logical_parameters = [decoded_types[id(attribute)]
                       for attribute in inherited_helpers[0]["params"][0].get("attrs", [])
                       if attribute.get("attr", {}).get("name")
                       == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]

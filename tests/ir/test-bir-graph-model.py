@@ -78,6 +78,24 @@ class PhaseCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Untyped consumed phase fields"):
             outputs(ROOT, self.definitions)
 
+    def test_instance_to_static_move_requires_explicit_field_consumption(self):
+        fields = self.definitions["birCallInstance"]["x-dotkt-model"]["loweringProperties"]
+        fields["unclassifiedInstanceFact"] = {"type": "boolean"}
+        with self.assertRaisesRegex(ValueError,
+                "Unclassified instance/static call field omission: unclassifiedInstanceFact"):
+            outputs(ROOT, self.definitions)
+
+        # A field present on both owning records is moved, not implicitly lost.
+        self.definitions["birCallStatic"]["x-dotkt-model"]["loweringProperties"][
+            "unclassifiedInstanceFact"] = {"type": "boolean"}
+        model = next(content for path, content in outputs(ROOT, self.definitions).items()
+                     if path.name == "BirGraph.Model.Generated.cs")
+        move = model.split("internal static class BirCallConversion", 1)[1]
+        self.assertIn("UnclassifiedInstanceFact = source.UnclassifiedInstanceFact,", move)
+        for field in ("Overrides", "ClrOwnerResolved", "Static", "_erasedConstraintDispatch",
+                      "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature"):
+            self.assertNotIn(f"{field} = source.{field},", move)
+
     def test_declaration_phase_difference_requires_an_explicit_contract(self):
         self.definitions["cirMethod"]["properties"]["ret"] = {"type": "boolean"}
         with self.assertRaisesRegex(ValueError, "Unaccounted declaration phase type"):

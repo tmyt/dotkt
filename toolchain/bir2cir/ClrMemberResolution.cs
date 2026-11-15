@@ -502,12 +502,8 @@ static partial class ClrMemberResolution
         JsonNode appendedParameter)
     {
         if ((source[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
-            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
-        {
-            // The caller owns this ABI extension (the cold entry's completion parameter).
-            // A hot signature snapshot must not validate the newly selected cold MethodDef.
-            target[KotlinSigSnapshotId] = RememberKotlinSignature(snapshot.Append(TypeJson.Read(appendedParameter)));
-        }
+            && AppendReferencedStaticSignatureSnapshot(snapshotId, TypeJson.Read(appendedParameter)) is { } projected)
+            target[KotlinSigSnapshotId] = projected;
     }
 
     static void WalkReferencedStaticCalls(JsonNode node, string context)
@@ -970,19 +966,7 @@ static partial class ClrMemberResolution
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
     // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
-    internal static JsonArray SelectedGenericTypeParameters(JsonObject node, ReferenceMetadataIndex refs)
-    {
-        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn owner
-            || node["resolvedMemberParams"] is not JsonArray parameters
-            || parameters.Select(TypeJson.Read).Any(type => type == null))
-            throw new InvalidOperationException("Native generic proof demand lacks its selected declaration descriptor");
-        return SelectedGenericTypeParameters(owner, (node["method"] as JsonValue)?.GetValue<string>(),
-            (node["typeArgs"] as JsonArray)?.Count ?? 0,
-            (node["k"] as JsonValue)?.GetValue<string>() == "clrGenericInstance",
-            parameters.Select(TypeJson.Read).ToArray(), refs);
-    }
-
-    internal static JsonArray SelectedGenericTypeParameters(TypeNode.Fqn owner, string name, int arity,
+    static MethodInfo SelectedGenericProofDeclaration(TypeNode.Fqn owner, string name, int arity,
         bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
         TypeNode[] parameterOwnerArguments = null)
     {
@@ -998,7 +982,7 @@ static partial class ClrMemberResolution
                 + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
                     .Where(method => method.Name == name)
                     .Select(method => method.ToString())));
-        return new JsonArray(selected.GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+        return selected;
     }
 
     static MethodInfo SelectedGenericDeclaration(Type owner, string name, int arity, bool instance,

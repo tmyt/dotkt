@@ -23,11 +23,11 @@ static partial class RoundtripMetadata
             writer.WriteEndObject();
         });
 
-    static BirAttribute PlacementCarrier(string name, byte[] content) => new() {
+    static BirAttribute PlacementCarrier(string name, byte[] content, string codec = BirCarrier.JsonV1) => new() {
         Attr = new TypeNode.Fqn(name),
         ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.String"), new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
         Args = new IBirAttributeValue[] {
-            new BirAttributeLiteral { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) },
+            new BirAttributeLiteral { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(codec) },
             new BirOpaqueBytes { Bytes = content },
         },
     };
@@ -44,4 +44,19 @@ static partial class RoundtripMetadata
     internal static void AddSourceMethodIdentity(BirFunctionDeclaration method, string sourceName,
         string sourceDeclaration = null) => method.Attrs = method.Attrs.OrEmpty()
             .Append(PlacementCarrier(AKSourceMethod, SourceMethodIdentityContent(sourceName, sourceDeclaration))).ToArray();
+
+    internal static void CopySourceOverloadPriority(BirFunctionDeclaration source, BirFunctionDeclaration target)
+    {
+        foreach (var attribute in source.Attrs.OrEmpty())
+            if (attribute.Attr.OrDefault() is TypeNode.Fqn { Name: SourceLowPriority })
+                target.Attrs = target.Attrs.OrEmpty().Append((BirAttribute)attribute.DeepClone()).ToArray();
+    }
+
+    internal static void CopySourceMethodIdentity(BirFunctionDeclaration source, BirFunctionDeclaration target)
+    {
+        if (target.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AKSourceMethod })) return;
+        foreach (var attribute in source.Attrs.OrEmpty())
+            if (attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AKSourceMethod })
+                target.Attrs = target.Attrs.OrEmpty().Append((BirAttribute)attribute.DeepClone()).ToArray();
+    }
 }

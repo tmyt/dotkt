@@ -60,14 +60,32 @@ sealed partial class GenericRepresentationPolicy
         policy.PrepareDomLocations(new[] { root });
         // The selected source cell becomes real storage before the same owning
         // handoff; its native role must move to the actual generated field.
-        SharedSyntheticSynthesis.Apply(root, ReferenceMetadataIndex.Build(Array.Empty<string>()));
+        BirFieldDeclaration materializedCell = null;
+        SharedSyntheticSynthesis.Apply(root, ReferenceMetadataIndex.Build(Array.Empty<string>()),
+            materializedStorage: (origin, physical) => {
+                if (!ReferenceEquals(origin, cell))
+                    throw new InvalidOperationException("Ref-cell materialization did not report its exact source occurrence");
+                materializedCell = physical;
+                policy.RegisterNativeStorageMaterialization(origin, physical);
+            });
+        var actualCell = root.Types.Value.OfType<BirClassDefinition>().Single(type => type.Name.OrDefault() == "SourceCell");
+        if (materializedCell == null || !ReferenceEquals(actualCell.Fields.Value[0], materializedCell)
+            || !ReferenceEquals(policy._nativeStorageMaterializations[cell], materializedCell))
+            throw new InvalidOperationException("Ref-cell materialization did not retain the actual authored storage field");
+        var duplicateMaterialization = false;
+        try { policy.RegisterNativeStorageMaterialization(cell, materializedCell); }
+        catch (InvalidOperationException) { duplicateMaterialization = true; }
+        if (!duplicateMaterialization || policy._nativeStorageMaterializations.Count != 1)
+            throw new InvalidOperationException("Selected native source storage accepted a second materialization notification");
+        policy.RefreshPhysicalNativeLocations(new[] { root });
         continuation = root.ToDom();
         policy.BindDomDeclarations(new JsonNode[] { continuation });
         var boundOwner = continuation["types"][0].AsObject();
         var boundField = boundOwner["fields"][1].AsObject();
         var cellOwner = continuation["types"].AsArray().OfType<JsonObject>()
             .Single(type => type["name"]?.GetValue<string>() == "SourceCell");
-        if (root.RefTypes.IsPresent || !policy.IsNativeField(cellOwner["fields"][0].AsObject())
+        if (root.RefTypes.IsPresent || policy._nativeStorageMaterializations.Count != 0
+            || !policy.IsNativeField(cellOwner["fields"][0].AsObject())
             || cellOwner["fields"][0][NativeLocationKey]?.GetValue<bool>() != true)
             throw new InvalidOperationException("Selected native ref-cell storage lost its actual synthesized field at handoff");
         if (!ReferenceEquals(policy.LocalDeclaration("SourceFrame"), boundOwner) || !policy.IsNativeField(boundField))
@@ -106,28 +124,44 @@ sealed partial class GenericRepresentationPolicy
             Body = new IBirStatement[] { new BirReturn { Value = use } } };
         var root = new BirFileDeclaration { FileClass = "Placement", Types = new IBirTypeDeclaration[] { source, payload }, Methods = new[] { read } };
         var policy = CreateSource(new[] { root }, new Dictionary<string, string>(), null);
+        var transitions = new AliasDeclarationTransitions();
+        transitions.Record(root, root.Types.Value, root.Types.Value, Array.Empty<AliasDeclarationTransitions.Replacement>());
         var carrier = new BirClassDefinition { Name = "PhysicalStorage", Kind = "class", Generated = true,
             Fields = new[] { field } };
         field.Name = "physicalValue";
         source.Fields = Array.Empty<BirFieldDeclaration>();
-        root.Types = new IBirTypeDeclaration[] { source, carrier, payload };
+        root.Types = new IBirTypeDeclaration[] { source, payload, carrier };
+        transitions.AdmitMaterializedTypes(root, new[] { carrier });
         policy.PrepareDomLocations(new[] { root });
-        var continuation = root.ToDom();
-        policy.BindDomDeclarations(new JsonNode[] { continuation });
-        if (!policy.IsNativeField(continuation["types"][1]["fields"][0].AsObject())
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy, out var preparation);
+        var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, policy);
+        var realization = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
+            FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs,
+            surface.Demand.ReservedNames, materializedType: (owner, type) => transitions.AdmitMaterializedTypes(owner, new[] { type }));
+        FBoundStarProjectionErasure.RealizeCarriersSource(new[] { root }, realization,
+            Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null,
+            (owner, types) => transitions.AdmitMaterializedTypes(owner, types));
+        var continuation = root.ToDom(declarations.ObserveProjection);
+        declarations.BindProjected();
+        policy.BindDomDeclarations(new JsonNode[] { continuation }, transitions);
+        if (!policy.IsNativeField(continuation["types"][2]["fields"][0].AsObject())
             || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("PhysicalStorage"), "physicalValue", null)
             || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("Source"), "value", null)
             || policy.ProjectArgumentHead(new TypeNode.Fqn("Source", new[] { text }), true, null)
                 is not TypeNode.Fqn { Args: [TypeNode.Star] }
             || policy.ProjectArgumentHead(new TypeNode.Fqn("PhysicalStorage", new[] { text }), true, null)
-                is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] })
+                is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
+            || policy.LocalDeclaration("PhysicalStorage") != null)
             throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
-        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
-        policy.RecordNativeFields(new JsonNode[] { continuation });
-        FBoundStarProjectionErasure.ApplyAll(new JsonNode[] { continuation }, refs, valueSlots: policy);
+        FBoundStarProjectionErasure.BindRealizationContinuation(realization);
         if (TypeJson.Read(continuation["methods"][0]["body"][0]["value"]["sty"]) is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
-            || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][1]["fields"][0]["type"]), valueType))
+            || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][2]["fields"][0]["type"]), valueType))
             throw new InvalidOperationException("Native source-owner use lost its closed field witness before late physical binding");
+        if (!ReferenceEquals(policy.LocalDeclaration("PhysicalStorage"), continuation["types"][2]))
+            throw new InvalidOperationException("FBound did not associate an explicitly appended physical owner with its actual continuing declaration");
+        transitions.Release();
 
         foreach (var removeDeclaration in new[] { false, true })
         {

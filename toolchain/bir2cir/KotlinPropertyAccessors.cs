@@ -73,15 +73,17 @@ static partial class KotlinPropertyAccessors
 
     internal static void PreserveCallIdentity(JsonObject call, string sourceName, string kind)
     {
-        if (sourceName == null || kind is not ("get" or "set"))
-            throw new InvalidOperationException("incomplete Kotlin property call identity");
+        ValidateCallIdentity(sourceName, kind);
         call[SourceNameKey] = sourceName;
         call[KindKey] = kind;
     }
 
     internal static bool IsCall(JsonObject call, string sourceName, string kind) =>
-        Str(call[SourceNameKey]) == sourceName && Str(call[KindKey]) == kind
-        || Str(call["method"]) == sourceName && Str(call["prop"]) == kind;
+        IsCall(Str(call[SourceNameKey]), Str(call[KindKey]), Str(call["method"]), Str(call["prop"]), sourceName, kind);
+
+    internal static bool IsCall(string preservedName, string preservedKind, string method, string prop,
+        string sourceName, string kind) => preservedName == sourceName && preservedKind == kind
+        || method == sourceName && prop == kind;
 
     internal static bool TryCallIdentity(JsonObject call, out string sourceName, out string kind)
         => TryCallIdentity(Str(call[SourceNameKey]), Str(call[KindKey]), Str(call["method"]), Str(call["prop"]),
@@ -474,17 +476,9 @@ static partial class KotlinPropertyAccessors
     internal static void AssociateBridgeProperty(JsonObject owner, JsonObject bridge, string propertyName,
         string accessorKind, string sourceAssociation, TypeNode[] slotParams, TypeNode slotRet)
     {
-        if (accessorKind is not ("get" or "set"))
-            throw new InvalidOperationException("property override bridge has no getter/setter role");
-        if (accessorKind == "set" && slotParams.Length == 0)
-            throw new InvalidOperationException("property setter override bridge has no value parameter");
-        if (string.IsNullOrEmpty(sourceAssociation))
-            throw new InvalidOperationException("property override bridge has no source association");
-        var propertyType = accessorKind == "get" ? slotRet : slotParams[^1];
-        var indexParams = accessorKind == "get" ? slotParams : slotParams[..^1];
-        var association = "dotkt$bridge$property$" + sourceAssociation + "|" +
-            SupertypeGraph.TypeKey(propertyType) + "(" +
-            string.Join(",", indexParams.Select(SupertypeGraph.TypeKey)) + ")";
+        var plan = PlanBridgeProperty(accessorKind, sourceAssociation, slotParams, slotRet);
+        var propertyType = plan.Type;
+        var association = plan.Association;
         bridge[SourceNameKey] = propertyName;
         bridge[KindKey] = accessorKind;
         bridge[AssociationKey] = association;
@@ -517,11 +511,9 @@ static partial class KotlinPropertyAccessors
             });
             return;
         }
-        if (Str(property["name"]) != propertyName
-            || TypeJson.Read(property["type"]) is not TypeNode existingType
-            || !existingType.Equals(propertyType)
-            || property[PropertyRolesKey] is not JsonArray propertyRoles
-            || propertyRoles.Any(role => Str(role) == accessorKind))
+        var propertyRoles = property[PropertyRolesKey] as JsonArray;
+        if (!CanMergeBridgeProperty(Str(property["name"]), TypeJson.Read(property["type"]),
+                propertyRoles?.Select(Str).ToArray(), propertyName, accessorKind, propertyType))
         {
             var associatedMethods = owner["methods"] is JsonArray ownerMethods
                 ? string.Join(",", ownerMethods.OfType<JsonObject>()
@@ -542,11 +534,7 @@ static partial class KotlinPropertyAccessors
     internal static void MarkExactInterfaceBridgeProperty(JsonObject bridge, string propertyName,
         string accessorKind, string sourceAssociation)
     {
-        if (accessorKind is not ("get" or "set"))
-            throw new InvalidOperationException("property override bridge has no getter/setter role");
-        if (string.IsNullOrEmpty(sourceAssociation))
-            throw new InvalidOperationException("property override bridge has no source association");
-        var association = "dotkt$bridge$property$" + sourceAssociation + "|exact-interface";
+        var association = PlanBridgeProperty(accessorKind, sourceAssociation, null, null, exactInterface: true).Association;
         bridge[SourceNameKey] = propertyName;
         bridge[KindKey] = accessorKind;
         bridge[AssociationKey] = association;

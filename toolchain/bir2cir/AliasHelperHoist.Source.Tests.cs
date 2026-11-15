@@ -110,6 +110,9 @@ static partial class AliasHelperHoist
         file.Types = new IBirTypeDeclaration[] { host, helper, kept, first, second };
         Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
         transitions.AdmitMaterializedTypes(file, new[] { second });
+        var contract = new BirInterfaceDefinition { Name = "ReferenceContract", Kind = "interface" };
+        file.Types = file.Types.OrEmpty().Concat(new IBirTypeDeclaration[] { contract }).ToArray();
+        transitions.AdmitMaterializedTypes(file, new IBirTypeDeclaration[] { contract });
         var projection = file.ToDom();
         transitions.ValidateProjection(new JsonNode[] { projection });
         var owners = transitions.LogicalOwners(0, projection).ToArray();
@@ -182,7 +185,17 @@ static partial class AliasHelperHoist
             || !ReferenceEquals(host.Fields.Value[0], moved) || !ReferenceEquals(original[0], first)
             || !ReferenceEquals(first.Methods.Value[0], firstMethod) || child.Vis.Value != "internal")
             throw new InvalidOperationException("Alias whole-type retirement changed kept source records or companion storage");
-        var projection = file.ToDom();
+        var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { file }, policy, out var preparation);
+        var nativeProofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
+        var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, nativeProofs, refs, policy);
+        var realization = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
+            FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs,
+            surface.Demand.ReservedNames, materializedType: (owner, type) => transitions.AdmitMaterializedTypes(owner, new[] { type }));
+        FBoundStarProjectionErasure.RealizeCarriersSource(new[] { file }, realization,
+            Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null,
+            (owner, types) => transitions.AdmitMaterializedTypes(owner, types));
+        var projection = file.ToDom(declarations.ObserveProjection);
+        declarations.BindProjected();
         var retiredMap = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var method in retiredMethods) retiredMap.Add(method, method.ToDom());
         policy.BindDomDeclarations(new JsonNode[] { projection }, transitions);
@@ -194,6 +207,10 @@ static partial class AliasHelperHoist
             || !ReferenceEquals(index.ByIdentity["retired-alias"].Method, retiredMap[firstMethod])
             || !ReferenceEquals(index.ByIdentity["kept-member"].Method, projection["types"][1]["methods"][0]))
             throw new InvalidOperationException("Alias logical facts, retired method or shifted exact owner handoff changed");
+        FBoundStarProjectionErasure.BindRealizationContinuation(realization);
+        if (!ReferenceEquals(policy.LocalDeclaration(first.Name.Value), projection["types"][0])
+            || KotlinSupertypesRecord.ReadNullableFrame(policy.LocalDeclaration(first.Name.Value)) != null)
+            throw new InvalidOperationException("FBound kept a retired logical alias header instead of its actual physical host");
         policy.CheckAliasNativeHandoff(projection, retired);
         var retainedFields = host.Fields.Value;
         host.Fields = new[] { (BirFieldDeclaration)moved.DeepClone() };

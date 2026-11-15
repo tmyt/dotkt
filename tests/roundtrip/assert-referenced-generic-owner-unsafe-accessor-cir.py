@@ -3,6 +3,7 @@ import base64
 import json
 import sys
 from collections import Counter
+from carrier_inspection import type_payloads
 
 def objects(node):
     if isinstance(node, dict):
@@ -17,6 +18,8 @@ with open(sys.argv[1], encoding="utf-8") as stream:
     producer = json.load(stream)
 with open(sys.argv[2], encoding="utf-8") as stream:
     root = json.load(stream)
+decoded_types = type_payloads([node for node in objects(producer) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[3])
 storage = {"t": "fqn", "name": "System.Array"}
 base_name = "roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase`2"
 calls = [node for node in objects(root) if node.get("k") == "callInstance"
@@ -36,7 +39,8 @@ for call in calls:
 assert not any(owner.get("name", "").startswith("dotkt$unsafe$holder$") for owner in root["types"])
 
 def facts(declaration, name):
-    return [json.loads(base64.b64decode(attr["args"][1]["bytes"])) for attr in declaration.get("attrs", [])
+    return [decoded_types[id(attr)] if name == "KotlinType" else json.loads(base64.b64decode(attr["args"][1]["bytes"]))
+            for attr in declaration.get("attrs", [])
             if attr.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 
 source_owner = "roundtrip.protectedgenericowner.ReferencedProtectedGenericOwnerBase"

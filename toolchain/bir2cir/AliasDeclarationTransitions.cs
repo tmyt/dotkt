@@ -5,7 +5,7 @@ using DotKt.Cir;
 
 // A representation owner reports its exact source occurrences, never a new
 // semantic catalog. The original vectors remain intact for strict association.
-sealed class AliasDeclarationTransitions
+sealed partial class AliasDeclarationTransitions
 {
     internal sealed record Replacement(IBirTypeDeclaration Source, BirClassDefinition Host,
         BirClassDefinition Helper);
@@ -13,6 +13,7 @@ sealed class AliasDeclarationTransitions
         IBirTypeDeclaration[] Continuing, Replacement[] Replacements,
         (string Owner, BirFieldDeclaration Field)[] RetiredFields);
     readonly List<FileTransition> files = new();
+    readonly HashSet<IBirTypeDeclaration> retiredPhysicalOwners = new(ReferenceEqualityComparer.Instance);
 
     internal void Record(BirFileDeclaration file, IBirTypeDeclaration[] original,
         IBirTypeDeclaration[] continuing, IReadOnlyList<Replacement> replacements)
@@ -38,6 +39,8 @@ sealed class AliasDeclarationTransitions
                 .Any(value => ReferenceEquals(value, declaration)))
             .Select(declaration => (replacement.Source.Name.OrDefault(), declaration))).ToArray();
         files.Add(new(file, original, continuing, replacements.ToArray(), retiredFields));
+        foreach (var source in original)
+            if (replacements.Any(row => ReferenceEquals(row.Source, source))) retiredLogicalOwners.Add(source);
     }
 
     static bool Same(IEnumerable<IBirTypeDeclaration> left, IEnumerable<IBirTypeDeclaration> right)
@@ -45,8 +48,8 @@ sealed class AliasDeclarationTransitions
 
     // Later materialization may append physical declarations, but cannot change
     // the reported representation of any preceding source occurrence. These
-    // classes extend the physical continuation, not the original logical owners.
-    internal void AdmitMaterializedTypes(BirFileDeclaration file, IReadOnlyList<BirClassDefinition> appended)
+    // declarations extend the physical continuation, not the original logical owners.
+    internal void AdmitMaterializedTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended)
     {
         if (files.Count == 0) return; // Reference builds have no alias transition ledger.
         var index = files.FindIndex(entry => ReferenceEquals(entry.File, file));
@@ -55,6 +58,20 @@ sealed class AliasDeclarationTransitions
         var expected = entry.Continuing.Concat(appended).ToArray();
         if (!Same(file.Types.OrEmpty(), expected)) throw Mismatch();
         files[index] = entry with { Continuing = expected };
+    }
+
+    internal void RetireMaterializedTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> removed)
+    {
+        if (files.Count == 0) return;
+        var index = files.FindIndex(entry => ReferenceEquals(entry.File, file));
+        if (index < 0) throw Mismatch();
+        var entry = files[index];
+        if (!Same(file.Types.OrEmpty(), entry.Continuing)
+            || removed.Distinct(ReferenceEqualityComparer.Instance).Count() != removed.Count
+            || removed.Any(owner => entry.Continuing.Count(actual => ReferenceEquals(actual, owner)) != 1
+                || !retiredPhysicalOwners.Add(owner))) throw Mismatch();
+        files[index] = entry with { Continuing = entry.Continuing.Where(owner =>
+            !removed.Any(actual => ReferenceEquals(actual, owner))).ToArray() };
     }
 
     internal void ValidateProjection(IReadOnlyList<JsonNode> roots)
@@ -84,18 +101,25 @@ sealed class AliasDeclarationTransitions
         if (entry == null) return false;
         if (originalPosition >= entry.Original.Length || !ReferenceEquals(entry.Original[originalPosition], original)
             || !Same(file.Types.OrEmpty(), entry.Continuing)) throw Mismatch();
-        retired = entry.Replacements.Any(row => ReferenceEquals(row.Source, original));
+        retired = entry.Replacements.Any(row => ReferenceEquals(row.Source, original)) || retiredPhysicalOwners.Contains(original);
         continuingPosition = Array.FindIndex(entry.Continuing, value => ReferenceEquals(value, original));
         if (retired == (continuingPosition >= 0)) throw Mismatch();
         return true;
     }
 
-    internal IEnumerable<JsonObject> LogicalOwners(int fileIndex, JsonObject projection)
+    internal IEnumerable<JsonObject> LogicalOwners(int fileIndex, JsonObject projection,
+        SourceDeclarationProjection declarations = null)
     {
         var entry = files[fileIndex];
         foreach (var source in entry.Original)
         {
             if (entry.Replacements.Any(row => ReferenceEquals(row.Source, source))) yield return LogicalHeader(source);
+            else if (retiredPhysicalOwners.Contains(source))
+            {
+                if (declarations == null || !declarations.TryGet((BirGraphValue)source, out var retired)
+                    || !declarations.IsRetired((BirGraphValue)source, retired)) throw Mismatch();
+                yield return retired;
+            }
             else
             {
                 var position = Array.FindIndex(entry.Continuing, value => ReferenceEquals(value, source));
@@ -109,7 +133,8 @@ sealed class AliasDeclarationTransitions
 
     internal void ValidateNativeField(BirFieldDeclaration actual)
     {
-        var retired = RetiredFields.Any(row => ReferenceEquals(row.Field, actual));
+        var retired = RetiredFields.Any(row => ReferenceEquals(row.Field, actual))
+            || retiredPhysicalOwners.Any(owner => owner.Fields.OrEmpty().Any(field => ReferenceEquals(field, actual)));
         var live = files.Sum(entry => entry.File.Fields.OrEmpty().Count(field => ReferenceEquals(field, actual))
             + entry.File.Types.OrEmpty().Sum(type => type.Fields.OrEmpty().Count(field => ReferenceEquals(field, actual))));
         if (live != (retired ? 0 : 1)) throw Mismatch();
@@ -129,25 +154,8 @@ sealed class AliasDeclarationTransitions
     // declaration view cross here. Bodies and native fields have their own
     // single projections; they are not copied into this logical header.
     internal static JsonObject LogicalHeader(IBirTypeDeclaration source)
-    {
-        var header = new JsonObject();
-        void Add<T>(string key, OptionalField<T> value, Func<T, JsonNode> project)
-        { if (value.IsPresent) header[key] = value.IsNull ? null : project(value.Value); }
-        Add("name", source.Name, value => JsonValue.Create(value));
-        Add("kind", source.Kind, value => JsonValue.Create(value));
-        Add("generated", source.Generated, value => JsonValue.Create(value));
-        Add("typeParams", source.TypeParams, values => new JsonArray(values.Select(value => (JsonNode)value.ToDom()).ToArray()));
-        Add("attrs", source.Attrs, values => new JsonArray(values.Select(value => (JsonNode)value.ToDom()).ToArray()));
-        var facts = source switch {
-            BirClassDefinition value => value.KotlinSupertypesPre,
-            BirInterfaceDefinition value => value.KotlinSupertypesPre,
-            BirEnumDefinition value => value.KotlinSupertypesPre,
-            _ => default,
-        };
-        Add(KotlinSupertypesRecord.PreKey, facts, SourceTypeFacts.ToDom);
-        return header;
-    }
+        => ProjectLogicalHeader(ReadLogicalHeaderFacts(source));
 
-    internal void Release() => files.Clear();
+    internal void Release() { files.Clear(); retiredLogicalOwners.Clear(); retiredPhysicalOwners.Clear(); }
     static InvalidOperationException Mismatch() => new("Alias representation does not match its reported source occurrences");
 }

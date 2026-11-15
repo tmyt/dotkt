@@ -103,8 +103,14 @@ static class CallableVisibilityLowering
     }
 
     public static void Copy(BirFieldDeclaration source, BirFunctionDeclaration target, string visibility = null)
+        => Copy(source.Attrs, target, visibility);
+
+    internal static void Copy(BirFunctionDeclaration source, BirFunctionDeclaration target, string visibility = null)
+        => Copy(source.Attrs, target, visibility);
+
+    static void Copy(OptionalField<BirAttribute[]> attributes, BirFunctionDeclaration target, string visibility)
     {
-        var copied = source.Attrs.OrEmpty().Where(attribute =>
+        var copied = attributes.OrEmpty().Where(attribute =>
             CopyAttribute((attribute.Attr.OrDefault() as TypeNode.Fqn)?.Name, visibility))
             .Select(attribute => (BirAttribute)attribute.DeepClone()).ToArray();
         if (copied.Length != 0) target.Attrs = target.Attrs.OrEmpty().Concat(copied).ToArray();

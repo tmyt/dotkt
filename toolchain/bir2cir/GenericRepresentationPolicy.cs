@@ -64,14 +64,37 @@ sealed partial class GenericRepresentationPolicy
         foreach (var (name, declaration) in declarations)
         {
             _localDeclarations[name] = declaration;
-            _localOwners.Add(name);
         }
+        RegisterCurrentPhysicalOwners(declarations.Keys, aliases);
+    }
+
+    // The current physical inventory can grow without granting source carrier
+    // eligibility. Source preparation and its DOM continuation share this set.
+    internal void RegisterCurrentPhysicalOwners(IEnumerable<string> names, IReadOnlyDictionary<string, string> aliases)
+    {
+        foreach (var name in names) _localOwners.Add(name);
         foreach (var (name, target) in aliases) _aliases[name] = target;
     }
 
     internal JsonObject LocalDeclaration(string owner) => _localDeclarations.GetValueOrDefault(owner);
     internal string BindingAlias(string owner) => owner == null ? null
         : _aliases.GetValueOrDefault(ReferenceMetadataIndex.BareOwnerFqn(owner));
+
+    // The late refresh consumes selected declaration vectors, not inferred
+    // operand types. Keep its precedence independent of the early source reader.
+    static T NativeRefreshParameters<T>(T shapes, T signature, T memberSignature, T argumentTypes) where T : class
+        => shapes ?? signature ?? memberSignature ?? argumentTypes;
+
+    static bool NativeRefreshCall(string kind) => kind is "callStatic" or "callInstance" or "constrainedCall"
+        or "callLocal" or "new" || ClrBoundNode.IsAny(kind);
+
+    static bool NativeRefreshAddress(TypeNode parameter) => SignatureValueTypes.Of(parameter) is TypeNode.ByRef;
+
+    static bool NativeRefreshLocation(string kind, out bool isStatic)
+    {
+        isStatic = kind == "staticField";
+        return isStatic || kind == "field";
+    }
 
     // Revisit newly materialized source/capture fields before value projection. Selected managed-reference
     // parameter shapes own these locations; the late value-flow pass separately allocates exact native locals.
@@ -114,19 +137,18 @@ sealed partial class GenericRepresentationPolicy
                 // Decide field layout while source bodies still exist in both
                 // reference and runtime builds, not after reference-body removal.
                 var kind = Text(obj["k"]);
-                if ((kind is "callStatic" or "callInstance" or "constrainedCall" or "callLocal" or "new"
-                        || ClrBoundNode.IsAny(kind))
-                    && (obj["shapeTypes"] ?? obj["sig"] ?? obj["memberSignature"] ?? obj["argTypes"]) is JsonArray parameters
+                if (NativeRefreshCall(kind)
+                    && NativeRefreshParameters(obj["shapeTypes"], obj["sig"], obj["memberSignature"], obj["argTypes"]) is JsonArray parameters
                     && obj["args"] is JsonArray arguments && parameters.Count == arguments.Count)
                     for (var i = 0; i < parameters.Count; i++)
                     {
-                        if (SignatureValueTypes.Of(TypeJson.Read(parameters[i])) is not TypeNode.ByRef
+                        if (!NativeRefreshAddress(TypeJson.Read(parameters[i]))
                             || arguments[i] is not JsonObject argument) continue;
                         var location = Text(argument["k"]) == "byrefOf" ? argument["inner"] as JsonObject : argument;
-                        if (location == null || Text(location["k"]) is not ("field" or "staticField")
+                        if (location == null || !NativeRefreshLocation(Text(location["k"]), out var isStatic)
                             || TypeJson.OwnerName(location["ownerType"] ?? location["owner"]) is not string owner
                             || Text(location["name"]) is not string name) continue;
-                        var key = FieldKey(owner, name, Text(location["k"]) == "staticField", location);
+                        var key = FieldKey(owner, name, isStatic, location);
                         if (fields.TryGetValue(key, out var declaration))
                         {
                             _nativeFields.Add(declaration);
@@ -239,6 +261,7 @@ sealed partial class GenericRepresentationPolicy
     public static void SelfTest()
     {
         SourcePolicySelfTest();
+        NativeRefreshSelfTest();
         var heads = BirGraphDom.ReadBirFileDeclaration(JsonNode.Parse("""
         {"types":[
           {"kind":"class","name":"SourceHead","typeParams":[{"name":"T"}]},
@@ -371,17 +394,21 @@ sealed partial class GenericRepresentationPolicy
         if (arguments.Length != 2 || arguments.Any(argument => argument is not TypeNode.Fqn { Name: "kotlin.collections.Collection" }))
             throw new InvalidOperationException("Frame expansion changed a collection's source declaration identity");
 
-        var sourceOverride = TypeJson.Write(new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
-        var innerRoot = new JsonObject { ["fileClass"] = "InnerRoles", ["types"] = new JsonArray(new JsonObject {
-            ["kind"] = "class", ["name"] = "Outer.Inner", ["semanticOwner"] = "Outer",
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "$storage0" }),
-            ["outerTypeParamCount"] = 2, ["mods"] = new JsonObject { ["inner"] = true },
-            ["methods"] = new JsonArray(new JsonObject { ["overrides"] = new JsonArray(new JsonObject {
-                ["owner"] = sourceOverride.DeepClone(), ["member"] = "run",
-            }) }),
-        }) };
+        var sourceOverride = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { new TypeNode.Tv("type", 0) });
+        var overrideEdge = new BirOverride { Owner = sourceOverride, Member = "run", Kind = "method", Arity = 0 };
+        BirTypeParameter[] OwnerParameters() => new[] {
+            new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "$storage0" },
+        };
+        var innerRoot = new BirFileDeclaration { FileClass = "InnerRoles", Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Kind = "class", Name = "Outer", TypeParams = OwnerParameters() },
+            new BirClassDefinition { Kind = "class", Name = "Outer.Inner", SemanticOwner = "Outer",
+                TypeParams = OwnerParameters(), OuterTypeParamCount = 2, Mods = new BirModifiers { Inner = true },
+                Methods = new[] { new BirFunctionDeclaration { Name = "run", Params = Array.Empty<BirParameter>(),
+                    Ret = new TypeNode.Fqn("kotlin.Unit"), Overrides = new[] { overrideEdge } } } },
+        } };
         TypeOwnershipLowering.ProjectInnerApplications(new[] { innerRoot }, null);
-        if (!JsonNode.DeepEquals(innerRoot["types"][0]["methods"][0]["overrides"][0]["owner"], sourceOverride))
+        if (!ReferenceEquals(overrideEdge.Owner.Value, sourceOverride)
+            || overrideEdge.Owner.Value is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }] })
             throw new InvalidOperationException("Physical inner capture projection rewrote a source override edge");
         Console.WriteLine("[generic binding roles] self-test OK (array root, map storage, exact source override frames)");
     }

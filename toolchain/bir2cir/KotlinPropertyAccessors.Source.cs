@@ -48,10 +48,26 @@ static partial class KotlinPropertyAccessors
 
     internal static void PreserveCallIdentity(BirCallStatic call, string sourceName, string kind)
     {
-        if (sourceName == null || kind is not ("get" or "set"))
-            throw new InvalidOperationException("incomplete Kotlin property call identity");
+        ValidateCallIdentity(sourceName, kind);
         call.PropertyName = sourceName;
         call.PropertyAccessor = kind;
+    }
+
+    internal static bool IsCall(BirCallStatic call, string sourceName, string kind) =>
+        IsCall(call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Method.OrDefault(),
+            call.Prop.OrDefault(), sourceName, kind);
+
+    internal static void PreserveCallIdentity(BirCallInstance call, string sourceName, string kind)
+    {
+        ValidateCallIdentity(sourceName, kind);
+        call.PropertyName = sourceName;
+        call.PropertyAccessor = kind;
+    }
+
+    static void ValidateCallIdentity(string sourceName, string kind)
+    {
+        if (sourceName == null || kind is not ("get" or "set"))
+            throw new InvalidOperationException("incomplete Kotlin property call identity");
     }
     internal static void SetPhysicalName(BirFunctionDeclaration declaration, string physicalName)
     {

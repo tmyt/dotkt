@@ -32,11 +32,9 @@ static class InnerRepresentationFrameTests
         NullableRepresentationMaterialization.Apply(new[] { source }, _ => false);
         var materializedOwner = TypeJson.Write(((BirFieldGet)((BirReturn)source.Types.Value[2].Methods.Value[0].Body.Value[0]).Value.Value).OwnerType.Value).ToJsonString();
         TypeOwnershipLowering.PrepareOwnershipFacts(new[] { source });
-        // Application projection is still a downstream DOM consumer.
-        var root = source.ToDom();
-        TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
-        var owner = TypeJson.Read(root["types"]![2]!["methods"]![0]!["body"]![0]!["value"]!["ownerType"]);
-        var arity = ((JsonArray)root["types"]![2]!["typeParams"]!).Count;
+        TypeOwnershipLowering.ProjectInnerApplications(new[] { source }, null);
+        var owner = ((BirFieldGet)((BirReturn)source.Types.Value[2].Methods.Value[0].Body.Value[0]).Value.Value).OwnerType.Value;
+        var arity = source.Types.Value[2].TypeParams.Value.Length;
         var expected = new TypeNode.Fqn("Outer.Inner", Enumerable.Range(0, arity)
             .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
         if (owner != expected)
@@ -120,13 +118,14 @@ static class InnerRepresentationFrameTests
 
     static void DeclarationArgumentOrder()
     {
-        var root = JsonNode.Parse("""
-        {"types":[
-          {"name":"Outer","typeParams":[{"name":"O"},{"name":"NO"}]},
-          {"name":"Outer.Inner","mods":{"inner":true},"outerTypeParamCount":2,"semanticOwner":"Outer"},
-          {"name":"Outer.Inner.Leaf","mods":{"inner":true},"outerTypeParamCount":4,"semanticOwner":"Outer.Inner"}],
-         "fields":[]}
-        """)!;
+        BirTypeParameter[] Parameters(params string[] names) => names.Select(name => new BirTypeParameter { Name = name }).ToArray();
+        var root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Kind = "class", Name = "Outer", TypeParams = Parameters("O", "NO") },
+            new BirClassDefinition { Kind = "class", Name = "Outer.Inner", Mods = new BirModifiers { Inner = true },
+                OuterTypeParamCount = 2, SemanticOwner = "Outer", TypeParams = Parameters("O", "NO", "I", "NI") },
+            new BirClassDefinition { Kind = "class", Name = "Outer.Inner.Leaf", Mods = new BirModifiers { Inner = true },
+                OuterTypeParamCount = 4, SemanticOwner = "Outer.Inner", TypeParams = Parameters("O", "NO", "I", "NI", "L", "NL") },
+        } };
         TypeNode Arg(string name) => new TypeNode.Fqn(name);
         var o = Arg("O"); var no = Arg("NO"); var i = Arg("I"); var ni = Arg("NI");
         var nested = new TypeNode.Fqn("Outer.Inner", new[] { i, ni, o, no });
@@ -135,17 +134,18 @@ static class InnerRepresentationFrameTests
         var declaration = order.DeclarationArguments(leaf);
         if (!declaration.SequenceEqual(new TypeNode[] { o, no, i, ni, nested, Arg("NL") }))
             throw new InvalidOperationException("Declaration substitution changed argument payloads or lost enclosing order");
-        ((JsonArray)root["fields"]!).Add(new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(leaf) });
+        var field = new BirFieldDeclaration { Name = "value", Type = leaf };
+        root.Fields = new[] { field };
         TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
         var projectedNested = new TypeNode.Fqn("Outer.Inner", new[] { o, no, i, ni });
         var expected = new TypeNode.Fqn("Outer.Inner.Leaf", new TypeNode[] { o, no, i, ni, projectedNested, Arg("NL") });
-        if (TypeJson.Read(root["fields"]![0]!["type"]) != expected)
+        if (field.Type.Value != expected)
             throw new InvalidOperationException("Nested argument applications were projected more than once");
         var enclosingNested = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { i, ni, nested, no });
-        root["fields"]![0]!["type"] = TypeJson.Write(enclosingNested);
+        field.Type = enclosingNested;
         TypeOwnershipLowering.ProjectInnerApplications(new[] { root }, null);
         var expectedEnclosing = new TypeNode.Fqn("Outer.Inner", new TypeNode[] { projectedNested, no, i, ni });
-        if (TypeJson.Read(root["fields"]![0]!["type"]) != expectedEnclosing)
+        if (field.Type.Value != expectedEnclosing)
             throw new InvalidOperationException("An enclosing argument payload was projected more than once");
         Console.WriteLine("[inner declaration argument order] self-test OK");
     }

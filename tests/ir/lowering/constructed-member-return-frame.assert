@@ -8,7 +8,7 @@
 # The original ordinary receiver uses its carrier getter and an exact result projection; the logical return
 # metadata still records Tuple<Pairish<T,T>>, including the two caller-frame occurrences rather than companions.
 ?any(.[] | .. | objects; ir_matches({"k":"cast","type":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":0}]}]},"e":{"k":"callInstance","virtual":true,"ownerType":{"t":"fqn","name":"LocalResultBox$star"},"method":"read"}}))
-+"bytes":"eyJ0IjoiZnFuIiwibmFtZSI6IlN5c3RlbS5UdXBsZSIsImFyZ3MiOlt7InQiOiJmcW4iLCJuYW1lIjoiUGFpcmlzaCIsImFyZ3MiOlt7InQiOiJ0diIsInNjb3BlIjoidHlwZSIsImkiOjB9LHsidCI6InR2Iiwic2NvcGUiOiJ0eXBlIiwiaSI6MH1dfV19"
++"bytes":"g6F0o2ZxbqRuYW1lrFN5c3RlbS5UdXBsZaRhcmdzkYOhdKNmcW6kbmFtZadQYWlyaXNopGFyZ3OSg6F0onR2pXNjb3BlpHR5cGWhaQCDoXSidHalc2NvcGWkdHlwZaFpAA=="
 
 # Scalar transport is erased, but the inherited bridge retains the already-closed native Tuple witness on its
 # owner. Neither sweep may reinterpret its K/V arguments in the selected base declaration's frame.

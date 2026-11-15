@@ -29,7 +29,7 @@ using DotKt.Bir;
 // APP builds only (StdlibMode == App): the collapse only fires in a non-ref build, and only an app-emitted library is
 // re-consumed cross-module via dll2klib. The stdlib ref surface keeps `kotlin.*` verbatim (no collapse -> no
 // ambiguity); the rt.dll is never metadata-read (RoundtripMetadata.CompleteMetadata filters runtime metadata there).
-static class CollectionIdentityRecord
+static partial class CollectionIdentityRecord
 {
     // The read-only collection tokens whose Root-V collapse target (IList/ICollection) collides with the mutable
     // sibling's direct @ClrTypeAlias — the ONLY source of the nested ambiguity. A nested MutableList/MutableSet/
@@ -42,21 +42,6 @@ static class CollectionIdentityRecord
         "kotlin.collections.Collection",
     };
 
-    // Type-level source truth must be captured before CLR inner-argument projection, F-bound star erasure, and the
-    // global reference-nullability strip. Unlike member signatures, supertype edges have no independent carrier for
-    // those facts. At this boundary every source/inline type exists and type-parameter indexes are still in the
-    // flattened Kotlin frame that ilemit and dll2klib publish.
-    public static void RecordTypeEdges(JsonNode root)
-    {
-        if (root is JsonObject o) RecordTypeEdges(o);
-    }
-
-    static void RecordTypeEdges(JsonObject o)
-    {
-        RecordSupertypes(o);
-        if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) RecordTypeEdges(to);
-    }
 
     // Member carriers are captured at the existing final semantic-signature boundary, after every pass that can
     // synthesize or reshape a declaration slot and immediately before BirTypeLowering performs the collection
@@ -78,39 +63,6 @@ static class CollectionIdentityRecord
             foreach (var t in types) if (t is JsonObject to) RecordMemberSlots(to);
     }
 
-    static void RecordSupertypes(JsonObject declaration)
-    {
-        var pre = new JsonObject();
-        if (TypeJson.Read(declaration["base"]) is TypeNode baseType && NestsCollapsingReadonly(baseType))
-            pre["base"] = declaration["base"].DeepClone();
-
-        if (declaration["interfaces"] is JsonArray interfaces)
-        {
-            var moved = new JsonArray();
-            foreach (var edge in interfaces)
-                if (TypeJson.Read(edge) is TypeNode type && (NestsCollapsingReadonly(type)
-                    || type is TypeNode.Fqn { Name: "kotlin.collections.MutableCollection"
-                        or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet" }))
-                    moved.Add(edge?.DeepClone());
-            if (moved.Count > 0) pre["interfaces"] = moved;
-        }
-
-        if (declaration["typeParams"] is JsonArray parameters)
-        {
-            var bounds = new JsonObject();
-            for (var i = 0; i < parameters.Count; i++)
-            {
-                if (parameters[i] is not JsonObject parameter
-                    || parameter["constraints"] is not JsonArray constraints || constraints.Count == 0
-                    || !constraints.Any(edge => TypeJson.Read(edge) is TypeNode type
-                        && NestsCollapsingReadonly(type))) continue;
-                bounds[i.ToString()] = constraints.DeepClone();
-            }
-            if (bounds.Count > 0) pre["bounds"] = bounds;
-        }
-
-        KotlinSupertypesRecord.Merge(declaration, pre);
-    }
 
     static void RecordMethod(JsonObject mo)
     {

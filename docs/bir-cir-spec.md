@@ -29,6 +29,14 @@ graph. The source declaration index is captured before these physical-only
 forwarders are added. The remaining value-representation index retains the
 original declarations' live occurrences and exact membership, not a frozen
 signature snapshot or newly generated forwarding methods.
+The owning module remains typed through local event-slot binding, collection
+identity and pointer validation, source array/nested-type fact capture, inner
+application projection, native event raises, and erased element/witness capture.
+It then admits late physical native storage separately from original source
+origins, closes bound-owned receivers, and normalizes repeated variance before
+FBound captures its declaration and proof snapshots.
+Override parameter shapes are captured before inner projection and associated
+with the exact continuing method occurrences at the single projection below.
 Remaining DOM-based passes currently receive a direct one-way
 projection, including a numeric-token leaf adapter. This is an incremental
 migration seam, not completion of #1414; it must disappear as owning passes move
@@ -148,8 +156,10 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
-  with the same logical keys and values. Source alias and executable inline/default/constructor-adapter carriers emit MessagePack;
-  remaining non-executable carriers emit JSON until their typed codecs migrate. Neither identifier is a
+  with the same logical keys and values. Source alias, executable inline/default/constructor-adapter, and
+  TypeNode carriers (`KotlinType`, `KotlinNullableGeneric`, `KotlinCollectionIdentity`,
+  `KotlinSuspendFunctionType`, `KotlinSuspendResult`) emit MessagePack. Remaining metadata object carriers
+  emit JSON until their typed codecs migrate. Neither identifier is a
   compiler-compatibility promise.
 - `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
   callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
@@ -1114,13 +1124,16 @@ and is the ONLY consumer of the vocabulary:
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may
 keep it in the frame or must promote it to an instance field — and whether the CLR admits the type at all — is
-`SuspendColdLowering`'s single decision, from liveness, ~300 passes later (`docs/dotkt-semantics.md` §4d/§7).
+`SuspendColdLowering`'s single decision, from liveness at state-machine construction
+(`docs/dotkt-semantics.md` §4d/§7).
 
 **A SECOND producer, for a second reason: suspension order.** kotc emits a plan where a value can acquire a second
 READER. bir2cir's suspend lowering emits one where a value must be evaluated on a particular SIDE of a suspension, which
-is a different question with the same answer. Its stage 0 (`SuspendOperandPlan.cs`, inside `SuspendColdLowering.ApplyAll`
-and therefore ~300 passes after `CallEvalLowering`) wraps a node whose operands contain a suspension in a plan binding
-every operand in array order, and lowers it on the spot through the same `Materialise`, supplying the ordering itself:
+is a different question with the same answer. Its owning stage 0 (`SuspendOperandPlan.Source.cs`, invoked once across
+all roots by `SuspendColdLowering.ApplyNamedSource` through `SuspendModuleContext.PrepareStage0`) runs after slot
+materialization and before any named or lambda state machine is built, still before the single DOM frontier. It
+wraps a node whose operands contain a suspension in a plan binding every operand in array order, and lowers it on
+the spot through `TypedCallEvalLowering.MaterialiseOwned`, sharing the call-evaluation policy and supplying the ordering itself:
 every operand LEFT of the last suspension-bearing one is forced to a `var`, and so is that operand when the node is
 itself a suspend call — which is what lifts a nested suspension out of a suspending call's own argument list, where the
 state machine would otherwise write the outer resume label and let the inner suspension overwrite it. The last-position

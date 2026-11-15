@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -6,55 +5,57 @@ using Def = SupertypeGraph.Def;
 
 static partial class KotlinOverrideSlotBridge
 {
-    // Pass-private live declaration views. They expose named facts, never an
-    // executable representation or a string-keyed alternative IR.
-    sealed class OverrideViews
+    // Pass-private live declaration views; metadata-only inherited candidates use explicit headers.
+    sealed class OverrideViews(IReadOnlyDictionary<string, IBirTypeDeclaration> source)
     {
         readonly Dictionary<object, OverrideMethod> methods = new(ReferenceEqualityComparer.Instance);
-        readonly IReadOnlyDictionary<string, IBirTypeDeclaration> source;
-        internal OverrideViews(IReadOnlyDictionary<string, IBirTypeDeclaration> source = null) => this.source = source;
-        internal OverrideMethod Method(JsonObject declaration)
-        {
-            if (!methods.TryGetValue(declaration, out var value)) methods[declaration] = value = new(declaration);
-            return value;
-        }
         internal OverrideMethod Method(BirFunctionDeclaration declaration)
         {
             if (!methods.TryGetValue(declaration, out var value)) methods[declaration] = value = new(declaration);
             return value;
         }
-        internal OverrideOwner Owner(Def definition) => new(definition,
-            source != null && source.TryGetValue(definition.Name, out var declaration) ? declaration : null, this);
+        internal OverrideMethod Method(SelectedMethodHeader declaration)
+        {
+            if (!methods.TryGetValue(declaration, out var value)) methods[declaration] = value = new(declaration);
+            return value;
+        }
+        internal OverrideOwner Owner(Def definition) => new(definition, source[definition.Name], this);
     }
 
     sealed class OverrideOwner(Def definition, IBirTypeDeclaration source, OverrideViews views)
     {
+        internal IBirTypeDeclaration Source => source;
         internal Def Definition => definition;
-        internal NullableRepresentationFrame Frame => source == null ? KotlinSupertypesRecord.ReadNullableFrame(definition.Node)
-            : NullableRepresentationViews.TypeFacts((BirGraphValue)source)?.NullableFrame;
-        internal BirTypeParameter[] DeclaredParameters => source == null ? ReadParameters(definition.Node?["typeParams"] as JsonArray) : source.TypeParams.OrDefault();
-        internal IEnumerable<OverrideMethod> Methods => source == null
-            ? definition.Methods.OfType<JsonObject>().Select(views.Method)
-            : source.Methods.OrEmpty().Select(views.Method);
-        internal bool HasMethods => source == null ? definition.Node?["methods"] is JsonArray : source.Methods.HasValue;
+        internal NullableRepresentationFrame Frame => NullableRepresentationViews.TypeFacts((BirGraphValue)source)?.NullableFrame;
+        internal BirTypeParameter[] DeclaredParameters => source.TypeParams.OrDefault();
+        internal IEnumerable<OverrideMethod> Methods => source.Methods.OrEmpty().Select(views.Method);
+        internal bool HasMethods => source.Methods.HasValue;
     }
 
     sealed record OverrideEdge(TypeNode Owner, string Member, string Kind, int? Arity, string DeclarationId, string PhysicalDeclarationId);
 
     sealed class OverrideParameter
     {
-        readonly JsonObject dom;
         readonly BirParameter source;
-        internal OverrideParameter(JsonObject value) => dom = value;
+        readonly SelectedParameterHeader header;
         internal OverrideParameter(BirParameter value) => source = value;
-        internal TypeNode Type => source == null ? TypeJson.Read(dom["type"]) : source.Type.OrDefault();
-        internal TypeNode Signature => source == null ? TypeJson.Read(dom[FunctionSignatureIdentity.Key]) : source.FunctionSignatureType.OrDefault();
-        internal TypeNode NullableSource => source == null ? FrozenType(dom["nullableGeneric"]) : source.NullableGeneric.OrDefault();
+        internal OverrideParameter(SelectedParameterHeader value) => header = value;
+        internal TypeNode Type => header != null ? header.Type.OrDefault() : source.Type.OrDefault();
+        internal TypeNode Signature => header != null ? header.FunctionSignatureType.OrDefault() : source.FunctionSignatureType.OrDefault();
+        internal TypeNode NullableSource => header != null ? header.NullableGeneric.OrDefault() : source.NullableGeneric.OrDefault();
         internal void Move(TypeNode slot, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
         {
             if (Type is not { } original || original.Equals(slot)) return;
             var preserveSignature = FunctionValueRepresentation.ContainsOrdinaryFunction(original);
-            if (source != null)
+            if (header != null)
+            {
+                if (preserveSignature && !header.FunctionSignatureType.HasValue) header.FunctionSignatureType = original;
+                header.Type = slot;
+                if (!header.NullableGeneric.HasValue) header.NullableGeneric = original;
+                if (!header.NullableFlags.IsPresent && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
+                    header.NullableFlags = flags;
+            }
+            else
             {
                 if (preserveSignature && !source.FunctionSignatureType.HasValue) source.FunctionSignatureType = original;
                 source.Type = slot;
@@ -62,99 +63,88 @@ static partial class KotlinOverrideSlotBridge
                 if (!source.NullableFlags.IsPresent && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
                     source.NullableFlags = flags;
             }
-            else
-            {
-                if (preserveSignature) dom[FunctionSignatureIdentity.Key] ??= TypeJson.Write(original);
-                dom["type"] = TypeJson.Write(slot);
-                dom["nullableGeneric"] ??= TypeNode.ToJson(original);
-                if (!dom.ContainsKey("nullableFlags") && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
-                    dom["nullableFlags"] = new JsonArray(flags.Select(flag => (JsonNode)JsonValue.Create(flag)).ToArray());
-            }
         }
     }
 
     sealed class OverrideMethod
     {
-        internal JsonObject Dom { get; }
         internal BirFunctionDeclaration Source { get; }
-        internal OverrideMethod(JsonObject value) => Dom = value;
+        internal SelectedMethodHeader Header { get; }
         internal OverrideMethod(BirFunctionDeclaration value) => Source = value;
-        internal string Name => Source == null ? Str(Dom["name"]) : Source.Name.OrDefault();
-        internal string DeclarationId => Source == null ? Str(Dom[DeclarationIdentityBinding.Key]) : Source.DeclarationId.OrDefault();
-        internal string KotlinSourceMember => Source == null ? Str(Dom[DeclarationRename.SourceMemberKey]) : null;
-        internal string ExistentialSourceMember => Source == null ? Str(Dom[FBoundStarProjectionErasure.SourceMemberKey]) : null;
-        internal string ExplicitClrName => Source == null ? Str(Dom[DeclarationIdentityBinding.ExplicitNameKey]) : Source.ExplicitClrName.OrDefault();
-        internal string Visibility => Source == null ? Str(Dom["vis"]) : Source.Vis.OrDefault();
-        internal bool Static => Source == null ? Bool(Dom["static"]) : Source.Static.OrDefault();
-        internal bool Abstract => Source == null ? Bool(Dom["abstract"]) : Source.Abstract.OrDefault();
-        internal bool Suspend => Source == null ? IsSuspendMethod(Dom) : Source.Mods.OrDefault()?.Suspend.OrDefault() == true;
-        internal bool ReturnsValue => Source == null ? Bool(Dom[BirTypeLowering.ValueReturnKey]) : Source.DotktValueReturn.OrDefault();
-        internal bool BodyPresent => Source == null ? Dom["body"] is JsonArray : Source.Body.HasValue;
-        internal bool ParamsPresent => Source == null ? Dom["params"] is JsonArray : Source.Params.HasValue;
-        internal bool PhysicalBridge => Source == null ? KotlinPropertyAccessors.IsPhysicalSlotBridge(Dom) : Source.PhysicalSlotBridge.OrDefault();
-        internal bool PropertyCarrierPresent => Source == null ? Dom[KotlinPropertyAccessors.MetadataCarrierKey] != null : Source.KotlinPropertyAccessorCarrier.HasValue;
-        internal bool SuspendSourceParametersPresent => Source == null && Dom[KotlinPropertyAccessors.SuspendSourceParamsKey] is JsonArray;
-        internal TypeNode Return => Source == null ? TypeJson.Read(Dom["ret"]) : Source.Ret.OrDefault();
-        internal TypeNode NullableReturn => Source == null ? FrozenType(Dom["nullableGenericRet"]) : Source.NullableGenericRet.OrDefault();
-        internal BirTypeParameter[] TypeParameters => Source == null ? ReadParameters(Dom["typeParams"] as JsonArray) : Source.TypeParams.OrDefault();
+        internal OverrideMethod(SelectedMethodHeader value) => Header = value;
+        internal string Name => Header != null ? Header.Name.OrDefault() : Source.Name.OrDefault();
+        internal string DeclarationId => Header != null ? Header.DeclarationId.OrDefault() : Source.DeclarationId.OrDefault();
+        internal string KotlinSourceMember => Header != null ? Header.KotlinSourceMember.OrDefault() : Source.KotlinSourceMember.OrDefault();
+        internal string ExistentialSourceMember => Header != null ? Header.ExistentialSourceMember.OrDefault() : Source.ExistentialSourceMember.OrDefault();
+        internal string ExplicitClrName => Header != null ? Header.ExplicitClrName.OrDefault() : Source.ExplicitClrName.OrDefault();
+        internal string Visibility => Header != null ? Header.Vis.OrDefault() : Source.Vis.OrDefault();
+        internal bool Static => Header != null ? Header.Static.OrDefault() : Source.Static.OrDefault();
+        internal bool Abstract => Header != null ? Header.Abstract.OrDefault() : Source.Abstract.OrDefault();
+        internal bool Suspend => Header != null ? Header.Mods.OrDefault()?.Suspend.OrDefault() == true : Source.Mods.OrDefault()?.Suspend.OrDefault() == true;
+        internal bool ReturnsValue => Header != null ? Header.DotktValueReturn.OrDefault() : Source.DotktValueReturn.OrDefault();
+        internal bool BodyPresent => Header == null && Source.Body.HasValue;
+        internal bool ParamsPresent => Header != null ? Header.Params.HasValue : Source.Params.HasValue;
+        internal bool PhysicalBridge => Header != null ? Header.PhysicalSlotBridge.OrDefault() : Source.PhysicalSlotBridge.OrDefault();
+        internal bool PropertyCarrierPresent => Header == null && Source.KotlinPropertyAccessorCarrier.HasValue;
+        internal bool SuspendSourceParametersPresent => Header != null ? Header.SuspendSourceParameters.HasValue : Source.SuspendSourceParams.HasValue;
+        internal TypeNode[] SuspendSourceParameters => Header != null ? Header.SuspendSourceParameters.OrDefault() : Source.SuspendSourceParams.OrDefault();
+        internal TypeNode SuspendSourceReturn => Header != null ? Header.SuspendSourceReturn.OrDefault() : Source.SuspendSourceRet.OrDefault();
+        internal TypeNode Return => Header != null ? Header.Ret.OrDefault() : Source.Ret.OrDefault();
+        internal TypeNode NullableReturn => Header != null ? Header.NullableGenericRet.OrDefault() : Source.NullableGenericRet.OrDefault();
+        internal BirTypeParameter[] TypeParameters => Header != null ? Header.TypeParams.OrDefault() : Source.TypeParams.OrDefault();
         internal int Arity => TypeParameters?.Length ?? 0;
-        internal NullableRepresentationFrame Frame => Source == null ? NullableRepresentationTypes.DeclarationMethodFrame(Dom) : Source.NullableRepresentationFrame.OrDefault();
-        internal IReadOnlyDictionary<int, TypeNode[]> Bounds => Source == null
-            ? Str(Dom[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string encoded ? SourceBoundsSnapshot.ReadFrozenText(encoded).Bounds : null
+        internal NullableRepresentationFrame Frame => Header != null ? Header.NullableRepresentationFrame.OrDefault() : Source.NullableRepresentationFrame.OrDefault();
+        internal IReadOnlyDictionary<int, TypeNode[]> Bounds => Header != null ? Header.MethodTypeParameterBoundsPre.OrDefault()?.Bounds
             : Source.MethodTypeParameterBoundsPre.OrDefault()?.Bounds;
-        internal OverrideParameter[] Parameters => Source == null
-            ? (Dom["params"] as JsonArray)?.OfType<JsonObject>().Select(parameter => new OverrideParameter(parameter)).ToArray() ?? []
+        internal OverrideParameter[] Parameters => Header != null ? Header.Params.OrEmpty().Select(parameter => new OverrideParameter(parameter)).ToArray()
             : Source.Params.OrEmpty().Select(parameter => new OverrideParameter(parameter)).ToArray();
-        internal OverrideEdge[] Overrides => Source == null
-            ? (Dom["overrides"] as JsonArray)?.OfType<JsonObject>().Select(edge => new OverrideEdge(TypeJson.Read(edge["owner"]), Str(edge["member"]), Str(edge["kind"]),
-                edge["arity"] is JsonValue value ? value.GetValue<int>() : null, Str(edge[DeclarationIdentityBinding.Key]), Str(edge["physicalDeclarationId"]))).ToArray() ?? []
-            : Source.Overrides.OrEmpty().Select(edge => new OverrideEdge(edge.Owner.OrDefault(), edge.Member.OrDefault(), edge.Kind.OrDefault(),
-                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), null)).ToArray();
-        internal bool Property(out string name, out string kind) => Source == null
-            ? KotlinPropertyAccessors.TryIdentity(Dom, out name, out kind) : KotlinPropertyAccessors.TryIdentity(Source, out name, out kind);
+        internal OverrideEdge[] Overrides => (Header != null ? Header.Overrides : Source.Overrides).OrEmpty()
+            .Select(edge => new OverrideEdge(edge.Owner.OrDefault(), edge.Member.OrDefault(), edge.Kind.OrDefault(),
+                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), edge.PhysicalDeclarationId.OrDefault())).ToArray();
+        internal bool Property(out string name, out string kind) => Header != null ? Header.Property(out name, out kind)
+            : KotlinPropertyAccessors.TryIdentity(Source, out name, out kind);
         internal void MoveReturn(TypeNode slot, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)
         {
             if (Return is not { } original || original.Equals(slot)) return;
-            if (Source != null)
+            if (Header != null)
+            {
+                Header.Ret = slot;
+                if (!Header.NullableGenericRet.HasValue) Header.NullableGenericRet = original;
+                if (!Header.RetNullableFlags.IsPresent && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
+                    Header.RetNullableFlags = flags;
+            }
+            else
             {
                 Source.Ret = slot;
                 if (!Source.NullableGenericRet.HasValue) Source.NullableGenericRet = original;
                 if (!Source.RetNullableFlags.IsPresent && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
                     Source.RetNullableFlags = flags;
             }
-            else
-            {
-                Dom["ret"] = TypeJson.Write(slot); Dom["nullableGenericRet"] ??= TypeNode.ToJson(original);
-                if (!Dom.ContainsKey("retNullableFlags") && NullableFlags.ComputeValues(original, isValue, annotationArguments: annotationArguments) is { } flags)
-                    Dom["retNullableFlags"] = new JsonArray(flags.Select(flag => (JsonNode)JsonValue.Create(flag)).ToArray());
-            }
         }
         internal void SetVirtual()
         {
-            if (Source != null) Source.Virtual = true; else Dom["virtual"] = true;
+            if (Header == null) Source.Virtual = true;
         }
     }
 
-    static TypeNode FrozenType(JsonNode value) => Str(value) is string encoded ? TypeNode.Parse(encoded) : null;
-    static BirTypeParameter[] ReadParameters(JsonArray parameters) => parameters?.OfType<JsonObject>().Select(ReadParameter).ToArray();
-    static BirTypeParameter ReadParameter(JsonObject parameter) => new() {
-        Name = Scalar<string>(parameter, "name"), Reified = Scalar<bool>(parameter, "reified"), Variance = Scalar<string>(parameter, "variance"),
-        Constraints = TypeVector(parameter, "constraints"), ErasedInnerConstraints = TypeVector(parameter, "erasedInnerConstraints"),
-        SpecialConstraints = !parameter.ContainsKey("specialConstraints") ? default : parameter["specialConstraints"] is not JsonArray specials
-            ? OptionalField<string[]>.Null : OptionalField<string[]>.Of(specials.Select(Str).ToArray()),
-    };
-    static OptionalField<T> Scalar<T>(JsonObject source, string key) => !source.ContainsKey(key) ? default
-        : source[key] is null ? OptionalField<T>.Null : OptionalField<T>.Of(source[key].GetValue<T>());
-    static OptionalField<TypeNode[]> TypeVector(JsonObject source, string key) => !source.ContainsKey(key) ? default
-        : source[key] is not JsonArray values ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(values.Select(TypeJson.Read).ToArray());
-    static JsonArray ParametersDom(BirTypeParameter[] parameters) => parameters == null ? null : new JsonArray(parameters.Select(parameter =>
-        (JsonNode)parameter.ToDom()).ToArray());
+    internal static BirTypeParameter[] SemanticMethodTypeParameters(BirFunctionDeclaration method)
+        => SemanticParameters(new OverrideMethod(method));
+
+    internal static BirTypeParameter[] SemanticMethodTypeParameters(BirInheritedImplementation method)
+        => SemanticParameters(method.TypeParams.OrDefault(), method.MethodTypeParameterBoundsPre.OrDefault()?.Bounds, null);
+
+    internal static BirTypeParameter[] SubstituteOwnerTypeParameterConstraints(BirTypeParameter[] parameters, TypeNode[] ownerArguments)
+        => SubstituteParameters(parameters, ownerArguments);
 
     static BirTypeParameter[] SemanticParameters(OverrideMethod method)
+        => SemanticParameters(method.TypeParameters, method.Bounds, method.Frame);
+
+    static BirTypeParameter[] SemanticParameters(BirTypeParameter[] declared,
+        IReadOnlyDictionary<int, TypeNode[]> bounds, NullableRepresentationFrame frame)
     {
-        var parameters = method.TypeParameters?.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() ?? [];
-        foreach (var pair in method.Bounds ?? new Dictionary<int, TypeNode[]>())
-            parameters[method.Frame?.SourcePosition(pair.Key) ?? pair.Key].Constraints = pair.Value.Select(BirGraphValue.CopyType).ToArray();
+        var parameters = declared?.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() ?? [];
+        foreach (var pair in bounds ?? new Dictionary<int, TypeNode[]>())
+            parameters[frame?.SourcePosition(pair.Key) ?? pair.Key].Constraints = pair.Value.Select(BirGraphValue.CopyType).ToArray();
         return parameters;
     }
     static BirTypeParameter[] SourceParameters(OverrideMethod method)

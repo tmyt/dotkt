@@ -276,7 +276,7 @@ def outputs(root, definitions):
             if key == "type": return f"TypeNode.Write({value})"
             if key == "literalValue": return f"LiteralToDom({value})"
             if key == "birSourceTypeAlias": return "throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\")"
-            return f"((BirGraphValue){value}).ToDom()"
+            return f"((BirGraphValue){value}).ToDom(projected)"
         if field.get("type") == "array":
             item = f"item{depth}"
             expr = dom(field["items"], item, depth + 1)
@@ -298,16 +298,16 @@ def outputs(root, definitions):
             return f"{value}.Select({item} => {expr}).ToArray()"
         return f"({cs(field)}){callback}({prefix}(BirGraphValue){value})"
 
-    def copy_graph(field, value, depth=0):
+    def copy_graph(field, value, depth=0, observer=None):
         field = base(field)
         if cs(field) == "byte[]": return f"{value}.ToArray()"
         if field.get("type") == "array":
             item = f"item{depth}"
-            expr = copy_graph(field["items"], item, depth + 1)
+            expr = copy_graph(field["items"], item, depth + 1, observer)
             if is_nullable(field["items"]): expr = f"{item} is null ? null : {expr}"
             return f"{value}.Select({item} => {expr}).ToArray()"
         if cs(field) == "TypeNode": return f"CopyType({value})"
-        if is_child(field): return f"({cs(field)})((BirGraphValue){value}).DeepClone()"
+        if is_child(field): return f"({cs(field)})((BirGraphValue){value}).DeepClone({observer or ''})"
         return value
 
     def is_type_slot(field):
@@ -466,6 +466,20 @@ def outputs(root, definitions):
                 expression = rewrite_type(value, prop + ".Value", prefix=prefix)
                 model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({expression});"]
         model += ["    }"]
+        model += ["    public override void RewriteOwnFieldsInPlace(",
+                  "        Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,",
+                  "        Action<string, BirGenericFrameRole, BirGraphSlot> visit)", "    {"]
+        for field, value in fields:
+            prop = member(field)
+            role = value.get("x-dotkt-frame-role", "Lexical")
+            prefix = f"{json.dumps(field)}, BirGenericFrameRole.{role}, "
+            if is_type_slot(value):
+                expression = rewrite_type(value, prop + ".Value", prefix=prefix)
+                model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({expression});"]
+            elif is_child(value):
+                body = slots(value, prop + ".Value", target=prop, optional=True, prefix=prefix)
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }"]
         if any(field == "sty" and is_type_slot(value) for field, value in fields):
             model += ["    public override void ClearResultTypeStamp() => Sty = default;"]
         model += ["    public override void VisitStringFields(Action<string> visit)", "    {"]
@@ -583,7 +597,15 @@ def outputs(root, definitions):
             if is_child(value) or base(value).get("type") == "array" or cs(value) in {"byte[]", "TypeNode"}:
                 prop = member(field)
                 model += [f"        {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({copy_graph(value, prop + '.Value')}) : {prop},"]
-        model += ["    };", "    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with", "    {"]
+        model += ["    };",
+                  "    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)",
+                  "    {", "        var result = this with", "        {"]
+        for field, value in fields:
+            if is_child(value) or base(value).get("type") == "array" or cs(value) in {"byte[]", "TypeNode"}:
+                prop = member(field)
+                model += [f"            {prop} = {prop}.HasValue ? OptionalField<{cs(value)}>.Of({copy_graph(value, prop + '.Value', observer='born')}) : {prop},"]
+        model += ["        };", "        born(this, result);", "        return result;", "    }",
+                  "    public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with", "    {"]
         for field, value in fields:
             if is_type_slot(value):
                 prop = member(field)
@@ -695,7 +717,7 @@ def outputs(root, definitions):
             prop = member(field)
             body = " ".join(line.strip() for line in write(value, "value"))
             model += [f"        WriteOptional(writer, {json.dumps(field)}, {prop}, (writer, value) => {{ {body} }});"]
-        model += ["        writer.WriteEndObject();", "    }", "    public override JsonObject ToDom()", "    {", "        var result = new JsonObject();"]
+        model += ["        writer.WriteEndObject();", "    }", "    public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)", "    {", "        var result = new JsonObject();"]
         if node: model += [f'        result["k"] = {json.dumps(tag)};']
         for field, value in fields:
             prop = member(field)
@@ -703,7 +725,7 @@ def outputs(root, definitions):
                 model += [f"        if ({prop}.IsPresent) throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\");"]
             else:
                 model += [f"        if ({prop}.IsPresent) result[{json.dumps(field)}] = {prop}.IsNull ? null : {dom(value, prop + '.Value')};"]
-        model += ["        return result;", "    }", "}", ""]
+        model += ["        projected?.Invoke(this, result);", "        return result;", "    }", "}", ""]
         codec += [f"    internal static {name} Read{name}(ref Utf8JsonReader reader)", "    {",
                   "        Require(reader, JsonTokenType.StartObject);", f"        {seen_type} seen = 0;"]
         codec += [f"        OptionalField<{cs(value)}> field{index} = default;" for index, (_, value) in enumerate(fields)]
@@ -797,5 +819,27 @@ def outputs(root, definitions):
             model += ["        " + line for line in type_name_fields(shape, "value", all_strings, nodes)]
             model += ["    }"]
     model += ["}", ""]
+    source_call = shapes["birCallInstance"]["properties"]
+    target_call = shapes["birCallStatic"]["properties"]
+    consumed = {"k", "recv", "ownerType", "virtual", "super", "memberRef", "memberOwnerTypeParams",
+                "memberVisibility", "shapeTypes", "declarationId",
+                # These selected-instance declaration/dispatch facts have no
+                # static-call field. The producer authors the new target; they
+                # must not survive this structural move as facts about it.
+                "overrides", "clrOwnerResolved", "static", "_erasedConstraintDispatch",
+                "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature"}
+    model += ["// Structural move only; the producer authors the new selected target.",
+              "internal static class BirCallConversion", "{",
+              "    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source) => new()", "    {"]
+    for field, value in source_call.items():
+        if field in consumed:
+            continue
+        if field not in target_call:
+            raise ValueError(f"Unclassified instance/static call field omission: {field}")
+        if cs(value) != cs(target_call[field]):
+            raise ValueError(f"Instance/static call field {field} has incompatible owning shapes")
+        prop = member(field)
+        model += [f"        {prop} = source.{prop},"]
+    model += ["    };", "}", ""]
     return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
             root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}

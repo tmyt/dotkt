@@ -14,6 +14,13 @@ static class MaterializedExecutable
         return NothingValueTermination.ApplyMaterialized(root);
     }
 
+    internal static T NormalizeSource<T>(T root) where T : BirGraphValue
+    {
+        ConstructedMemberReturnSubstitution.ApplySourceMaterialized(root);
+        NothingValueTermination.Apply(root);
+        return root;
+    }
+
     // A compiler-authored forwarder has exactly one selected call with this/local
     // operands. Normalize that returned value at construction, without admitting
     // an arbitrary body through a second graph or replaying a late pass schedule.
@@ -25,6 +32,17 @@ static class MaterializedExecutable
 
     public static void SelfTest()
     {
+        var sourceBridge = new BirFunctionDeclaration { Body = new IBirStatement[] {
+            new BirReturn { Value = new BirCallInstance {
+                OwnerType = new TypeNode.Fqn("Example.Box", new TypeNode[] { new TypeNode.Fqn("kotlin.Nothing") }),
+                Ret = new TypeNode.Tv("type", 0),
+            } },
+        } };
+        var sourceExpected = sourceBridge.ToDom();
+        Normalize(sourceExpected);
+        NormalizeSource(sourceBridge);
+        if (!JsonNode.DeepEquals(sourceBridge.ToDom(), sourceExpected))
+            throw new InvalidOperationException("Owning executable admission disagreed on ordered result closure and Nothing termination");
         var bridge = new JsonObject
         {
             ["body"] = new JsonArray(new JsonObject

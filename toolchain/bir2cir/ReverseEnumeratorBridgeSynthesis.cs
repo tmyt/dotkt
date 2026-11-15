@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // THE REVERSE ENUMERATOR BRIDGE, stated as ordinary CIR.
 //
@@ -95,14 +97,16 @@ static class ReverseEnumeratorBridgeSynthesis
         }
     }
 
-    public static SlotReservation ReserveSlots(SupertypeGraph.Def def,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
-        => Plan(def, defs, refs) is { } plan ? new SlotReservation(plan.Element) : null;
+    internal static SlotReservation ReserveSlots(SupertypeGraph.Def def,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
+        => Plan(def, defs, refs, declarations) is { } plan ? new SlotReservation(plan.Element) : null;
 
     static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)
     {
-        if (def.Kind != "class" || FindIteratorProvider(def, defs, refs) is not { } iterator
+        if (def.Kind != "class" || FindIteratorProvider(def, defs, refs, declarations) is not { } iterator
             || Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
         return (iterator, element);
     }
@@ -232,22 +236,6 @@ static class ReverseEnumeratorBridgeSynthesis
         return true;
     }
 
-    // This class's own `Iterable.iterator()` implementation: an instance, nullary, non-generic declaration under the
-    // Kotlin member name whose result IS a `kotlin.collections.Iterator`. Both halves are the Kotlin contract —
-    // `Iterable<T>.iterator(): Iterator<T>` — and the return is checked through the supertype graph rather than
-    // against a list of names, because an override may narrow it to any subtype (`MutableIterator<T>`,
-    // `ListIterator<T>`, the primitive `IntIterator`/`CharIterator`/`LongIterator`, or a user iterator class).
-    static bool IsIteratorDeclaration(JsonObject method,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs) =>
-        SourceName(method) == IteratorMember
-        && !Bool(method["static"])
-        && (method["params"] as JsonArray)?.Count == 0
-        && Arity(method) == 0
-        && SemanticReturn(method) is TypeNode.Fqn ret
-        && IteratorElement(ret, defs, refs) != null;
-
-    // DeclarationIdentityBinding may already have allocated a collision-free CLR MethodDef name. Its retained
-    // source identity is authoritative for the Kotlin protocol; the physical name is only the call operand.
     static string SourceName(JsonObject method) =>
         Str(method["declarationSourceName"])
         ?? Str(method[DeclarationRename.SourceMemberKey])
@@ -265,10 +253,11 @@ static class ReverseEnumeratorBridgeSynthesis
     // declarations; a most-specific abstract redeclaration suppresses an ancestor default, while multiple unrelated
     // defaults are rejected rather than selected by traversal order.
     static IteratorProvider FindIteratorProvider(SupertypeGraph.Def cls,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)
     {
         var self = SelfOwner(cls.Name, cls.Arity) as TypeNode.Fqn;
-        if (DeclaredIterator(self, cls, defs, refs, inherited: false) is { } own) return own;
+        if (DeclaredIterator(self, cls, defs, refs, inherited: false, declarations) is { } own) return own;
 
         var current = cls.Base;
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -276,7 +265,7 @@ static class ReverseEnumeratorBridgeSynthesis
         {
             if (defs.TryGetValue(current.Name, out var localBase))
             {
-                if (DeclaredIterator(current, localBase, defs, refs, inherited: true) is { } inherited) return inherited;
+                if (DeclaredIterator(current, localBase, defs, refs, inherited: true, declarations) is { } inherited) return inherited;
                 var args = SupertypeGraph.EffectiveArgs(current, localBase.Arity);
                 if (args == null) return null;
                 current = localBase.Base == null
@@ -292,39 +281,66 @@ static class ReverseEnumeratorBridgeSynthesis
                 .FirstOrDefault(parent => parent != null);
         }
 
-        var declarations = SupertypeGraph.Reachable(cls, defs, refs)
+        var interfaceDeclarations = SupertypeGraph.Reachable(cls, defs, refs)
             .Where(reachable => reachable.isInterface)
             .Select(reachable =>
             {
                 if (defs.TryGetValue(reachable.spec.Name, out var local))
-                    return DeclaredIterator(reachable.spec, local, defs, refs, inherited: true);
+                    return DeclaredIterator(reachable.spec, local, defs, refs, inherited: true, declarations);
                 return ReferencedIterator(reachable.spec, refs);
             })
             .Where(candidate => candidate != null)
             .ToList();
-        var mostSpecific = declarations.Where(candidate => !declarations.Any(other =>
+        var mostSpecific = interfaceDeclarations.Where(candidate => !interfaceDeclarations.Any(other =>
                 !ReferenceEquals(candidate, other)
                 && SupertypeGraph.ReachesDeclaration(other.Owner, candidate.Owner, defs, refs)))
             .ToList();
         return mostSpecific.Count == 1 && !mostSpecific[0].Abstract ? mostSpecific[0] : null;
     }
 
+    // This class's own `Iterable.iterator()` implementation: an instance, nullary, non-generic declaration under the
+    // Kotlin member name whose result IS a `kotlin.collections.Iterator`. Both halves are the Kotlin contract —
+    // `Iterable<T>.iterator(): Iterator<T>` — and the return is checked through the supertype graph rather than
+    // against a list of names, because an override may narrow it to any subtype (`MutableIterator<T>`,
+    // `ListIterator<T>`, the primitive `IntIterator`/`CharIterator`/`LongIterator`, or a user iterator class).
+    // DeclarationIdentityBinding may already have allocated a collision-free CLR MethodDef name. Its retained
+    // source identity is authoritative for the Kotlin protocol; the physical name is only the call operand.
     static IteratorProvider DeclaredIterator(TypeNode.Fqn owner, SupertypeGraph.Def def,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs, bool inherited)
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs, bool inherited,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)
     {
         var args = SupertypeGraph.EffectiveArgs(owner, def.Arity);
         if (args == null) return null;
-        var candidates = def.Methods.OfType<JsonObject>()
-            // A private declaration is not inherited and therefore cannot suppress the interface default selected
-            // for the derived class. The declaring class itself may still call its own private member, so apply this
-            // accessibility boundary only while walking bases/interfaces.
-            .Where(method => (!inherited || Str(method["vis"]) != "private")
-                && IsIteratorDeclaration(method, defs, refs))
-            .Select(method => new IteratorProvider(owner, Str(method["name"]),
-                SupertypeGraph.SubstOwnerTvs(TypeJson.Read(method["ret"]), args),
-                SupertypeGraph.SubstOwnerTvs(SemanticReturn(method), args), Bool(method["abstract"])))
+        var candidates = IteratorDeclarations(def, declarations)
+            .Where(method => (!inherited || method.Visibility != "private")
+                && method.SourceName == IteratorMember && !method.Static && method.Parameters == 0
+                && method.Arity == 0 && method.SemanticReturn is TypeNode.Fqn ret
+                && IteratorElement(ret, defs, refs) != null)
+            .Select(method => new IteratorProvider(owner, method.Name,
+                SupertypeGraph.SubstOwnerTvs(method.Return, args),
+                SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract))
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;
+    }
+
+    sealed record IteratorDeclaration(string SourceName, string Name, string Visibility, bool Static,
+        int Parameters, int Arity, TypeNode Return, TypeNode SemanticReturn, bool Abstract);
+
+    static IEnumerable<IteratorDeclaration> IteratorDeclarations(SupertypeGraph.Def definition,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
+    {
+        if (declarations != null)
+        {
+            foreach (var method in declarations[definition.Name].Methods.OrEmpty())
+                yield return new(method.DeclarationSourceName.OrDefault() ?? method.KotlinSourceMember.OrDefault() ?? method.Name.OrDefault(),
+                    method.Name.OrDefault(), method.Vis.OrDefault(), method.Static.OrDefault(),
+                    method.Params.HasValue ? method.Params.Value.Length : -1, method.TypeParams.OrEmpty().Length,
+                    method.Ret.OrDefault(), method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault());
+            yield break;
+        }
+        foreach (var method in definition.Methods.OfType<JsonObject>())
+            yield return new(SourceName(method), Str(method["name"]), Str(method["vis"]), Bool(method["static"]),
+                (method["params"] as JsonArray)?.Count ?? -1, Arity(method), TypeJson.Read(method["ret"]), SemanticReturn(method), Bool(method["abstract"]));
     }
 
     static IteratorProvider ReferencedIterator(TypeNode.Fqn owner, ReferenceMetadataIndex refs)

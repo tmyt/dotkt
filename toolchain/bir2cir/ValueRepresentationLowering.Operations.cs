@@ -15,13 +15,16 @@ sealed partial class ValueRepresentationLowering
             new IBirExpression[] { ShapeValue(shape) }, new[] { new TypeNode.Fqn("kotlin.String") }, KotlinRuntimeTypeWitness.PredicateType) : null;
     }
     BirCallStatic HelperValue(string target, IReadOnlyList<IBirExpression> arguments, IReadOnlyList<TypeNode> parameters, TypeNode result)
+        => HelperValueOwned(target, arguments.Select(CloneValue).ToArray(), parameters, result);
+
+    BirCallStatic HelperValueOwned(string target, IReadOnlyList<IBirExpression> arguments, IReadOnlyList<TypeNode> parameters, TypeNode result)
     {
         var split = target.LastIndexOf('.');
         var owner = target[..split];
         var name = target[(split + 1)..];
         return new BirCallStatic { Owner = new TypeNode.Fqn(owner), Method = name,
             DeclarationId = HelperIdentity(owner, name, parameters), Sig = parameters.Select(BirGraphValue.CopyType).ToArray(),
-            Args = arguments.Select(CloneValue).ToArray(), Ret = BirGraphValue.CopyType(result), Sty = BirGraphValue.CopyType(result) };
+            Args = arguments.ToArray(), Ret = BirGraphValue.CopyType(result), Sty = BirGraphValue.CopyType(result) };
     }
 
     readonly record struct OperationLexicalContext(BirGraphValue Type, BirGraphValue Callable)
@@ -78,6 +81,14 @@ sealed partial class ValueRepresentationLowering
     }
 
     internal void BindOperations(BirFileDeclaration root)
+        => BindOperationRoot(root, default, preserveOwnership: false);
+
+    // A newly authored bridge is not a file and must not replay earlier source
+    // operations. Its operands can already contain registered declarations.
+    internal void BindMaterializedOperations(BirFunctionDeclaration root)
+        => BindOperationRoot(root, default, preserveOwnership: true);
+
+    void BindOperationRoot(BirGraphValue root, OperationLexicalContext context, bool preserveOwnership)
     {
         if (referenceBuild || bindings.Count == 0) return;
         if (domBound) throw new InvalidOperationException("Source value operations used after DOM declaration handoff");
@@ -93,7 +104,7 @@ sealed partial class ValueRepresentationLowering
             {
                 if (call.Super.OrDefault() && call.DeclarationId.HasValue
                     && members.TryGetValue(call.DeclarationId.Value, out var body) && !body.Method.Abstract)
-                    return DefaultCallValue(body.Owner, body.Method, call.Recv.OrDefault(), call.Args.OrEmpty());
+                    return DefaultCallValue(body.Owner, body.Method, call.Recv.OrDefault(), call.Args.OrEmpty(), preserveOwnership);
                 if (!call.Super.OrDefault() && SelectedAdapter(call.DeclarationId.OrDefault(),
                         call.Overrides.OrEmpty().Select(marker => marker.DeclarationId.OrDefault())) is string target)
                 {
@@ -101,7 +112,7 @@ sealed partial class ValueRepresentationLowering
                     var signature = new TypeNode[] { new TypeNode.Fqn("kotlin.Any") }.Concat(call.Sig.OrEmpty()).ToArray();
                     var ret = call.DynRet.OrDefault() ?? call.Ret.OrDefault() ?? call.Sty.OrDefault()
                         ?? throw new InvalidOperationException("Value member adapter has no selected return type");
-                    return HelperValue(target, args, signature, ret);
+                    return preserveOwnership ? HelperValueOwned(target, args, signature, ret) : HelperValue(target, args, signature, ret);
                 }
             }
             var (kind, source, operand, reified) = node switch {
@@ -116,7 +127,10 @@ sealed partial class ValueRepresentationLowering
                 && !KotlinTypeWitness.NeedsWitness(kind, reified)
                 && SemanticBound(lexical, variable, new HashSet<TypeNode.Tv>()) is { } bound)
             {
-                var guard = node.DeepClone();
+                var guard = !preserveOwnership ? node.DeepClone() : node switch {
+                    BirCast value => value with { }, BirInstanceOrNull value => value with { },
+                    _ => throw new InvalidOperationException("Unaccounted value-bound operation"),
+                };
                 var guardType = bound is TypeNode.Nullable ? bound : new TypeNode.Nullable(bound);
                 if (guard is BirCast cast) cast.Type = guardType;
                 else ((BirInstanceOrNull)guard).Type = guardType;
@@ -131,12 +145,13 @@ sealed partial class ValueRepresentationLowering
             if (binding == null) return node;
             string temp;
             do temp = "$valueClassifier$" + suffix++; while (!names.Add(temp));
-            return ClassifiedOperation(kind, source, operand, binding, shape, temp);
+            return ClassifiedOperation(kind, source, operand, binding, shape, temp, preserveOwnership);
         }
-        Walk(root, default);
+        Walk(root, context);
     }
 
-    BirCallStatic DefaultCallValue(string owner, LiveMethod source, IBirExpression receiver, IReadOnlyList<IBirExpression> arguments)
+    BirCallStatic DefaultCallValue(string owner, LiveMethod source, IBirExpression receiver, IReadOnlyList<IBirExpression> arguments,
+        bool preserveOwnership = false)
     {
         var plan = MemberCallSubstitution.PlanRule3Helper(refs, new TypeNode.Fqn(owner), source.Name, source.Id,
             true, receiver != null, arguments.Count, source.Parameters, Array.Empty<TypeNode>(), source.Return, source.Return,
@@ -149,11 +164,12 @@ sealed partial class ValueRepresentationLowering
             CalleeRet = plan.CalleeReturn == null ? default : OptionalField<TypeNode>.Of(plan.CalleeReturn),
             Ret = plan.Return == null ? default : OptionalField<TypeNode>.Of(plan.Return),
             ProjectedHelperReceiver = plan.ProjectedHelperReceiver is int projected ? OptionalField<int>.Of(projected) : default,
-            Args = (receiver == null ? arguments : new[] { receiver }.Concat(arguments)).Select(CloneValue).ToArray() };
+            Args = (receiver == null ? arguments : new[] { receiver }.Concat(arguments))
+                .Select(argument => preserveOwnership ? argument : CloneValue(argument)).ToArray() };
     }
 
     BirValueBlock ClassifiedOperation(string kind, TypeNode source, IBirExpression operand,
-        ValueRepresentationBinding binding, string shape, string temp)
+        ValueRepresentationBinding binding, string shape, string temp, bool preserveOwnership)
     {
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         var boolean = new TypeNode.Fqn("kotlin.Boolean");
@@ -171,7 +187,8 @@ sealed partial class ValueRepresentationLowering
         BirIf ThrowWhen(IBirExpression test, string exception) => new() { Branches = new[] { new BirBranch {
             Cond = Value(test), Body = new IBirStatement[] { new BirThrow { Value = new BirNew {
                 Type = new TypeNode.Fqn(exception), Args = Array.Empty<IBirExpression>(), ArgTypes = Array.Empty<TypeNode>() } } } } } };
-        var statements = new List<IBirStatement> { new BirVariable { Name = temp, Type = any, Init = Value(CloneValue(operand)) } };
+        var statements = new List<IBirStatement> { new BirVariable { Name = temp, Type = any,
+            Init = Value(preserveOwnership ? operand : CloneValue(operand)) } };
         IBirExpression result;
         if (kind == "cast")
         {

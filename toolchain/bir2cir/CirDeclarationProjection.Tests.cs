@@ -42,8 +42,9 @@ static partial class CirDeclarationProjection
         foreach (var site in sites)
         {
             var attribute = site.Single(a => a.Attr is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinCollectionIdentityAttribute" });
-            if (attribute.Args[1] is not AttributeArgument.BytesValue bytes
-                || Encoding.UTF8.GetString(bytes.Bytes) != TypeNode.ToJson(nested))
+            if (attribute.Args[0] is not AttributeArgument.TextValue { Value: TypeNodeCarrier.Codec } codec
+                || attribute.Args[1] is not AttributeArgument.BytesValue bytes
+                || !TypeNodeDataEquality.Equal(TypeNodeCarrier.Decode(codec.Value, bytes.Bytes), nested))
                 throw new Exception("Collection handoff lost its exact source metadata payload");
         }
 
