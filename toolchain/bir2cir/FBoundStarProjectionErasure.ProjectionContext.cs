@@ -58,10 +58,6 @@ static partial class FBoundStarProjectionErasure
         internal static CarrierProjectionContext ForCurrentSource(CarrierRealizationContext realization,
             CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases = null)
         {
-            var original = ForSource(realization.Demand, realization.References, aliases);
-            ProjectionDeclaration Read(string name) => current.Definitions.TryGetValue(name, out var actual)
-                ? ReadSource(AliasDeclarationTransitions.ReadLogicalHeaderFacts(actual))
-                : original.LocalDeclaration(name);
             // Only the already allocated, needed names are exported by the old
             // continuation. Their current physical records supply owner frames.
             var owners = realization.Owners.Values.Where(owner => owner.Needed).ToDictionary(owner => owner.Name,
@@ -70,7 +66,25 @@ static partial class FBoundStarProjectionErasure
                         current.Definitions[owner.Name].TypeParams.OrEmpty().Length, true)) { ErasedName = owner.ErasedName }
                     : new Owner { Name = owner.Name, ErasedName = owner.ErasedName, Needed = true }, StringComparer.Ordinal);
             return new(realization.Preparation, owners, realization.References, realization.Values,
-                realization.NativeProofs, current.LocalClrAliases, Read, current);
+                realization.NativeProofs, current.LocalClrAliases, CurrentSourceDeclarations(realization, current, aliases), current);
+        }
+
+        // Collection helper signatures project referenced values, not local
+        // carrier owners. Keep that scope explicit before the DOM continuation
+        // installs its ambient policy, using the same current declaration facts.
+        internal static CarrierProjectionContext ForReferencedValuesSource(CarrierRealizationContext realization,
+            CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases = null) => new(
+                realization.Preparation, new Dictionary<string, Owner>(StringComparer.Ordinal),
+                realization.References, realization.Values, realization.NativeProofs, null,
+                CurrentSourceDeclarations(realization, current, aliases));
+
+        static Func<string, ProjectionDeclaration> CurrentSourceDeclarations(CarrierRealizationContext realization,
+            CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases)
+        {
+            var original = ForSource(realization.Demand, realization.References, aliases);
+            return name => current.Definitions.TryGetValue(name, out var actual)
+                ? ReadSource(AliasDeclarationTransitions.ReadLogicalHeaderFacts(actual))
+                : original.LocalDeclaration(name);
         }
 
         static ProjectionDeclaration ReadSource(AliasDeclarationTransitions.LogicalHeaderFacts header) => new(

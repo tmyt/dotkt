@@ -158,6 +158,13 @@ static class Bir2Cir
                 StarProjectionBoundLowering.SourcePreparationSelfTest();
                 ExternalGenericConstraintValidation.SourcePreparationSelfTest();
                 CollectionBclSlotSynthesis.SourcePreparationSelfTest();
+                CollectionBclSlotSynthesis.SourceSelfTest();
+                StarProjectionCountLowering.SourceSelfTest();
+                ReadOnlyCollectionViewInterfaces.SourceSelfTest();
+                KotlinMapStorageSynthesis.SourceSelfTest();
+                ReadOnlyCollectionStorageSynthesis.SourceSelfTest();
+                ReverseEnumeratorBridgeSynthesis.SourceSelfTest();
+                ExactExternalDeclarationIdentity.SourceSelfTest();
                 ValueRepresentationLowering.SourceTypesSelfTest();
                 DeclNullableFlags.SourceSelfTest();
                 CollectionIdentityRecord.MemberSlotsSourceSelfTest();
@@ -1070,6 +1077,49 @@ sealed class Pipeline
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
                 physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[index].Path));
 
+        // Complete collection surfaces module-wide before any consumer snapshots
+        // their final interface graph. Helper signatures use the pre-birth
+        // referenced-value scope, not the local carrier-owner projection.
+        var referencedValues = FBoundStarProjectionErasure.CarrierProjectionContext.ForReferencedValuesSource(
+            carrierRealization, finalCarrierTypes, aliasTransitions);
+        if (!referenceBuild)
+            CollectionBclSlotSynthesis.ApplyAll(captured, refs,
+                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames),
+                suspendTransitions.PublishMethods);
+        foreach (var source in captured)
+        {
+            if (appBuild) StarProjectionCountLowering.Apply(source);
+            ReadOnlyCollectionViewInterfaces.Apply(source);
+        }
+        if (referenceBuild)
+            physicalPreparation.EmittedLocalTypes.Add(KotlinMapStorageSynthesis.EmitReferenceSurface(
+                captured, suspendTransitions.PublishTypes));
+        else
+        {
+            foreach (var name in KotlinMapStorageSynthesis.ApplyAll(captured, refs, substituteStdlibBuild,
+                         type => referencedValues.Rewrite(type), suspendTransitions.PublishTypes))
+                physicalPreparation.EmittedLocalTypes.Add(name);
+            foreach (var name in ReadOnlyCollectionStorageSynthesis.ApplyAll(captured, refs,
+                         type => referencedValues.Rewrite(type), suspendTransitions.PublishTypes))
+                physicalPreparation.EmittedLocalTypes.Add(name);
+            foreach (var adapter in ReverseEnumeratorBridgeSynthesis.ApplyAll(captured, refs,
+                         suspendTransitions.PublishMethods, suspendTransitions.PublishTypes))
+                physicalPreparation.EmittedLocalTypes.Add(adapter.Name.Value);
+        }
+        refs.SetLocalEmittedTypes(inventory.EmittedTypeFqns.Concat(physicalPreparation.EmittedLocalTypes)
+            .Except(physicalPreparation.ExternalCanonicalTypes, StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal));
+        // Newly authored bridge bodies need the same inherited/static selection
+        // after every root has reached its final collection representation.
+        ClrMemberResolution.ResolveInheritedExternalCalls(captured, refs);
+        for (var index = 0; index < captured.Length; index++)
+            ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
+                physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
+                physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[index].Path));
+        if (!referenceBuild)
+            foreach (var source in captured) ExactExternalDeclarationIdentity.Apply(source, refs);
+        finalCarrierTypes = FBoundStarProjectionErasure.RefreshCurrentPhysicalTypesSource(captured, carrierRealization);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -1122,11 +1172,6 @@ sealed class Pipeline
         // retain their concrete signature and their ordinary query guard.
         var genericRepresentations = module.GenericRepresentations;
         var representationMethodFrames = module.RepresentationMethodFrames;
-        // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
-        // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
-        // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
-        // (app build -> clr: base + pendingOverrideOwner linkage).
-        var localTypeFqns = module.Preparation.Inventory.EmittedTypeFqns;
         // App-only physical interop stages remain separate from runtime/metadata
         // self-builds; source call attribution already ran in the owning prefix.
         var attributeTopLevelOwner = _options.StdlibMode == BuildStdlibMode.App;
@@ -1175,7 +1220,6 @@ sealed class Pipeline
         // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
         // another to the .NET declaration whose slot it cannot fill.
         var loweredRoots = new List<(JsonNode Root, string File)>();
-        var finalLocalDeclarationIds = physicalPreparation.Declarations.DeclarationIds;
         foreach (var (substituted, outputName) in staged)
         {
             // Physical signatures, collision/name allocation and properties are
@@ -1183,79 +1227,8 @@ sealed class Pipeline
             loweredRoots.Add((substituted, outputName));
         }
 
-        // PHASE 3A — complete every representation synthesis module-wide before any pass snapshots the final type
-        // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
-        // would otherwise make their contents depend on source-file order.
-        if (!_options.RefBuild)
-            CollectionBclSlotSynthesis.ApplyAll(loweredRoots.Select(s => s.Root), refs,
-                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
-                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames));
-        foreach (var (lowered, _) in loweredRoots)
-        {
-            // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
-            // re-pointed the receiver `cast` at a non-generic BCL collection interface, but MemberCallSubstitution bound
-            // Count to the GENERIC `IReadOnly*<object>.Count`, absent on a value-type-arg collection (`List<int>`)
-            // -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE non-generic
-            // `System.Collections.ICollection.Count`. App build only; runs AFTER MemberCallSubstitution so Count is bound.
-            if (attributeTopLevelOwner) StarProjectionCountLowering.Apply(lowered);
-            // The READ-ONLY sibling of every mutable collection face this unit's types name. Kotlin's `MutableList<E>`
-            // IS-A `List<E>`, but their lowered CLR faces (`IList<T>` / `IReadOnlyList<T>`) are unrelated interfaces,
-            // so the read-only view is real only when the emitted type declares it. Runs AFTER the mutable faces are
-            // final (CollectionBclSlotSynthesis adds the ICollection<E> face of a list implementer) and BEFORE the
-            // interface-slot manifests below, so the sibling is an ordinary stated interface everywhere downstream.
-            // All builds: the rule is keyed on the lowered BCL face, which the reference build (whose surface stays
-            // Kotlin-faced) simply never has.
-            ReadOnlyCollectionViewInterfaces.Apply(lowered);
-        }
-
-        if (_options.RefBuild)
-            emittedLocalTypes.Add(KotlinMapStorageSynthesis.EmitReferenceSurface(
-                loweredRoots.Select(s => s.Root).ToList()));
-        else
-            foreach (var carrier in KotlinMapStorageSynthesis.ApplyAll(
-                         loweredRoots.Select(s => s.Root).ToList(), refs, _options.SubstituteStdlibBuild))
-                emittedLocalTypes.Add(carrier);
-
-        if (!_options.RefBuild)
-            foreach (var carrier in ReadOnlyCollectionStorageSynthesis.ApplyAll(
-                         loweredRoots.Select(s => s.Root).ToList(), refs))
-                emittedLocalTypes.Add(carrier);
-
-        // THE REVERSE ENUMERATOR BRIDGE (#139/#400): a class whose supertype graph reaches a BCL enumerable face owes
-        // `IEnumerator<E> GetEnumerator()` and has only Kotlin's `iterator(): Iterator<E>`. Author the compiler-owned
-        // adapter TypeDef and both GetEnumerator halves — declarations, bodies and exact MethodImpl descriptors — so
-        // ilemit emits them one-to-one. Module-wide (the face can be inherited through a base declared in a sibling
-        // file) and after the loop above, whose last passes can still state such a face. Non-ref: the reference
-        // surface keeps the Kotlin collection faces, so nothing in it implements a BCL enumerable interface.
-        if (!_options.RefBuild
-            && ReverseEnumeratorBridgeSynthesis.ApplyAll(loweredRoots.Select(s => s.Root).ToList(), refs))
-            // The adapter is declared by THIS emission unit, later than the initial inventory, so record it before
-            // any member binding below can mistake a local construction for a reference to another assembly.
-            emittedLocalTypes.Add(ReverseEnumeratorBridgeSynthesis.AdapterName);
-
-        // Final member/value binding must share the complete emission-unit ownership inventory,
-        // including late collection carriers. Canonical runtime templates remain owned by the stdlib.
-        refs.SetLocalEmittedTypes(localTypeFqns.Concat(emittedLocalTypes)
-            .Except(externalCanonicalTypes, StringComparer.Ordinal)
-            .ToHashSet(StringComparer.Ordinal));
-
-        // Late synthesis above authors ordinary calls as part of new bridge bodies. Bind those calls only after every
-        // root has reached its final representation, then resolve local-owner calls inherited from external bases.
-        ClrMemberResolution.ResolveInheritedExternalCalls(loweredRoots.Select(s => s.Root), refs);
-        foreach (var (lowered, outputName) in loweredRoots)
-            ClrMemberResolution.ResolveReferencedStaticCalls(
-                lowered, refs, emittedLocalTypes, externalCanonicalTypes,
-                finalLocalDeclarationIds, outputName);
-
-        // Declaration inheritance and MethodImpl ownership are physical CLR edges. Put their final TypeSpecs on the
-        // same exact reflected identity so ilemit cannot visit one slot twice through an arity-free alias and an exact
-        // owner. This runs after every pass that can add an interface or descriptor (including read-only collection
-        // views and reverse-enumerator synthesis), but before ResolveInterfaceSlots snapshots those final edges into
-        // ilemit's exact slot manifests. The reference build keeps Kotlin vocabulary and deliberately skips this
-        // CIR-only normalization.
-        if (!_options.RefBuild)
-            foreach (var (lowered, _) in loweredRoots)
-                ExactExternalDeclarationIdentity.Apply(lowered, refs);
+        // Collection surfaces, their generated-call binding and exact external
+        // declaration edges are complete on owning BIR before the frontier.
 
         var capturedInvocations = CapturedGenericInvocation.PrepareLocalDeclarations(loweredRoots.Select(file => file.Root),
             flattenMissingOwners: _options.SubstituteStdlibBuild);

@@ -1305,11 +1305,6 @@ static partial class FBoundStarProjectionErasure
         }
     }
 
-    // A helper authored after the main projection still has the reference assembly's Kotlin declaration types.
-    // Apply the same referenced value ABI before lowering aliases; selected native CLR descriptors are separate.
-    internal static TypeNode ProjectReferencedValueType(TypeNode type, ReferenceMetadataIndex refs) =>
-        RewriteType(type, new Dictionary<string, Owner>(StringComparer.Ordinal), refs);
-
     static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs, bool boundDeclaration = false,
         IReadOnlyDictionary<string, string> localClrAliases = null,

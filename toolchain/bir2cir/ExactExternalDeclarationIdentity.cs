@@ -1,6 +1,7 @@
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // A declaration edge or MethodImpl owner is CLR metadata, not a Kotlin lookup token. Keep every referenced
 // base/interface and descriptor owner on the exact TypeDef identity selected by bir2cir. In particular, a semantic
@@ -8,49 +9,29 @@ using DotKt.Bir;
 // reach ilemit as two spellings of the same interface: walking both would emit the same MethodImpl twice. Nested
 // external identities also retain their `Outer`N+Inner`M ownership instead of asking ilemit to reconstruct it from a
 // flattened source name.
-static class ExactExternalDeclarationIdentity
+static partial class ExactExternalDeclarationIdentity
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    internal static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
-        if (root is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
+        TypeNode ExactSource(TypeNode current)
         {
-            Rewrite(type, "base", refs);
-            if (type["interfaces"] is JsonArray interfaces)
-                for (var i = 0; i < interfaces.Count; i++)
-                {
-                    var current = interfaces[i];
-                    var exact = Exact(current, refs);
-                    if (!ReferenceEquals(current, exact)) interfaces[i] = exact;
-                }
-            if (type["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                {
-                    RewriteMethodImplOwners(method, "clrInterfaceImpls", refs);
-                    RewriteMethodImplOwners(method, "clrBaseImpls", refs);
-                }
-            Apply(type, refs);
+            if (current is not TypeNode.Fqn type) return current;
+            var exact = refs.ExactReflectedOwner(type.Name, type.Args?.Length ?? 0);
+            return exact == type.Name ? current : new TypeNode.Fqn(exact,
+                type.Args?.Select(BirGraphValue.CopyType).ToArray());
         }
-    }
-
-    static void RewriteMethodImplOwners(JsonObject method, string key, ReferenceMetadataIndex refs)
-    {
-        if (method[key] is not JsonArray implementations) return;
-        foreach (var implementation in implementations.OfType<JsonObject>())
-            Rewrite(implementation, "owner", refs);
-    }
-
-    static void Rewrite(JsonObject owner, string key, ReferenceMetadataIndex refs)
-    {
-        if (owner[key] is not JsonNode value) return;
-        var exact = Exact(value, refs);
-        if (!ReferenceEquals(value, exact)) owner[key] = exact;
-    }
-
-    static JsonNode Exact(JsonNode node, ReferenceMetadataIndex refs)
-    {
-        if (TypeJson.Read(node) is not TypeNode.Fqn type) return node;
-        var exact = refs.ExactReflectedOwner(type.Name, type.Args?.Length ?? 0);
-        return exact == type.Name ? node : TypeJson.Write(new TypeNode.Fqn(exact, type.Args));
+        // Type placement has already flattened the owning type vector. These
+        // current edges and attached MethodImpls are physical declaration facts,
+        // not arbitrary executable owner hints or frozen Kotlin source metadata.
+        foreach (var type in root.Types.OrEmpty())
+        {
+            if (type.Base.HasValue) type.Base = ExactSource(type.Base.Value);
+            if (type.Interfaces.HasValue)
+                for (var index = 0; index < type.Interfaces.Value.Length; index++)
+                    type.Interfaces.Value[index] = ExactSource(type.Interfaces.Value[index]);
+            foreach (var method in type.Methods.OrEmpty())
+                foreach (var descriptor in method.ClrInterfaceImpls.OrEmpty().Concat(method.ClrBaseImpls.OrEmpty()))
+                    if (descriptor.Owner.HasValue) descriptor.Owner = ExactSource(descriptor.Owner.Value);
+        }
     }
 }

@@ -1,7 +1,7 @@
-using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // The READ-ONLY face of a mutable collection implementer, stated in CIR.
 //
@@ -27,23 +27,24 @@ using DotKt.Bir;
 // member name, and applied to classes and interfaces alike (an interface extending the mutable face must expose the
 // sibling to its own implementers, which may name only the interface). CollectionBclSlotSynthesis completes the
 // BCL-only slots from that same constructed interface closure before this pass runs.
-static class ReadOnlyCollectionViewInterfaces
+static partial class ReadOnlyCollectionViewInterfaces
 {
-    public static void Apply(JsonNode root)
+    internal static void Apply(BirFileDeclaration root)
     {
-        if (root is not JsonObject o || o["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
+        foreach (var type in root.Types.OrEmpty())
         {
-            if (type["interfaces"] is not JsonArray ifaces) continue;
-            var stated = ifaces.Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToList();
-            // Declaration order is the emitted InterfaceImpl order: keep the stated faces first, then the siblings
-            // they oblige, in the order those faces were stated.
-            foreach (var sibling in stated.Select(CollectionViewFaces.ReadOnlySibling).OfType<TypeNode.Fqn>().ToList())
+            if (!type.Interfaces.HasValue) continue;
+            var interfaces = type.Interfaces.Value.ToList();
+            var stated = interfaces.OfType<TypeNode.Fqn>().ToList();
+            // Keep actual original edges first, followed by the first occurrence
+            // of each owed sibling in original declaration order, including interfaces.
+            foreach (var sibling in stated.Select(CollectionViewFaces.ReadOnlySibling).OfType<TypeNode.Fqn>().ToArray())
             {
                 if (stated.Contains(sibling)) continue;
                 stated.Add(sibling);
-                ifaces.Add(TypeJson.Write(sibling));
+                interfaces.Add(sibling);
             }
+            type.Interfaces = interfaces.ToArray();
         }
     }
 }
