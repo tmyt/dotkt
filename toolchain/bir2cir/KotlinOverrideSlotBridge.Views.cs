@@ -150,11 +150,24 @@ static partial class KotlinOverrideSlotBridge
     static JsonArray ParametersDom(BirTypeParameter[] parameters) => parameters == null ? null : new JsonArray(parameters.Select(parameter =>
         (JsonNode)parameter.ToDom()).ToArray());
 
+    internal static BirTypeParameter[] SemanticMethodTypeParameters(BirFunctionDeclaration method)
+        => SemanticParameters(new OverrideMethod(method));
+
+    internal static BirTypeParameter[] SemanticMethodTypeParameters(BirInheritedImplementation method)
+        => SemanticParameters(method.TypeParams.OrDefault(), method.MethodTypeParameterBoundsPre.OrDefault()?.Bounds, null);
+
+    internal static BirTypeParameter[] SubstituteOwnerTypeParameterConstraints(BirTypeParameter[] parameters, TypeNode[] ownerArguments)
+        => SubstituteParameters(parameters, ownerArguments);
+
     static BirTypeParameter[] SemanticParameters(OverrideMethod method)
+        => SemanticParameters(method.TypeParameters, method.Bounds, method.Frame);
+
+    static BirTypeParameter[] SemanticParameters(BirTypeParameter[] declared,
+        IReadOnlyDictionary<int, TypeNode[]> bounds, NullableRepresentationFrame frame)
     {
-        var parameters = method.TypeParameters?.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() ?? [];
-        foreach (var pair in method.Bounds ?? new Dictionary<int, TypeNode[]>())
-            parameters[method.Frame?.SourcePosition(pair.Key) ?? pair.Key].Constraints = pair.Value.Select(BirGraphValue.CopyType).ToArray();
+        var parameters = declared?.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() ?? [];
+        foreach (var pair in bounds ?? new Dictionary<int, TypeNode[]>())
+            parameters[frame?.SourcePosition(pair.Key) ?? pair.Key].Constraints = pair.Value.Select(BirGraphValue.CopyType).ToArray();
         return parameters;
     }
     static BirTypeParameter[] SourceParameters(OverrideMethod method)

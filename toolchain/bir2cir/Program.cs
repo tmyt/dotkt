@@ -78,6 +78,8 @@ static class Bir2Cir
                 CapturedGenericInvocation.SelfTestPhysicalInvocation();
                 SourceModuleIndex.SelfTest();
                 InheritedClassInterfaceBridge.SourceSelfTest();
+                InheritedClassInterfaceBridge.LateSourceSelfTest();
+                CovariantInterfaceReturnBridge.SourceSelfTest();
                 BirFileCodec.SelfTest();
                 BirGraphMutationTests.SelfTest();
                 ClrTypeVariance.SelfTest();
@@ -199,6 +201,8 @@ static class Bir2Cir
                 StarProjectionLowering.SourceSelfTest();
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();
+                ExistentialCaptureAlignment.SourceSelfTest();
+                ErasedElementValues.CaptureSourceSelfTest();
                 RoundtripMetadata.RuntimeLinkageSelfTest();
                 RoundtripMetadata.TypeHeaderSelfTest();
                 RoundtripMetadata.SourceTypeAliasSelfTest();
@@ -720,13 +724,45 @@ sealed class Pipeline
                 genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
             });
 
+        var localExistentialOwners = carrierRealization.Owners.Values.Where(owner => owner.Needed)
+            .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal);
+        ExistentialCaptureAlignment.ApplyAll(captured, localExistentialOwners, refs, isValueFqn, genericRepresentations,
+            (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
+                nullableDeclarations, owner, field, position, arity, storage));
+        void AdmitBridgeMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> appended)
+        {
+            foreach (var method in appended)
+            {
+                currentDeclarations.GetSource(method);
+                foreach (var implementation in method.ClrInterfaceImpls.OrEmpty()) currentDeclarations.GetSource(implementation);
+            }
+            pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations);
+        }
+        InheritedClassInterfaceBridge.ApplyAll(captured, AdmitBridgeMethods);
+        var sourceCovariantSlots = CovariantInterfaceReturnBridge.ApplyAll(captured, refs, isValueFqn,
+            genericRepresentations, pendingOverrideParameters.ReadSourceParameters(), (file, owner, method) => {
+                AdmitBridgeMethods(owner, new[] { method });
+                if (referenceBuild) return;
+                var appended = StringCharSequenceBridge.ApplyMaterializedReturns(file, method);
+                foreach (var type in appended)
+                {
+                    currentDeclarations.GetSource(type);
+                    foreach (var constructor in type.Ctors.OrEmpty()) currentDeclarations.GetSource(constructor);
+                    foreach (var member in type.Methods.OrEmpty()) currentDeclarations.GetSource(member);
+                }
+                aliasTransitions.AdmitMaterializedTypes(file, appended);
+                genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
+            });
+        var continuingCovariantSlots = sourceCovariantSlots.Select(slot => (
+            Implementation: currentDeclarations.GetSource(slot.Implementation), slot.Descriptor)).ToArray();
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after carrier realization and its body,
-            // constraint, shared-storage and consumer fixed-point rewrites.
+            // continuing projection, after carrier realization, capture-storage
+            // alignment and inherited/covariant bridge materialization.
             var root = source.ToDom(currentDeclarations.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -746,14 +782,16 @@ sealed class Pipeline
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions);
         var overrideSourceParameters = pendingOverrideParameters.BindDom(continuingRoots);
+        var covariantBridgedSlots = continuingCovariantSlots.Select(slot =>
+            new CovariantInterfaceReturnBridge.BridgedSlot(slot.Implementation.Physical, slot.Descriptor)).ToHashSet();
         var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(carrierRealization);
         aliasTransitions.Release();
         retiredDeclarations.Clear();
         retiredDom.Clear();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
-            new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums, sharedCells,
-                moduleBindings, overrideSourceParameters, carrierContinuation));
+            new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums,
+                moduleBindings, overrideSourceParameters, carrierContinuation, covariantBridgedSlots));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -803,36 +841,15 @@ sealed class Pipeline
         // Call-boundary materialization has completed in the owning prefix.
         // The remaining type/slot/suspend owners consume this module-wide set.
         var staged = new List<(JsonNode Root, string OutputName)>();
-        var sharedCells = module.Preparation.SharedCells;
         foreach (var bir in birFiles)
             staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
-        // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
-        // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
-        // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
+        // Continue the owning prefix's selected carrier, source-parameter and
+        // covariant-slot facts; do not reselect them after the frontier.
         var overrideSourceParameters = module.Preparation.OverrideSourceParameters;
         var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
-        // Closure/SAM synthesis ran while captures still carried their Kotlin constructed types, and suspend-lambda
-        // state machines will copy those same declarations later. An erased smart cast can now deliver an existential
-        // carrier to generated storage; make each capture declaration/construction/field agree on that exact physical
-        // representation before state-machine materialization and final member binding.
-        ExistentialCaptureAlignment.ApplyAll(
-            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs, isValueFqn, genericRepresentations,
-            (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
-                nullableTvDeclRets, owner, field, position, arity, storage));
-        // KOTLIN FAKE-OVERRIDE -> CLR INTERFACE SLOT: if a concrete class implements an interface using a public
-        // NON-VIRTUAL method inherited from its base class, Kotlin considers the member implemented but CLR implicit
-        // interface binding does not. Materialize the exact forwarding member in CIR/BIR-space before suspend lowering
-        // (so a synthesized suspend member is transformed normally). Exact signature/return only; ambiguity is skipped.
-        InheritedClassInterfaceBridge.ApplyAll(staged.Select(s => s.Root).ToList());
-
-        // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
-        // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
-        // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
-        var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), refs, isValueFqn, genericRepresentations, overrideSourceParameters,
-            _options.RefBuild ? null : StringCharSequenceBridge.ApplyMaterializedReturns);
+        var covariantBridgedSlots = module.Preparation.CovariantBridgedSlots;
 
         // Covariant bridges own their exact cold and Task slots. Prepare only the remaining suspend-result
         // obligations, so both passes cannot claim the same interface MethodImpl.
@@ -1738,9 +1755,10 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
 sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
     UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
-    IReadOnlyList<SharedSyntheticSynthesis.CellStorage> SharedCells, ModuleBindingSnapshots Bindings,
+    ModuleBindingSnapshots Bindings,
     IReadOnlyDictionary<JsonObject, TypeNode[]> OverrideSourceParameters,
-    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers);
+    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers,
+    IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> CovariantBridgedSlots);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
