@@ -34,9 +34,9 @@ sealed partial class ValueRepresentationLowering
                 if (!ReferenceEquals(after, before ?? SourceTypeFacts.Empty)) NullableRepresentationViews.SetTypeFacts(node, after);
             }
             node.VisitOwnChildSlots((field, role, slot) => {
-                // Same domain as the post-transport-cleanup metadata writer:
-                // exact foreign descriptors are not Kotlin declaration slots.
-                if (FBoundStarProjectionErasure.IsTransientMarker(field) || NullableRepresentationViews.Frozen(role)
+                // Exact foreign descriptors are not Kotlin declaration slots.
+                // Scalar transport markers are not generated graph children.
+                if (NullableRepresentationViews.Frozen(role)
                     || field is "attrs" or "overrides" or "memberRef" or "clrInterfaceImpls" or "clrBaseImpls"
                     or DeclarationIdentityBinding.SemanticSignatureKey) return;
                 Walk(slot.Value);

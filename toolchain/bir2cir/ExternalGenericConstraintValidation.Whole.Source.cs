@@ -24,8 +24,7 @@ static partial class ExternalGenericConstraintValidation
                 nextMethods = ReadSourceParameterFacts(node is BirFunctionDeclaration method ? method.TypeParams.OrEmpty() : []);
             else if (incomingField == "ctors") nextMethods = Array.Empty<ParameterFacts>();
 
-            bool Included(string field) => !FBoundStarProjectionErasure.IsTransientMarker(field)
-                && UseSiteTypeField(field, node is BirNew);
+            bool Included(string field) => UseSiteTypeField(field, node is BirNew);
             // Validation is read-only. Generated structural readers include
             // wire TypeSpecs, not frozen text/bytes or another declaration's
             // opaque source carriers; no role-wide exclusion loses live types.

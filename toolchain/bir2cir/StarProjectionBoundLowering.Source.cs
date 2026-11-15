@@ -12,8 +12,7 @@ static partial class StarProjectionBoundLowering
             if (node is null or IBirExecutablePayload) return;
             // Static containers and declaration identity were excluded by the
             // old owner, not by a general generic-frame-role classification.
-            static bool Excluded(string field) => field is "name" or "owner"
-                || FBoundStarProjectionErasure.IsTransientMarker(field);
+            static bool Excluded(string field) => field is "name" or "owner";
             node.RewriteOwnFieldsInPlace((field, _, type) => Excluded(field) ? type : Subst(type, localBounds, references),
                 (field, _, slot) => { if (!Excluded(field)) Walk(slot.Value); });
         }

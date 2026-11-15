@@ -4,11 +4,11 @@ using DotKt.Cir;
 
 static partial class DeclarationIdentityBinding
 {
-    enum ReferencedAction { Skip, ClrDelegate, StaticIntrinsicDelegate, MarkIntrinsic, MarkFactory, Bind }
+    enum ReferencedAction { Skip, StaticIntrinsicDelegate, MarkIntrinsic, MarkFactory, Bind }
     readonly record struct ReferencedPlan(ReferencedAction Action, string Name = null, string Owner = null, string Intrinsic = null);
 
-    // Both owning transports consume exactly the same selected declaration.
-    // No signature/overload search occurs at this boundary.
+    // Owning calls consume the selected declaration without a signature or
+    // overload search at this boundary.
     static ReferencedPlan PlanReferencedBinding(string kind, string id, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localIds, bool coroutineContext, bool factoryMarker, bool deferUnknown)
     {
@@ -18,7 +18,6 @@ static partial class DeclarationIdentityBinding
             if (deferUnknown) return new(ReferencedAction.Skip);
             throw new InvalidOperationException($"bir2cir: referenced frontend declaration identity '{id}' has no trusted physical binding");
         }
-        if (kind is "newBoundClrDelegate" or "newClrStaticDelegate") return new(ReferencedAction.ClrDelegate, name, owner, intrinsic);
         if (intrinsic != null) return new(kind == "newDelegate" ? ReferencedAction.StaticIntrinsicDelegate : ReferencedAction.MarkIntrinsic,
             name, owner, intrinsic);
         if (refs.TryDeclarationFactory(id, out _, out _, out _) && kind == "callStatic" && (!factoryMarker || deferUnknown))
@@ -90,7 +89,7 @@ static partial class DeclarationIdentityBinding
                     if (consumeIdentity) call.DeclarationId = default;
                     break;
                 case BirConstrainedCall call:
-                    call.Method = plan.Name;
+                    call.Method = plan.Name; call.Prop = default;
                     if (consumeIdentity) call.DeclarationId = default;
                     break;
                 case BirNewDelegate call:

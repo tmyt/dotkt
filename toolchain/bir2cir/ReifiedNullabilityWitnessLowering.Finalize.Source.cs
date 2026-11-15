@@ -9,11 +9,9 @@ static partial class ReifiedNullabilityWitnessLowering
         void Walk(BirGraphValue node)
         {
             if (node is IBirExecutablePayload) return;
-            node.VisitOwnChildSlots((field, _, slot) => {
-                // These transport anchors are still needed by the one strict
-                // frontier, but the old finalizer ran after their cleanup.
-                if (!FBoundStarProjectionErasure.IsTransientMarker(field)) Walk(slot.Value);
-            });
+            // Scalar address/transport facts are not graph children; only the
+            // same maintained structural children participate in this walk.
+            node.VisitOwnChildSlots((_, _, slot) => Walk(slot.Value));
             switch (node)
             {
                 case BirCallStatic call when call.NullableWitnessCount.OrDefault() > 0:

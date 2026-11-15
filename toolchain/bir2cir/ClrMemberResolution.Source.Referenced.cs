@@ -16,9 +16,7 @@ static partial class ClrMemberResolution
         {
             if (node is IBirExecutablePayload) return;
             var childContext = ReferencedSourceDeclarationContext(node, context);
-            node.VisitOwnChildSlots((field, _, slot) => {
-                if (!FBoundStarProjectionErasure.IsTransientMarker(field)) Walk(slot.Value, childContext);
-            });
+            node.VisitOwnChildSlots((_, _, slot) => Walk(slot.Value, childContext));
             var input = ReadSourceReferencedCall(node);
             if (input != null)
                 WriteSourceReferencedCall(node, PlanReferencedCall(input, context, refs,
@@ -151,8 +149,6 @@ static partial class ClrMemberResolution
             if (call.DotktKotlinSigId.HasValue) KotlinSigSnapshots.Remove(call.DotktKotlinSigId.Value);
             call.DotktKotlinSigId = default;
         }
-        node.VisitOwnChildSlots((field, _, slot) => {
-            if (!FBoundStarProjectionErasure.IsTransientMarker(field)) DropKotlinSigSnapshots(slot.Value);
-        });
+        node.VisitOwnChildSlots((_, _, slot) => DropKotlinSigSnapshots(slot.Value));
     }
 }
