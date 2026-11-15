@@ -44,10 +44,15 @@ static partial class SequenceForEachLowering
             "old owners retained moved forests or a native typed enumerable changed path");
         var once = file.DeepClone(); Apply(file);
         Need(file.StructurallyEquals(once) && _tmp == before + 2, "completed iteration was rewritten twice");
-        Need(IsErasedCast(new TypeNode.Fqn("System.Collections.IEnumerable"))
-            && IsErasedCast(new TypeNode.Fqn("kotlin.collections.List", new TypeNode[] { new TypeNode.Star() }))
-            && !IsSequenceTyped(new BirLocal { Name = "stampOnly", Sty = new TypeNode.Fqn("kotlin.sequences.Sequence") }),
-            "erased cast classification changed or sty became a sequence inference");
+        Need(IsErasedCast(new TypeNode.Fqn("System.Collections.IEnumerable")),
+            "non-generic enumerable cast lost erased dispatch");
+        // This clock consumes the existing object/Any-erased collection face,
+        // not a raw source star. Keep the shared FaithfulHints classifier.
+        Need(IsErasedCast(new TypeNode.Fqn("kotlin.collections.List", new TypeNode[] {
+                new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })),
+            "Any-erased collection cast lost the existing shared classification");
+        Need(!IsSequenceTyped(new BirLocal { Name = "stampOnly", Sty = new TypeNode.Fqn("kotlin.sequences.Sequence") }),
+            "sty became a sequence inference");
         Console.WriteLine("[source sequence dispatch] self-test OK (actual source/body MOVE, counter/label order, dynamic sequence fact, native path and idempotence)");
     }
 }

@@ -65,13 +65,14 @@ sealed class SourceModuleIndex
                 new BirEnumDefinition { Name = "NativeEnum", Kind = "enum", Methods = new[] { Method("enum-method") } },
                 new BirClassDefinition { Name = "Value", Kind = "struct", NestedIn = "Alias" },
                 new BirClassDefinition { Name = "RichEnum", Kind = "class", EnumRich = true },
+                new BirClassDefinition { Name = "LocalAlias", Kind = "class", Attrs = new[] { Alias("System.Int32") } },
             } }, new BirFileDeclaration { FileClass = "Other", Methods = new[] { Method("other-method") } } };
         var references = new Dictionary<string, string>(StringComparer.Ordinal) { ["External"] = "System.String", ["Alias"] = "System.Object" };
         var index = new SourceModuleIndex(roots, references);
-        var dom = roots.Select(root => (System.Text.Json.Nodes.JsonNode)root.ToDom()).ToArray();
-        var expectedAliases = DeclarationIdentityBinding.CollisionAliases(dom, references);
+        var expectedAliases = new Dictionary<string, string>(StringComparer.Ordinal) {
+            ["External"] = "System.String", ["Alias"] = "System.Object", ["LocalAlias"] = "System.Int32",
+        };
         if (!index.DeclarationIds.SetEquals(new[] { "file-method", "class-method", "interface-method", "enum-method", "other-method" })
-            || !index.DeclarationIds.SetEquals(DeclarationIdentityBinding.CollectDeclarationIds(dom))
             || !index.ValueTypes.SetEquals(new[] { "NativeEnum", "Value" })
             || index.CollisionAliases.Count != expectedAliases.Count
             || expectedAliases.Any(pair => index.CollisionAliases.GetValueOrDefault(pair.Key) != pair.Value))

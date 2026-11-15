@@ -38,13 +38,16 @@ static partial class MemberCallSubstitution
         var root = new BirFileDeclaration { FileClass = "Snapshots", Methods = new[] { arrayFactory, host, Accessor("top-level") },
             Types = new IBirTypeDeclaration[] { owner } };
         var properties = CollectLocalPropertyAccessors(new[] { root });
-        var domProperties = CollectLocalPropertyAccessors(new[] { root.ToDom() });
-        if (properties.Count != domProperties.Count || properties.Count != 3
-            || properties.Any(pair => !domProperties.TryGetValue(pair.Key, out var counterparts)
-                || !pair.Value.Select(item => item.PhysicalName).SequenceEqual(counterparts.Select(item => item.PhysicalName))
-                || pair.Value.Zip(counterparts).Any(items => !items.First.Parameters.Zip(items.Second.Parameters)
-                    .All(types => TypeNodeDataEquality.Equal(types.First, types.Second)))))
-            throw new InvalidOperationException("Property declaration snapshots differ between source and live late owners");
+        var expected = new[] {
+            (Key: new LocalPropertyAccessorKey("Owner", "value", "get", 0, 1), Names: new[] { "first", "second" }),
+            (Key: new LocalPropertyAccessorKey("Owner", "value", "get", 1, 1), Names: new[] { "generic" }),
+            (Key: new LocalPropertyAccessorKey("Nested", "value", "get", 0, 1), Names: new[] { "nested" }),
+        };
+        var expectedParameter = new TypeNode.Fqn("Container", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
+        if (properties.Count != expected.Length || expected.Any(row => !properties.TryGetValue(row.Key, out var actual)
+            || !actual.Select(item => item.PhysicalName).SequenceEqual(row.Names)
+            || actual.Any(item => item.Parameters.Length != 1 || !TypeNodeDataEquality.Equal(item.Parameters[0], expectedParameter))))
+            throw new InvalidOperationException("Property snapshots lost exact owners, generic arity, candidate order, or source signatures");
         var key = new LocalPropertyAccessorKey("Owner", "value", "get", 0, 1);
         if (!properties[key].Select(item => item.PhysicalName).SequenceEqual(new[] { "first", "second" })
             || !properties.ContainsKey(new("Nested", "value", "get", 0, 1)))

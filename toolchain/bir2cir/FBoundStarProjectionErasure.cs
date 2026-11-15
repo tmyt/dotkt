@@ -114,9 +114,9 @@ static partial class FBoundStarProjectionErasure
                 arguments[index] = argument["of"]!.DeepClone();
     }
 
-    public static void RemoveTransientFacts(IEnumerable<JsonNode> roots, bool preserveExactOuter = false)
+    public static void RemoveTransientFacts(IEnumerable<JsonNode> roots)
     {
-        foreach (var root in roots) RemoveTransientMarkers(root, preserveExactOuter);
+        foreach (var root in roots) RemoveTransientMarkers(root);
     }
 
     static void CollectDefinitions(JsonObject container, Dictionary<string, JsonObject> defs)
@@ -1292,19 +1292,18 @@ static partial class FBoundStarProjectionErasure
     // consumes afterwards; do not turn these anchors into extra use-site types.
     internal static bool IsTransientMarker(string field) => TransientMarkerKeys.Contains(field);
 
-    static void RemoveTransientMarkers(JsonNode node, bool preserveExactOuter = false)
+    static void RemoveTransientMarkers(JsonNode node)
     {
         switch (node)
         {
             case JsonObject obj:
-                foreach (var field in TransientMarkerKeys)
-                    if (!preserveExactOuter || field != ExactOuterKey) obj.Remove(field);
+                foreach (var field in TransientMarkerKeys) obj.Remove(field);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
-                    if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
+                    if (value != null) RemoveTransientMarkers(value);
                 break;
             case JsonArray array:
                 foreach (var value in array)
-                    if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
+                    if (value != null) RemoveTransientMarkers(value);
                 break;
         }
     }

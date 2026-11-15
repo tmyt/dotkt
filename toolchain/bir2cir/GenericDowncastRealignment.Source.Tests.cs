@@ -20,9 +20,24 @@ static partial class GenericDowncastRealignment
         var local = new BirVariable { Name = "item", Type = Derived(text), Init = E(cast) };
         var receiver = new BirLocal { Name = "item", Sty = Derived(text) };
         var call = new BirCallInstance { OwnerType = Derived(text), Method = "read", Recv = E(receiver) };
+        var uninitialized = new BirVariable { Name = "uninitialized", Type = Derived(text) };
+        var nullInitializer = new BirVariable { Name = "nullInitializer", Type = Derived(text), Init = OptionalField<IBirExpression>.Null };
+        // This owner consumes already-present type/receiver facts; it never
+        // completes a missing fact owned by another binding/lowering stage.
+        var missingOwner = new BirCallInstance { Method = "read", Recv = E(new BirLocal { Name = "item" }) };
+        var nullOwner = new BirCallInstance { Method = "read", OwnerType = OptionalField<TypeNode>.Null,
+            Recv = E(new BirLocal { Name = "item" }) };
+        var missingReceiver = new BirCallInstance { Method = "read", OwnerType = Derived(text) };
+        var nullReceiver = new BirCallInstance { Method = "read", OwnerType = Derived(text), Recv = OptionalField<IBirExpression>.Null };
+        var missingTarget = new BirCast { E = E(new BirLocal { Name = "item" }) };
+        var nullTarget = new BirCast { Type = OptionalField<TypeNode>.Null, E = E(new BirLocal { Name = "item" }) };
         var shadow = new BirCallInstance { OwnerType = Derived(text), Method = "read", Recv = E(new BirLocal { Name = "item" }) };
         var method = new BirFunctionDeclaration { Name = "use", Params = Array.Empty<BirParameter>(),
-            Body = new IBirStatement[] { local, new BirExpressionStatement { Expr = E(call) } }, InlineBir = new byte[] { 0x80 } };
+            Body = new IBirStatement[] { uninitialized, nullInitializer, local, new BirExpressionStatement { Expr = E(call) },
+                new BirExpressionStatement { Expr = E(missingOwner) }, new BirExpressionStatement { Expr = E(nullOwner) },
+                new BirExpressionStatement { Expr = E(missingReceiver) }, new BirExpressionStatement { Expr = E(nullReceiver) },
+                new BirVariable { Name = "missingTarget", Type = Derived(text), Init = E(missingTarget) },
+                new BirVariable { Name = "nullTarget", Type = Derived(text), Init = E(nullTarget) } }, InlineBir = new byte[] { 0x80 } };
         var sibling = new BirFunctionDeclaration { Name = "sibling", Params = new[] {
             new BirParameter { Name = "item", Type = Derived(text) } }, Body = new IBirStatement[] {
                 new BirExpressionStatement { Expr = E(shadow) } } };
@@ -38,6 +53,13 @@ static partial class GenericDowncastRealignment
         Need(ReferenceEquals(cast.E.Value, operand) && ReferenceEquals(call.Recv.Value, receiver)
             && ReferenceEquals(root.Methods.Value[0], method) && method.InlineBir.Value.SequenceEqual(new byte[] { 0x80 }),
             "owning operands/declarations or opaque payload changed");
+        Need(!uninitialized.Init.IsPresent && nullInitializer.Init.IsNull
+            && uninitialized.Type.Value == Derived(text) && nullInitializer.Type.Value == Derived(text)
+            && ReferenceEquals(method.Body.Value[0], uninitialized) && ReferenceEquals(method.Body.Value[1], nullInitializer)
+            && !missingOwner.OwnerType.IsPresent && nullOwner.OwnerType.IsNull
+            && !missingReceiver.Recv.IsPresent && nullReceiver.Recv.IsNull
+            && !missingTarget.Type.IsPresent && nullTarget.Type.IsNull,
+            "absent/null initializer, owner, receiver or target facts were read or invented by realignment");
         var incomplete = new Def { Arity = 2, Interfaces = new[] { Face(variable) } };
         Need(Realign(new TypeNode.Fqn("Incomplete", new TypeNode[] { text, text }), Face(any),
                 new Dictionary<string, Def> { ["Incomplete"] = incomplete }) == null,
