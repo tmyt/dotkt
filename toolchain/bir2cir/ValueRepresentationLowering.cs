@@ -135,54 +135,6 @@ sealed partial class ValueRepresentationLowering
 
     TypeNode AliasFace(TypeNode type) => sourcePolicy.AliasFace(type);
 
-    internal void RecordSourceTypes(JsonNode root)
-    {
-        if (referenceBuild || bindings.Count == 0) return;
-        void Slot(JsonObject declaration, string key, string carrier)
-        {
-            if (TypeJson.Read(declaration[key]) is not TypeNode original || original.Equals(AliasFace(original))) return;
-            declaration[carrier] ??= TypeNode.ToJson(original);
-        }
-        void Walk(JsonNode node)
-        {
-            if (node is JsonArray array)
-            {
-                for (var index = 0; index < array.Count; index++)
-                    Walk(array[index]);
-                return;
-            }
-            if (node is not JsonObject obj) return;
-            if (obj["k"] == null)
-            {
-                Slot(obj, "ret", "retKotlinType");
-                Slot(obj, "type", "kotlinType");
-                if (obj["kind"] != null)
-                {
-                    var pre = new JsonObject();
-                    if (obj["interfaces"] is JsonArray interfaces)
-                    {
-                        var changed = interfaces.Where(edge => TypeJson.Read(edge) is TypeNode type
-                            && !type.Equals(AliasFace(type))).Select(edge => edge.DeepClone()).ToArray();
-                        if (changed.Length > 0) pre["interfaces"] = new JsonArray(changed);
-                    }
-                    if (TypeJson.Read(obj["base"]) is TypeNode parent && !parent.Equals(AliasFace(parent)))
-                        pre["base"] = obj["base"].DeepClone();
-                    KotlinSupertypesRecord.Merge(obj, pre);
-                }
-            }
-            foreach (var (key, child) in obj.ToArray())
-            {
-                // MethodImpl descriptors state exact physical slots, not source declarations. Their
-                // signatures still undergo type lowering, but must never acquire source metadata carriers.
-                if (key is "attrs" or "overrides" or "memberRef" or "clrInterfaceImpls" or "clrBaseImpls"
-                    or DeclarationIdentityBinding.SemanticSignatureKey) continue;
-                Walk(child);
-            }
-        }
-        Walk(root);
-    }
-
-
     internal static void SelfTest()
     {
         KClassMemberBinding.SelfTest();
@@ -292,16 +244,15 @@ sealed partial class ValueRepresentationLowering
                 declarations.RetireForest(declaration);
             }
         }, null);
+        var sourceMethod = source.Methods.Value.Single(method => method.Name.OrDefault() == "use");
+        sourceMethod.ClrInterfaceImpls = new[] { new BirMethodImpl { Owner = new TypeNode.Fqn("Source"), Member = "value", Arity = 0,
+            Params = Array.Empty<TypeNode>(), Ret = new TypeNode.Fqn("Union") } };
+        sourceMethod.ClrBaseImpls = new[] { (BirMethodImpl)sourceMethod.ClrInterfaceImpls.Value[0].DeepClone() };
+        policy.RecordSourceTypes(source);
         root = source.ToDom(declarations.ObserveProjection);
         declarations.ProjectRetiredForests();
         policy.BindDomDeclarations(new[] { root }, declarations.RetiredMethods, declarations);
         var method = root["methods"].AsArray().OfType<JsonObject>().Single(method => Text(method["name"]) == "use");
-        foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
-            method[key] = JsonNode.Parse("""
-            [{"owner":{"t":"fqn","name":"Source"},"member":"value","arity":0,"params":[],
-              "ret":{"t":"fqn","name":"Union"}}]
-            """);
-        policy.RecordSourceTypes(root);
         if (root["types"][2]["methods"].AsArray().OfType<JsonObject>().Count() != 1
             || !Bool(root["types"][2]["methods"][0]["generated"]))
             throw new InvalidOperationException("An inherited binding annotation duplicated a nominal facet slot");

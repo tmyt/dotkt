@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // #29 ROUND-TRIP RECORD — capture the Kotlin READ-ONLY-vs-MUTABLE collection identity that BirTypeLowering's
@@ -46,47 +45,6 @@ static partial class CollectionIdentityRecord
     // Member carriers are captured at the existing final semantic-signature boundary, after every pass that can
     // synthesize or reshape a declaration slot and immediately before BirTypeLowering performs the collection
     // collapse. Their reference nullability rides the declaration NRT channel independently.
-    public static void RecordMemberSlots(JsonNode root)
-    {
-        if (root is JsonObject o) RecordMemberSlots(o);
-    }
-
-    static void RecordMemberSlots(JsonObject o)
-    {
-        if (o["methods"] is JsonArray methods)
-            foreach (var m in methods) if (m is JsonObject mo) RecordMethod(mo);
-        if (o["ctors"] is JsonArray ctors)
-            foreach (var c in ctors) if (c is JsonObject co) RecordParams(co["params"]);
-        RecordSimpleDecls(o["properties"]);
-        RecordSimpleDecls(o["fields"]);
-        if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) RecordMemberSlots(to);
-    }
-
-
-    static void RecordMethod(JsonObject mo)
-    {
-        if (TypeJson.Read(mo["ret"]) is TypeNode ret && NestsCollapsingReadonly(ret))
-            mo["collIdentityRet"] = TypeNode.ToJson(ret);
-        RecordParams(mo["params"]);
-    }
-
-    static void RecordParams(JsonNode ps)
-    {
-        if (ps is not JsonArray a) return;
-        foreach (var p in a)
-            if (p is JsonObject po && TypeJson.Read(po["type"]) is TypeNode pt && NestsCollapsingReadonly(pt))
-                po["collIdentity"] = TypeNode.ToJson(pt);
-    }
-
-    static void RecordSimpleDecls(JsonNode arr)
-    {
-        if (arr is not JsonArray a) return;
-        foreach (var d in a)
-            if (d is JsonObject dobj && TypeJson.Read(dobj["type"]) is TypeNode t && NestsCollapsingReadonly(t))
-                dobj["collIdentity"] = TypeNode.ToJson(t);
-    }
-
     // True iff a read-only List/Set/Collection appears where BirTypeLowering's Root-V collapse would REWRITE it — i.e.
     // reached with `typeArg == true`. Native array elements, like direct value slots, retain the readonly head;
     // constructed storage inside that element can still need a source-identity record.

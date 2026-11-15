@@ -24,15 +24,15 @@ static partial class CirDeclarationProjection
         // Exercise the real producer -> metadata owner -> typed declaration boundary. No emitter is simulated.
         var nested = new TypeNode.Fqn("Physical.Container", [new TypeNode.Fqn("kotlin.collections.List",
             [new TypeNode.Fqn("kotlin.Int")])]);
-        var method = Method();
-        method["ret"] = TypeJson.Write(nested);
-        method["params"] = new JsonArray(new JsonObject { ["name"] = "value", ["type"] = TypeJson.Write(nested) });
-        var file = File(method);
-        file["fields"] = new JsonArray(new JsonObject { ["name"] = "F", ["type"] = TypeJson.Write(nested) });
-        file["properties"] = new JsonArray(new JsonObject { ["name"] = "P", ["type"] = TypeJson.Write(nested) });
-        CollectionIdentityRecord.RecordMemberSlots(file);
-        if (!method.ContainsKey("collIdentityRet") || !method["params"][0].AsObject().ContainsKey("collIdentity"))
+        var method = new BirFunctionDeclaration { Name = "M", Static = true, Override = false, Virtual = false,
+            Params = new[] { new BirParameter { Name = "value", Type = nested } }, Ret = nested, Body = Array.Empty<IBirStatement>() };
+        var source = new BirFileDeclaration { FileClass = "Probe", HasMain = false, Methods = new[] { method },
+            Fields = new[] { new BirFieldDeclaration { Name = "F", Type = nested } },
+            Properties = new[] { new BirPropertyDeclaration { Name = "P", Type = nested } }, Types = Array.Empty<IBirTypeDeclaration>() };
+        CollectionIdentityRecord.RecordMemberSlots(source);
+        if (!method.CollIdentityRet.HasValue || !method.Params.Value[0].CollIdentity.HasValue)
             throw new Exception("Collection metadata handoff control did not exercise its producer");
+        var file = source.ToDom();
         RoundtripMetadata.PrepareMetadata(file, runtimeMode: false);
         AddCarrierDefinition(file, "KotlinCollectionIdentityAttribute");
         var declarations = ReadCirFileDeclaration(file);
