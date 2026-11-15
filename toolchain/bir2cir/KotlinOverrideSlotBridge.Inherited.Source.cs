@@ -70,6 +70,7 @@ static partial class KotlinOverrideSlotBridge
             SuspendResult = value.SuspendResult, DotktValueReturn = value.DotktValueReturn, Static = value.Static,
             Abstract = value.Abstract, Vis = value.Vis, KotlinSourceMember = value.KotlinSourceMember,
             ExistentialSourceMember = value.ExistentialSourceMember, PhysicalSlotBridge = value.PhysicalSlotBridge,
+            SuspendSourceParameters = value.SuspendSourceParams, SuspendSourceReturn = value.SuspendSourceRet,
         };
     }
 
@@ -114,6 +115,7 @@ static partial class KotlinOverrideSlotBridge
     static BirOverride[] HeaderOverrides(JsonArray value) => value?.OfType<JsonObject>().Select(edge => new BirOverride {
         Owner = ScalarType(edge, "owner"), Member = Scalar<string>(edge, "member"), Kind = Scalar<string>(edge, "kind"),
         Arity = Scalar<int>(edge, "arity"), DeclarationId = Scalar<string>(edge, DeclarationIdentityBinding.Key),
+        PhysicalDeclarationId = Scalar<string>(edge, "physicalDeclarationId"),
     }).ToArray();
     static SelectedMethodHeader HeaderFromDom(JsonObject value) => new() {
         DomSource = value,

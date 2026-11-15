@@ -750,6 +750,7 @@ internal static class BirGraphDom
                 case "kind": break;
                 case "arity": break;
                 case "declarationId": break;
+                case "physicalDeclarationId": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirOverride at {source.GetPath()}");
             }
         return new BirOverride
@@ -759,6 +760,7 @@ internal static class BirGraphDom
             Kind = Field<string>(fields, "kind", value => value!.GetValue<string>()),
             Arity = Field<int>(fields, "arity", value => value!.GetValue<int>()),
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+            PhysicalDeclarationId = Field<string>(fields, "physicalDeclarationId", value => value!.GetValue<string>()),
         };
     }
 
@@ -1688,6 +1690,8 @@ internal static class BirGraphDom
                 case "suspendResult": break;
                 case "suspendTaskResult": break;
                 case "suspendTaskOnlyBridge": break;
+                case "suspendSourceParams": break;
+                case "suspendSourceRet": break;
                 case "dotktValueReturn": break;
                 case "_ownerConstraintOverrideBounds": break;
                 case "_ownerConstraintDispatchBounds": break;
@@ -1776,6 +1780,8 @@ internal static class BirGraphDom
             SuspendResult = Field<TypeNode>(fields, "suspendResult", value => TypeNode.Parse(value!.GetValue<string>())),
             SuspendTaskResult = Field<TypeNode>(fields, "suspendTaskResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             SuspendTaskOnlyBridge = Field<bool>(fields, "suspendTaskOnlyBridge", value => value!.GetValue<bool>()),
+            SuspendSourceParams = Field<TypeNode[]>(fields, "suspendSourceParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            SuspendSourceRet = Field<TypeNode>(fields, "suspendSourceRet", value => TypeNode.Read(value) ?? throw new FormatException()),
             DotktValueReturn = Field<bool>(fields, "dotktValueReturn", value => value!.GetValue<bool>()),
             _ownerConstraintOverrideBounds = Field<OwnerConstraintOverrideBounds>(fields, "_ownerConstraintOverrideBounds", value => OwnerConstraintOverrideBounds.ReadFrozenText(value!.GetValue<string>())),
             _ownerConstraintDispatchBounds = Field<OwnerConstraintDispatchBounds>(fields, "_ownerConstraintDispatchBounds", value => OwnerConstraintDispatchBounds.ReadFrozenText(value!.GetValue<string>())),

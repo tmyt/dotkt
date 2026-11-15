@@ -319,7 +319,7 @@
       "properties": { "k": { "const": "defaultArg" } }, "required": ["k"], "additionalProperties": false
     },
     "birOverride": {
-      "type": "object", "x-dotkt-model": { "name": "BirOverride", "domain": "birCoreValues" },
+      "type": "object", "x-dotkt-model": { "name": "BirOverride", "domain": "birCoreValues", "loweringProperties": { "physicalDeclarationId": { "type": "string" } } },
       "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter", "event-add", "event-remove"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" } },
       "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
     },
@@ -564,6 +564,8 @@
         "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "suspendTaskResult": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
         "suspendTaskOnlyBridge": { "type": "boolean" },
+        "suspendSourceParams": { "x-dotkt-frame-role": "FrozenSourceFact", "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "suspendSourceRet": { "x-dotkt-frame-role": "FrozenSourceFact", "$ref": "#/$defs/type" },
         "dotktValueReturn": { "type": "boolean" },
         "_ownerConstraintOverrideBounds": { "type": "string", "x-dotkt-csharp-type": "OwnerConstraintOverrideBounds", "x-dotkt-csharp-codec": "OwnerConstraintOverrideBounds", "x-dotkt-json-content": "#/$defs/ownerConstraintOverrideBounds" },
         "_ownerConstraintDispatchBounds": { "$ref": "#/$defs/ownerConstraintDispatchBoundsText" },

@@ -4398,6 +4398,7 @@ internal sealed record BirOverride : BirGraphValue
     public OptionalField<string> Kind { get; set; }
     public OptionalField<int> Arity { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
+    public OptionalField<string> PhysicalDeclarationId { get; set; }
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -4420,6 +4421,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Member.HasValue) { visit((string)Member.Value); }
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
+        if (PhysicalDeclarationId.HasValue) { visit((string)PhysicalDeclarationId.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -4486,7 +4488,8 @@ internal sealed record BirOverride : BirGraphValue
             && EqualField(Member, value.Member, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Kind, value.Kind, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Arity, value.Arity, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
-            && EqualField(DeclarationId, value.DeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
+            && EqualField(DeclarationId, value.DeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(PhysicalDeclarationId, value.PhysicalDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -4495,6 +4498,7 @@ internal sealed record BirOverride : BirGraphValue
         WriteOptional(writer, "kind", Kind, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "arity", Arity, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "physicalDeclarationId", PhysicalDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -4505,6 +4509,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Kind.IsPresent) result["kind"] = Kind.IsNull ? null : JsonValue.Create(Kind.Value);
         if (Arity.IsPresent) result["arity"] = Arity.IsNull ? null : JsonValue.Create(Arity.Value);
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
+        if (PhysicalDeclarationId.IsPresent) result["physicalDeclarationId"] = PhysicalDeclarationId.IsNull ? null : JsonValue.Create(PhysicalDeclarationId.Value);
         projected?.Invoke(this, result);
         return result;
     }
@@ -9444,6 +9449,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<TypeNode> SuspendResult { get; set; }
     public OptionalField<TypeNode> SuspendTaskResult { get; set; }
     public OptionalField<bool> SuspendTaskOnlyBridge { get; set; }
+    public OptionalField<TypeNode[]> SuspendSourceParams { get; set; }
+    public OptionalField<TypeNode> SuspendSourceRet { get; set; }
     public OptionalField<bool> DotktValueReturn { get; set; }
     public OptionalField<OwnerConstraintOverrideBounds> _ownerConstraintOverrideBounds { get; set; }
     public OptionalField<OwnerConstraintDispatchBounds> _ownerConstraintDispatchBounds { get; set; }
@@ -9489,6 +9496,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (SuspendRet.HasValue) { visit("suspendRet", (TypeNode)SuspendRet.Value); }
         if (_syntheticTypeArgs.HasValue) { foreach (var item0 in _syntheticTypeArgs.Value) { visit("_syntheticTypeArgs", (TypeNode)item0); } }
         if (SuspendTaskResult.HasValue) { visit("suspendTaskResult", (TypeNode)SuspendTaskResult.Value); }
+        if (SuspendSourceParams.HasValue) { foreach (var item0 in SuspendSourceParams.Value) { visit("suspendSourceParams", (TypeNode)item0); } }
+        if (SuspendSourceRet.HasValue) { visit("suspendSourceRet", (TypeNode)SuspendSourceRet.Value); }
         if (PendingOverrideOwner.HasValue) { visit("pendingOverrideOwner", (TypeNode)PendingOverrideOwner.Value); }
         if (PendingOverrideReturn.HasValue) { visit("pendingOverrideReturn", (TypeNode)PendingOverrideReturn.Value); }
         if (RetSuspendFnType.HasValue) { visit("retSuspendFnType", (TypeNode)RetSuspendFnType.Value); }
@@ -9500,6 +9509,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (SuspendRet.HasValue) SuspendRet = OptionalField<TypeNode>.Of(rewrite("suspendRet", BirGenericFrameRole.Lexical, SuspendRet.Value));
         if (_syntheticTypeArgs.HasValue) _syntheticTypeArgs = OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => rewrite("_syntheticTypeArgs", BirGenericFrameRole.SyntheticApplication, item0)).ToArray());
         if (SuspendTaskResult.HasValue) SuspendTaskResult = OptionalField<TypeNode>.Of(rewrite("suspendTaskResult", BirGenericFrameRole.Lexical, SuspendTaskResult.Value));
+        if (SuspendSourceParams.HasValue) SuspendSourceParams = OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => rewrite("suspendSourceParams", BirGenericFrameRole.FrozenSourceFact, item0)).ToArray());
+        if (SuspendSourceRet.HasValue) SuspendSourceRet = OptionalField<TypeNode>.Of(rewrite("suspendSourceRet", BirGenericFrameRole.FrozenSourceFact, SuspendSourceRet.Value));
         if (PendingOverrideOwner.HasValue) PendingOverrideOwner = OptionalField<TypeNode>.Of(rewrite("pendingOverrideOwner", BirGenericFrameRole.Lexical, PendingOverrideOwner.Value));
         if (PendingOverrideReturn.HasValue) PendingOverrideReturn = OptionalField<TypeNode>.Of(rewrite("pendingOverrideReturn", BirGenericFrameRole.Lexical, PendingOverrideReturn.Value));
         if (RetSuspendFnType.HasValue) RetSuspendFnType = OptionalField<TypeNode>.Of(rewrite("retSuspendFnType", BirGenericFrameRole.Lexical, RetSuspendFnType.Value));
@@ -9522,6 +9533,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (RoundtripDeclarationIdentity.HasValue) { visit("roundtripDeclarationIdentity", BirGenericFrameRole.FrozenSourceFact, new BirGraphSlot(() => (BirGraphValue)RoundtripDeclarationIdentity.Value!, replacement => RoundtripDeclarationIdentity = OptionalField<BirRoundtripDeclarationIdentity>.Of((BirRoundtripDeclarationIdentity)replacement))); }
         if (ExistentialInnerConstructorFactory.HasValue) { visit("existentialInnerConstructorFactory", BirGenericFrameRole.FrozenSourceFact, new BirGraphSlot(() => (BirGraphValue)ExistentialInnerConstructorFactory.Value!, replacement => ExistentialInnerConstructorFactory = OptionalField<BirInnerConstructorFactory>.Of((BirInnerConstructorFactory)replacement))); }
         if (SuspendTaskResult.HasValue) SuspendTaskResult = OptionalField<TypeNode>.Of(rewrite("suspendTaskResult", BirGenericFrameRole.Lexical, SuspendTaskResult.Value));
+        if (SuspendSourceParams.HasValue) SuspendSourceParams = OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => rewrite("suspendSourceParams", BirGenericFrameRole.FrozenSourceFact, item0)).ToArray());
+        if (SuspendSourceRet.HasValue) SuspendSourceRet = OptionalField<TypeNode>.Of(rewrite("suspendSourceRet", BirGenericFrameRole.FrozenSourceFact, SuspendSourceRet.Value));
         if (PendingOverrideOwner.HasValue) PendingOverrideOwner = OptionalField<TypeNode>.Of(rewrite("pendingOverrideOwner", BirGenericFrameRole.Lexical, PendingOverrideOwner.Value));
         if (PendingOverrideReturn.HasValue) PendingOverrideReturn = OptionalField<TypeNode>.Of(rewrite("pendingOverrideReturn", BirGenericFrameRole.Lexical, PendingOverrideReturn.Value));
         if (KotlinPropertyAccessorCarrier.HasValue) { visit("kotlinPropertyAccessorCarrier", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinPropertyAccessorCarrier.Value!, replacement => KotlinPropertyAccessorCarrier = OptionalField<EventPropertySourceFacts>.Of((EventPropertySourceFacts)replacement))); }
@@ -9550,6 +9563,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (_syntheticTypeArgs.HasValue) { foreach (var item0 in _syntheticTypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ExistentialSourceMember.HasValue) { visit((string)ExistentialSourceMember.Value); }
         if (SuspendTaskResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SuspendTaskResult.Value, visit); }
+        if (SuspendSourceParams.HasValue) { foreach (var item0 in SuspendSourceParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
+        if (SuspendSourceRet.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SuspendSourceRet.Value, visit); }
         if (ExtensionCoreDeclarationId.HasValue) { visit((string)ExtensionCoreDeclarationId.Value); }
         if (DeclarationSourceName.HasValue) { visit((string)DeclarationSourceName.Value); }
         if (KotlinSourceMember.HasValue) { visit((string)KotlinSourceMember.Value); }
@@ -9570,6 +9585,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (SuspendRet.HasValue) { BirGraphNameFields.VisitType((TypeNode)SuspendRet.Value, visit); }
         if (_syntheticTypeArgs.HasValue) { foreach (var item0 in _syntheticTypeArgs.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
         if (SuspendTaskResult.HasValue) { BirGraphNameFields.VisitType((TypeNode)SuspendTaskResult.Value, visit); }
+        if (SuspendSourceParams.HasValue) { foreach (var item0 in SuspendSourceParams.Value) { BirGraphNameFields.VisitType((TypeNode)item0, visit); } }
+        if (SuspendSourceRet.HasValue) { BirGraphNameFields.VisitType((TypeNode)SuspendSourceRet.Value, visit); }
         if (PendingOverrideOwner.HasValue) { BirGraphNameFields.VisitType((TypeNode)PendingOverrideOwner.Value, visit); }
         if (PendingOverrideReturn.HasValue) { BirGraphNameFields.VisitType((TypeNode)PendingOverrideReturn.Value, visit); }
         if (RetSuspendFnType.HasValue) { BirGraphNameFields.VisitType((TypeNode)RetSuspendFnType.Value, visit); }
@@ -9701,6 +9718,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         NullableWitnessIndices = NullableWitnessIndices.HasValue ? OptionalField<int[]>.Of(NullableWitnessIndices.Value.Select(item0 => item0).ToArray()) : NullableWitnessIndices,
         SuspendResult = SuspendResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendResult.Value)) : SuspendResult,
         SuspendTaskResult = SuspendTaskResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendTaskResult.Value)) : SuspendTaskResult,
+        SuspendSourceParams = SuspendSourceParams.HasValue ? OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => CopyType(item0)).ToArray()) : SuspendSourceParams,
+        SuspendSourceRet = SuspendSourceRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendSourceRet.Value)) : SuspendSourceRet,
         RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetKotlinType.Value)) : RetKotlinType,
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
         NullableGenericSuspendRet = NullableGenericSuspendRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericSuspendRet.Value)) : NullableGenericSuspendRet,
@@ -9723,6 +9742,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendRet.Value)) : SuspendRet,
         _syntheticTypeArgs = _syntheticTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : _syntheticTypeArgs,
         SuspendTaskResult = SuspendTaskResult.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendTaskResult.Value)) : SuspendTaskResult,
+        SuspendSourceParams = SuspendSourceParams.HasValue ? OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => rewrite(item0)).ToArray()) : SuspendSourceParams,
+        SuspendSourceRet = SuspendSourceRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendSourceRet.Value)) : SuspendSourceRet,
         PendingOverrideOwner = PendingOverrideOwner.HasValue ? OptionalField<TypeNode>.Of(rewrite(PendingOverrideOwner.Value)) : PendingOverrideOwner,
         PendingOverrideReturn = PendingOverrideReturn.HasValue ? OptionalField<TypeNode>.Of(rewrite(PendingOverrideReturn.Value)) : PendingOverrideReturn,
         RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(rewrite(RetSuspendFnType.Value)) : RetSuspendFnType,
@@ -9749,6 +9770,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         CollIdentityRet = CollIdentityRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CollIdentityRet.Value)) : CollIdentityRet,
         SuspendResult = SuspendResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendResult.Value)) : SuspendResult,
         SuspendTaskResult = SuspendTaskResult.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendTaskResult.Value)) : SuspendTaskResult,
+        SuspendSourceParams = SuspendSourceParams.HasValue ? OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => type(BirGenericFrameRole.FrozenSourceFact, item0)).ToArray()) : SuspendSourceParams,
+        SuspendSourceRet = SuspendSourceRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendSourceRet.Value)) : SuspendSourceRet,
         RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, RetKotlinType.Value)) : RetKotlinType,
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGenericRet.Value)) : NullableGenericRet,
         NullableGenericSuspendRet = NullableGenericSuspendRet.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, NullableGenericSuspendRet.Value)) : NullableGenericSuspendRet,
@@ -9768,6 +9791,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (SuspendRet.HasValue) SuspendRet = OptionalField<TypeNode>.Of(rewrite(SuspendRet.Value));
         if (_syntheticTypeArgs.HasValue) _syntheticTypeArgs = OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray());
         if (SuspendTaskResult.HasValue) SuspendTaskResult = OptionalField<TypeNode>.Of(rewrite(SuspendTaskResult.Value));
+        if (SuspendSourceParams.HasValue) SuspendSourceParams = OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => rewrite(item0)).ToArray());
+        if (SuspendSourceRet.HasValue) SuspendSourceRet = OptionalField<TypeNode>.Of(rewrite(SuspendSourceRet.Value));
         if (PendingOverrideOwner.HasValue) PendingOverrideOwner = OptionalField<TypeNode>.Of(rewrite(PendingOverrideOwner.Value));
         if (PendingOverrideReturn.HasValue) PendingOverrideReturn = OptionalField<TypeNode>.Of(rewrite(PendingOverrideReturn.Value));
         if (RetSuspendFnType.HasValue) RetSuspendFnType = OptionalField<TypeNode>.Of(rewrite(RetSuspendFnType.Value));
@@ -9794,6 +9819,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (CollIdentityRet.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)CollIdentityRet.Value); }
         if (SuspendResult.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)SuspendResult.Value); }
         if (SuspendTaskResult.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)SuspendTaskResult.Value); }
+        if (SuspendSourceParams.HasValue) { foreach (var item0 in SuspendSourceParams.Value) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)item0); } }
+        if (SuspendSourceRet.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)SuspendSourceRet.Value); }
         if (RetKotlinType.HasValue) { type(BirGenericFrameRole.StorageSourceType, (TypeNode)RetKotlinType.Value); }
         if (NullableGenericRet.HasValue) { type(BirGenericFrameRole.StorageSourceType, (TypeNode)NullableGenericRet.Value); }
         if (NullableGenericSuspendRet.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)NullableGenericSuspendRet.Value); }
@@ -9829,6 +9856,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (CollIdentityRet.HasValue) { CollIdentityRet = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, CollIdentityRet.Value)); }
         if (SuspendResult.HasValue) { SuspendResult = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendResult.Value)); }
         if (SuspendTaskResult.HasValue) { SuspendTaskResult = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, SuspendTaskResult.Value)); }
+        if (SuspendSourceParams.HasValue) { SuspendSourceParams = OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => type(BirGenericFrameRole.FrozenSourceFact, item0)).ToArray()); }
+        if (SuspendSourceRet.HasValue) { SuspendSourceRet = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendSourceRet.Value)); }
         if (RetKotlinType.HasValue) { RetKotlinType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, RetKotlinType.Value)); }
         if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.StorageSourceType, NullableGenericRet.Value)); }
         if (NullableGenericSuspendRet.HasValue) { NullableGenericSuspendRet = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, NullableGenericSuspendRet.Value)); }
@@ -9860,6 +9889,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (RoundtripDeclarationIdentity.HasValue) { child(BirGenericFrameRole.FrozenSourceFact, BirRepresentationRole.Lexical, (BirGraphValue)RoundtripDeclarationIdentity.Value); }
         if (ExistentialInnerConstructorFactory.HasValue) { child(BirGenericFrameRole.FrozenSourceFact, BirRepresentationRole.Lexical, (BirGraphValue)ExistentialInnerConstructorFactory.Value); }
         if (SuspendTaskResult.HasValue) { SuspendTaskResult = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Return, SuspendTaskResult.Value)); }
+        if (SuspendSourceParams.HasValue) { SuspendSourceParams = OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => type(BirGenericFrameRole.FrozenSourceFact, BirRepresentationRole.Lexical, item0)).ToArray()); }
+        if (SuspendSourceRet.HasValue) { SuspendSourceRet = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, BirRepresentationRole.Lexical, SuspendSourceRet.Value)); }
         if (PendingOverrideOwner.HasValue) { PendingOverrideOwner = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, PendingOverrideOwner.Value)); }
         if (PendingOverrideReturn.HasValue) { PendingOverrideReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, PendingOverrideReturn.Value)); }
         if (KotlinPropertyAccessorCarrier.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)KotlinPropertyAccessorCarrier.Value); }
@@ -9892,6 +9923,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (CollIdentityRet.HasValue) { CollIdentityRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, CollIdentityRet.Value)); }
         if (SuspendResult.HasValue) { SuspendResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendResult.Value)); }
         if (SuspendTaskResult.HasValue) { SuspendTaskResult = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendTaskResult.Value)); }
+        if (SuspendSourceParams.HasValue) { SuspendSourceParams = OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => type(BirOwnershipRole.Lexical, item0)).ToArray()); }
+        if (SuspendSourceRet.HasValue) { SuspendSourceRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, SuspendSourceRet.Value)); }
         if (RetKotlinType.HasValue) { RetKotlinType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, RetKotlinType.Value)); }
         if (NullableGenericRet.HasValue) { NullableGenericRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericRet.Value)); }
         if (NullableGenericSuspendRet.HasValue) { NullableGenericSuspendRet = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, NullableGenericSuspendRet.Value)); }
@@ -9954,6 +9987,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(SuspendResult, value.SuspendResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(SuspendTaskResult, value.SuspendTaskResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(SuspendTaskOnlyBridge, value.SuspendTaskOnlyBridge, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(SuspendSourceParams, value.SuspendSourceParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
+            && EqualField(SuspendSourceRet, value.SuspendSourceRet, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(DotktValueReturn, value.DotktValueReturn, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_ownerConstraintOverrideBounds, value._ownerConstraintOverrideBounds, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(_ownerConstraintDispatchBounds, value._ownerConstraintDispatchBounds, (left, right) => left.FrozenText == right.FrozenText)
@@ -10041,6 +10076,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "suspendResult", SuspendResult, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "suspendTaskResult", SuspendTaskResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "suspendTaskOnlyBridge", SuspendTaskOnlyBridge, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "suspendSourceParams", SuspendSourceParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "suspendSourceRet", SuspendSourceRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "dotktValueReturn", DotktValueReturn, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_ownerConstraintOverrideBounds", _ownerConstraintOverrideBounds, (writer, value) => { OwnerConstraintOverrideBounds.Write(writer, value); });
         WriteOptional(writer, "_ownerConstraintDispatchBounds", _ownerConstraintDispatchBounds, (writer, value) => { OwnerConstraintDispatchBounds.Write(writer, value); });
@@ -10130,6 +10167,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (SuspendResult.IsPresent) result["suspendResult"] = SuspendResult.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendResult.Value));
         if (SuspendTaskResult.IsPresent) result["suspendTaskResult"] = SuspendTaskResult.IsNull ? null : TypeNode.Write(SuspendTaskResult.Value);
         if (SuspendTaskOnlyBridge.IsPresent) result["suspendTaskOnlyBridge"] = SuspendTaskOnlyBridge.IsNull ? null : JsonValue.Create(SuspendTaskOnlyBridge.Value);
+        if (SuspendSourceParams.IsPresent) result["suspendSourceParams"] = SuspendSourceParams.IsNull ? null : new JsonArray(SuspendSourceParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (SuspendSourceRet.IsPresent) result["suspendSourceRet"] = SuspendSourceRet.IsNull ? null : TypeNode.Write(SuspendSourceRet.Value);
         if (DotktValueReturn.IsPresent) result["dotktValueReturn"] = DotktValueReturn.IsNull ? null : JsonValue.Create(DotktValueReturn.Value);
         if (_ownerConstraintOverrideBounds.IsPresent) result["_ownerConstraintOverrideBounds"] = _ownerConstraintOverrideBounds.IsNull ? null : OwnerConstraintOverrideBounds.ToDom(_ownerConstraintOverrideBounds.Value);
         if (_ownerConstraintDispatchBounds.IsPresent) result["_ownerConstraintDispatchBounds"] = _ownerConstraintDispatchBounds.IsNull ? null : OwnerConstraintDispatchBounds.ToDom(_ownerConstraintDispatchBounds.Value);
