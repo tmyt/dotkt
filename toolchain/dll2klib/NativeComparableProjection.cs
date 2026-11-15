@@ -48,7 +48,8 @@ internal sealed partial class AssemblyScanner
                     });
                     var view = InheritedFunction(new InheritedDefaultImplementation(target.Reader, declaration,
                         "CompareTo", sourceType.Argument.Select(argument => argument.Type).ToImmutableArray(),
-                        targetDecoder, null, 0, null, "", false, 0, false), "compareTo", 2, names);
+                        targetDecoder, null, 0, null, "", false, 0, false), "compareTo", 2, names,
+                        argumentSignatures: decoder);
                     var binding = ClrExternalAnnotation(names, owner);
                     AddTarget("memberOwner", TypeNode.ToJson(physicalType));
                     AddTarget("memberName", target.Reader.GetString(target.Reader.GetMethodDefinition(declaration).Name));

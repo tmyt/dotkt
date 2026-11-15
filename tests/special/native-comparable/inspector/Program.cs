@@ -63,6 +63,21 @@ foreach (var (inputIndex, typeName, expected) in cases) {
             throw new Exception("A source-only view was assigned a fabricated declaration identity");
         using var target = JsonDocument.Parse(facts["memberOwner"]);
         if (target.RootElement.GetProperty("name").GetString() != "System.IComparable`1") throw new Exception("Target lost its exact native owner");
+        var parameter = Get(Items(view, "ValueParameter").Single(), "Type");
+        if (typeName == "PermutedOrder`2") {
+            void RequireBoxArgument(object type) {
+                var argument = Get(Items(type, "Argument").Single(), "Type");
+                if (!(bool)Get(type, "Nullable") || !(bool)Get(argument, "HasTypeParameter") ||
+                    (int)Get(argument, "TypeParameter") != 1 || (bool)Get(argument, "Nullable"))
+                    throw new Exception("Declaration T? must annotate only Box<!1>?, not its inserted argument");
+            }
+            RequireBoxArgument(parameter);
+            RequireBoxArgument(Get(Items(original.Single(), "ValueParameter").Single(), "Type"));
+        }
+        if (typeName is "DateTime" or "MutableOrder" && (bool)Get(parameter, "Nullable"))
+            throw new Exception("A value-type contract argument became nullable");
+        if (typeName == "DualOrder" && (bool)Get(parameter, "Nullable") != facts["memberOwner"].Contains("System.String"))
+            throw new Exception("Constructed reference/value argument nullability changed");
         owners.Add(facts["memberOwner"]);
     }
     if (owners.Distinct().Count() != operators.Length) throw new Exception("Constructed contracts collapsed");

@@ -3809,7 +3809,9 @@ internal sealed partial class AssemblyScanner : IDisposable
         MethodDefinition method,
         ImmutableArray<KType> types,
         NameTable names,
-        SignatureDecoder signatures)
+        SignatureDecoder signatures,
+        ImmutableArray<KType> substitutedDeclarationTypes = default,
+        SignatureDecoder? argumentSignatures = null)
     {
         var rows = method.GetParameters()
             .Select(handle => (Handle: handle, Row: reader.GetParameter(handle)))
@@ -3817,20 +3819,26 @@ internal sealed partial class AssemblyScanner : IDisposable
             .ToDictionary(parameter => parameter.Row.SequenceNumber);
         for (var i = 0; i < types.Length; i++)
         {
+            // A declaration's single T slot contributes only outer NRT after
+            // substitution; it does not annotate the inserted argument tree.
+            var outerNullabilityOnly = !substitutedDeclarationTypes.IsDefault &&
+                substitutedDeclarationTypes[i].HasTypeParameter;
             if (!rows.TryGetValue(i + 1, out var entry))
             {
                 yield return new ValueParameter
                 {
                     Name = names.String($"arg{i}"),
                     Type = ProjectInheritedType(
-                        reader, default, types[i], methodHandle, signatures),
+                        reader, default, types[i], methodHandle, signatures,
+                        outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentSignatures),
                 };
                 continue;
             }
             var attrs = signatures.Attributes;
             var name = entry.Row.Name.IsNil ? $"arg{i}" : reader.GetString(entry.Row.Name);
             var type = ProjectInheritedType(
-                reader, entry.Handle, types[i], methodHandle, signatures);
+                reader, entry.Handle, types[i], methodHandle, signatures,
+                outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentSignatures);
             var value = new ValueParameter
             {
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
@@ -3851,7 +3859,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         InheritedDefaultImplementation inherited,
         string name,
         int kotlinFlags,
-        NameTable names)
+        NameTable names,
+        SignatureDecoder? argumentSignatures = null)
     {
         var reader = inherited.Reader;
         var declarationHandle = inherited.Declaration;
@@ -3891,7 +3900,9 @@ internal sealed partial class AssemblyScanner : IDisposable
                     declaration,
                     parameterTypes,
                     names,
-                    inherited.Signatures)
+                    inherited.Signatures,
+                    argumentSignatures is not null ? signature.ParameterTypes : default,
+                    argumentSignatures)
             },
         };
         AddInheritedMethodTypeParameters(
@@ -3918,7 +3929,9 @@ internal sealed partial class AssemblyScanner : IDisposable
         KType physical,
         EntityHandle contextOwner,
         SignatureDecoder signatures,
-        bool flowContract = false)
+        bool flowContract = false,
+        bool outerNullabilityOnly = false,
+        SignatureDecoder? argumentSignatures = null)
     {
         var attrs = signatures.Attributes;
         TypeNode? exact = null;
@@ -3954,6 +3967,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             "KotlinTypeAttribute" => result,
             "KotlinSuspendFunctionTypeAttribute" or "KotlinNullableGenericAttribute"
                 => signatures.ApplyOuterNullability(result, bytes, contextByte),
+            _ when outerNullabilityOnly => (argumentSignatures ?? signatures).ApplyOuterNullability(result, bytes, contextByte),
             _ => signatures.ApplyNullability(result, bytes, contextByte),
         };
         if (flowContract && attrs.Has(slot, MetadataAttributes.MaybeNull, requireTrust: false))
