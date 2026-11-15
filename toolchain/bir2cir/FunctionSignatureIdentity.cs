@@ -42,7 +42,7 @@ static class FunctionSignatureIdentity
     internal static TypeNode SignatureType(BirParameter parameter) => SignatureType(
         parameter.Type.OrDefault(), parameter.FunctionSignatureType.OrDefault());
 
-    static TypeNode SignatureType(TypeNode type, TypeNode discriminator) => type == null
+    internal static TypeNode SignatureType(TypeNode type, TypeNode discriminator) => type == null
         ? throw new InvalidOperationException("A physical declaration parameter has no type")
         : discriminator != null ? new TypeNode.Mod(false, DeclarationType(discriminator), type) : BirGraphValue.CopyType(type);
 

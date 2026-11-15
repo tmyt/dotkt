@@ -563,6 +563,7 @@
         "nullableWitnessIndices": { "type": "array", "items": { "type": "integer" } },
         "suspendResult": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "suspendTaskResult": { "x-dotkt-representation-role": "Return", "$ref": "#/$defs/type" },
+        "suspendTaskOnlyBridge": { "type": "boolean" },
         "dotktValueReturn": { "type": "boolean" },
         "_ownerConstraintOverrideBounds": { "type": "string", "x-dotkt-csharp-type": "OwnerConstraintOverrideBounds", "x-dotkt-csharp-codec": "OwnerConstraintOverrideBounds", "x-dotkt-json-content": "#/$defs/ownerConstraintOverrideBounds" },
         "_ownerConstraintDispatchBounds": { "$ref": "#/$defs/ownerConstraintDispatchBoundsText" },

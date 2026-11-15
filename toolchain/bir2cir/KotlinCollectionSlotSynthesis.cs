@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
+using SelectedParameterHeader = KotlinOverrideSlotBridge.SelectedParameterHeader;
 
 // KOTLIN-ONLY collection-interface slots — the mirror image of CollectionBclSlotSynthesis.
 //
@@ -227,84 +228,6 @@ static partial class KotlinCollectionSlotSynthesis
             && (slot.DeclaringInterface == MutableList && slot.EraseReturn
                 || slot.DeclaringInterface == MutableCollection && slot.Member == "add"));
 
-    sealed class Def
-    {
-        public string Name;
-        public string Kind;
-        public JsonObject Node;
-        public JsonArray Methods;
-        public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
-        public TypeNode.Fqn Base;
-        public int Arity;
-    }
-
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
-    {
-        var rootList = roots.ToList();
-        var inherited = KotlinOverrideSlotBridge.SelectedInheritedCollectionMethods(rootList, refs, isValue);
-        var defs = new Dictionary<string, Def>(StringComparer.Ordinal);
-        foreach (var root in rootList) Collect(root, defs);
-        foreach (var def in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyType(def, defs, inherited.TryGetValue(def.Name, out var methods) ? methods : null, refs);
-    }
-
-    static void Collect(JsonNode node, Dictionary<string, Def> defs)
-    {
-        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            if (Str(type["name"]) is string name)
-                defs[name] = new Def
-                {
-                    Name = name,
-                    Kind = Str(type["kind"]),
-                    Node = type,
-                    Methods = type["methods"] as JsonArray,
-                    Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
-                        .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),
-                    Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                    Arity = TypeParameterFrame.Count(type),
-                };
-            Collect(type, defs);
-        }
-    }
-
-    static void ApplyType(Def cls, IReadOnlyDictionary<string, Def> defs,
-        IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods, ReferenceMetadataIndex refs)
-    {
-        if (cls.Methods == null) return;
-        // An unchanged inherited implementation can reuse its base's bridge. A new source override needs its own
-        // interface mapping: its physical signature can differ from the erased generic base declaration.
-        var inherited = InheritedSlots(cls, defs);
-
-        var newBridges = new List<JsonObject>();
-        var wanted = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var slot in Slots)
-        {
-            if (inherited.Members.Contains(SlotKey(slot)) && DeclaresConcretely(cls, slot) == null) continue;
-            // Does this class PARTICIPATE in the slot? Exactly when a declaration reachable from it overrides the
-            // Kotlin member: its own first, else a concrete declaration in its local supertype closure (a base-class
-            // body, or an interface DEFAULT method for which the frontend emits nothing on the implementing class).
-            if (!TryResolveImplementation(cls, slot, defs, inheritedMethods, out var target)) continue;
-            if (cls.Methods.OfType<JsonObject>().Any(m => Str(m["name"]) == slot.Bridge)) continue;
-            newBridges.Add(Bridge(cls, slot, target, defs, refs));
-            wanted.Add(slot.SlotInterface);
-        }
-        if (newBridges.Count == 0) return;
-
-        if (cls.Node["interfaces"] is not JsonArray ifaces)
-        {
-            ifaces = new JsonArray();
-            cls.Node["interfaces"] = ifaces;
-        }
-        foreach (var iface in wanted)
-        {
-            if (!ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn f && f.Name == iface))
-                ifaces.Add(TypeJson.Fqn(iface));
-        }
-        foreach (var bridge in newBridges) cls.Methods.Add(bridge);
-    }
-
     /// <summary>The exact slot members a LOCAL base class already provides, plus inherited carrier interfaces.</summary>
     ///
     /// A carrier groups several independent Kotlin members, so inheriting one bridge cannot suppress synthesis of
@@ -318,82 +241,6 @@ static partial class KotlinCollectionSlotSynthesis
 
     static string SlotKey(Slot slot) => slot.SlotInterface + "\0" + slot.SlotMember;
 
-    static InheritedSlotState InheritedSlots(Def cls, IReadOnlyDictionary<string, Def> defs)
-    {
-        var found = new InheritedSlotState();
-        var seen = new HashSet<string>(StringComparer.Ordinal) { cls.Name };
-        for (var baseSpec = cls.Base; baseSpec != null && seen.Add(baseSpec.Name);)
-        {
-            if (!defs.TryGetValue(baseSpec.Name, out var local)) break;
-            foreach (var i in local.Interfaces)
-                if (SlotInterfaces.Contains(i.Name)) found.Interfaces.Add(i.Name);
-            // A local base not yet visited still ANSWERS for its own declarations: the decision below is
-            // declaration-driven, so a base that WILL receive the interface is detected by the same predicate
-            // rather than by visit order.
-            foreach (var slot in Slots)
-                if (DeclaresConcretely(local, slot) != null) found.Members.Add(SlotKey(slot));
-            if (local.Methods != null)
-                foreach (var method in local.Methods.OfType<JsonObject>())
-                    if (method["clrInterfaceImpls"] is JsonArray implementations)
-                        foreach (var implementation in implementations.OfType<JsonObject>())
-                            if (TypeJson.Read(implementation["owner"]) is TypeNode.Fqn owner
-                                && Str(implementation["member"]) is string member)
-                                found.Members.Add(owner.Name + "\0" + member);
-            baseSpec = local.Base;
-        }
-        return found;
-    }
-
-    /// <summary>Where the slot's Kotlin member is really implemented, expressed in this class's own frame.</summary>
-    static bool TryResolveImplementation(Def cls, Slot slot, IReadOnlyDictionary<string, Def> defs,
-        IReadOnlyList<(TypeNode.Fqn Owner, JsonObject Method)> inheritedMethods,
-        out (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target)
-    {
-        target = default;
-        // 1. This class's own declaration wins, and it is the common case.
-        if (DeclaresConcretely(cls, slot) is JsonObject own)
-        {
-            target = (SelfOwner(cls), own, false);
-            return true;
-        }
-        var selected = inheritedMethods?.Where(method => Overrides(method.Method, slot)).ToList();
-        if (selected is { Count: 1 })
-        {
-            target = (selected[0].Owner, selected[0].Method, true);
-            return true;
-        }
-        // 2. Otherwise the implementation is inherited. Walk the LOCAL supertype closure — base classes and
-        //    interfaces alike — for a concrete declaration overriding the same member: a base-class body, or an
-        //    interface DEFAULT method (`interface I<E> : MutableCollection<E> { override fun removeAll(…) = … }`).
-        //    An EXTERNAL supertype is never searched: an interface default compiled by this pass carries the capability
-        //    interface and DIM bridge itself, so the CLR inherits it without reconstructing Kotlin semantics here.
-        foreach (var (spec, def) in LocalSupertypeClosure(cls, defs))
-        {
-            if (DeclaresConcretely(def, slot) is not JsonObject inheritedMethod) continue;
-            target = (spec, inheritedMethod, false);
-            return true;
-        }
-        return false;
-    }
-
-    /// <summary>A CONCRETE declaration of the slot's Kotlin member, identified by the frontend override chain.</summary>
-    static JsonObject DeclaresConcretely(Def def, Slot slot)
-    {
-        if (def.Methods == null) return null;
-        var matches = def.Methods.OfType<JsonObject>()
-            .Where(m => !Bool(m["static"]) && !Bool(m["abstract"]) && Overrides(m, slot))
-            .ToList();
-        if (matches.Count > 1)
-            throw new InvalidOperationException(
-                $"bir2cir: '{def.Name}' has {matches.Count} concrete declarations overriding "
-                + $"'{slot.DeclaringInterface}.{slot.Member}' — the Kotlin slot to implement is ambiguous. That is a "
-                + "frontend-fact defect, not something to resolve by picking one.");
-        return matches.Count == 1 ? matches[0] : null;
-    }
-
-    static bool Overrides(JsonObject method, Slot slot) =>
-        method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>().Any(o => MatchesOverride(o, slot));
-
     static bool MatchesOverride(JsonObject marker, Slot slot) =>
         MatchesOverride(TypeJson.Read(marker["owner"]), Str(marker["member"]), Str(marker["kind"]),
             marker["arity"] is JsonValue value && value.TryGetValue<int>(out var arity) ? arity : null, slot);
@@ -401,189 +248,6 @@ static partial class KotlinCollectionSlotSynthesis
     static bool MatchesOverride(TypeNode type, string member, string kind, int? arity, Slot slot) =>
         type is TypeNode.Fqn owner && owner.Name == slot.DeclaringInterface
         && member == slot.Member && kind == slot.Kind && arity == slot.Arity;
-
-    /// <summary>Base classes then interfaces, transitively, each constructed in the starting class's own frame.</summary>
-    static IEnumerable<(TypeNode.Fqn Spec, Def Def)> LocalSupertypeClosure(Def cls,
-        IReadOnlyDictionary<string, Def> defs)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal) { cls.Name };
-        var queue = new Queue<TypeNode.Fqn>();
-        void Enqueue(Def from, TypeNode[] args)
-        {
-            if (from.Base != null) queue.Enqueue((TypeNode.Fqn)Subst(from.Base, args));
-            foreach (var i in from.Interfaces) queue.Enqueue((TypeNode.Fqn)Subst(i, args));
-        }
-        Enqueue(cls, OwnArgs(cls));
-        while (queue.Count > 0)
-        {
-            var spec = queue.Dequeue();
-            if (!seen.Add(spec.Name) || !defs.TryGetValue(spec.Name, out var def)) continue;
-            yield return (spec, def);
-            var args = spec.Args ?? Array.Empty<TypeNode>();
-            if (args.Length == def.Arity) Enqueue(def, args);
-        }
-    }
-
-    /// <summary>
-    /// `private bool dotkt$slot$&lt;member&gt;(object p0[, int index]) { return this.&lt;member&gt;((&lt;declared&gt;)p0, …) }`.
-    ///
-    /// The erased `Any` parameter is what makes the capability test instantiation-independent. An element is
-    /// cast/unboxed to the OVERRIDDEN member's declared E; Collection values already share the opaque slot ABI and
-    /// retain their original reference. The forward is VIRTUAL: the bridge is inherited by
-    /// subclasses and must reach the most-derived override.
-    /// </summary>
-    static JsonObject Bridge(Def cls, Slot slot, (TypeNode.Fqn Owner, JsonObject Method, bool Closed) target,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
-    {
-        var parameterDeclarations = (target.Method["params"] as JsonArray)?.OfType<JsonObject>().ToArray()
-            ?? Array.Empty<JsonObject>();
-        var declaredParams = parameterDeclarations.Select(p => TypeJson.Read(p["type"])).ToArray();
-        if (declaredParams.Length != slot.Arity || declaredParams.Any(p => p == null)
-            || (slot.Arity != 0 && slot.Parameters.Length != slot.Arity))
-            throw new InvalidOperationException(
-                $"bir2cir: the declaration implementing '{slot.DeclaringInterface}.{slot.Member}' on '{cls.Name}' has "
-                + $"{declaredParams.Length} readable parameter(s), but the slot declares {slot.Arity} parameter(s) and "
-                + $"{slot.Parameters.Length} carrier fact(s).");
-        var ownerArgs = target.Owner.Args ?? Array.Empty<TypeNode>();
-        TypeNode InCaller(TypeNode type) => target.Closed ? type : Subst(type, ownerArgs);
-        TypeNode QueryGuard(int index)
-        {
-            var parameter = parameterDeclarations[index];
-            if (!target.Closed && UsesErasedQueryCarrier(declaredParams[index])
-                && defs.TryGetValue(target.Owner.Name, out var owner)
-                && Str(parameter["kotlinType"] ?? parameter["nullableGeneric"]) is string semantic
-                && GenericQueryBound(TypeNode.Parse(semantic), target.Method, owner.Node,
-                    type => type is TypeNode.Fqn named && (defs.TryGetValue(named.Name, out var definition)
-                        ? definition.Kind == "interface" : refs?.IsInterfaceType(named) == true),
-                    refs?.NullableTypeFrames) is { } bound)
-                return InCaller(bound);
-            return InCaller(QueryGuardType(declaredParams[index], parameter));
-        }
-        var bridgeParams = new JsonArray();
-        var slotParams = new JsonArray();
-        var callSig = new JsonArray();
-        var callArgs = new JsonArray();
-        for (var i = 0; i < declaredParams.Length; i++)
-        {
-            var declared = InCaller(declaredParams[i]);
-            // The ERASED positions are the ones the SLOT INTERFACE declares as `Any`; `MutableList.addAll(index,
-            // elements)`'s leading `Int` index stays verbatim. Both facts come from the Kotlin slot declaration, not
-            // from inspecting what a parameter type happens to look like.
-            var carrier = slot.Parameters[i];
-            var erase = carrier != ParameterCarrier.Exact;
-            var name = "p" + i;
-            var anyNullable = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-            var remapping = new TypeNode.Fn(false, anyNullable, new TypeNode[] { anyNullable, anyNullable });
-            var slotParam = carrier == ParameterCarrier.MapRemapping
-                ? TypeJson.Write(remapping)
-                : erase ? TypeJson.Fqn("kotlin.Any") : TypeJson.Write(declared);
-            var parameter = new JsonObject { ["name"] = name, ["type"] = Clone(slotParam) };
-            if (carrier == ParameterCarrier.MapRemapping)
-                parameter[FunctionSignatureIdentity.Key] = TypeJson.Write(remapping);
-            bridgeParams.Add(parameter);
-            slotParams.Add(carrier == ParameterCarrier.MapRemapping
-                ? TypeJson.Write(new TypeNode.Mod(false, FunctionSignatureIdentity.DeclarationType(remapping), remapping))
-                : Clone(slotParam));
-            callSig.Add(TypeJson.Write(declared));
-            callArgs.Add(carrier switch
-            {
-                ParameterCarrier.Exact => Local(name),
-                ParameterCarrier.ErasedValue => new JsonObject
-                    { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) },
-                ParameterCarrier.ErasedInput => new JsonObject
-                    { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) },
-                ParameterCarrier.MapRemapping => new JsonObject
-                    { ["k"] = "cast", ["type"] = TypeJson.Write(declared), ["e"] = Local(name) },
-                ParameterCarrier.ErasedCollection => CollectionArgument(slot,
-                    (JsonObject)target.Method["params"][i], declared, name),
-                _ => throw new InvalidOperationException($"bir2cir: unknown collection slot carrier {carrier}"),
-            });
-        }
-
-        var targetRet = InCaller(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"));
-        var slotRet = slot.EraseReturn
-            ? slot.NullableReturn ? (TypeNode)new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))
-                : new TypeNode.Fqn("kotlin.Any") : targetRet;
-        JsonNode forwarded = new JsonObject
-        {
-            ["k"] = "callInstance",
-            ["ownerType"] = TypeJson.Write(target.Owner),
-            ["virtual"] = true,
-            // bir2cir authored this call with its exact declaration owner; no later pass may reinterpret it
-            // as an ordinary Kotlin receiver call and bind it back to the slot this bridge implements.
-            ["clrOwnerResolved"] = true,
-            ["recv"] = new JsonObject { ["k"] = "this" },
-            ["method"] = Str(target.Method[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(target.Method["name"]),
-            ["sig"] = callSig,
-            ["ret"] = TypeJson.Write(targetRet),
-            ["args"] = callArgs,
-        };
-        if (target.Closed)
-        {
-            forwarded["dynRet"] = TypeJson.Write(targetRet);
-            forwarded["calleeParams"] = target.Method["inheritedDeclarationSignature"]?.DeepClone();
-        }
-        if (slot.Kind == "getter" && (!target.Closed
-                || Str(target.Method[DeclarationIdentityBinding.ExplicitNameKey]) == Str(target.Method["name"])))
-        {
-            if (!KotlinPropertyAccessors.TryIdentity(target.Method, out var property, out var accessor))
-                throw new InvalidOperationException("Map getter bridge has no declaration-owned property identity");
-            forwarded["method"] = property;
-            forwarded["prop"] = accessor;
-            KotlinPropertyAccessors.PreserveCallIdentity((JsonObject)forwarded, property, accessor);
-        }
-        if ((target.Method["inheritedDeclarationId"] ?? target.Method[DeclarationIdentityBinding.Key]) is JsonNode declarationId)
-            forwarded[DeclarationIdentityBinding.Key] = declarationId.DeepClone();
-        if (slot.EraseReturn)
-            forwarded = new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(slotRet), ["e"] = forwarded };
-        // Kotlin's `contains`/`indexOf`/`lastIndexOf` type-safe barrier returns the query's not-found value when an
-        // erased star argument cannot inhabit E. Letting the bridge cast first would throw for `Collection<Int>`
-        // queried with a String or null. Guard before the cast; only the compatible arm invokes the user override.
-        for (var i = declaredParams.Length - 1; i >= 0; i--)
-            if (slot.Parameters[i] == ParameterCarrier.ErasedValue)
-                forwarded = new JsonObject
-                {
-                    ["k"] = "cond",
-                    ["type"] = TypeJson.Write(slotRet),
-                    ["cond"] = ErasedValueCompatible(QueryGuard(i), "p" + i),
-                    ["then"] = forwarded,
-                    ["else"] = ErasedQueryMiss(slot),
-                };
-        var bridge = new JsonObject
-        {
-            ["name"] = slot.Bridge,
-            ["static"] = false,
-            ["override"] = false,
-            ["virtual"] = true,
-            ["abstract"] = false,
-            ["objectOverride"] = false,
-            ["vis"] = "private",
-            ["generated"] = true,
-            ["params"] = bridgeParams,
-            ["ret"] = TypeJson.Write(slotRet),
-            ["body"] = new JsonArray(new JsonObject
-            {
-                ["k"] = "return",
-                ["value"] = forwarded,
-            }),
-            ["attrs"] = new JsonArray(),
-            [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
-            ["clrInterfaceImpls"] = new JsonArray(new JsonObject
-            {
-                ["owner"] = TypeJson.Fqn(slot.SlotInterface),
-                ["member"] = slot.SlotMember,
-                ["arity"] = 0,
-                ["params"] = slotParams,
-                ["ret"] = TypeJson.Write(slotRet),
-            }),
-        };
-        if (cls.Kind == "interface")
-            bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
-        // This newly generated body has not visited the value classifier binder. Bind its source-bound tests once,
-        // rather than mistaking a classifier-backed physical Object slot for acceptance of every non-null value.
-        KotlinRuntimeTypeWitness.ValueRepresentations?.BindMaterializedOperations(bridge);
-        return MaterializedExecutable.Normalize(bridge);
-    }
 
     // The selected declaration's erased source bound is distinct from both its physical argument slot and closed K.
     // This fact belongs only to the transient inherited candidate, not to an emitted MethodDef signature.
@@ -608,92 +272,24 @@ static partial class KotlinCollectionSlotSynthesis
         return source is TypeNode.Nullable && bound is not TypeNode.Nullable ? new TypeNode.Nullable(bound) : bound;
     }
 
-    static TypeNode QueryGuardType(TypeNode physical, JsonObject parameter) =>
-        TypeJson.Read(parameter[QueryBoundKey]) ?? (physical is not (TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Tv)
-            && parameter["nullableFlags"] is JsonArray { Count: > 0 } flags && flags[0]?.GetValue<int>() == 2
+    static TypeNode QueryGuardType(TypeNode physical, TypeNode selectedBound, IReadOnlyList<int> nullableFlags) =>
+        selectedBound ?? (physical is not (TypeNode.Nullable or TypeNode.Oblivious or TypeNode.Tv)
+            && nullableFlags is { Count: > 0 } && nullableFlags[0] == 2
                 ? new TypeNode.Nullable(physical) : physical);
 
-    static JsonObject ErasedValueCompatible(TypeNode declared, string name) => new()
+    static void ValidateCollectionArgument(Slot slot, TypeNode source, TypeNode declared)
     {
-        ["k"] = "cond",
-        ["type"] = TypeJson.Fqn("kotlin.Boolean"),
-        ["cond"] = new JsonObject
-        {
-            ["k"] = "binOp", ["op"] = "===",
-            ["lhs"] = Local(name),
-            ["rhs"] = new JsonObject
-            {
-                ["k"] = "const",
-                ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))),
-                ["value"] = null,
-            },
-        },
-        ["then"] = NullFits(declared),
-        ["else"] = new JsonObject
-        {
-            ["k"] = "isInst",
-            ["type"] = TypeJson.Write(declared),
-            ["e"] = Local(name),
-        },
-    };
-
-    static JsonNode NullFits(TypeNode declared) => declared switch
-    {
-        TypeNode.Nullable => ConstBool(true),
-        TypeNode.Oblivious => ConstBool(true),
-        TypeNode.Projection projection => NullFits(projection.Of),
-        TypeNode.Tv => new JsonObject
-        {
-            ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn("DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt"),
-            ["method"] = "starProjectionTypeAcceptsNull",
-            ["sig"] = new JsonArray(TypeJson.Fqn("System.Type")),
-            ["ret"] = TypeJson.Fqn("kotlin.Boolean"),
-            ["args"] = new JsonArray(new JsonObject
-            {
-                ["k"] = "classRef",
-                ["type"] = TypeJson.Write(declared),
-            }),
-        },
-        _ => ConstBool(false),
-    };
-
-    static JsonNode ErasedQueryMiss(Slot slot) => slot.SlotMember switch
-    {
-        "dotktContains" => ConstBool(false),
-        "dotktMapContainsKey" or "dotktMapContainsValue" or "dotktMapRemoveEntry" or "dotktMapReplaceEntry" => ConstBool(false),
-        "dotktMapGet" or "dotktMapRemove" or "dotktMapReplace" => new JsonObject {
-            ["k"] = "const", ["type"] = TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))), ["value"] = null,
-        },
-        "dotktMapGetOrDefault" => Local("p1"),
-        "dotktIndexOf" or "dotktLastIndexOf" => new JsonObject
-            { ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Int"), ["value"] = -1 },
-        _ => throw new InvalidOperationException(
-            $"bir2cir: erased-value slot '{slot.SlotInterface}.{slot.SlotMember}' has no query-miss value"),
-    };
-
-    static JsonObject ConstBool(bool value) => new()
-    {
-        ["k"] = "const", ["type"] = TypeJson.Fqn("kotlin.Boolean"), ["value"] = value,
-    };
-
-    // The slot and the selected Kotlin implementation both carry the original collection as object. The source
-    // carrier validates that contract; no CLR generic closure or helper frame needs to be reconstructed here.
-    static JsonObject CollectionArgument(Slot slot, JsonObject parameter, TypeNode declared, string name)
-    {
-        var source = (Str(parameter["kotlinType"]) ?? Str(parameter["nullableGeneric"])) is string sourceType
-            ? TypeJson.Read(JsonNode.Parse(sourceType)) : TypeJson.Read(parameter["type"]);
         if (source is not TypeNode.Fqn { Name: Collection, Args.Length: 1 }
             || declared is not TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object" })
             throw new InvalidOperationException(
                 $"bir2cir: '{slot.DeclaringInterface}.{slot.Member}' collection slot disagrees with its source "
                 + $"({TypeJson.Write(source)}) or physical parameter ({TypeJson.Write(declared)}).");
-        return Local(name);
     }
 
     public static void SelfTest()
     {
         QueryParameterSelfTest();
+        SelfTestSource();
         foreach (var element in new TypeNode[] {
             new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"), new TypeNode.Tv("type", 1),
             new TypeNode.Projection("out", new TypeNode.Tv("type", 1)),
@@ -702,12 +298,10 @@ static partial class KotlinCollectionSlotSynthesis
         {
             var source = new TypeNode.Fqn(Collection, new[] { element });
             var physical = new TypeNode.Fqn("kotlin.Any");
-            var parameter = new JsonObject {
-                ["type"] = TypeJson.Write(physical), ["kotlinType"] = TypeNode.ToJson(source),
-            };
-            var forwarded = CollectionArgument(Slots.Single(slot => slot.SlotMember == "dotktContainsAll"),
+            var parameter = SelectedParameterHeader.FromSource(new BirParameter { Type = physical, KotlinType = source });
+            var forwarded = SourceCollectionArgument(Slots.Single(slot => slot.SlotMember == "dotktContainsAll"),
                 parameter, physical, "collection");
-            if (Str(forwarded["k"]) != "local" || Str(forwarded["name"]) != "collection")
+            if (forwarded.Name.OrDefault() != "collection")
                 throw new InvalidOperationException("Collection slot changed an opaque argument's identity");
         }
         Console.WriteLine("[collection slot values] self-test OK (reference/value elements, owner variables, projections, nested source types)");
@@ -717,33 +311,19 @@ static partial class KotlinCollectionSlotSynthesis
     {
         SourceQueryParameterSelfTest();
         var variable = new TypeNode.Tv("type", 0);
-        var nullableReference = new JsonObject { ["nullableFlags"] = new JsonArray(2) };
-        var nonnullReference = new JsonObject { ["nullableFlags"] = new JsonArray(1) };
+        var nullableReference = new[] { 2 };
+        var nonnullReference = new[] { 1 };
         var physicalObject = new TypeNode.Fqn("System.Object");
-        if (QueryGuardType(physicalObject, nullableReference) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "System.Object" } }
-            || QueryGuardType(physicalObject, nonnullReference) != physicalObject
-            || QueryGuardType(variable, nullableReference) != variable
+        if (QueryGuardType(physicalObject, null, nullableReference) is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "System.Object" } }
+            || QueryGuardType(physicalObject, null, nonnullReference) != physicalObject
+            || QueryGuardType(variable, null, nullableReference) != variable
             || UsesErasedQueryCarrier(variable) || UsesErasedQueryCarrier(new TypeNode.Fqn("Bound"))
             || !UsesErasedQueryCarrier(new TypeNode.Nullable(physicalObject)))
             throw new InvalidOperationException("Query guard lost reference nullability or changed a generic physical contract");
         Console.WriteLine("[collection query parameters] self-test OK (erased source bound, typed/native signatures)");
     }
 
-    static TypeNode.Fqn SelfOwner(Def cls)
-    {
-        var args = OwnArgs(cls);
-        return new TypeNode.Fqn(cls.Name, args.Length == 0 ? null : args);
-    }
-
-    // The COMPLETE CLR generic frame (captured enclosing prefix + own declarations), never `typeParams` alone: an
-    // inner class or a lifted local/object implementer would otherwise get a partially-open self owner.
-    static TypeNode[] OwnArgs(Def cls) =>
-        Enumerable.Range(0, cls.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
-
     static TypeNode Subst(TypeNode type, TypeNode[] args) => SupertypeGraph.SubstOwnerTvs(type, args);
 
-    static JsonObject Local(string name) => new() { ["k"] = "local", ["name"] = name };
-    static JsonNode Clone(JsonNode n) => n == null ? null : JsonNode.Parse(n.ToJsonString());
-    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }

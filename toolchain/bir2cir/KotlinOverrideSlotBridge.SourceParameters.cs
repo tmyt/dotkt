@@ -17,6 +17,8 @@ static partial class KotlinOverrideSlotBridge
         sealed record OwnerRow(int File, int Position, IBirTypeDeclaration Owner, MethodRow[] Methods)
         {
             internal readonly List<MaterializedMethod> Materialized = new();
+            internal readonly Dictionary<BirFunctionDeclaration, CurrentDeclarationBindings.DeclarationBinding> Retired
+                = new(ReferenceEqualityComparer.Instance);
         }
         BirFileDeclaration[] files;
         OwnerRow[] owners;
@@ -55,12 +57,32 @@ static partial class KotlinOverrideSlotBridge
             if (row == null) return false;
             var current = files[row.File].Types.OrEmpty();
             if (row.Position >= current.Length || !ReferenceEquals(current[row.Position], owner)) throw Mismatch();
-            var expected = row.Methods.Select(method => method.Method).Concat(row.Materialized.Select(method => method.Method))
-                .Concat(appended).ToArray();
+            var expected = CurrentMethods(row).Concat(appended).ToArray();
             if (expected.Distinct(ReferenceEqualityComparer.Instance).Count() != expected.Length
                 || !owner.Methods.OrEmpty().SequenceEqual(expected, ReferenceEqualityComparer.Instance)) throw Mismatch();
             var continuations = appended.Select(method => new MaterializedMethod(method, bindings.GetSource(method))).ToArray();
             row.Materialized.AddRange(continuations);
+            return true;
+        }
+
+        static IEnumerable<BirFunctionDeclaration> CurrentMethods(OwnerRow row)
+            => row.Methods.Select(method => method.Method).Concat(row.Materialized.Select(method => method.Method))
+                .Where(method => !row.Retired.ContainsKey(method));
+
+        // Retirement changes current ownership, not the original snapshot's
+        // membership or frozen signatures. Only the producer's exact removals
+        // may disappear; their captured bindings cross the same frontier once.
+        internal bool RetireMethods(IBirTypeDeclaration owner, IReadOnlyList<BirFunctionDeclaration> methods,
+            CurrentDeclarationBindings bindings)
+        {
+            ValidateSourceRows();
+            var row = owners.SingleOrDefault(row => ReferenceEquals(row.Owner, owner));
+            if (row == null) return false;
+            var current = new HashSet<BirFunctionDeclaration>(CurrentMethods(row), ReferenceEqualityComparer.Instance);
+            var removed = new HashSet<BirFunctionDeclaration>(methods, ReferenceEqualityComparer.Instance);
+            if (removed.Count != methods.Count || methods.Any(method => !current.Contains(method))) throw Mismatch();
+            var continuations = methods.Select(method => (Method: method, Binding: bindings.GetCapturedSource(method))).ToArray();
+            foreach (var entry in continuations) row.Retired.Add(entry.Method, entry.Binding);
             return true;
         }
 
@@ -83,8 +105,7 @@ static partial class KotlinOverrideSlotBridge
             {
                 var current = files[row.File].Types.OrEmpty();
                 if (row.Position >= current.Length || !ReferenceEquals(current[row.Position], row.Owner)
-                    || !row.Owner.Methods.OrEmpty().SequenceEqual(row.Methods.Select(method => method.Method)
-                        .Concat(row.Materialized.Select(method => method.Method)), ReferenceEqualityComparer.Instance))
+                    || !row.Owner.Methods.OrEmpty().SequenceEqual(CurrentMethods(row), ReferenceEqualityComparer.Instance))
                     throw Mismatch();
             }
         }
@@ -104,19 +125,28 @@ static partial class KotlinOverrideSlotBridge
                     || types[row.Position] is not JsonObject owner
                     || (owner["name"] as JsonValue)?.GetValue<string>() != row.Owner.Name.OrDefault()) throw Mismatch();
                 var methods = owner["methods"] as JsonArray;
-                if ((methods?.Count ?? 0) != row.Methods.Length + row.Materialized.Count) throw Mismatch();
-                for (var index = 0; index < row.Methods.Length; index++)
+                if ((methods?.Count ?? 0) != CurrentMethods(row).Count()) throw Mismatch();
+                var index = 0;
+                foreach (var source in row.Methods)
                 {
-                    var source = row.Methods[index];
+                    if (row.Retired.TryGetValue(source.Method, out var retired))
+                    {
+                        result.Add(retired.Physical, source.Parameters);
+                        continue;
+                    }
                     if (methods[index] is not JsonObject method
                         || (method["name"] as JsonValue)?.GetValue<string>() != source.Method.Name.OrDefault()
                         || (method[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() != source.Method.DeclarationId.OrDefault())
                         throw Mismatch();
                     result.Add(method, source.Parameters);
+                    index++;
                 }
-                for (var index = 0; index < row.Materialized.Count; index++)
-                    if (!ReferenceEquals(methods[row.Methods.Length + index], row.Materialized[index].Binding.Physical))
-                        throw Mismatch();
+                foreach (var materialized in row.Materialized)
+                    if (!row.Retired.ContainsKey(materialized.Method))
+                    {
+                        if (!ReferenceEquals(methods[index], materialized.Binding.Physical)) throw Mismatch();
+                        index++;
+                    }
             }
             consumed = true;
             files = null;

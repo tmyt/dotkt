@@ -50,7 +50,72 @@ static partial class KotlinOverrideSlotBridge
         catch (InvalidOperationException) { detached = true; }
         if (!detached) throw new InvalidOperationException("Source override parameters rebound a copied declaration by name or identity");
         MaterializedSourceParameterSnapshotSelfTest();
+        RetiredSourceParameterSnapshotSelfTest();
         Console.WriteLine("[source override parameter snapshots] self-test OK (last owner, pre-projection types, exact continuation, producer appends, one-time handoff)");
+    }
+
+    static void RetiredSourceParameterSnapshotSelfTest()
+    {
+        static void Require(bool value, string message)
+        { if (!value) throw new InvalidOperationException("Override snapshot retirement: " + message); }
+        static void Refused(Action action)
+        {
+            try { action(); } catch (InvalidOperationException) { return; }
+            throw new InvalidOperationException("Invalid declaration retirement was accepted");
+        }
+        var original = new TypeNode.Fqn("Original");
+        var physical = new TypeNode.Fqn("Physical");
+        BirFunctionDeclaration Method(string name) => new() { Name = name, DeclarationId = name,
+            Params = new[] { new BirParameter { Name = "value", Type = original } }, Ret = original };
+        var first = Method("first");
+        var removed = Method("placeholder");
+        removed.Abstract = true;
+        var last = Method("last");
+        var property = new BirPropertyDeclaration { Name = "value", Type = original };
+        var owner = new BirClassDefinition { Name = "RetirementOwner", Kind = "class",
+            Methods = new[] { first, removed, last }, Properties = new[] { property } };
+        var file = new BirFileDeclaration { FileClass = "RetirementFile", Types = new IBirTypeDeclaration[] { owner } };
+        var roots = new[] { file };
+        var pending = CaptureSourceParameters(roots);
+        var bindings = new CurrentDeclarationBindings(roots);
+        var signatures = FBoundStarProjectionErasure.CaptureSourceSignatures(bindings);
+        var removedBinding = bindings.GetCapturedSource(removed);
+        var frozen = pending.ReadSourceParameters();
+        removed.Params.Value[0].Type = physical;
+        var bridge = Method("bridge");
+        owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
+        bindings.GetSource(bridge);
+        Require(pending.AdmitMaterializedMethods(owner, new[] { bridge }, bindings), "physical append was not reported");
+        Require(!bindings.TryGetCapturedSource(property, out _), "property acquired an unnecessary detached buyer");
+        Refused(() => bindings.RetireSourceMembers(owner, new[] { Method("placeholder") }, Array.Empty<BirPropertyDeclaration>()));
+        bindings.RetireSourceMembers(owner, new[] { removed }, new[] { property });
+        Require(pending.RetireMethods(owner, new[] { removed }, bindings), "selected owner lost its original row");
+        Refused(() => bindings.RetireSourceMembers(owner, new[] { removed }, Array.Empty<BirPropertyDeclaration>()));
+        owner.Methods = new[] { first, last, bridge };
+        owner.Properties = Array.Empty<BirPropertyDeclaration>();
+        Require(pending.ReadSourceParameters().Count == 3 && frozen[removed].Single() == original
+            && !frozen.ContainsKey(bridge), "retirement changed original eligibility or frozen parameter values");
+        var live = file.ToDom(bindings.ObserveProjection);
+        var detached = removed.ToDom(bindings.ObserveProjection);
+        bindings.BindProjected();
+        var parameters = pending.BindDom(new JsonNode[] { live });
+        var physicalSignatures = signatures.BindPhysical();
+        Require(parameters.Count == 3 && parameters[detached].Single() == original
+            && physicalSignatures[detached].Single() == original
+            && ReferenceEquals(removedBinding.Physical, detached)
+            && ReferenceEquals(bindings.GetPhysical(detached), removedBinding)
+            && TypeJson.Read(detached["params"][0]["type"]) == physical
+            && parameters.ContainsKey(live["types"][0]["methods"][1].AsObject())
+            && !parameters.ContainsKey(live["types"][0]["methods"][2].AsObject()),
+            "survivor order, exact detached binding or shared frozen-signature continuation changed");
+
+        var stillOwned = Method("stillOwned");
+        var stillOwner = new BirClassDefinition { Name = "StillOwner", Methods = new[] { stillOwned } };
+        var stillFile = new BirFileDeclaration { FileClass = "StillFile", Types = new IBirTypeDeclaration[] { stillOwner } };
+        var stillBindings = new CurrentDeclarationBindings(new[] { stillFile });
+        stillBindings.RetireSourceMembers(stillOwner, new[] { stillOwned }, Array.Empty<BirPropertyDeclaration>());
+        stillFile.ToDom(stillBindings.ObserveProjection);
+        Refused(stillBindings.BindProjected);
     }
 
     static void MaterializedSourceParameterSnapshotSelfTest()

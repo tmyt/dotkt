@@ -17,7 +17,7 @@ static partial class CovariantInterfaceReturnBridge
         ReferenceMetadataIndex refs, ValueTypeOracle isValue)
         => new(implementation, DescriptorKey(descriptorOwner, descriptorMember, methodArity, slotParams, slotRet, refs, isValue));
 
-    static string DescriptorKey(TypeNode.Fqn descriptorOwner, string descriptorMember, int methodArity,
+    internal static string DescriptorKey(TypeNode.Fqn descriptorOwner, string descriptorMember, int methodArity,
         IEnumerable<TypeNode> slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         var ownerName = refs.ExactReflectedOwner(descriptorOwner.Name, descriptorOwner.Args?.Length ?? 0);

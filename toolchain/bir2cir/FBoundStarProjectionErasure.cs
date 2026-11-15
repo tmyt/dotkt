@@ -674,6 +674,11 @@ static partial class FBoundStarProjectionErasure
         bool allowBoxing = false)
         => IsClrAssignable(source, target, CarrierTypeContext.ForDom(defs, refs), physicalTypes, allowBoxing);
 
+    internal static bool IsClrAssignable(TypeNode source, TypeNode target,
+        IReadOnlyDictionary<string, IBirTypeDeclaration> defs, ReferenceMetadataIndex refs, bool physicalTypes = false,
+        bool allowBoxing = false)
+        => IsClrAssignable(source, target, CarrierTypeContext.ForSource(defs, refs), physicalTypes, allowBoxing);
+
     static Type ResolveClosedReferenceType(TypeNode.Fqn type, ReferenceMetadataIndex refs, bool physicalTypes = false)
     {
         var arity = type.Args?.Length ?? 0;
