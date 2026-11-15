@@ -42,6 +42,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
         env:
+          TMPDIR: ${{ runner.temp }}
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/.dotnet
 
       - name: Set up JDK 21
@@ -117,6 +118,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
         env:
+          TMPDIR: ${{ runner.temp }}
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/.dotnet
 
       - name: Set up JDK 21
@@ -176,6 +178,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
         env:
+          TMPDIR: ${{ runner.temp }}
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/.dotnet
 
       - name: Set up JDK 21
