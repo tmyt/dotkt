@@ -63,12 +63,15 @@ static partial class OwnerConstrainedMethodLowering
             && caller._ownerConstraintDispatchBounds.Value.Bounds[0].Single() == ownerVariable
             && ReferenceEquals(bindings.SourceLocalDeclarations, originalCatalog) && originalCatalog.Count == originalCount,
             "final physical constraints/dispatch facts or original catalog membership changed");
-        var physical = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        ConfigurePreparedMethods(bindings, refs);
-        Require(Methods.Any(row => ReferenceEquals(row.Method, physical["methods"][0]))
-            && Methods.Any(row => ReferenceEquals(row.Method, physical["types"][0]["methods"][0])),
-            "source registration did not continue to the exact physical method objects");
+        var ledger = new SourceDeclarationProjection(roots, bindings);
+        ledger.SealSourceContinuations();
+        Require(Methods.Any(row => ReferenceEquals(row.Method, captured))
+            && Methods.Any(row => ReferenceEquals(row.Method, caller))
+            && ReferenceEquals(root.Methods.Value[0], captured) && ReferenceEquals(owner.Methods.Value[0], caller),
+            "source registration did not retain the exact continuing method objects");
+        FBoundStarProjectionErasure.CompleteRealization(context);
+        bindings.CompleteSourceCustody(ledger);
+        ledger.Release();
 
         var plans = PlanConstraintRewrite(new TypeNode[][] { null, Array.Empty<TypeNode>() }, Array.Empty<TypeNode[]>(),
             null, null, refs, _ => false, type => type, _ => null, _ => new[] { native });

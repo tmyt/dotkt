@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -54,7 +53,7 @@ static partial class FBoundStarProjectionErasure
             ["kotlin.Any"] = "System.Object",
         };
         var values = GenericRepresentationPolicy.CreateSource(new[] { file }, aliases, refs);
-        values.PrepareDomLocations(new[] { file });
+        values.PrepareSourceLocations(new[] { file });
         var ledger = new AliasDeclarationTransitions();
         file.Types = new IBirTypeDeclaration[] { owned, frameOwner, laterPhysicalOccurrence };
         // Replacement-list order is not Original declaration order.
@@ -115,8 +114,8 @@ static partial class FBoundStarProjectionErasure
             && Same(source.ProjectOrdinaryParameter(new TypeNode.Nullable(logical)), new TypeNode.Nullable(expectedCarrier))
             && file.StructurallyEquals(before), "shared source projection changed an expected shape, wrapper, native witness or owning declaration");
 
-        // The actual one-way projection supplies addresses. This is the DOM
-        // adapter to the SAME scalar projection body, not a historical oracle.
+        // Physical type lowering keeps the original scalar hierarchy separate
+        // from live current headers and explicit retired logical facts.
         var originalHierarchy = bindings.SourceSupertypes["Owned"].Base;
         BirTypeLowering.Apply(file, new BirTypeLowering.PhysicalTypeContext(false, aliases));
         Require(frameOwner.Base.Value is TypeNode.Fqn { Name: "System.Object" }
@@ -126,28 +125,32 @@ static partial class FBoundStarProjectionErasure
             && !source.RequiresOpaqueVariantAlias(retiredApplication)
             && ReferenceEquals(source.OwnerFrame(demand.Owners["FrameOwner"]), ownerFrame),
             "physical types changed captured hierarchy or the live projection header's variance/frame policy");
-        var physical = file.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        values.BindDomDeclarations(new JsonNode[] { physical }, ledger);
-        Require(KotlinSupertypesRecord.ReadNullableFrame(values.LocalDeclaration("FrameOwner"))?.SourceArity == 2,
-            "pre-registration logical last-Original clock was not exercised");
-        values.RegisterLocalDefinitions(preparation.BindDefinitions(), preparation.LocalClrAliases);
-        var dom = CarrierProjectionContext.ForDom(demand.Owners, refs, values, proofs, preparation.LocalClrAliases);
-        Require(dom.ProjectionCanChangeConstruction(currentApplication)
-            && dom.OwnerFrame(demand.Owners["FrameOwner"]).SourceArity == 1
-            && dom.OwnerFrame(demand.Owners["FrameOwner"]).NullableIndices.SequenceEqual(new[] { 0 })
-            && !dom.RequiresOpaqueVariantAlias(retiredApplication)
-            && !dom.ProjectionCanChangeConstruction(foreignApplication),
-            "DOM registration lost current-first, logical-last, owner-frame or reference-blocking policy");
-        foreach (var (sample, index) in cases.Select((sample, index) => (sample, index)))
-            Require(Same(dom.Rewrite(sample.Input, sample.Bound, sample.PreserveHead, sample.PreserveArray), sourceResults[index]),
-                "typed and continuing DOM adapters selected different scalar projection for case " + index);
-        Require(Same(dom.ProjectOrdinaryParameter(new TypeNode.Nullable(logical)), new TypeNode.Nullable(expectedCarrier)),
-            "continuing ordinary parameter disagreed with source projection");
+        var custody = new SourceDeclarationProjection(new[] { file }, bindings);
+        custody.SealSourceContinuations();
+        values.CompleteSourceContinuation(new[] { file }, ledger, custody);
+        Require(ledger.TryRetiredLogicalHeader("FrameOwner", out var retiredHeader)
+            && ReferenceEquals(retiredHeader.KotlinSupertypesPre.Value.NullableFrame, otherFrame)
+            && ReferenceEquals(bindings.SourceDefinitions["FrameOwner"].Source, frameOwner),
+            "retired last-Original and current first-occurrence facts were conflated");
+        var continuing = CarrierProjectionContext.ForSource(demand, refs, ledger);
+        Require(continuing.ProjectionCanChangeConstruction(currentApplication)
+            && continuing.OwnerFrame(demand.Owners["FrameOwner"]).SourceArity == 1
+            && continuing.OwnerFrame(demand.Owners["FrameOwner"]).NullableIndices.SequenceEqual(new[] { 0 })
+            && !continuing.RequiresOpaqueVariantAlias(retiredApplication)
+            && !continuing.ProjectionCanChangeConstruction(foreignApplication),
+            "typed continuation lost current-first, logical-last, owner-frame or reference-blocking policy");
+        foreach (var sample in cases)
+            Require(Same(continuing.Rewrite(sample.Input, sample.Bound, sample.PreserveHead, sample.PreserveArray), sample.Expected),
+                "live typed continuation changed the normative scalar projection");
+        Require(Same(continuing.ProjectOrdinaryParameter(new TypeNode.Nullable(logical)), new TypeNode.Nullable(expectedCarrier)),
+            "continuing ordinary parameter disagreed with its expected source policy");
+        demand.CompleteSourceLifetime();
+        bindings.CompleteSourceCustody(custody);
         Reject(() => source.Rewrite(any));
         Reject(() => source.ProjectOrdinaryParameter(any));
         Reject(() => source.IsCapturedInner(logical));
         ledger.Release();
+        custody.Release();
         Console.WriteLine("[carrier projection context] self-test OK (shared policies, first/current and last/logical facts, frames, reference variance and one-way clock)");
     }
 }

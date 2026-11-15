@@ -97,12 +97,6 @@ static partial class FBoundStarProjectionErasure
 
     static void LocalAliasDeclarationSelfTest()
     {
-        var savedPolicy = _valueSlots;
-        var savedProofs = _nativeProofs;
-        var savedGraph = _sourceSupertypes;
-        var savedMethods = _localMethods;
-        var savedDeclarations = _localDeclarations;
-        var savedNames = _usedCarrierNames;
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         try
         {
@@ -129,7 +123,7 @@ static partial class FBoundStarProjectionErasure
                     new BirClassDefinition { Name = "AliasHolder", Kind = "class", Fields = new[] { field } },
                 } };
             var context = SourceSynthesisTestContext(file, refs);
-            context.Values.PrepareDomLocations(new[] { file });
+            context.Values.PrepareSourceLocations(new[] { file });
             var projected = context.Projection.Rewrite(sourceType);
             var captured = new TypeNode.Fqn("CapturedOnly", new TypeNode[] { text });
             Require(projected == new TypeNode.Fqn("kotlin.Any") && !context.Owners.ContainsKey("SourceAlias")
@@ -145,22 +139,20 @@ static partial class FBoundStarProjectionErasure
             Require(parameter.Type.Value == projected && method.Ret.Value == projected && field.Type.Value == projected,
                 "owning declaration projection disagreed with source alias value policy");
             RewriteLateTypesSource(new[] { file }, context);
-            var physical = file.ToDom(context.Bindings.ObserveProjection);
-            context.Bindings.BindProjected();
-            context.Values.BindDomDeclarations(new System.Text.Json.Nodes.JsonNode[] { physical });
-            BindRealizationContinuation(context);
-            Require(TypeJson.Read(physical["methods"][0]["params"][0]["type"]) == projected
-                && TypeJson.Read(physical["methods"][0]["ret"]) == projected
-                && Str(physical["methods"][0]["params"][0]["kotlinType"]) == TypeNode.ToJson(sourceType)
-                && Str(physical["methods"][0]["retKotlinType"]) == TypeNode.ToJson(sourceType)
-                && Str(physical["types"][3]["fields"][0]["kotlinType"]) == TypeNode.ToJson(Alias(text))
-                && Str(physical["methods"][1]["params"][0]["kotlinType"]) == TypeNode.ToJson(nestedType),
-                "genuine late projection changed alias ABI or reconstructed source metadata");
+            var ledger = new SourceDeclarationProjection(new[] { file }, context.Bindings);
+            ledger.SealSourceContinuations();
+            context.Values.CompleteSourceContinuation(new[] { file }, null, ledger);
+            Require(parameter.Type.Value == projected && method.Ret.Value == projected
+                && parameter.KotlinType.Value == sourceType && method.RetKotlinType.Value == sourceType
+                && field.KotlinType.Value == Alias(text) && nested.KotlinType.Value == nestedType
+                && ReferenceEquals(file.Methods.Value[0], method) && ReferenceEquals(file.Types.Value[3], context.Bindings.SourceDefinitions["AliasHolder"].Source),
+                "genuine late projection changed alias ABI, original source metadata or actual declarations");
+            CompleteRealization(context);
+            context.Bindings.CompleteSourceCustody(ledger);
+            ledger.Release();
         }
         finally
         {
-            _valueSlots = savedPolicy; _nativeProofs = savedProofs; _sourceSupertypes = savedGraph;
-            _localMethods = savedMethods; _localDeclarations = savedDeclarations; _usedCarrierNames = savedNames;
             OwnerConstrainedMethodLowering.Reset(refs);
         }
 
