@@ -904,8 +904,9 @@ sealed class Pipeline
         foreach (var bir in birFiles)
             staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
-        // Continue the owning prefix's selected carrier and
-        // covariant-slot facts; do not reselect them after the frontier.
+        // Continue the owning prefix's selected carrier facts;
+        // do not reselect them after the frontier.
+        var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
 
         // Suspend residue, logical results and final override slots have already
