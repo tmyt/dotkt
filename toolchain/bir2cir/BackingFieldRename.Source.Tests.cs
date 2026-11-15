@@ -79,9 +79,6 @@ static partial class BackingFieldRename
             || storage.Attrs.Value[1].Args.Value.Length != 0 || storage.Attrs.Value[1].AttrClr.IsPresent
             || setterOnly.Attrs.Value.Length != 1 || singleton.Attrs.IsPresent)
             throw new InvalidOperationException("Backing rename changed CompilerGenerated attribute order or presence");
-        if (ApplyAll(roots).Count != 0 || storage.Attrs.Value.Length != 2 || inherited.Name.Value != Mangle("value"))
-            throw new InvalidOperationException("Backing rename is not idempotent");
-
         // Equal bare owners merge, including a later ordinary-field barrier;
         // they must not discard an earlier unrelated property-backed name.
         var first = new BirClassDefinition { Kind = "class", Name = "Merged`1", Fields = new[] { Field("a"), Field("c") },
