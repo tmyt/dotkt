@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -26,8 +25,6 @@ static partial class KotlinOverrideSlotBridge
     internal sealed class SelectedMethodHeader
     {
         internal BirFunctionDeclaration Source { get; init; }
-        internal JsonObject DomSource { get; init; }
-        internal bool ProjectedSource { get; init; }
         internal OptionalField<string> Name { get; set; }
         internal OptionalField<string> ExplicitClrName { get; set; }
         internal OptionalField<string> DeclarationId { get; set; }
@@ -95,62 +92,12 @@ static partial class KotlinOverrideSlotBridge
         string DeclarationId, TypeNode[] QueryBounds, TypeNode[] SelectionParameters)
     {
         internal BirFunctionDeclaration Source => Method.Source;
-        internal JsonObject DomFact { get; init; }
     }
 
     sealed record InheritedFact(SelectedMethodHeader Header, TypeNode ImplementationOwner, string ImplementationMember,
         int ImplementationArity, BirTypeParameter[] ImplementationParameters, SourceBoundsSnapshot ImplementationBounds,
-        BirGraphValue Source, JsonObject Dom);
+        BirGraphValue Source);
 
-    static SelectedParameterHeader ParameterHeader(JsonObject value) => new() {
-        Name = Scalar<string>(value, "name"), Type = ScalarType(value, "type"),
-        FunctionSignatureType = ScalarType(value, FunctionSignatureIdentity.Key),
-        KotlinType = FrozenHeaderType(value, "kotlinType"), NullableGeneric = FrozenHeaderType(value, "nullableGeneric"),
-        NullableFlags = !value.ContainsKey("nullableFlags") ? default : value["nullableFlags"] is not JsonArray flags
-            ? OptionalField<int[]>.Null : flags.Select(flag => flag.GetValue<int>()).ToArray(),
-    };
-    static OptionalField<TypeNode> ScalarType(JsonObject value, string key) => !value.ContainsKey(key) ? default
-        : value[key] == null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeJson.Read(value[key]));
-    static OptionalField<TypeNode> FrozenHeaderType(JsonObject value, string key) => !value.ContainsKey(key) ? default
-        : value[key] == null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(Str(value[key])));
-    static BirOverride[] HeaderOverrides(JsonArray value) => value?.OfType<JsonObject>().Select(edge => new BirOverride {
-        Owner = ScalarType(edge, "owner"), Member = Scalar<string>(edge, "member"), Kind = Scalar<string>(edge, "kind"),
-        Arity = Scalar<int>(edge, "arity"), DeclarationId = Scalar<string>(edge, DeclarationIdentityBinding.Key),
-        PhysicalDeclarationId = Scalar<string>(edge, "physicalDeclarationId"),
-    }).ToArray();
-    static SelectedMethodHeader HeaderFromDom(JsonObject value) => new() {
-        DomSource = value,
-        Name = Scalar<string>(value, "name"), ExplicitClrName = Scalar<string>(value, DeclarationIdentityBinding.ExplicitNameKey),
-        DeclarationId = Scalar<string>(value, DeclarationIdentityBinding.Key),
-        Params = !value.ContainsKey("params") ? default : value["params"] is not JsonArray ps
-            ? OptionalField<SelectedParameterHeader[]>.Null : ps.OfType<JsonObject>().Select(ParameterHeader).ToArray(),
-        Ret = ScalarType(value, "ret"), TypeParams = ReadParameters(value["typeParams"] as JsonArray),
-        Mods = value["mods"] is JsonObject mods ? new BirModifiers { Suspend = Scalar<bool>(mods, "suspend") } : default,
-        Overrides = HeaderOverrides(value["overrides"] as JsonArray),
-        PropertyName = Scalar<string>(value, KotlinPropertyAccessors.SourceNameKey),
-        PropertyAccessor = Scalar<string>(value, KotlinPropertyAccessors.KindKey),
-        PropertyAssociation = Scalar<string>(value, KotlinPropertyAccessors.AssociationKey),
-        NullableRepresentationFrame = NullableRepresentationTypes.DeclarationMethodFrame(value),
-        MethodTypeParameterBoundsPre = Str(value[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string saved
-            ? SourceBoundsSnapshot.ReadFrozenText(saved) : default,
-        NullableGenericRet = FrozenHeaderType(value, "nullableGenericRet"), RetKotlinType = FrozenHeaderType(value, "retKotlinType"),
-        SuspendResult = FrozenHeaderType(value, "suspendResult"), DotktValueReturn = Scalar<bool>(value, BirTypeLowering.ValueReturnKey),
-        Static = Scalar<bool>(value, "static"), Abstract = Scalar<bool>(value, "abstract"), Vis = Scalar<string>(value, "vis"),
-        KotlinSourceMember = Scalar<string>(value, DeclarationRename.SourceMemberKey),
-        ExistentialSourceMember = Scalar<string>(value, FBoundStarProjectionErasure.SourceMemberKey),
-        PhysicalSlotBridge = Scalar<bool>(value, KotlinPropertyAccessors.PhysicalSlotBridgeKey),
-        SuspendSourceParameters = TypeVector(value, KotlinPropertyAccessors.SuspendSourceParamsKey),
-        SuspendSourceReturn = ScalarType(value, KotlinPropertyAccessors.SuspendSourceRetKey),
-    };
-    static InheritedFact InheritedDomFact(JsonObject fact)
-    {
-        if (fact[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject implementation) return null;
-        var header = HeaderFromDom(fact); header.Name = Scalar<string>(fact, "member");
-        return new(header, TypeJson.Read(implementation["owner"]), Str(implementation["member"]), Int(implementation["arity"]),
-            ReadParameters(implementation["typeParams"] as JsonArray),
-            Str(implementation[NullableGenericErasure.MethodTypeParameterBoundsPre]) is string saved
-                ? SourceBoundsSnapshot.ReadFrozenText(saved) : null, null, fact);
-    }
     static InheritedFact InheritedSourceFact(BirGraphValue fact)
     {
         SelectedMethodHeader header;
@@ -178,7 +125,7 @@ static partial class KotlinOverrideSlotBridge
         }
         return implementation == null ? null : new(header, implementation.Owner.OrDefault(), implementation.Member.OrDefault(),
             implementation.Arity.HasValue ? implementation.Arity.Value : -1, implementation.TypeParams.OrDefault(),
-            implementation.MethodTypeParameterBoundsPre.OrDefault(), fact, null);
+            implementation.MethodTypeParameterBoundsPre.OrDefault(), fact);
         static SelectedParameterHeader[] DefaultParameters(TypeNode[] types) => types.Select((type, index) =>
             new SelectedParameterHeader { Name = "p" + index, Type = type }).ToArray();
     }
@@ -261,7 +208,7 @@ static partial class KotlinOverrideSlotBridge
                     if (sources.Length == 0 || sources.Length > 1 && !SameSelectedSuspendDeclaration(sources)) continue;
                     foreach (var source in sources)
                     {
-                        var header = source.Source != null ? SelectedMethodHeader.FromSource(source.Source) : HeaderFromDom(source.Dom);
+                        var header = SelectedMethodHeader.FromSource(source.Source);
                         var signature = source.Parameters.Select(parameter => parameter.Signature == null ? parameter.Type
                             : FunctionSignatureIdentity.SignatureType(parameter.Type, parameter.Signature)).ToArray();
                         var queryBounds = !collectionQueries ? null : parameters.Select((_, index) =>
@@ -325,7 +272,6 @@ static partial class KotlinOverrideSlotBridge
                     var projected = selectedSource?.SuspendSourceParameters.HasValue == true;
                     var header = new SelectedMethodHeader {
                         Source = selectedSource?.Source,
-                        DomSource = selectedSource?.DomSource, ProjectedSource = projected,
                         Name = projected ? selectedSource.Name : fact.Header.Name,
                         Params = (projected ? selectedSource.Params.Value : parameters).Select(parameter => parameter.Copy()).ToArray(),
                         TypeParams = SubstituteParameters(typeParams, args), Ret = physicalRet, ExplicitClrName = physicalMember,
@@ -352,7 +298,7 @@ static partial class KotlinOverrideSlotBridge
                     if (returnsValue && IsUnitValueSlot(physicalRet)) header.DotktValueReturn = true;
                     result.Add(new(callOwner, header, fact.Source, fact.Header.Overrides.OrEmpty(), defaults,
                         signature, declarationId, queryBounds?.Select(type => type == null ? null : SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
-                        physicalParams.Select((type, index) => index < factParams.Length ? factParams[index] : type).ToArray()) { DomFact = fact.Dom });
+                        physicalParams.Select((type, index) => index < factParams.Length ? factParams[index] : type).ToArray()));
                 }
             }
         }
@@ -362,10 +308,9 @@ static partial class KotlinOverrideSlotBridge
     static ErasedElementValues.BoundDeclaration HeaderMethodBounds(SelectedMethodHeader method) => new(
         method.NullableRepresentationFrame.OrDefault(), method.TypeParams.OrEmpty().Select(parameter => parameter.Constraints.OrEmpty()).ToArray(),
         method.MethodTypeParameterBoundsPre.OrDefault()?.Bounds);
-    static ErasedElementValues.BoundDeclaration OwnerBounds(OverrideOwner owner) => owner.Source != null
-        ? new(owner.Frame, TypeParameterFrame.Declarations(owner.Source).Select(parameter => parameter.Constraints.OrEmpty()).ToArray(),
-            NullableRepresentationViews.TypeFacts((BirGraphValue)owner.Source)?.Bounds)
-        : ErasedElementValues.OwnerBounds(owner.Definition.Node);
+    static ErasedElementValues.BoundDeclaration OwnerBounds(OverrideOwner owner) => new(owner.Frame,
+        TypeParameterFrame.Declarations(owner.Source).Select(parameter => parameter.Constraints.OrEmpty()).ToArray(),
+        NullableRepresentationViews.TypeFacts((BirGraphValue)owner.Source)?.Bounds);
 
     static bool SameSelectedSuspendDeclaration(IReadOnlyList<OverrideMethod> projections)
     {
@@ -374,37 +319,4 @@ static partial class KotlinOverrideSlotBridge
             && projection.SuspendSourceParametersPresent && projection.SuspendSourceReturn != null);
     }
 
-    // Layout renderer for the genuine late physical DOM owner. Selection above has
-    // already resolved the declaration; no source graph is encoded or re-parsed.
-    static JsonObject RenderInheritedCandidate(SelectedInheritedSourceMethod selection)
-    {
-        var method = selection.Method;
-        var candidate = (JsonObject)selection.DomFact.DeepClone();
-        candidate["name"] = method.Name.OrDefault();
-        if (method.ProjectedSource)
-        {
-            candidate[DeclarationRename.SourceMemberKey] = selection.DomFact["member"]?.DeepClone();
-            candidate["params"] = method.DomSource["params"].DeepClone();
-        }
-        candidate["typeParams"] = ParametersDom(method.TypeParams.OrDefault());
-        if (method.NullableRepresentationFrame.OrDefault() is { RequiresMetadata: true } frame)
-            candidate[NullableRepresentationTypes.MethodFrameKey] = frame.ToJson().ToJsonString();
-        if (method.MethodTypeParameterBoundsPre.HasValue)
-            candidate[NullableGenericErasure.MethodTypeParameterBoundsPre] = method.MethodTypeParameterBoundsPre.Value.FrozenText;
-        candidate[DeclarationIdentityBinding.ExplicitNameKey] = method.ExplicitClrName.OrDefault();
-        candidate["ret"] = TypeJson.Write(method.Ret.OrDefault());
-        candidate["inheritedDeclarationSignature"] = new JsonArray(selection.DeclarationSignature.Select(TypeJson.Write).ToArray());
-        if (selection.DeclarationId != null) candidate["inheritedDeclarationId"] = selection.DeclarationId;
-        if (candidate["mods"] is JsonObject mods) mods.Remove("suspend");
-        for (var index = 0; index < method.Params.Value.Length; index++)
-        {
-            var parameter = (JsonObject)candidate["params"][index];
-            var value = method.Params.Value[index];
-            parameter["type"] = TypeJson.Write(value.Type.OrDefault());
-            if (value.NullableFlags.HasValue)
-                parameter["nullableFlags"] = new JsonArray(value.NullableFlags.Value.Select(flag => (JsonNode)JsonValue.Create(flag)).ToArray());
-        }
-        if (method.DotktValueReturn.OrDefault()) candidate[BirTypeLowering.ValueReturnKey] = true;
-        return candidate;
-    }
 }
