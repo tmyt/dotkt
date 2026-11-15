@@ -185,7 +185,7 @@ static partial class ClrMemberResolution
     // The physical pass revisits only constructions after type lowering, when declared Unit/void and a generic
     // return instantiated with Unit are distinguishable, and records representation adapters against those slots.
     public static void ResolveLocalDelegateTargets(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs,
-        bool physicalDelegates = false, IReadOnlyDictionary<string, string> localCarriers = null)
+        IReadOnlyDictionary<string, string> localCarriers = null)
     {
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         _localCarriers = localCarriers;
@@ -209,44 +209,18 @@ static partial class ClrMemberResolution
                     AddDeclarations(name, methods);
         }
 
-        static int GenericArity(JsonObject method) => method["typeParams"] is JsonArray tps ? tps.Count : 0;
-        static TypeNode SubstMethodTvs(TypeNode type, TypeNode[] args) => type switch
-        {
-            TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
-            TypeNode.Nullable n => new TypeNode.Nullable(SubstMethodTvs(n.Of, args)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(SubstMethodTvs(o.Of, args)),
-            TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
-                nested.Select(a => SubstMethodTvs(a, args)).ToArray()),
-            TypeNode.Array a => new TypeNode.Array(SubstMethodTvs(a.Elem, args)),
-            TypeNode.ByRef b => new TypeNode.ByRef(SubstMethodTvs(b.Of, args)),
-            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
-                SubstMethodTvs(fn.Ret, args),
-                fn.Params.Select(p => SubstMethodTvs(p, args)).ToArray(),
-                fn.Recv == null ? null : SubstMethodTvs(fn.Recv, args), fn.Clr,
-                fn.Ctx?.Select(c => SubstMethodTvs(c, args)).ToArray()),
-            _ => type,
-        };
-        static string[] Keys(IEnumerable<TypeNode> types) => types.Select(SupertypeGraph.TypeKey).ToArray();
-
         void Bind(JsonObject call)
         {
             var kind = (call["k"] as JsonValue)?.GetValue<string>();
-            if (physicalDelegates && kind is not ("newDelegate" or "newClosure")) return;
-            if (!physicalDelegates && kind == "newClosure") return;
-            if (kind is not ("newDelegate" or "newClosure" or "newBoundDelegate" or "callStatic" or "callInstance" or "constrainedCall")) return;
-            // A constrained call names its declaration owner in `iface`; its `recvType` is the type parameter whose
-            // dispatch mechanics the emitter consumes.  Treating only ordinary owner slots as local left this one
-            // call shape outside delegate-target stamping whenever the interface is emitted in this module.
-            var ownerNode = kind == "constrainedCall"
-                ? call["iface"]
-                : kind == "newClosure" ? call["closureType"]
+            if (kind is not ("newDelegate" or "newClosure")) return;
+            var ownerNode = kind == "newClosure" ? call["closureType"]
                 : call["calleeOwner"] ?? call["owner"] ?? call["ownerType"];
             if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner) return;
             if (!owners.TryGetValue(owner.Name, out var methods))
             {
                 // The referenced MethodDef is already selected. Its physical slots, not the requested
                 // function-value carrier, determine the natural delegate over that method pointer.
-                if (physicalDelegates && kind == "newDelegate"
+                if (kind == "newDelegate"
                     && call["memberRef"] is JsonObject reference
                     && reference["parameterTypes"] is JsonArray parameterTypes
                     && TypeJson.Read(reference["returnType"]) is TypeNode returnType
@@ -258,7 +232,7 @@ static partial class ClrMemberResolution
                         ?? Array.Empty<TypeNode>();
                     TypeNode ValueSlot(TypeNode type) => type is TypeNode.Mod modifier
                         ? ValueSlot(modifier.Of)
-                        : SubstMethodTvs(SupertypeGraph.SubstOwnerTvs(type, referencedOwnerArgs), referencedMethodArgs);
+                        : SubstituteLocalDelegateMethodType(SupertypeGraph.SubstOwnerTvs(type, referencedOwnerArgs), referencedMethodArgs);
                     var natural = BirTypeLowering.PhysicalDelegate(ValueSlot(returnType),
                         parameterTypes.Select(TypeJson.Read).Select(ValueSlot).ToArray());
                     if (NeedsSlotAdapter(natural, requested))
@@ -283,49 +257,36 @@ static partial class ClrMemberResolution
             if (suppliedArgs.Any(t => t == null)) return;
             var ownerArgs = kind == "newClosure" ? suppliedArgs : owner.Args ?? Array.Empty<TypeNode>();
             var declarationId = (call[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>();
-            var matches = new List<(JsonObject Method, TypeNode[] Params)>();
-            foreach (var candidate in methods.Where(m =>
-                         (declarationId != null
-                             ? (m[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>() == declarationId
-                             : (m["name"] as JsonValue)?.GetValue<string>() == name)
-                         && GenericArity(m) == methodArgs.Length))
-            {
-                if (candidate["params"] is not JsonArray parameters || parameters.Count != wanted.Length) continue;
-                var declared = parameters.OfType<JsonObject>()
-                    .Select(p => TypeJson.Read(p["type"])).ToArray();
-                if (declared.Length != wanted.Length || declared.Any(t => t == null)) continue;
-                var selection = sourceSignature == null ? declared : parameters.OfType<JsonObject>()
-                    .Select(p => TypeJson.Read(p[FunctionSignatureIdentity.Key] ?? p["type"])).ToArray();
-                var closed = selection.Select(t => SupertypeGraph.SubstOwnerTvs(t, ownerArgs))
-                    .Select(t => SubstMethodTvs(t, methodArgs)).ToArray();
-                // A closure construction names its synthesized class's unique invoke method, not an overload
-                // descriptor. Its requested delegate parameters may need adaptation to that declaration.
-                // An authored identity likewise already selected the declaration. Its physical parameters may
-                // have changed during callable adaptation; the old use-site signature cannot select it again.
-                if (declarationId != null || kind == "newClosure"
-                    || Keys(selection).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
-                    matches.Add((candidate, declared));
-            }
-            if (matches.Count != 1 && kind is "newDelegate" or "newClosure" or "newBoundDelegate")
+            var candidates = methods.Select((candidate, index) => {
+                var parameters = candidate["params"] as JsonArray;
+                var declared = parameters?.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+                // A partial parameter vector cannot name a declaration.
+                if (declared?.Length != parameters?.Count) declared = null;
+                return new LocalDelegateCandidate(index,
+                    (candidate["name"] as JsonValue)?.GetValue<string>(),
+                    (candidate[DeclarationIdentityBinding.Key] as JsonValue)?.GetValue<string>(),
+                    (candidate["typeParams"] as JsonArray)?.Count ?? 0, declared,
+                    parameters?.OfType<JsonObject>().Select(parameter =>
+                        TypeJson.Read(parameter[FunctionSignatureIdentity.Key] ?? parameter["type"])).ToArray());
+            }).ToArray();
+            var matches = SelectLocalDelegateTargets(candidates, name, declarationId, wanted,
+                ownerArgs, methodArgs, sourceSignature != null, kind == "newClosure");
+            if (matches.Length != 1)
                 throw new InvalidOperationException(
-                    $"bir2cir: {kind} target '{owner.Name}.{name}' resolves to {matches.Count} exact local methods; call={call.ToJsonString()}");
-            if (matches.Count != 1) return;
-            if (matches[0].Method["params"] is JsonArray selectedParameters
+                    $"bir2cir: {kind} target '{owner.Name}.{name}' resolves to {matches.Length} exact local methods; call={call.ToJsonString()}");
+            if (methods[matches[0].Index]["params"] is JsonArray selectedParameters
                 && selectedParameters.OfType<JsonObject>().Any(p => p[FunctionSignatureIdentity.Key] != null))
                 call["calleeParams"] = FunctionSignatureIdentity.Signature(selectedParameters);
-            // Delegate-construction nodes identify the target method itself, so their descriptor must be the
-            // declaration's open parameter vector. Ordinary calls already carry the receiver/method-substituted
-            // call-site descriptor; replacing it with declaration-relative type variables would reinterpret those
-            // variables in the caller's generic frame (notably for a constrained call through I<Int> from T : I<Int>).
-            if (kind is "newDelegate" or "newBoundDelegate")
-                call["sig"] = new JsonArray(matches[0].Params.Select(TypeJson.Write).ToArray());
-            if (physicalDelegates
-                && TypeJson.Read(call["funcType"]) is TypeNode.Fn { Suspend: false } desired
-                && TypeJson.Read(matches[0].Method["ret"]) is TypeNode declaredReturn)
+            // A direct delegate constructor identifies the declaration's open MethodDef signature.
+            // Closure constructions retain their separately selected invoke/adapter shape.
+            if (kind == "newDelegate")
+                call["sig"] = new JsonArray(matches[0].Parameters.Select(TypeJson.Write).ToArray());
+            if (TypeJson.Read(call["funcType"]) is TypeNode.Fn { Suspend: false } desired
+                && TypeJson.Read(methods[matches[0].Index]["ret"]) is TypeNode declaredReturn)
             {
-                TypeNode Close(TypeNode type) => SubstMethodTvs(SupertypeGraph.SubstOwnerTvs(type, ownerArgs), methodArgs);
+                TypeNode Close(TypeNode type) => SubstituteLocalDelegateMethodType(SupertypeGraph.SubstOwnerTvs(type, ownerArgs), methodArgs);
                 var natural = BirTypeLowering.PhysicalDelegate(Close(declaredReturn),
-                    matches[0].Params.Select(Close).ToArray());
+                    matches[0].Parameters.Select(Close).ToArray());
                 // The function value and its lifted method can acquire different nullable representations.
                 // Preserve the selected method's actual signature and let the existing slot adapter cross
                 // object/value and value/void seams; changing the delegate token alone cannot change the ldftn target.
@@ -337,7 +298,7 @@ static partial class ClrMemberResolution
                     call["funcType"] = TypeJson.Write(natural);
                 }
             }
-            try { StampDelegateArgumentTargets(call, matches[0].Params, ownerArgs, methodArgs); }
+            try { StampDelegateArgumentTargets(call, matches[0].Parameters, ownerArgs, methodArgs); }
             catch (Exception ex)
             {
                 throw new InvalidOperationException(
@@ -467,29 +428,13 @@ static partial class ClrMemberResolution
         {
             foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) EnsurePlainCallDescriptors(value);
             var kind = (obj["k"] as JsonValue)?.GetValue<string>();
-            if (kind is "newDelegate" or "newBoundDelegate")
-            {
-                if (obj["sig"] is not JsonArray && TypeJson.Read(obj["funcType"]) is TypeNode.Fn fn)
-                    // A function type's extension receiver is a real leading CLR delegate/target-method parameter.
-                    // `Params` excludes it; `DelegateParams` is the complete physical signature.
-                    obj["sig"] = new JsonArray(fn.DelegateParams.Select(TypeJson.Write).ToArray());
-                return;
-            }
-            if (kind is not ("callStatic" or "callInstance" or "constrainedCall")) return;
-            if (obj["sig"] is JsonArray)
-            {
-                // A preceding binding pass may already have supplied the authoritative physical descriptor.
-                // Consume the redundant frontend vector in that case too; it is not a second CIR signature.
-                obj.Remove("shapeTypes");
-                return;
-            }
-            if (obj["shapeTypes"] is JsonArray shapeTypes)
-            {
-                obj["sig"] = shapeTypes.DeepClone();
-                obj.Remove("shapeTypes");
-            }
-            else if (obj["argTypes"] is JsonArray argTypes) obj["sig"] = argTypes.DeepClone();
-            else if (obj["args"] is JsonArray args && args.Count == 0) obj["sig"] = new JsonArray();
+            var construction = kind is "newDelegate" or "newBoundDelegate";
+            if (!construction && kind is not ("callStatic" or "callInstance" or "constrainedCall")) return;
+            TypeNode[] Vector(string key) => (obj[key] as JsonArray)?.Select(TypeJson.Read).ToArray();
+            var plan = PlanPlainDescriptor(construction, Vector("sig"), Vector("shapeTypes"), Vector("argTypes"),
+                obj["args"] is JsonArray { Count: 0 }, construction ? TypeJson.Read(obj["funcType"]) : null);
+            if (plan.Signature != null) obj["sig"] = new JsonArray(plan.Signature.Select(TypeJson.Write).ToArray());
+            if (plan.ConsumeShapes) obj.Remove("shapeTypes");
         }
         else if (node is JsonArray array)
             foreach (var item in array.ToList()) if (item != null) EnsurePlainCallDescriptors(item);

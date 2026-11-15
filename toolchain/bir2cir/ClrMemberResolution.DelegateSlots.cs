@@ -87,10 +87,12 @@ static partial class ClrMemberResolution
         for (var i = 0; i < parameters.Length; i++)
         {
             if (args[i] is not JsonObject arg) continue;
-            var slot = SupertypeGraph.SubstOwnerTvs(parameters[i], ownerArgs);
-            MarkDelegateSlot(arg, SubstituteMethodTypeArgs(slot, methodArgs));
+            MarkDelegateSlot(arg, CloseDelegateArgumentSlot(parameters[i], ownerArgs, methodArgs));
         }
     }
+
+    static TypeNode CloseDelegateArgumentSlot(TypeNode parameter, TypeNode[] ownerArgs, TypeNode[] methodArgs)
+        => SubstituteMethodTypeArgs(SupertypeGraph.SubstOwnerTvs(parameter, ownerArgs), methodArgs);
 
     static TypeNode SubstituteMethodTypeArgs(TypeNode type, TypeNode[] args) => type switch
     {
