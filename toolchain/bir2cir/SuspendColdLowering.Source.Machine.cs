@@ -26,7 +26,7 @@ static partial class SuspendColdLowering
             }
             if (lambda)
             {
-                foreach (var (name, type) in _captures) Capture(name, type, IsExactOuterStorage(name));
+                foreach (var (name, captureType) in _captures) Capture(name, captureType, IsExactOuterStorage(name));
             }
             else
             {

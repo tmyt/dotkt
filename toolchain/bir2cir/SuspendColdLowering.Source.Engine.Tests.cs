@@ -55,10 +55,10 @@ static partial class SuspendColdLowering
                 && generator.RewriteNoSpill((BirGraphValue)new BirThis()) is BirFieldGet { Name.Value: ThisField },
                 "authored state-machine self and the enclosing receiver were conflated");
 
-            var from = new BirCallStatic { Owner = new TypeNode.Fqn("EngineFile"), Method = "from", Ret = IntTn, Args = [] };
-            var to = new BirCallStatic { Owner = new TypeNode.Fqn("EngineFile"), Method = "to", Ret = IntTn, Args = [] };
+            var from = new BirCallStatic { Owner = new TypeNode.Fqn("EngineFile"), Method = "from", Ret = IntTn, Args = Array.Empty<IBirExpression>() };
+            var to = new BirCallStatic { Owner = new TypeNode.Fqn("EngineFile"), Method = "to", Ret = IntTn, Args = Array.Empty<IBirExpression>() };
             static BirCallStatic Pause() => new() { Owner = new TypeNode.Fqn("EngineFile"), Method = "pause", Ret = IntTn,
-                SuspendCall = true, Args = [] };
+                SuspendCall = true, Args = Array.Empty<IBirExpression>() };
             var evaluation = new BirExpressionStatement { Expr = Pause() };
             var loop = new BirFor { Var = "index", From = from, To = to, Step = 1, Cmp = "<",
                 Body = new IBirStatement[] { evaluation, new BirContinue() } };
@@ -71,7 +71,7 @@ static partial class SuspendColdLowering
 
             var handlerRead = Local("caught");
             var handlerCall = new BirExpressionStatement { Expr = Pause() };
-            var ordinary = new BirCatch { ExcType = new TypeNode.Fqn("System.ArgumentException"), Var = "ordinary", Body = [] };
+            var ordinary = new BirCatch { ExcType = new TypeNode.Fqn("System.ArgumentException"), Var = "ordinary", Body = Array.Empty<IBirStatement>() };
             var handler = new BirCatch { ExcType = new TypeNode.Fqn("System.Exception"), Var = "caught",
                 Body = new IBirStatement[] { handlerCall, new BirExpressionStatement { Expr = handlerRead } } };
             var attempt = new BirTry { Body = Array.Empty<IBirStatement>(), Catches = new[] { ordinary, handler } };
@@ -100,7 +100,7 @@ static partial class SuspendColdLowering
             {
                 var result = Ret(IntConst(arity));
                 var parameters = Enumerable.Range(0, arity).Select(index => new BirLambdaParameter { Name = "p" + index, Type = IntTn }).ToArray();
-                var lambda = new BirNewSuspendLambda { Arity = arity, Params = parameters, Captures = [],
+                var lambda = new BirNewSuspendLambda { Arity = arity, Params = parameters, Captures = Array.Empty<BirCaptureDescriptor>(),
                     SuspendRet = IntTn, Body = new IBirStatement[] { result } };
                 var input = new SourceFunctionInput.Lambda(file, null, lambda, "EngineLambda" + arity, [], 0, false, false);
                 var built = new SourceFunGen(context, input).Build();
