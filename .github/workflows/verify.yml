@@ -37,15 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: debug fs
-        run: |
-          id
-          echo "RUNNER_TEMP=$RUNNER_TEMP"
-          df -hT "$RUNNER_TEMP"
-          grep -F " $(stat -c %m "$RUNNER_TEMP") " /proc/mounts
-          ls -la /.dockerenv 2>/dev/null && echo "in docker"
-          head -3 /proc/1/cgroup
-
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
