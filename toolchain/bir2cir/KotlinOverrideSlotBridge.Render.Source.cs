@@ -43,9 +43,9 @@ static partial class KotlinOverrideSlotBridge
                 if (NullableFlags.ComputeValues(shape, isValue) is { } flags) bridge.NullableFlags = flags;
                 argument = IsNullableValueSlot(parameters[index], physical, refs, isValue, returnPosition: false)
                     && physical is TypeNode.Nullable nullable
-                    ? new BirNullableWrap { Elem = BirGraphValue.CopyType(nullable.Of), E = argument,
+                    ? new BirNullableWrap { Elem = BirGraphValue.CopyType(nullable.Of), E = OptionalField<IBirExpression>.Of(argument),
                         _physicalDeclarationSignature = physicalImplementation }
-                    : new BirCast { Type = BirGraphValue.CopyType(physical), E = argument,
+                    : new BirCast { Type = BirGraphValue.CopyType(physical), E = OptionalField<IBirExpression>.Of(argument),
                         _physicalDeclarationSignature = physicalImplementation };
             }
             bridgeParameters[index] = bridge;
@@ -79,13 +79,13 @@ static partial class KotlinOverrideSlotBridge
             {
                 returned = IsNullableValueSlot(result, implementationReturn, refs, isValue, returnPosition: true)
                     && implementationReturn is TypeNode.Nullable nullable
-                    ? new BirNullableValue { Elem = BirGraphValue.CopyType(nullable.Of), E = returned,
+                    ? new BirNullableValue { Elem = BirGraphValue.CopyType(nullable.Of), E = OptionalField<IBirExpression>.Of(returned),
                         _physicalDeclarationSignature = physicalImplementation }
-                    : new BirCast { Type = BirGraphValue.CopyType(result), E = returned,
+                    : new BirCast { Type = BirGraphValue.CopyType(result), E = OptionalField<IBirExpression>.Of(returned),
                         _physicalDeclarationSignature = physicalImplementation };
                 carried = true;
             }
-            statement = new BirReturn { Value = returned };
+            statement = new BirReturn { Value = OptionalField<IBirExpression>.Of(returned) };
         }
         var method = new BirFunctionDeclaration {
             Name = name, Static = false, Override = false, Virtual = true, Abstract = false, ObjectOverride = false,
