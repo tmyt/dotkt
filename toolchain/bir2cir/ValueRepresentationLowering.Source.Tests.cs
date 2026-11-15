@@ -99,12 +99,14 @@ sealed partial class ValueRepresentationLowering
         if (!indexed.locals["source-value-method"].Method.HasSource
             || indexed.locals["source-value-method"].Method.Return != new TypeNode.Fqn("kotlin.Long"))
             throw new InvalidOperationException("Value representation source association copied a stale method header");
-        var continuation = root.ToDom();
+        var declarations = FixtureProjection(root);
+        var continuation = root.ToDom(declarations.ObserveProjection);
+        declarations.ProjectRetiredForests();
         var physicalOwner = continuation["types"][0].AsObject();
         physicalOwner["name"] = "PhysicalShape";
         var physicalMethod = physicalOwner["methods"][0].AsObject();
         physicalMethod["name"] = "physicalEntry";
-        indexed.BindDomDeclarations(new JsonNode[] { continuation });
+        indexed.BindDomDeclarations(new JsonNode[] { continuation }, null, declarations);
         physicalMethod["ret"] = TypeJson.Fqn("kotlin.Int");
         if (!indexed.localParameters["SourceShape"].SequenceEqual(new[] { "out" })
             || indexed.localParameters.ContainsKey("PhysicalShape") || indexed.localParameters.ContainsKey("AbsentShape")
@@ -127,22 +129,26 @@ sealed partial class ValueRepresentationLowering
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String") };
         var live = Method("live");
         var retired = Method("retired");
-        var root = new BirFileDeclaration { FileClass = "Retirement", Methods = new[] { retired, live } };
+        var retiredOwner = new BirClassDefinition { Kind = "class", Name = "RetiredOwner", Methods = new[] { retired } };
+        var liveOwner = new BirClassDefinition { Kind = "class", Name = "LiveOwner", Methods = new[] { live } };
+        var root = new BirFileDeclaration { FileClass = "Retirement", Types = new IBirTypeDeclaration[] { retiredOwner, liveOwner } };
         var sourcePolicy = new ValueRepresentationSourcePolicy(new[] { root }, null, false);
         var values = CreateSource(new[] { root }, null, false, sourcePolicy, CaptureSource(new[] { root }), null);
         var retiredView = values.sourceMethods[0].Method;
         var liveView = values.sourceMethods[1].Method;
+        var declarations = FixtureProjection(root);
         values.RetireSourceDeclaration(retired);
+        declarations.RetireForest(retired);
         // A newly generated helper is not a source-catalog occurrence, even if it shares scalar header facts.
         values.RetireSourceDeclaration(Method("untracked"));
         retired.Ret = new TypeNode.Fqn("kotlin.Long");
-        root.Methods = new[] { live };
-        var continuing = root.ToDom();
-        var retiredProjection = retired.ToDom();
-        var retirements = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance) { [retired] = retiredProjection };
-        values.BindDomDeclarations(new JsonNode[] { continuing }, retirements);
+        retiredOwner.Methods = Array.Empty<BirFunctionDeclaration>();
+        var continuing = root.ToDom(declarations.ObserveProjection);
+        declarations.ProjectRetiredForests();
+        var retiredProjection = declarations.RetiredMethods[retired];
+        values.BindDomDeclarations(new JsonNode[] { continuing }, declarations.RetiredMethods, declarations);
         if (retiredView.HasSource || liveView.HasSource || values.sourceMethods.Count != 0
-            || !ReferenceEquals(liveView.Dom, continuing["methods"][0])
+            || !ReferenceEquals(liveView.Dom, continuing["types"][1]["methods"][0])
             || !ReferenceEquals(retiredView.Dom, retiredProjection)
             || retiredView.Return != new TypeNode.Fqn("kotlin.Long")
             || !ReferenceEquals(values.locals["shared-source-id"].Method, liveView))
@@ -151,12 +157,18 @@ sealed partial class ValueRepresentationLowering
         if (retiredView.Return != new TypeNode.Fqn("kotlin.Int"))
             throw new InvalidOperationException("Retired value declaration became a frozen source header after handoff");
 
-        var missingRoot = new BirFileDeclaration { FileClass = "Missing", Methods = new[] { Method("first"), Method("second") } };
+        var missingOwner = new BirClassDefinition { Kind = "class", Name = "MissingOwner", Methods = new[] { Method("first") } };
+        var missingRoot = new BirFileDeclaration { FileClass = "Missing", Types = new IBirTypeDeclaration[] {
+            missingOwner, new BirClassDefinition { Kind = "class", Name = "OtherOwner", Methods = new[] { Method("second") } },
+        } };
         var missing = CreateSource(new[] { missingRoot }, null, false,
             new ValueRepresentationSourcePolicy(new[] { missingRoot }, null, false), CaptureSource(new[] { missingRoot }), null);
-        missingRoot.Methods = new[] { missingRoot.Methods.Value[1] };
+        var missingDeclarations = FixtureProjection(missingRoot);
+        missingOwner.Methods = Array.Empty<BirFunctionDeclaration>();
+        var missingDom = missingRoot.ToDom(missingDeclarations.ObserveProjection);
+        missingDeclarations.ProjectRetiredForests();
         var refused = false;
-        try { missing.BindDomDeclarations(new JsonNode[] { missingRoot.ToDom() }); }
+        try { missing.BindDomDeclarations(new JsonNode[] { missingDom }, null, missingDeclarations); }
         catch (InvalidOperationException) { refused = true; }
         if (!refused) throw new InvalidOperationException("An unreported missing source occurrence bypassed strict value declaration handoff");
     }

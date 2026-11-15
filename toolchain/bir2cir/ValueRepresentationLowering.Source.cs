@@ -130,9 +130,10 @@ sealed partial class ValueRepresentationLowering
     }
 
     internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots,
-        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations = null,
-        SourceDeclarationProjection declarations = null)
+        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations,
+        SourceDeclarationProjection declarations)
     {
+        ArgumentNullException.ThrowIfNull(declarations);
         if (domBound) throw new InvalidOperationException("Value representation declarations already handed to DOM");
         var identities = sourceMethods.Select(method => method.Fact.Id).ToHashSet(StringComparer.Ordinal);
         var actual = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
@@ -140,7 +141,7 @@ sealed partial class ValueRepresentationLowering
         {
             foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
                 if (Text(method[DeclarationIdentityBinding.Key]) is string id && identities.Contains(id)
-                    && declarations?.MaterializedMethods.Contains(method) != true)
+                    && !declarations.MaterializedMethods.Contains(method))
                 {
                     if (!actual.TryGetValue(id, out var occurrences)) actual.Add(id, occurrences = new List<JsonObject>());
                     occurrences.Add(method);
@@ -148,13 +149,11 @@ sealed partial class ValueRepresentationLowering
             foreach (var type in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Index(type);
         }
         foreach (var root in roots.OfType<JsonObject>()) Index(root);
-        // Capture -> continuing DOM association preserves declaration order.
-        // Occurrences only retain the old dictionary overwrite behavior for an
-        // exact repeated identity; they do not infer an origin for a new method.
+        // ID counts validate original membership, not physical traversal order:
+        // only the actual owning projection associates a continuing occurrence.
         foreach (var expected in sourceMethods.GroupBy(method => method.Fact.Id, StringComparer.Ordinal))
             if ((actual.GetValueOrDefault(expected.Key)?.Count ?? 0) != expected.Count(method => !method.Method.Retired))
                 throw new InvalidOperationException("Value representation source declaration occurrences changed before physical association: " + expected.Key);
-        var positions = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var method in sourceMethods)
         {
             if (method.Method.Retired)
@@ -163,14 +162,7 @@ sealed partial class ValueRepresentationLowering
                 method.Method.BindRetired(retiredDeclarations, declarations);
                 continue;
             }
-            if (declarations != null)
-            {
-                method.Method.BindProjected(declarations, actual[method.Fact.Id]);
-                continue;
-            }
-            var position = positions.GetValueOrDefault(method.Fact.Id);
-            method.Method.Bind(actual[method.Fact.Id][position]);
-            positions[method.Fact.Id] = position + 1;
+            method.Method.BindProjected(declarations, actual[method.Fact.Id]);
         }
         sourceMethods.Clear();
         domBound = true;
@@ -193,7 +185,7 @@ sealed partial class ValueRepresentationLowering
         {
             if (!Retired || source == null || declarations == null
                 || !declarations.TryGetValue(source, out var declaration) || declaration == null
-                || declaration.Parent != null && projection?.IsRetired(source, declaration) != true)
+                || !projection.IsRetired(source, declaration))
                 throw new InvalidOperationException("Value declaration lacks its explicit source retirement");
             Bind(declaration);
         }
