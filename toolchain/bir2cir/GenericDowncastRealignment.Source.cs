@@ -15,7 +15,7 @@ static partial class GenericDowncastRealignment
             if (node is IBirExecutablePayload) return;
             // Preserve this owner's pre-order cast decision: child realignment
             // must not become a new source-type inference for its parent.
-            if (node is BirCast { Type.Value: TypeNode.Fqn target } cast
+            if (node is BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn target } cast
                 && SourceExpressionType(cast.E.OrDefault() as BirGraphValue) is TypeNode.Fqn source
                 && Realign(target, source, defs) is TypeNode.Fqn aligned)
                 cast.Type = aligned;
@@ -27,10 +27,11 @@ static partial class GenericDowncastRealignment
         void Align(BirGraphValue node, ImmutableDictionary<string, TypeNode.Fqn> locals)
         {
             if (node is IBirExecutablePayload) return;
-            if (node is BirVariable { Init.Value: BirCast { Type.Value: TypeNode.Fqn type } } variable)
+            if (node is BirVariable { Init.HasValue: true,
+                    Init.Value: BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn type } } variable)
                 variable.Type = BirGraphValue.CopyType(type);
-            if (node is BirCallInstance { Recv.Value: BirLocal { Name.HasValue: true } local,
-                    OwnerType.Value: TypeNode.Fqn owner } call
+            if (node is BirCallInstance { Recv.HasValue: true, Recv.Value: BirLocal { Name.HasValue: true } local,
+                    OwnerType.HasValue: true, OwnerType.Value: TypeNode.Fqn owner } call
                 && locals.TryGetValue(local.Name.Value, out var actual) && actual.Name == owner.Name)
                 call.OwnerType = BirGraphValue.CopyType(actual);
 
@@ -46,7 +47,7 @@ static partial class GenericDowncastRealignment
                     if (statement is BirVariable { Name.HasValue: true } declared)
                     {
                         current = current.Remove(declared.Name.Value);
-                        if (declared.Init.OrDefault() is BirCast { Type.Value: TypeNode.Fqn selected })
+                        if (declared.Init.OrDefault() is BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn selected })
                             current = current.SetItem(declared.Name.Value, selected);
                     }
                 }
