@@ -169,7 +169,7 @@ static class TypedGenericArrayStorageLowering
     {
         var array = Type("System.Array");
         var integer = Type("System.Int32");
-        var element = Type("System.Object");
+        var element = Type("System.String");
         if (ClrMemberResolution.PlanArrayStorageCall(refs, "get_Length", Array.Empty<string>()).Dispatch != "call"
             || ClrMemberResolution.PlanArrayStorageCall(refs, "GetValue", new[] { "System.Int32" }).Dispatch != "call"
             || ClrMemberResolution.PlanArrayStorageCall(refs, "GetElementType", Array.Empty<string>(), "System.Type").Dispatch != "callvirt")
@@ -228,7 +228,7 @@ static class TypedGenericArrayStorageLowering
         Require(stored.Type.Value == Type("void") && spills.Length == 6, "store lost ordered spill/check block");
         var arraySpill = (BirVariable)spills[0]; var indexSpill = (BirVariable)spills[1];
         var valueSpill = (BirVariable)spills[2]; var componentSpill = (BirVariable)spills[3];
-        Require(arraySpill.Type.Value == array && indexSpill.Type.Value == integer && valueSpill.Type.Value == element
+        Require(arraySpill.Type.Value == array && indexSpill.Type.Value == integer && valueSpill.Type.Value == Type("System.Object")
             && componentSpill.Type.Value == Type("System.Type")
             && new[] { arraySpill.Init.Value, indexSpill.Init.Value, valueSpill.Init.Value }
                 .Cast<BirLocal>().Select(local => local.Name.Value).SequenceEqual(new[] { "receiverEffect", "indexEffect", "valueEffect" }),
