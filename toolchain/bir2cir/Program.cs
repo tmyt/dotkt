@@ -208,7 +208,13 @@ static class Bir2Cir
                 RoundtripMetadata.RuntimeLinkageSelfTest();
                 RoundtripMetadata.TypeHeaderSelfTest();
                 RoundtripMetadata.SourceTypeAliasSelfTest();
-                SuspendColdLowering.DeclarationRegistrySelfTest();
+                SuspendLiveness.SourceSelfTest();
+                SuspendColdLowering.OperandPlanSourceSelfTest();
+                SuspendColdLowering.DeclarationSourceSelfTest();
+                SuspendColdLowering.SourceContinuationSelfTest();
+                SuspendColdLowering.EngineSourceSelfTest();
+                SuspendColdLowering.CallsSourceSelfTest();
+                SuspendLambdaLowering.SourceSelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 ReferenceMetadataIndex.PhysicalParameterFactsSelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
@@ -781,14 +787,24 @@ sealed class Pipeline
         }, BindBridgeMethods);
         ConstructedMemberReturnSubstitution.ApplyAll(captured);
 
+        var suspendTransitions = new SuspendColdLowering.SourcePipelineTransitions(captured,
+            currentDeclarations, nativeProofs, genericRepresentations, aliasTransitions,
+            RetireDeclaration, retiredDeclarations);
+        var suspendModule = new SuspendColdLowering.SuspendModuleContext(captured, refs,
+            inventory.EmittedTypeFqns, appBuild, localExistentialOwners, isValueFqn, signatures,
+            scalarSlots.Parameters, carrierRealization.Declarations.PhysicalDeclarationSources,
+            suspendTransitions);
+        SuspendColdLowering.ApplyNamedSource(suspendModule);
+        if (!referenceBuild) SuspendLambdaLowering.ApplyAll(suspendModule);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after slot synthesis and constructed-result
-            // closure, immediately before suspend state-machine materialization.
-            var root = source.ToDom(currentDeclarations.ObserveProjection);
+            // continuing projection, after slot and suspend state-machine
+            // materialization. Retired source facts use the same observer.
+            var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
                 root,
@@ -796,24 +812,20 @@ sealed class Pipeline
         }
 
         var continuingRoots = files.Select(file => file.Root).ToArray();
-        // Retired generated targets still supply source declaration facts. Put
-        // those explicitly reported declarations through the same frontier once;
-        // both continuing indexes receive the exact same detached DOM record.
-        var retiredDom = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
-        foreach (var method in retiredDeclarations)
-            retiredDom.Add(method, currentDeclarations.IsRetiredSource(method)
-                ? method.ToDom(currentDeclarations.ObserveProjection) : method.ToDom());
+        suspendTransitions.Projection.ProjectRetiredForests();
+        var retiredDom = suspendTransitions.Projection.RetiredMethods;
         currentDeclarations.BindProjected();
-        genericRepresentations.BindDomDeclarations(continuingRoots, aliasTransitions);
-        valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom);
+        genericRepresentations.BindDomDeclarations(continuingRoots, aliasTransitions, suspendTransitions.Projection);
+        valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom, suspendTransitions.Projection);
         var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
-            continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions);
+            continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions, suspendTransitions.Projection);
         var covariantBridgedSlots = continuingCovariantSlots.Select(slot =>
             new CovariantInterfaceReturnBridge.BridgedSlot(slot.Implementation.Physical, slot.Descriptor)).ToHashSet();
         var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(carrierRealization);
         aliasTransitions.Release();
         retiredDeclarations.Clear();
-        retiredDom.Clear();
+        suspendTransitions.Release();
+        suspendModule.ReleaseSourceDeclarations();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums,
@@ -876,32 +888,8 @@ sealed class Pipeline
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
         var covariantBridgedSlots = module.Preparation.CovariantBridgedSlots;
 
-        // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
-        // extensions, instance members, static/companion members, abstract/interface members) into the cold
-        // Continuation shape (SM class + `f$dotkt_suspend` cold entry + Task bridge + suspend-main drain), and rewrite
-        // member/cross-file/cross-assembly suspend CALLS to the callee's cold shape. Runs GLOBALLY across all files (a
-        // same-assembly cross-file suspend call keeps `owner:null`, so the registry spans every input file). After call
-        // substitution (its synthesized calls are already-final sibling/BCL shapes) and before type lowering (its
-        // kotlin.* type tokens flow through BirTypeLowering). Declaration is UNCONDITIONAL: a non-segmentable v1 shape
-        // gets a call-time-throw cold entry, not a drop — no `suspend:true` survives to ilemit in app builds.
-        //
-        // Runs in app, runtime-stdlib, AND reference builds. Reference emission replaces bodies with throw stubs, but
-        // must retain every declaration signature and trusted identity carrier, including the independently allocated
-        // `id|cold` entry. Otherwise a consuming module can preserve the frontend-selected suspend overload only until
-        // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
-        // runtime and reference builds therefore execute the same declaration transform and physical allocation.
-        var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn, declarationSemanticSignatures,
-            physicalParameterIndices, physicalDeclarationSources);
-
-        // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
-        // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
-        // (SuspendColdLowering.BuildLambdaSm, the shared FunGen machinery). Runs after the cold lowering (so a
-        // suspend-lambda relocated into a synthesized SM invokeSuspend body is still caught — this pass walks
-        // the newly-added SM types too) and before type lowering. kotc emits `newSuspendLambda` for every
-        // `suspend` lambda literal (exercised by cases/il-lam1, il-lam2); same (non-ref) gate as the cold lowering.
-        if (!_options.RefBuild)
-            SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
+        // Named Cold and suspend-lambda materialization have already completed
+        // module-wide in the owning prefix, before the sole DOM frontier.
 
         // PHASE 1.7a — RESIDUAL SUSPEND DECLARATIONS. The two phases above leave the `suspend` modifier on exactly the
         // declarations the stdlib self-build retains without a state machine (the Kotlin surface kept beside its cold
