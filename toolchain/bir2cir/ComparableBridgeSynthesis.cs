@@ -14,7 +14,7 @@ using DotKt.Bir;
 // semantic boundary, before BirTypeLowering: a legal covariant override returning `Nothing` must retain that stamp
 // on the synthesized call so NothingValueTermination can terminate the physical Int32 slot instead of returning
 // Nothing's CLR object erasure into it (#321). Non-ref builds only (the ref surface stays pure Kotlin).
-static class ComparableBridgeSynthesis
+static partial class ComparableBridgeSynthesis
 {
     public static void Apply(JsonNode root, Func<TypeNode, TypeNode> projectValue = null)
     {
@@ -24,25 +24,13 @@ static class ComparableBridgeSynthesis
             if (t is not JsonObject to) continue;
             if ((to["kind"] as JsonValue)?.GetValue<string>() != "class") continue;   // interfaces carry no bodies
             if (to["interfaces"] is not JsonArray ifaces) continue;
-            TypeNode selfArg = null; var hasNonGeneric = false;
-            foreach (var i in ifaces)
-            {
-                if (TypeJson.Read(i) is not TypeNode.Fqn f) continue;
-                if (f.Name == "System.IComparable" && f.Args == null) hasNonGeneric = true;
-                else if (f.Name is not ("kotlin.Comparable" or "System.IComparable")) continue;
-                else if (f.Args is { Length: 1 })
-                {
-                    if (BirTypeLowering.ComparableApplicationCollapses(projectValue?.Invoke(f.Args[0]) ?? f.Args[0])) hasNonGeneric = true;
-                    else selfArg = f.Args[0];
-                }
-            }
-            if (selfArg == null || hasNonGeneric) continue;   // 1-arg IComparable<X> only
+            var selfArg = SelectComparableArgument(ifaces.Select(TypeJson.Read), projectValue);
+            if (selfArg == null) continue;   // 1-arg IComparable<X> only
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
             // Idempotence: skip when a 1-arg CompareTo(object) is already declared (user-written or a prior pass).
-            var exists = methods.OfType<JsonObject>().Any(m =>
-                (m["name"] as JsonValue)?.GetValue<string>() == "CompareTo"
-                && m["params"] is JsonArray ps && ps.Count == 1
-                && TypeJson.Read((ps[0] as JsonObject)?["type"]) is TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" });
+            var exists = methods.OfType<JsonObject>().Any(m => IsErasedCompareTo(
+                (m["name"] as JsonValue)?.GetValue<string>(), (m["params"] as JsonArray)?
+                    .Select(parameter => TypeJson.Read((parameter as JsonObject)?["type"])).ToArray()));
             if (exists) continue;
             var owner = (to["name"] as JsonValue)?.GetValue<string>();
             if (string.IsNullOrEmpty(owner)) continue;
@@ -54,12 +42,8 @@ static class ComparableBridgeSynthesis
                 && m["params"] is JsonArray ps1 && ps1.Count == 1
                 && m["overrides"] is JsonArray overrides
                 && overrides.OfType<JsonObject>().Any(o =>
-                    TypeJson.Read(o["owner"]) is TypeNode.Fqn ownerSpec
-                    && ownerSpec.Name is "kotlin.Comparable" or "System.IComparable"
-                    && ownerSpec.Args is { Length: 1 }
-                    && ownerSpec.Args[0].Equals(selfArg)
-                    && (o["member"] as JsonValue)?.GetValue<string>() is "compareTo" or "CompareTo"
-                    && (o["kind"] as JsonValue)?.GetValue<string>() == "method")).ToList();
+                    IsComparableOverride(TypeJson.Read(o["owner"]),
+                        (o["member"] as JsonValue)?.GetValue<string>(), (o["kind"] as JsonValue)?.GetValue<string>(), selfArg))).ToList();
             if (targets.Count != 1 || targets[0]["params"] is not JsonArray targetParams
                 || targetParams[0] is not JsonObject targetParam
                 || TypeJson.Read(targetParam["type"]) is not TypeNode targetParamType)

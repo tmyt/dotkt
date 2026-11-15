@@ -138,18 +138,23 @@ static partial class ClosureSynthesis
             var refused = ApplyMaterialized(captureFile, new[] { new MaterializedOccurrence(
                 new BirGraphSlot(() => (BirGraphValue)illegalStatement.Expr.Value,
                     value => illegalStatement.Expr = OptionalField<IBirExpression>.Of((IBirExpression)value)), roots[0].Context) }, refs);
-            // Check the real surviving-type gate after the one typed-to-DOM
-            // frontier, rather than introducing a second test-only registry.
+            // Check the actual owning surviving-type gate against the same deferred registry.
             var refusedAtFinalGate = false;
-            try { AssertSurvivingCapturesLegal(new[] { captureFile.ToDom() }); }
+            try { AssertSurvivingCapturesLegal(new[] { captureFile }); }
             catch (NotSupportedException error)
             {
                 refusedAtFinalGate = error.Message.Contains("TypedMaterialized.kt:17: closure-synthesis: in `source`")
                     && error.Message.Contains("`span`") && error.Message.Contains("TypedMaterialized.IllegalCapture");
             }
             if (!refusedAtFinalGate) throw new InvalidOperationException("Typed capture refusal did not reach the shared surviving-type gate");
+            // The recorded verdict cannot be erased by reclassifying a subsequently rewritten field.
+            captureFile.Types.Value.Single().Fields.Value.Single().Type = new TypeNode.Fqn("System.String");
+            var retainedVerdict = false;
+            try { AssertSurvivingCapturesLegal(new[] { captureFile }); }
+            catch (NotSupportedException error) { retainedVerdict = error.Message.Contains("`span`"); }
+            if (!retainedVerdict) throw new InvalidOperationException("Surviving capture check recomputed its deferred verdict");
             captureFile.Types = Array.Empty<IBirTypeDeclaration>();
-            AssertSurvivingCapturesLegal(new[] { captureFile.ToDom() });
+            AssertSurvivingCapturesLegal(new[] { captureFile });
         }
         finally { refs.DisposeNet(); }
         Console.WriteLine("[typed materialized closures] self-test OK (owning slots, bottom-up classes, generic frames, provenance and delegate slots)");
