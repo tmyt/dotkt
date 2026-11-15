@@ -33,7 +33,7 @@ internal static class SourceMetadataTests
                 ["typeAliases"] = new JsonArray(expected.DeepClone()),
             };
             var inputPath = Path.Combine(Path.GetTempPath(), "dotkt-source-metadata-" + Guid.NewGuid() + ".bir.json");
-            JsonObject root;
+            object root;
             try
             {
                 File.WriteAllBytes(inputPath, Encoding.UTF8.GetBytes(input.ToJsonString()));
@@ -44,16 +44,20 @@ internal static class SourceMetadataTests
                 var module = load.Invoke(null, [new[] { inputPath }, false, false, true, references])!;
                 var loaded = (System.Collections.IEnumerable)module.GetType().GetProperty("Files")!.GetValue(module)!;
                 var file = loaded.Cast<object>().Single();
-                root = (JsonObject)file.GetType().GetProperty("Root")!.GetValue(file)!;
+                root = file.GetType().GetProperty("Root")!.GetValue(file)!;
             }
             finally { File.Delete(inputPath); }
-            if (root.ContainsKey("typeAliases") || root["assemblyAttrs"] is not JsonArray { Count: 1 })
-                throw new Exception("Source declarations leaked into physical DOM traversal or lost their assembly carrier");
-            var arguments = root["assemblyAttrs"]![0]!["args"]!;
-            if (arguments[0]!["value"]!.GetValue<string>() != BirCarrier.MessagePackV1)
+            // Inspect the actual continuing records. Internal graph types are
+            // accessed through the same reflection boundary as the loader;
+            // serializing them would hide another stale DOM assumption.
+            var attributes = FieldValue<Array>(root, "AssemblyAttrs");
+            if ((bool)Field(Field(root, "TypeAliases"), "IsPresent") || attributes.Length != 1)
+                throw new Exception("Source declarations leaked into physical traversal or lost their assembly carrier");
+            var arguments = FieldValue<Array>(attributes.GetValue(0)!, "Args");
+            if (FieldValue<BirLiteral>(arguments.GetValue(0)!, "Value") is not BirLiteral.TextLiteral codec
+                || codec.Value != BirCarrier.MessagePackV1)
                 throw new Exception("Source alias carrier is not actually binary");
-            var decoded = BirCarrier.DecodeBody(arguments[0]!["value"]!.GetValue<string>(),
-                Convert.FromBase64String(arguments[1]!["bytes"]!.GetValue<string>()),
+            var decoded = BirCarrier.DecodeBody(codec.Value, FieldValue<byte[]>(arguments.GetValue(1)!, "Bytes"),
                 SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
             Equal(expected, Write(decoded));
             var binary = BirCarrier.EncodeBody(BirCarrier.MessagePackV1, source,
@@ -181,6 +185,9 @@ internal static class SourceMetadataTests
         }) MessagePackBoundaryTests.Reject(() => BirCarrier.DecodeBody(BirCarrier.JsonV1,
             Encoding.UTF8.GetBytes(malformed), LiteralText.ReadJson, IrMessagePack.ReadString));
     }
+
+    static object Field(object value, string name) => value.GetType().GetProperty(name)!.GetValue(value)!;
+    static T FieldValue<T>(object value, string name) => (T)Field(Field(value, name), "Value");
 
     static SourceTypeAlias Read(string json) => BirCarrier.DecodeBody(BirCarrier.JsonV1,
         Encoding.UTF8.GetBytes(json), SourceMetadataJson.Read);
