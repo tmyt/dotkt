@@ -144,7 +144,7 @@ static partial class FBoundStarProjectionErasure
         node.RewriteOwnFieldsInPlace((field, _, type) => {
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
-            var facts = SourceTypeSlotFacts(node, state.Realization, scope.Descriptor);
+            var facts = SourceTypeSlotFacts(node, state.Realization, scope.Descriptor, state.LocalClrAliases);
             var bound = scope.Bound || BoundTypeSlot(facts, field);
             var shape = scope.ArrayShape || NativeArrayTypeSlot(facts, field);
             if (field == "typeArgs") return RewriteSourceMethodArgument(node, type, index, state, bound, shape);
@@ -164,7 +164,7 @@ static partial class FBoundStarProjectionErasure
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape);
         }, (field, _, child) => {
             if (!typesOnly && earlyOperand && field == "e") return;
-            var facts = SourceTypeSlotFacts(node, state.Realization, scope.Descriptor);
+            var facts = SourceTypeSlotFacts(node, state.Realization, scope.Descriptor, state.LocalClrAliases);
             var next = childScope with { Bound = scope.Bound || BoundTypeSlot(facts, field),
                 ArrayShape = scope.ArrayShape || NativeArrayTypeSlot(facts, field),
                 Descriptor = field is "clrBaseImpls" or "clrInterfaceImpls" or "overrides" or "inheritedImplementation",

@@ -7,28 +7,35 @@ static partial class FBoundStarProjectionErasure
     internal sealed class SourceRewriteState
     {
         internal CarrierRealizationContext Realization { get; }
-        internal CarrierProjectionContext Projection => Realization.Projection;
+        internal CarrierProjectionContext Projection { get; }
         internal ReferenceMetadataIndex References => Realization.References;
-        internal IReadOnlyDictionary<string, Owner> Owners => Realization.Owners;
+        internal IReadOnlyDictionary<string, Owner> Owners => Projection.Owners;
+        internal IReadOnlyDictionary<string, string> LocalClrAliases => Projection.LocalClrAliases;
         internal IReadOnlySet<string> Carriers { get; }
         internal Func<TypeNode, IBirExpression, IBirExpression> ComponentPredicate { get; }
         readonly CarrierTypeContext types;
+        readonly CurrentPhysicalTypeView currentPhysical;
         readonly Dictionary<BirGraphValue, TypeNode> projections = new(ReferenceEqualityComparer.Instance);
         readonly Dictionary<BirGraphValue, TypeNode> arrayElements = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BirArrayGet> projectedReads = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BirFunctionDeclaration> normalizedMethods = new(ReferenceEqualityComparer.Instance);
 
         internal SourceRewriteState(CarrierRealizationContext realization,
-            Func<TypeNode, IBirExpression, IBirExpression> componentPredicate)
+            Func<TypeNode, IBirExpression, IBirExpression> componentPredicate,
+            CurrentPhysicalTypeView currentPhysical = null, CarrierProjectionContext projection = null)
         {
             Realization = realization;
+            Projection = projection ?? realization.Projection;
+            this.currentPhysical = currentPhysical;
             ComponentPredicate = componentPredicate;
-            types = CarrierTypeContext.ForSource(realization.Preparation, realization.References);
-            Carriers = realization.Owners.Values.Select(owner => owner.ErasedName).ToHashSet(StringComparer.Ordinal);
+            types = currentPhysical == null ? CarrierTypeContext.ForSource(realization.Preparation, realization.References)
+                : CarrierTypeContext.ForSource(currentPhysical.Definitions, realization.References);
+            Carriers = Owners.Values.Select(owner => owner.ErasedName).ToHashSet(StringComparer.Ordinal);
         }
 
-        internal IBirTypeDeclaration Definition(string name) => Realization.SourceDefinitions.TryGetValue(name, out var binding)
-            ? (IBirTypeDeclaration)binding.Source : null;
+        internal IBirTypeDeclaration Definition(string name) => currentPhysical != null
+            ? currentPhysical.Definitions.GetValueOrDefault(name)
+            : Realization.SourceDefinitions.TryGetValue(name, out var binding) ? (IBirTypeDeclaration)binding.Source : null;
         internal IReadOnlyList<TypeNode> ProjectArguments(TypeNode.Fqn source, string target)
             => ProjectConstructedArguments(source, target, types);
         internal bool ClrVariance(TypeNode.Fqn target, IReadOnlyList<TypeNode> arguments, bool physical = false)
@@ -90,7 +97,7 @@ static partial class FBoundStarProjectionErasure
     };
 
     internal static bool SourceNativeSignature(BirGraphValue declaration, SourceRewriteState state)
-        => SourceTypeSlotFacts(declaration, state.Realization, declarationDescriptor: false).NativeMethodSignature;
+        => SourceTypeSlotFacts(declaration, state.Realization, declarationDescriptor: false, state.LocalClrAliases).NativeMethodSignature;
 
     internal static void PreserveNormalizedSourceReturn(BirFunctionDeclaration declaration,
         TypeNode original, TypeNode physical, SourceRewriteState state)
@@ -175,11 +182,11 @@ static partial class FBoundStarProjectionErasure
     };
 
     static TypeSlotFacts SourceTypeSlotFacts(BirGraphValue node, CarrierRealizationContext context,
-        bool declarationDescriptor)
+        bool declarationDescriptor, IReadOnlyDictionary<string, string> currentAliases = null)
     {
         var kind = (node as BirGraphNode)?.Tag;
         var refs = context.References;
-        var aliases = context.Preparation.LocalClrAliases;
+        var aliases = currentAliases ?? context.Preparation.LocalClrAliases;
         bool NativeOwner(TypeNode owner) => owner is TypeNode.Fqn named
             && context.Values?.IsBindingAlias(named.Name) != true && !aliases.ContainsKey(named.Name)
             && IsNativeArrayOwner(named, refs, aliases);
