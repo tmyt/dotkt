@@ -109,6 +109,12 @@ static partial class ContinuationErasure
 
         var projection = new SourceDeclarationProjection(roots, bindings);
         var dom = file.ToDom(projection.ObserveProjection);
+        static bool HasOuter(JsonNode node) => node switch {
+            JsonObject obj => obj.ContainsKey("outer") || obj.Any(pair => HasOuter(pair.Value)),
+            JsonArray array => array.Any(HasOuter),
+            _ => false,
+        };
+        Need(!HasOuter(dom), "an exact outer role escaped the single source frontier before any DOM cleanup");
         projection.ProjectRetiredForests();
         bindings.BindProjected();
         generic.BindDomDeclarations(new JsonNode[] { dom }, declarations: projection);

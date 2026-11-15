@@ -37,60 +37,9 @@ static partial class DeclarationIdentityBinding
         return PhysicalOnlyId(string.Join("|", identities), "inherited-slot:" + owner);
     }
 
-    public static HashSet<string> CollectDeclarationIds(IEnumerable<JsonNode> roots)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        void WalkOwner(JsonObject owner)
-        {
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    if (Str(method[Key]) is string id) result.Add(id);
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) WalkOwner(type);
-        }
-        foreach (var root in roots.OfType<JsonObject>()) WalkOwner(root);
-        return result;
-    }
-
-    // A stdlib metadata build cannot read its own future reference DLL, but its BIR already states every
-    // @ClrTypeAlias explicitly. Merge those local facts only for the isolated runtime-physical collision projection,
-    // so reference and runtime twins allocate the same MethodDef names from the same CLR signature set.
-    public static IReadOnlyDictionary<string, string> CollisionAliases(
-        IEnumerable<JsonNode> roots,
-        IReadOnlyDictionary<string, string> referencedAliases)
-    {
-        var result = new Dictionary<string, string>(referencedAliases, StringComparer.Ordinal);
-
-        void WalkOwner(JsonObject owner)
-        {
-            if (Str(owner["name"]) is string ownerName && owner["attrs"] is JsonArray attrs)
-            {
-                foreach (var attr in attrs.OfType<JsonObject>())
-                {
-                    if (TypeJson.OwnerName(attr["attr"]) != "kotlin.clr.ClrTypeAlias") continue;
-                    var alias = attr["args"] is JsonArray args
-                        && args.Count == 1
-                        && args[0] is JsonObject constant
-                        && Str(constant["k"]) == "const"
-                        ? Str(constant["value"])
-                        : null;
-                    AddCollisionAlias(result, ownerName, alias);
-                }
-            }
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) WalkOwner(type);
-        }
-
-        foreach (var root in roots.OfType<JsonObject>())
-        {
-            if (root["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) WalkOwner(type);
-        }
-        return result;
-    }
-
-    // Both the typed source index and the remaining late physical index apply
-    // the same trusted declaration rule; transport does not choose alias policy.
+    // A metadata self-build cannot read its own future reference DLL. The source
+    // index merges trusted local @ClrTypeAlias facts into the referenced aliases,
+    // so reference/runtime collision projection uses the same physical names.
     internal static void AddCollisionAlias(Dictionary<string, string> result, string ownerName, string alias)
     {
         if (string.IsNullOrEmpty(alias))

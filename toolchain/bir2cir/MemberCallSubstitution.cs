@@ -70,33 +70,6 @@ static partial class MemberCallSubstitution
     static IReadOnlySet<string> _localDeclarationIds;
 
 
-    public static IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>
-        CollectLocalPropertyAccessors(IEnumerable<JsonNode> roots)
-    {
-        var collector = new LocalPropertyCollector();
-        void Walk(JsonNode node)
-        {
-            if (node is JsonObject obj)
-            {
-                if (LocalPropertyCollector.IsOwner(Str(obj["name"]), obj["kind"] != null) && obj["methods"] is JsonArray methods)
-                    foreach (var method in methods.OfType<JsonObject>())
-                    {
-                        var parameters = method["params"] as JsonArray;
-                        collector.Add(Str(obj["name"]), KotlinPropertyAccessors.IsPhysicalSlotBridge(method),
-                            Str(method[KotlinPropertyAccessors.SourceNameKey]), Str(method[KotlinPropertyAccessors.KindKey]),
-                            Str(method["name"]), (method["typeParams"] as JsonArray)?.Count ?? 0, parameters?.Count ?? 0,
-                            () => parameters?.OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray());
-                    }
-                foreach (var child in obj.Select(pair => pair.Value).ToArray())
-                    if (child != null) Walk(child);
-            }
-            else if (node is JsonArray array)
-                foreach (var child in array.ToArray()) if (child != null) Walk(child);
-        }
-        foreach (var root in roots) Walk(root);
-        return collector.Finish();
-    }
-
     internal static bool TryResolveLocalPropertyAccessor(
         IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> accessors,
         string owner, string property, string kind, int methodArity,

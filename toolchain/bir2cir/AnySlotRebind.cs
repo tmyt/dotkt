@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -52,45 +51,11 @@ static partial class AnySlotRebind
         public string BaseName { get; }                 // the base's bare FQN name; null == the implicit kotlin.Any
     }
 
-    // Collect every local reference `class`/`interface` (module-wide — a call site may live in a different .bir.json
-    // than the declaration, and ilemit's emitted-type table is assembly-wide) -> the universal slots it DECLARES + its
-    // base's bare name (an interface has no base -> null). Value-type enums (`kind:"enum"`) are EnumMemberBinding's.
-    public static Dictionary<string, TypeInfo> CollectLocalTypes(IEnumerable<JsonNode> roots)
-    {
-        var map = new Dictionary<string, TypeInfo>(System.StringComparer.Ordinal);
-        foreach (var root in roots)
-            if (root is JsonObject ro && ro["types"] is JsonArray ts)
-                foreach (var t in ts)
-                    if (t is JsonObject to
-                        && (to["kind"] as JsonValue)?.TryGetValue<string>(out var kind) == true && (kind == "class" || kind == "interface")
-                        && (to["name"] as JsonValue)?.TryGetValue<string>(out var n) == true)
-                    {
-                        var slots = new HashSet<string>(System.StringComparer.Ordinal);
-                        if (to["methods"] is JsonArray ms)
-                            foreach (var m in ms)
-                                if (m is JsonObject mo && (mo["name"] as JsonValue)?.TryGetValue<string>(out var mn) == true)
-                                {
-                                    // The slot ilemit's name-keyed method table will hold = ObjectSlotRename's EMITTED
-                                    // name: an `objectOverride` decl (a genuine kotlin.Any universal override —
-                                    // arity/receiver-gated by kotc's isAnySlotMethod) is renamed to its BCL slot; every
-                                    // other method keeps its name. So a class "declares" a slot iff its EMITTED name is a
-                                    // universal slot. A same-name NON-override overload (`fun toString(pretty: Boolean)`,
-                                    // arity 1) is NOT renamed (stays `toString`) and does NOT shadow the arity-0 universal
-                                    // call, so it must NOT count — else a real `p.toString()` is left un-rebound and
-                                    // dead-ends. (A method literally named `ToString`/`GetHashCode`/`Equals` DOES emit
-                                    // under that name, so ilemit resolves it -> count it.)
-                                    var isOverride = (mo["objectOverride"] as JsonValue)?.TryGetValue<bool>(out var ov) == true && ov;
-                                    var emitted = EmittedObjectSlot(mn, isOverride);
-                                    if (ObjectSlots.Contains(emitted)) slots.Add(emitted);
-                                }
-                        map[n] = new TypeInfo(slots, to["base"] != null ? TypeJson.OwnerName(to["base"]) : null);
-                    }
-        return map;
-    }
-
     static string EmittedObjectSlot(string name, bool objectOverride)
         => objectOverride && KotlinToSlot.TryGetValue(name, out var slot) ? slot : name;
 
+    // Module-wide declaration facts match the emitted method spelling: genuine Any overrides take the BCL
+    // slot, while same-name Kotlin overloads do not. Enums belong to EnumMemberBinding, not this reference table.
     public static Dictionary<string, TypeInfo> CollectLocalTypes(IEnumerable<BirFileDeclaration> roots)
     {
         var result = new Dictionary<string, TypeInfo>(System.StringComparer.Ordinal);

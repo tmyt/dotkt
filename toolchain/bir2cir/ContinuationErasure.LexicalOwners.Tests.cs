@@ -85,6 +85,7 @@ static partial class ContinuationErasure
                 throw new InvalidOperationException("Continuation erasure shared mutable physical argument vectors");
         }
         ExactEnclosingFrames(names);
+        ExactOuterModelSelfTest();
         Console.WriteLine("[coroutine lexical owners] self-test OK (own frames, enclosing storage, values and ancestor ABI)");
     }
 
@@ -114,5 +115,75 @@ static partial class ContinuationErasure
         if (receiver.Outer.IsPresent || field.Outer.IsPresent || parameter.Outer.IsPresent || alias.Outer.IsPresent
             || !field._nativeLocation.Value || !receiver._nativeFieldAddress.Value)
             throw new InvalidOperationException("Exact outer consumption retained its role or erased a required physical-location proof");
+    }
+
+    static void ExactOuterModelSelfTest()
+    {
+        static void Need(bool condition, string message)
+        { if (!condition) throw new InvalidOperationException("Exact outer model coverage: " + message); }
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        BirConstant Zero() => new() { Type = integer, Value = new BirLiteral.IntegerLiteral(0) };
+        BirExpressionStatement Expr(IBirExpression value) => new() { Expr = OptionalField<IBirExpression>.Of(value) };
+        var read = new BirFieldGet { Name = "$outer", Ret = integer, _nativeFieldAddress = true };
+        var writeExpression = new BirFieldSetExpression { Name = "$outer", Value = Zero() };
+        var write = new BirSetField { Name = "$outer", Value = Zero() };
+        var local = new BirLocal { Name = "$outer", Sty = integer };
+        var self = new BirThis { Sty = integer };
+        var variable = new BirVariable { Name = "$outer", Type = integer, Init = Zero() };
+        var field = new BirFieldDeclaration { Name = "$outer", Type = integer, _nativeLocation = true };
+        var parameter = new BirParameter { Name = "$outer", Type = integer };
+        var lambdaParameter = new BirLambdaParameter { Name = "$outer", Type = integer };
+        var capture = new BirCaptureDescriptor { Name = "$outer", Type = integer };
+        var inlineCapture = new BirInlineCapture { Name = "$outer", Type = integer, Value = Zero() };
+        BirGraphValue[] roles = { read, writeExpression, write, local, self, variable, field, parameter,
+            lambdaParameter, capture, inlineCapture };
+        // Reflection is test-only: a new modeled carrier must extend both the
+        // actual role reader and the consumer, not silently default through them.
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly;
+        var modeled = typeof(BirGraphValue).Assembly.GetTypes()
+            .Where(type => !type.IsAbstract && typeof(BirGraphValue).IsAssignableFrom(type)
+                && type.GetProperty("Outer", flags) is not null).ToHashSet();
+        Need(modeled.SetEquals(roles.Select(role => role.GetType())) && roles.Length == 11,
+            "the generated Outer-bearing records and explicit coverage differ");
+        var properties = roles.Select(role => role.GetType().GetProperty("Outer", flags)!).ToArray();
+        Need(properties.All(property => property.PropertyType == typeof(OptionalField<bool>)), "Outer fact type changed");
+
+        var inline = new BirInlineLambda { Params = new[] { lambdaParameter }, Captures = new[] { inlineCapture },
+            Body = Array.Empty<IBirStatement>(), Result = Zero() };
+        var suspend = new BirNewSuspendLambda { Arity = 0, Params = Array.Empty<BirLambdaParameter>(),
+            Captures = new[] { capture }, CapValues = new IBirExpression[] { Zero() }, SuspendRet = integer,
+            Body = Array.Empty<IBirStatement>() };
+        var frozen = ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, new BirInlinePayload {
+            V = 1, Fqn = "OuterRoles.inline", Owner = "OuterRoles", Recv = "none", Static = true,
+            Params = new[] { new BirParameter { Name = "$outer", Type = integer, Outer = true } }, Ret = integer,
+            Body = new IBirStatement[] { new BirReturn { Value = Zero() } },
+        });
+        var frozenBytes = frozen.ToArray();
+        var body = new IBirStatement[] { Expr(read), Expr(writeExpression), write, Expr(local), Expr(self), variable,
+            Expr(inline), Expr(suspend) };
+        var method = new BirFunctionDeclaration { Name = "use", Params = new[] { parameter }, Body = body, InlineBir = frozen };
+        var file = new BirFileDeclaration { Methods = new[] { method }, Fields = new[] { field } };
+        var states = new[] { default(OptionalField<bool>), OptionalField<bool>.Null,
+            OptionalField<bool>.Of(false), OptionalField<bool>.Of(true) };
+        foreach (var state in states)
+        {
+            for (var index = 0; index < roles.Length; index++)
+            {
+                properties[index].SetValue(roles[index], state);
+                Need(SourceExactOuter(roles[index]) == state.OrDefault(), "role reader disagrees on " + roles[index].GetType().Name);
+            }
+            ConsumeExactOuterSource(file);
+            for (var index = 0; index < roles.Length; index++)
+                Need(!((OptionalField<bool>)properties[index].GetValue(roles[index])!).IsPresent
+                    && !SourceExactOuter(roles[index]), "consumer missed " + roles[index].GetType().Name);
+            Need(ReferenceEquals(method.Body.Value, body) && ReferenceEquals(file.Fields.Value[0], field)
+                && ReferenceEquals(inline.Params.Value[0], lambdaParameter) && ReferenceEquals(inline.Captures.Value[0], inlineCapture)
+                && ReferenceEquals(suspend.Captures.Value[0], capture) && field._nativeLocation.Value && read._nativeFieldAddress.Value,
+                "consumption replaced actual records/vectors or erased a physical-location proof");
+            Need(ReferenceEquals(method.InlineBir.Value, frozen) && frozen.AsSpan().SequenceEqual(frozenBytes)
+                && ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec, frozen).Params.Value[0].Outer.Value,
+                "consumption rewrote frozen executable metadata");
+        }
     }
 }
