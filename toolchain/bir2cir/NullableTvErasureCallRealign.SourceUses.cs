@@ -318,7 +318,7 @@ static partial class NullableTvErasureCallRealign
     }
 
     static IBirExpression SourceCoerce(IBirExpression value, TypeNode source, TypeNode target, bool exactProperty = false)
-        => CoerceForFixedSlot(value, source, target, _isValue, _refs, exactProperty);
+        => CoerceForOwnedFixedSlot(value, source, target, _isValue, _refs, exactProperty);
 
     static OptionalField<IBirExpression> SourceStore(OptionalField<IBirExpression> value, TypeNode target, Ctx context)
     {
@@ -346,6 +346,6 @@ static partial class NullableTvErasureCallRealign
         var selection = SelectObjectSlotCoercion(graph.Tag, graph is BirCast cast ? cast.Type.OrDefault() : null,
             source, new TypeNode.Nullable(element), false, _isValue);
         return selection.Kind == SlotCoercionKind.Cast ? new BirCast { Type = selection.Type,
-            E = OptionalField<IBirExpression>.Of((IBirExpression)graph.DeepClone()) } : value;
+            E = OptionalField<IBirExpression>.Of(value.Value) } : value;
     }
 }

@@ -53,7 +53,7 @@ static partial class NullableTvErasureCallRealign
     static DeclSig ReadSig(BirFunctionDeclaration method)
     {
         var signature = ReadSignature(method.Ret.OrDefault(), () => method.NullableGenericRet.OrDefault(),
-            () => method.RetKotlinType.OrDefault(), ownershipKnown: false,
+            () => method.RetKotlinType.OrDefault(), method.NullableErasureOwnershipKnown.OrDefault(),
             preferCarrier => ReadParams(method.Params.OrEmpty(), preferCarrier));
         if (signature == null) return null;
         signature.Ret = BirGraphValue.CopyType(signature.Ret);

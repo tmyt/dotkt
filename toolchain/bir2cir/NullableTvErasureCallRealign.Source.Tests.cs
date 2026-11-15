@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -73,19 +72,17 @@ static partial class NullableTvErasureCallRealign
         var late = Method("late", "late-id", Fqn("object"), new BirParameter { Type = Fqn("object"), NullableGeneric = scalarNullable });
         late.Generated = true;
         late.NullableGenericRet = scalarNullable;
-        var dom = files[0].ToDom();
-        var lateDom = late.ToDom();
-        lateDom[NullableErasureOwnershipKnownKey] = true;
-        dom["types"][0]["methods"].AsArray().Add(lateDom);
-        CollectNewSyntheticMembers(dom, index);
+        late.NullableErasureOwnershipKnown = true;
+        owner.Methods = owner.Methods.Value.Append(late).ToArray();
+        CollectNewSyntheticMembers(files[0], index);
         var admitted = index.ByOwner["Owner"]["late|1"];
         Assert(admitted.NullableErasureOwnershipKnown && admitted.Ret.Equals(scalarNullable)
             && admitted.Params[0].Equals(scalarNullable), "late generated member used a different carrier policy");
         var holder = new BirClassDefinition { Name = "Holder", Kind = "class", Methods = new[] {
             Method("plain", "plain-id", Fqn("Plain")),
         } };
-        dom["types"].AsArray().Add(holder.ToDom());
-        CollectNewSyntheticTypes(dom, index);
+        files[0].Types = files[0].Types.Value.Append(holder).ToArray();
+        CollectNewSyntheticTypes(files[0], index);
         Assert(index.ByDeclarationOwner["Holder"]["plain-id"].Ret == Fqn("Plain")
             && ReferenceEquals(index.ByOwner["Owner"]["late|1"], admitted),
             "late type admission rescanned an already-owned declaration");

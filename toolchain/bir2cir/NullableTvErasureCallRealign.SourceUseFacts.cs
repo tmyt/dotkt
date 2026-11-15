@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -8,8 +7,8 @@ static partial class NullableTvErasureCallRealign
     enum DerivedResultAction { Keep, Stamp, Return, Cast }
     readonly record struct DerivedResult(TypeNode Type, DerivedResultAction Action, bool Dynamic = false);
 
-    // Both graph renderers obey the same ownership and checked reference-array
-    // result projection rule. A return stamp is a current physical claim.
+    // Result selection is independent of owning replacement construction.
+    // A return stamp is a current physical claim, not a historical source hint.
     static DerivedResult SelectDerivedResult(TypeNode derived, TypeNode stamped, bool erasureApplied,
         bool ownershipKnown, bool companion)
     {
@@ -89,13 +88,6 @@ static partial class NullableTvErasureCallRealign
             && slots.TryGetValue(name, out var declaration) && declaration != null
                 ? Subst(NullableGenericErasure.EraseNullableTv(declaration, _isValue), OwnerArguments(owner), null) : null;
 
-    static UseSelection ReadUseSelection(JsonObject call)
-    {
-        KotlinPropertyAccessors.TryCallIdentity(call, out var property, out var accessor);
-        var signature = call["shapeTypes"] as JsonArray ?? call["sig"] as JsonArray ?? call["argTypes"] as JsonArray;
-        return new(Str(call[DeclarationIdentityBinding.Key]), property, accessor,
-            TypeJson.OwnerName(call["calleeOwner"]), signature?.Select(TypeJson.Read).ToArray());
-    }
 
     static UseSelection ReadUseSelection(BirGraphValue node)
     {
