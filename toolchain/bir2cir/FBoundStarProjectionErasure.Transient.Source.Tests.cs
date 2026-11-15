@@ -33,10 +33,12 @@ static partial class FBoundStarProjectionErasure
             new BirLocal { Outer = true }, new BirThis { Outer = true },
             new BirConstrainedCall { _exactExistentialBridgeOwnerCall = true },
         };
-        var modeledKinds = typeof(BirGraphValue).Assembly.GetTypes().Where(type => !type.IsAbstract
-            && typeof(BirGraphValue).IsAssignableFrom(type) && type.GetProperties().Any(property =>
-                markers.Contains(char.ToLowerInvariant(property.Name[0]) + property.Name[1..]))).ToHashSet();
-        if (!modeledKinds.SetEquals(values.Select(value => value.GetType())))
+        var modeledFacts = typeof(BirGraphValue).Assembly.GetTypes().Where(type => !type.IsAbstract
+            && typeof(BirGraphValue).IsAssignableFrom(type)).Select(type => (type, facts: type.GetProperties()
+                .Select(property => char.ToLowerInvariant(property.Name[0]) + property.Name[1..])
+                .Where(markers.Contains).ToHashSet(StringComparer.Ordinal)))
+            .Where(row => row.facts.Count != 0).ToDictionary(row => row.type, row => row.facts);
+        if (!modeledFacts.Keys.ToHashSet().SetEquals(values.Select(value => value.GetType())))
             throw new InvalidOperationException("Carrier transport coverage no longer matches the modeled owning kinds");
         // JSON is inspection only: the operation itself consumes actual typed
         // fields. No graph is converted or read back to continue lowering.
@@ -49,8 +51,10 @@ static partial class FBoundStarProjectionErasure
         foreach (var value in values)
         {
             using var before = Inspect(value);
-            if (!before.RootElement.EnumerateObject().Any(property => markers.Contains(property.Name)))
-                throw new InvalidOperationException("Transient fixture carries none of its modeled source facts");
+            var authoredFacts = before.RootElement.EnumerateObject().Select(property => property.Name)
+                .Where(markers.Contains).ToHashSet(StringComparer.Ordinal);
+            if (!authoredFacts.SetEquals(modeledFacts[value.GetType()]))
+                throw new InvalidOperationException("Transient fixture does not cover every modeled source fact on its owning kind");
             ConsumeCarrierTransportFacts(value);
             using var after = Inspect(value);
             if (after.RootElement.EnumerateObject().Any(property => markers.Contains(property.Name)))

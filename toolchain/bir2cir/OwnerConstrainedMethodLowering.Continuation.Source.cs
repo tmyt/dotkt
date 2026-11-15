@@ -10,8 +10,8 @@ static partial class OwnerConstrainedMethodLowering
         if (!PreparedMethods || !ReferenceEquals(bindings, MethodBindings) || !ReferenceEquals(references, References)
             || bindings.IsBound) throw new InvalidOperationException("Method preparation does not own this source continuation");
         foreach (var row in Methods) { _ = row.MethodBinding.Source; _ = row.OwnerBinding.Source; }
-        // Record still admits exact generated captures below. The existing
-        // physical Configure consumes this same registration after BindProjected.
+        // Exact generated captures can still be registered below; the same
+        // source registrations are released when method preparation completes.
     }
 
     static BirTypeParameter[] ContinuationParameters(BirGraphValue declaration) => declaration switch {
