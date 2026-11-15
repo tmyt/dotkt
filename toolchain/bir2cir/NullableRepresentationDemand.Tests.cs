@@ -399,37 +399,40 @@ static partial class NullableRepresentationDemand
     static void MetadataSelfTest()
     {
         var frame = new NullableRepresentationFrame(1, new[] { 0 });
-        var owner = new JsonObject {
-            ["kind"] = "class", ["name"] = "FrameOwner", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "N" }),
+        var sourceOwner = new BirClassDefinition {
+            Kind = "class", Name = "FrameOwner", TypeParams = new[] {
+                new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "N" } },
+            KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(frame).Merge(
+                new Dictionary<int, TypeNode[]> { [0] = new TypeNode[] { new TypeNode.Fqn("System.Object") } }),
         };
-        KotlinSupertypesRecord.Merge(owner, new JsonObject { [NullableRepresentationFrame.MetadataKey] = frame.ToJson() });
-        KotlinSupertypesRecord.Merge(owner, new JsonObject {
-            ["bounds"] = new JsonObject { ["0"] = new JsonArray(TypeJson.Fqn("System.Object")) },
-        });
         var sourceResult = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Tv("method", 0)) });
-        var method = new JsonObject {
-            ["name"] = "physical", [DeclarationIdentityBinding.Key] = "frame-test-method", ["declarationSourceName"] = "source",
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }, new JsonObject { ["name"] = "N" }), ["params"] = new JsonArray(),
-            ["ret"] = TypeJson.Write(new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 1) })),
-            [DeclarationIdentityBinding.SemanticSignatureKey] = new JsonObject {
-                ["params"] = new JsonArray(TypeJson.Fqn("kotlin.Int")), ["ret"] = TypeJson.Fqn("kotlin.Unit"),
-            },
-            [NullableRepresentationTypes.MethodFrameKey] = frame.ToJson().ToJsonString(),
+        var sourceMethod = new BirFunctionDeclaration {
+            Name = "physical", DeclarationId = "frame-test-method", DeclarationSourceName = "source",
+            TypeParams = new[] { new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "N" } },
+            Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("Box", new TypeNode[] { new TypeNode.Tv("method", 1) }),
+            DeclarationSemanticSignature = new SourceDeclarationSignature(new TypeNode[] { new TypeNode.Fqn("kotlin.Int") },
+                new TypeNode.Fqn("kotlin.Unit")), NullableRepresentationFrame = frame,
         };
-        var root = new JsonObject { ["fileClass"] = "FrameFile", ["types"] = new JsonArray(owner), ["methods"] = new JsonArray(method) };
-        var runtime = root.DeepClone();
+        var source = new BirFileDeclaration { FileClass = "FrameFile", Types = new IBirTypeDeclaration[] { sourceOwner },
+            Methods = new[] { sourceMethod } };
+        var runtime = source.DeepClone().ToDom();
         var signatures = new SourceDeclarationSignatures();
         signatures.Capture(new[] { new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
             DeclarationId = "frame-test-method", Params = Array.Empty<BirParameter>(), Ret = sourceResult,
         } } } });
-        DeclarationIdentityBinding.ApplyLocal(new[] { root },
+        DeclarationIdentityBinding.ApplyLocal(new[] { source },
             new Dictionary<string, string> { ["frame-test-method"] = "physical" }, new HashSet<string>(),
-            signatures, new Dictionary<string, int[]>(), null);
+            signatures, new Dictionary<string, int[]>(), null, (_, _, _, _) =>
+                throw new InvalidOperationException("Authored nullable metadata unexpectedly consumed its declaration ID"));
+        if (!ReferenceEquals(source.Methods.Value[0], sourceMethod) || sourceMethod.DeclarationId.Value != "frame-test-method"
+            || sourceMethod.DeclarationSemanticSignature.Value.Return != sourceResult)
+            throw new InvalidOperationException("Owning identity allocation changed the nullable metadata source authority");
+        var root = source.ToDom();
         RoundtripMetadata.PrepareMetadata(root, runtimeMode: false);
         var stamped = BirGraphDom.ReadBirFileDeclaration(root);
         RoundtripMetadata.CompleteMetadata(stamped, runtimeMode: false);
-        owner = ((BirGraphValue)stamped.Types.Value[0]).ToDom();
-        method = stamped.Methods.Value[0].ToDom();
+        var owner = ((BirGraphValue)stamped.Types.Value[0]).ToDom();
+        var method = stamped.Methods.Value[0].ToDom();
 
         static JsonNode Payload(JsonObject declaration, string name)
         {

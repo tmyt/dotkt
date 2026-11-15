@@ -152,7 +152,8 @@ sealed partial class ValueRepresentationLowering
         // ID counts validate original membership, not physical traversal order:
         // only the actual owning projection associates a continuing occurrence.
         foreach (var expected in sourceMethods.GroupBy(method => method.Fact.Id, StringComparer.Ordinal))
-            if ((actual.GetValueOrDefault(expected.Key)?.Count ?? 0) != expected.Count(method => !method.Method.Retired))
+            if ((actual.GetValueOrDefault(expected.Key)?.Count ?? 0) != expected.Count(method => !method.Method.Retired
+                && !declarations.WasPhysicalIdentityConsumed(method.Method.SourceOccurrence, method.Fact.Id)))
                 throw new InvalidOperationException("Value representation source declaration occurrences changed before physical association: " + expected.Key);
         foreach (var method in sourceMethods)
         {
@@ -162,7 +163,8 @@ sealed partial class ValueRepresentationLowering
                 method.Method.BindRetired(retiredDeclarations, declarations);
                 continue;
             }
-            method.Method.BindProjected(declarations, actual[method.Fact.Id]);
+            method.Method.BindProjected(declarations, method.Fact.Id,
+                (IReadOnlyList<JsonObject>)actual.GetValueOrDefault(method.Fact.Id) ?? Array.Empty<JsonObject>());
         }
         sourceMethods.Clear();
         domBound = true;
@@ -177,6 +179,8 @@ sealed partial class ValueRepresentationLowering
         internal LiveMethod(BirFunctionDeclaration source) => this.source = source;
         internal LiveMethod(MemberBinding reference) => this.reference = reference;
         internal bool HasSource => source != null;
+        internal BirFunctionDeclaration SourceOccurrence => source
+            ?? throw new InvalidOperationException("Value declaration has already crossed its source frontier");
         internal bool Retired { get; private set; }
         internal bool IsSource(BirFunctionDeclaration declaration) => ReferenceEquals(source, declaration);
         internal void Retire() => Retired = true;
@@ -190,12 +194,16 @@ sealed partial class ValueRepresentationLowering
             Bind(declaration);
         }
         internal void Bind(JsonObject declaration) { dom = declaration; source = null; }
-        internal void BindProjected(SourceDeclarationProjection projection, IReadOnlyList<JsonObject> live)
+        internal void BindProjected(SourceDeclarationProjection projection, string capturedIdentity,
+            IReadOnlyList<JsonObject> live)
         {
             if (Retired || source == null) throw new InvalidOperationException("Value declaration has no live source occurrence");
             var declaration = projection.Get(source);
-            if (Text(declaration[DeclarationIdentityBinding.Key]) != Id
-                || !live.Any(actual => ReferenceEquals(actual, declaration)))
+            var consumed = projection.WasPhysicalIdentityConsumed(source, capturedIdentity);
+            if (consumed ? declaration.ContainsKey(DeclarationIdentityBinding.Key)
+                    || live.Any(actual => ReferenceEquals(actual, declaration))
+                : Text(declaration[DeclarationIdentityBinding.Key]) != capturedIdentity
+                    || !live.Any(actual => ReferenceEquals(actual, declaration)))
                 throw new InvalidOperationException("Value declaration is not its exact continuing occurrence");
             Bind(declaration);
         }

@@ -8094,23 +8094,23 @@ sealed partial class ReferenceMetadataIndex
                 SignatureParameters = new TypeNode[] { signature }, SignatureReturn = new TypeNode.Fqn("void"),
             };
             index._declarationById["referenced-slot"] = binding;
-            var root = JsonNode.Parse("""
-                {"types":[{"name":"Implementation","kind":"class","interfaces":[{"t":"fqn","name":"ReferencedSlot"}],
-                  "methods":[{"name":"accept","declarationId":"implementation","declarationSourceName":"accept",
-                    "signatureOverrideDeclarations":["referenced-slot"],
-                    "params":[{"name":"value","type":{"t":"fqn","name":"System.Object"}}],
-                    "ret":{"t":"fqn","name":"void"},"body":[]}]}]}
-                """);
-            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { root },
-                new Dictionary<string, JsonArray>(), index, _ => false);
-            if (root["types"][0]["methods"].AsArray().Count != 1)
+            var implementation = new BirFunctionDeclaration { Name = "accept", DeclarationId = "implementation",
+                DeclarationSourceName = "accept", SignatureOverrideDeclarations = new[] { "referenced-slot" },
+                Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Fqn("System.Object") } },
+                Ret = new TypeNode.Fqn("void"), Body = Array.Empty<IBirStatement>() };
+            var owner = new BirClassDefinition { Name = "Implementation", Kind = "class",
+                Interfaces = new TypeNode[] { new TypeNode.Fqn("ReferencedSlot") }, Methods = new[] { implementation } };
+            var root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { owner } };
+            var plan = new DeclarationSignatureIdentity.SignatureAllocationPlan(new Dictionary<string, TypeNode[]>());
+            DeclarationSignatureIdentity.BindSelectedOverridesSource(new[] { root }, plan, index, _ => false,
+                (_, _, _) => { }, _ => { }, _ => { });
+            if (owner.Methods.Value.Length != 1)
                 throw new InvalidOperationException("Existing function identity acquired a second signature-allocation bridge");
-            root["types"][0]["methods"][0]["signatureOverrideDeclarations"] = new JsonArray("referenced-slot");
+            implementation.SignatureOverrideDeclarations = new[] { "referenced-slot" };
             index._declarationById["referenced-slot"] = binding with { SignatureAllocated = true };
-            DeclarationSignatureIdentity.BindSelectedOverrides(new[] { root },
-                new Dictionary<string, JsonArray>(), index, _ => false);
-            if (root["types"][0]["methods"].AsArray().Count != 2
-                || root["types"][0]["methods"][1]["clrInterfaceImpls"]?.AsArray().Count != 1)
+            DeclarationSignatureIdentity.BindSelectedOverridesSource(new[] { root }, plan, index, _ => false,
+                (_, _, _) => { }, _ => { }, _ => { });
+            if (owner.Methods.Value.Length != 2 || owner.Methods.Value[1].ClrInterfaceImpls.Value.Length != 1)
                 throw new InvalidOperationException("A referenced signature allocation lost its explicit slot obligation");
         }
         SelfTestSourceHierarchyFrames();

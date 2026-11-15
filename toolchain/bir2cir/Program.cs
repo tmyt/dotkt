@@ -44,6 +44,9 @@ static class Bir2Cir
                 MemberStrip.SelfTestSource();
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
+                PhysicalIdentityConsumptionTests.SelfTest();
+                KotlinPropertyAccessors.FinalizationSourceSelfTest();
+                NullableGenericOverloadCollision.SourceSelfTest();
                 CurrentDeclarationBindingsTests.SelfTest();
                 BirTypeLowering.PhysicalContextSelfTest();
                 BirTypeLowering.SourceSelfTest();
@@ -947,7 +950,7 @@ sealed class Pipeline
         ClrMemberResolution.ResolveLocalDelegateTargetsSource(captured, refs,
             localCarriers: localExistentialOwners);
         var starProjectionBounds = StarProjectionBoundLowering.CollectTypeParamBounds(captured);
-        var declarationCollisionProjection = new List<JsonNode>();
+        var declarationCollisionSources = new List<BirFileDeclaration>();
         var physicalPreparation = new PhysicalAbiPreparation(
             AnySlotRebind.CollectLocalTypes(captured).Keys.ToHashSet(StringComparer.Ordinal),
             (appBuild ? captured.SelectMany(file => file.Types.OrEmpty())
@@ -958,7 +961,7 @@ sealed class Pipeline
                 .ToHashSet(StringComparer.Ordinal),
             ExternalGenericConstraintValidation.Prepare(captured, refs, isValueFqn, enums.Basic),
             MemberCallSubstitution.CollectLocalPropertyAccessors(captured),
-            new SourceModuleIndex(captured, refs.Aliases), declarationCollisionProjection);
+            new SourceModuleIndex(captured, refs.Aliases));
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(captured,
             carrierRealization.Declarations.PhysicalDeclarationSources);
         if (!referenceBuild) CollectionBclSlotSynthesis.RecordContracts(captured, refs);
@@ -1029,13 +1032,29 @@ sealed class Pipeline
                 physicalPreparation.EmittedLocalTypes, refs.NullableTypeFrames,
                 valueRepresentations.InterfaceMarkers, outputName));
             FunctionSignatureIdentity.Complete(collisionSource);
-            var collisionRoot = collisionSource.ToDom();
-            FBoundStarProjectionErasure.RemoveTransientFacts(new[] { collisionRoot });
-            declarationCollisionProjection.Add(collisionRoot);
+            declarationCollisionSources.Add(collisionSource);
             BirTypeLowering.Apply(source, new BirTypeLowering.PhysicalTypeContext(referenceBuild,
                 refs.Aliases, isValueFqn, refs.PhysicalTypeNames, physicalPreparation.EmittedLocalTypes,
                 refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers, outputName));
         }
+
+        // Allocate one module-wide signature/name plan from the isolated runtime
+        // witnesses. Actual bridge births and identity consumption stay on their
+        // producer-reported occurrences, not on a second source inventory.
+        for (var index = 0; index < captured.Length; index++)
+            NullableGenericOverloadCollision.Check(captured[index], OutputNameFor(inputsWithSources[index].Path));
+        var declarationSignatures = DeclarationSignatureIdentity.Plan(declarationCollisionSources, refs);
+        DeclarationSignatureIdentity.ApplyAll(declarationCollisionSources, declarationSignatures, (_, _) => { });
+        DeclarationSignatureIdentity.ApplyAll(captured, declarationSignatures, suspendTransitions.RetireTypes);
+        DeclarationSignatureIdentity.BindSelectedOverridesSource(captured, declarationSignatures, refs, isValueFqn,
+            suspendTransitions.PublishMethods, descriptor => currentDeclarations.GetSource(descriptor),
+            descriptor => suspendTransitions.RetireDiscardedSubtree(descriptor));
+        var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
+            declarationCollisionSources, out var declarationSemanticCarrierIds);
+        DeclarationIdentityBinding.ApplyLocal(captured, declarationPhysicalNames, declarationSemanticCarrierIds,
+            signatures, scalarSlots.Parameters, refs, suspendTransitions.ReportPhysicalIdentityConsumption);
+        KotlinPropertyAccessors.FinalizePhysicalProperties(captured);
+        finalCarrierTypes = FBoundStarProjectionErasure.RefreshCurrentPhysicalTypesSource(captured, carrierRealization);
 
         for (var index = 0; index < captured.Length; index++)
         {
@@ -1043,7 +1062,7 @@ sealed class Pipeline
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
             // continuing projection, after slots, placement, exact generic uses,
-            // storage, lexical access, signatures, constraints and physical types. Retired facts
+            // storage, signatures, physical types, names and properties. Retired facts
             // use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
@@ -1068,8 +1087,8 @@ sealed class Pipeline
         retiredDeclarations.Clear();
         suspendTransitions.Release();
         suspendModule.ReleaseSourceDeclarations();
-        return new LoadedBirModule(files, signatures, sourceIndex,
-            genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
+        return new LoadedBirModule(files, sourceIndex,
+            genericRepresentations, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, enums,
                 carrierContinuation, physicalPreparation));
     }
@@ -1079,7 +1098,6 @@ sealed class Pipeline
         _enumRuntimeLookup |= module.Preparation.Enums.RuntimeLookup;
         var birFiles = module.Files;
         var birRoots = birFiles.Select(b => b.Root).ToList();
-        var declarationSemanticSignatures = module.Signatures;
         var valueRepresentations = module.ValueRepresentations;
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
         var representationAliases = module.SourceIndex.CollisionAliases;
@@ -1089,8 +1107,6 @@ sealed class Pipeline
         // State that ABI before frame materialization and declaration/use snapshots; typed overrides
         // retain their concrete signature and their ordinary query guard.
         var genericRepresentations = module.GenericRepresentations;
-        var scalarSlots = module.ScalarSlots;
-        var physicalParameterIndices = scalarSlots.Parameters;
         var representationMethodFrames = module.RepresentationMethodFrames;
         // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
         // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
@@ -1145,39 +1161,13 @@ sealed class Pipeline
         // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
         // another to the .NET declaration whose slot it cannot fill.
         var loweredRoots = new List<(JsonNode Root, string File)>();
-        // Reference assemblies retain Kotlin type vocabulary, but their MethodDef names must match the runtime twin.
-        // Derive the collision set from an isolated runtime-physical projection in every build mode.
-        var declarationCollisionProjection = physicalPreparation.CollisionProjection;
         var finalLocalDeclarationIds = physicalPreparation.Declarations.DeclarationIds;
         foreach (var (substituted, outputName) in staged)
         {
-            // Stamp validation, comparer/property allocation and physical types
-            // finished on owning BIR. Collision allocation remains module-wide.
-            var lowered = substituted;
-            // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
-            // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
-            // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
-            // the reference-nullable strip, so nothing earlier sees the two meet. Refuses loudly, naming both source
-            // signatures — a silent wrong binding is the one outcome a program with no valid lowering must not get.
-            NullableGenericOverloadCollision.Check(lowered, outputName);
-            loweredRoots.Add((lowered, outputName));
+            // Physical signatures, collision/name allocation and properties are
+            // complete before the strict owning projection.
+            loweredRoots.Add((substituted, outputName));
         }
-
-        // #395: Kotlin declarations that were distinct before type lowering may now occupy one CLI signature.
-        // Allocate their MethodDef names from the common runtime-physical projection and rewrite all local uses from
-        // the frontend-selected declaration identity before any module-wide member binding consults declarations.
-        var declarationSignatures = DeclarationSignatureIdentity.Plan(declarationCollisionProjection, refs);
-        DeclarationSignatureIdentity.Apply(declarationCollisionProjection, declarationSignatures);
-        DeclarationSignatureIdentity.Apply(loweredRoots.Select(s => s.Root), declarationSignatures);
-        DeclarationSignatureIdentity.BindSelectedOverrides(loweredRoots.Select(s => s.Root), declarationSignatures,
-            refs, isValueFqn);
-        var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
-            declarationCollisionProjection, out var declarationSemanticCarrierIds);
-        DeclarationIdentityBinding.ApplyLocal(
-            loweredRoots.Select(s => s.Root), declarationPhysicalNames,
-            declarationSemanticCarrierIds, declarationSemanticSignatures,
-            physicalParameterIndices, refs);
-        KotlinPropertyAccessors.FinalizePhysicalProperties(loweredRoots.Select(s => s.Root));
 
         // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
         // while every source file is visible together. This deliberately follows physical type lowering and its
@@ -1611,9 +1601,9 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 }
 
 sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
-sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSignatures Signatures,
+sealed record LoadedBirModule(IReadOnlyList<BirFile> Files,
     SourceModuleIndex SourceIndex,
-    GenericRepresentationPolicy GenericRepresentations, KotlinGenericScalarSlots.Projection ScalarSlots,
+    GenericRepresentationPolicy GenericRepresentations,
     ValueRepresentationLowering ValueRepresentations,
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     ModulePreparation Preparation);
@@ -1625,7 +1615,7 @@ sealed record PhysicalAbiPreparation(HashSet<string> EmittedLocalTypes,
     ExternalGenericConstraintValidation.Prepared GenericConstraints,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
         IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> PropertyAccessors,
-    SourceModuleIndex Declarations, IReadOnlyList<JsonNode> CollisionProjection);
+    SourceModuleIndex Declarations);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 

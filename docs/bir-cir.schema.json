@@ -585,6 +585,8 @@
         "nullableGenericRet": { "x-dotkt-frame-role": "StorageSourceType", "type": "string", "x-dotkt-kotlin-json-type": true },
         "nullableGenericSuspendRet": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "declarationSourceName": { "type": "string" },
+        "declarationSignatureAllocation": { "type": "boolean" },
+        "declarationSemanticSignature": { "$ref": "#/$defs/sourceDeclarationSignature", "x-dotkt-frame-role": "FrozenSourceFact" },
         "kotlinSourceMember": { "type": "string" },
         "pendingOverrideOwner": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" },
         "pendingOverrideReturn": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" },
@@ -614,6 +616,7 @@
     },
     "birConstructor": {
       "type": "object", "x-dotkt-model": { "name": "BirConstructor", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": {
+        "declarationSignatureAllocation": { "type": "boolean" },
         "roundtripMetadataPending": { "type": "boolean" },
         "roundtripDeclarationIdentity": { "$ref": "#/$defs/birRoundtripDeclarationIdentity", "x-dotkt-frame-role": "FrozenSourceFact" }
       } },

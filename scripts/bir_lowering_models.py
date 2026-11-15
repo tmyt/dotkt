@@ -443,6 +443,19 @@ def outputs(root, definitions):
             model += ["    public override TypeNode? OwnTypeOrReturnStamp => " + " ?? ".join(own_type_or_return) + ";"]
         if "declarationId" in shape["properties"]:
             model += ["    public override OptionalField<string> DeclarationIdentityFact => DeclarationId;"]
+        final_property_fields = {"propertyName", "propertyAccessor", "propertyAssociation", "explicitClrName", "physicalSlotBridge"} & shape["properties"].keys()
+        if final_property_fields:
+            model += ["    public override void ConsumeFinalPropertyFacts(Func<string?, string?, bool> hasIdentity)", "    {"]
+            if {"propertyName", "propertyAccessor"} <= final_property_fields:
+                model += ["        if (hasIdentity(PropertyName.OrDefault(), PropertyAccessor.OrDefault()))", "        {",
+                          "            PropertyName = default; PropertyAccessor = default;"]
+                if "propertyAssociation" in final_property_fields:
+                    model += ["            PropertyAssociation = default;"]
+                model += ["        }"]
+            for field in ["explicitClrName", "physicalSlotBridge"]:
+                if field in final_property_fields:
+                    model += [f"        {member(field)} = default;"]
+            model += ["    }"]
         if "dotktDelegateSlot" in shape["properties"]:
             model += ["    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;"]
         if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":

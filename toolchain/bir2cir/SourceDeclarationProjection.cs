@@ -10,6 +10,7 @@ sealed class SourceDeclarationProjection
 {
     sealed record TypeVector(BirFileDeclaration File, IBirTypeDeclaration[] Original,
         IBirTypeDeclaration[] Continuing, HashSet<IBirTypeDeclaration> Retired);
+    sealed record IdentityConsumption(BirFileDeclaration File, IBirTypeDeclaration Owner, string Identity);
     internal sealed class MethodPlacement
     {
         internal BirFunctionDeclaration[] Before { get; }
@@ -38,6 +39,7 @@ sealed class SourceDeclarationProjection
     readonly HashSet<JsonObject> materializedMethods = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirFileDeclaration, MethodPlacement> placements = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<IBirTypeDeclaration, BirFunctionDeclaration[]> placementTargets = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<BirFunctionDeclaration, IdentityConsumption> consumedIdentities = new(ReferenceEqualityComparer.Instance);
     bool projected;
     bool released;
 
@@ -53,6 +55,33 @@ sealed class SourceDeclarationProjection
 
     internal IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> RetiredMethods => projected && !released ? methods : throw Mismatch();
     internal IReadOnlySet<JsonObject> MaterializedMethods => projected && !released ? materializedMethods : throw Mismatch();
+
+    // Physical name allocation consumes an emission identity, not the original
+    // selection key. Only its producer can report this exact attached occurrence
+    // before removing the field; binders never reconstruct a missing identity.
+    internal void ReportPhysicalIdentityConsumption(BirFileDeclaration file, IBirTypeDeclaration owner,
+        BirFunctionDeclaration method, string identity)
+    {
+        if (projected || released || identity == null || !types.TryGetValue(file, out var row)
+            || !file.Types.OrEmpty().SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance)
+            || owner != null && row.Continuing.Count(actual => ReferenceEquals(actual, owner)) != 1
+            || CurrentMethods(file, owner).Count(actual => ReferenceEquals(actual, method)) != 1
+            || !method.DeclarationId.HasValue || method.DeclarationId.Value != identity
+            || !consumedIdentities.TryAdd(method, new(file, owner, identity))) throw Mismatch();
+    }
+
+    internal bool WasPhysicalIdentityConsumed(BirFunctionDeclaration method, string identity)
+    {
+        if (released) throw Mismatch();
+        if (!consumedIdentities.TryGetValue(method, out var row)) return false;
+        if (!projected || row.Identity != identity || method.DeclarationId.IsPresent
+            || CurrentMethods(row.File, row.Owner).Count(actual => ReferenceEquals(actual, method)) != 1)
+            throw Mismatch();
+        return true;
+    }
+
+    static BirFunctionDeclaration[] CurrentMethods(BirFileDeclaration file, IBirTypeDeclaration owner)
+        => owner?.Methods.OrEmpty() ?? file.Methods.OrEmpty();
 
     internal void RetireForest(BirGraphValue actual)
     {
@@ -216,7 +245,7 @@ sealed class SourceDeclarationProjection
         released = true;
         Array.Clear(roots); types.Clear(); retired.Clear(); published.Clear(); projections.Clear(); methods.Clear();
         forestRoots.Clear(); materializedMethods.Clear();
-        placements.Clear(); placementTargets.Clear();
+        placements.Clear(); placementTargets.Clear(); consumedIdentities.Clear();
     }
 
     static void Walk(BirGraphValue node, Action<BirGraphValue> visit)
