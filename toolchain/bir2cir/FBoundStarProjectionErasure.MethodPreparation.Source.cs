@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -39,8 +38,7 @@ static partial class FBoundStarProjectionErasure
         }
 
         // Read the captured row, not the declaration's now-projected Params.
-        // Consumers treat this signature as immutable; the same row is handed
-        // to the remaining physical consumers at BindPhysical, without replay.
+        // Consumers treat this source signature as immutable until completion.
         internal TypeNode[] GetSourceSignature(CurrentDeclarationBindings.DeclarationBinding declaration)
         {
             if (signatures == null) throw new InvalidOperationException("Source method signatures already handed off");
@@ -48,12 +46,10 @@ static partial class FBoundStarProjectionErasure
                 : throw new InvalidOperationException("The declaration has no captured source signature");
         }
 
-        internal IReadOnlyDictionary<JsonObject, TypeNode[]> BindPhysical()
+        internal void CompleteSourceLifetime()
         {
             if (signatures == null) throw new InvalidOperationException("Source method signatures already handed off");
-            var physical = signatures.ToDictionary(pair => pair.Key.Physical, pair => pair.Value);
             signatures = null;
-            return physical;
         }
     }
 

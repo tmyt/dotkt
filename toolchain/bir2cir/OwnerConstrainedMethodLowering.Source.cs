@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -6,14 +5,13 @@ using DeclarationBinding = CurrentDeclarationBindings.DeclarationBinding;
 
 static partial class OwnerConstrainedMethodLowering
 {
-    // One registration changes address at the owning frontier. The physical
-    // consumers never rebuild membership from names or declaration identities.
+    // Registrations retain their exact source anchors until preparation ends.
     sealed class MethodRegistration(DeclarationBinding method, DeclarationBinding owner)
     {
         internal DeclarationBinding MethodBinding => method;
         internal DeclarationBinding OwnerBinding => owner;
-        internal JsonObject Method => method.Physical;
-        internal JsonObject Owner => owner.Physical;
+        internal BirFunctionDeclaration Method => (BirFunctionDeclaration)method.Source;
+        internal BirGraphValue Owner => owner.Source;
     }
     static CurrentDeclarationBindings MethodBindings;
     static bool PreparedMethods;
@@ -26,12 +24,13 @@ static partial class OwnerConstrainedMethodLowering
         References = references;
     }
 
-    internal static void ConfigurePreparedMethods(CurrentDeclarationBindings bindings, ReferenceMetadataIndex references)
+    internal static void CompleteMethodPreparation(CurrentDeclarationBindings bindings, ReferenceMetadataIndex references)
     {
         if (!PreparedMethods || !ReferenceEquals(bindings, MethodBindings) || !ReferenceEquals(references, References))
-            throw new InvalidOperationException("Method preparation does not own this physical continuation");
+            throw new InvalidOperationException("Method preparation does not own this source lifetime");
         foreach (var row in Methods) { _ = row.Method; _ = row.Owner; }
-        References = references;
+        Methods.Clear();
+        MethodBindings = null;
         PreparedMethods = false;
     }
 

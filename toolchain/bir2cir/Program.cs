@@ -248,6 +248,7 @@ static class Bir2Cir
                 ConstrainedTypeParameterReceiverBinding.AritySnapshotSelfTest();
                 ConstrainedTypeParameterReceiverBinding.SelfTestSourceCloseOwners();
                 FBoundStarProjectionErasure.SelfTestSourceProjectionNormalization();
+                FBoundStarProjectionErasure.TransientSourceSelfTest();
                 ConstrainedTypeParameterReceiverBinding.ResolvedPropertiesSelfTest();
                 SourceOwnerClosureTests.Run();
                 StdlibSubstituteTypeParams.SelfTest();
@@ -450,7 +451,7 @@ sealed class Pipeline
         LateinitInitializationLowering.ApplyAll(captured, refs);
         KotlinPropertyAccessors.AllocateDeclarationsAndProperties(captured);
         var localPropertyDeclarations = MemberCallSubstitution.CollectLocalPropertyAccessors(captured);
-        genericRepresentations.PrepareDomLocations(captured);
+        genericRepresentations.PrepareSourceLocations(captured);
         var ownership = TypeOwnershipLowering.PrepareOwnershipFacts(captured);
         TypedCharSequenceIdentity.ApplyAll(captured);
         var forwardedEvents = ClrEventSubscriptionBinding.CollectForwardedOwners(captured);
@@ -1135,34 +1136,21 @@ sealed class Pipeline
             ClrMemberResolution.EnsurePlainCallDescriptors(source);
         }
 
+        // Every terminal consumer validates the SAME owning records and the
+        // producer-reported changes before their source capabilities end.
+        var continuingRoots = captured.ToArray();
+        suspendTransitions.Projection.SealSourceContinuations();
+        genericRepresentations.CompleteSourceContinuation(continuingRoots, aliasTransitions, suspendTransitions.Projection);
+        valueRepresentations.CompleteSourceContinuation(continuingRoots, aliasTransitions, suspendTransitions.Projection);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(uncheckedDeclarations,
+            continuingRoots, aliasTransitions, suspendTransitions.Projection);
+        var carrierContinuation = FBoundStarProjectionErasure.CompleteRealization(carrierRealization);
+        currentDeclarations.CompleteSourceCustody(suspendTransitions.Projection);
         for (var index = 0; index < captured.Length; index++)
         {
-            var source = captured[index];
+            files.Add(new BirFile(inputsWithSources[index].Path, captured[index], inputsWithSources[index].Suspend));
             captured[index] = null;
-            // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after slots, placement, exact generic uses,
-            // storage, signatures, physical types, names and properties. Retired facts
-            // use the same observer.
-            var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
-            files.Add(new BirFile(
-                inputsWithSources[index].Path,
-                root,
-                inputsWithSources[index].Suspend));
         }
-
-        var continuingRoots = files.Select(file => file.Root).ToArray();
-        suspendTransitions.Projection.ProjectRetiredForests();
-        var retiredDom = suspendTransitions.Projection.RetiredMethods;
-        CapturedGenericInvocation.BindProjectedDeclarations(capturedInvocations, suspendTransitions.Projection);
-        currentDeclarations.BindProjected();
-        genericRepresentations.BindDomDeclarations(continuingRoots, aliasTransitions, suspendTransitions.Projection);
-        valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom, suspendTransitions.Projection);
-        // Its last call consumer ran on owning BIR. Validate the original
-        // declaration continuation, then let this source-only ledger retire.
-        _ = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
-            continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions, suspendTransitions.Projection);
-        var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(
-            carrierRealization, finalCarrierTypes);
         aliasTransitions.Release();
         retiredDeclarations.Clear();
         suspendTransitions.Release();
@@ -1177,7 +1165,6 @@ sealed class Pipeline
     {
         _enumRuntimeLookup |= module.Preparation.Enums.RuntimeLookup;
         var birFiles = module.Files;
-        var birRoots = birFiles.Select(b => b.Root).ToList();
         var valueRepresentations = module.ValueRepresentations;
         KotlinRuntimeTypeWitness.ValueRepresentations = valueRepresentations;
         var representationAliases = module.SourceIndex.CollisionAliases;
@@ -1201,7 +1188,7 @@ sealed class Pipeline
 
         // Call-boundary materialization has completed in the owning prefix.
         // The remaining type/slot/suspend owners consume this module-wide set.
-        var staged = new List<(JsonNode Root, string OutputName)>();
+        var staged = new List<(BirFileDeclaration Root, string OutputName)>();
         foreach (var bir in birFiles)
             staged.Add((bir.Root, OutputNameFor(bir.Path)));
 
@@ -1235,7 +1222,7 @@ sealed class Pipeline
         // The fully-lowered roots, kept so the implementing-position half of the crossing refusal can be asked of the
         // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
         // another to the .NET declaration whose slot it cannot fill.
-        var loweredRoots = new List<(JsonNode Root, string File)>();
+        var loweredRoots = new List<(BirFileDeclaration Root, string File)>();
         foreach (var (substituted, outputName) in staged)
         {
             // Physical signatures, collision/name allocation and properties are
@@ -1250,16 +1237,11 @@ sealed class Pipeline
         // PHASE 3B — final native binding and validation of the stable physical graph.
         bool runtimeRepresentationTypes = false;
 
-        var hasAssemblyAttributes = birRoots.OfType<JsonObject>().Any(root =>
-            root["assemblyAttrs"] is JsonArray { Count: > 0 });
-        // Every remaining owner consumes typed occurrences. Enter once before
-        // interface-slot resolution, delegate construction and physical value
-        // edges; no pass below returns the graph to DOM.
-        var physicalRoots = loweredRoots.Select(file =>
-            (Root: BirGraphDom.ReadBirFileDeclaration(file.Root), file.File)).ToArray();
+        var hasAssemblyAttributes = loweredRoots.Any(file => file.Root.AssemblyAttrs.OrEmpty().Length != 0);
+        var physicalRoots = loweredRoots.ToArray();
         var physicalDocuments = physicalRoots.Select(file => file.Root).ToArray();
-        // Pure physical re-read precedes the same final native resolver. Resolve
-        // every file's operands before declaration binding or CGI can add edits.
+        // Resolve every file's operands on its continuing owning graph before
+        // declaration binding or CGI can add edits.
         foreach (var root in physicalDocuments)
             ClrMemberResolution.Apply(root, refs, emittedLocalTypes);
         // Resolve declaration operands on the continuing physical records before
@@ -1271,12 +1253,12 @@ sealed class Pipeline
             ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes);
         }
         // Retain the original prepared declaration membership and exact source
-        // anchors across this one-way frontier. The captured ID keys already
+        // anchors. The captured ID keys already
         // own selection; pending metadata and allocated names are not a new
         // declaration inventory. Both invocation and receiver materialization
         // now consume these same owning typed records before dispatch metadata.
         var physicalCapturedInvocations = CapturedGenericInvocation.BindPhysicalDeclarations(
-            capturedInvocations, loweredRoots.Select(file => file.Root).ToArray(), physicalDocuments);
+            capturedInvocations, physicalDocuments);
         loweredRoots.Clear();
         foreach (var root in physicalDocuments)
             physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes);
@@ -1555,7 +1537,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
     }
 }
 
-sealed record BirFile(string Path, JsonNode Root, SuspendShapeAnalysis Suspend);
+sealed record BirFile(string Path, BirFileDeclaration Root, SuspendShapeAnalysis Suspend);
 sealed record LoadedBirModule(IReadOnlyList<BirFile> Files,
     SourceModuleIndex SourceIndex,
     GenericRepresentationPolicy GenericRepresentations,

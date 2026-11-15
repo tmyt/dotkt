@@ -90,10 +90,13 @@ static partial class FBoundStarProjectionErasure
                     Type = text, Value = new BirLiteral.TextLiteral("value") } } };
             Require(ReferenceEquals(BindStarInnerConstructionSource(ordinary, null, null, state), ordinary),
                 "a first ordinary source argument was treated as a hidden inner receiver");
-            _ = root.ToDom(context.Bindings.ObserveProjection);
-            context.Bindings.BindProjected();
-            Require(context.Bindings.GetPhysical(nestedBinding.Physical) == nestedBinding,
+            var custody = new SourceDeclarationProjection(new[] { root }, context.Bindings);
+            custody.SealSourceContinuations();
+            custody.RequireOccurrence(nested);
+            Require(ReferenceEquals(nestedBinding.Source, nested),
                 "inner construction replaced a registered nested declaration instead of moving its operand");
+            context.Bindings.CompleteSourceCustody(custody);
+            custody.Release();
             context.Declarations.ReleaseSourceRows();
         }
         finally { OwnerConstrainedMethodLowering.Reset(references); }
@@ -137,10 +140,13 @@ static partial class FBoundStarProjectionErasure
                 && ReferenceEquals(((BirLocalFunction)operand.Stmts.Value[0]).Decl.Value, nested)
                 && ForeignStarProjectionBinding.UsedRuntimeFallback,
                 "projected construction lost structural descriptor, fallback types or actual runtime operands");
-            _ = root.ToDom(context.Bindings.ObserveProjection);
-            context.Bindings.BindProjected();
-            Require(context.Bindings.GetPhysical(nestedBinding.Physical) == nestedBinding,
+            var custody = new SourceDeclarationProjection(new[] { root }, context.Bindings);
+            custody.SealSourceContinuations();
+            custody.RequireOccurrence(nested);
+            Require(ReferenceEquals(nestedBinding.Source, nested),
                 "reflection construction cloned a registered nested declaration");
+            context.Bindings.CompleteSourceCustody(custody);
+            custody.Release();
             context.Declarations.ReleaseSourceRows();
         }
         finally { OwnerConstrainedMethodLowering.Reset(references); }
