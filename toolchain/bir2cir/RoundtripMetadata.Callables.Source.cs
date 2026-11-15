@@ -247,6 +247,8 @@ static partial class RoundtripMetadata
             writer.WriteStartObject(); writer.WriteString("id", value.DeclarationId.Value);
             writer.WriteString("name", !runtimeMode && constructor ? ".ctor" : value.DeclarationSourceName.Value);
             if (value.DeclarationSignatureAllocation.OrDefault()) writer.WriteBoolean("signatureAllocation", true);
+            if (constructor && value.ConstructorPrimary.HasValue)
+                writer.WriteBoolean("constructorPrimary", value.ConstructorPrimary.Value);
             if (!runtimeMode && !constructor)
             {
                 if (value.DeclarationSemanticSignature.HasValue) { writer.WritePropertyName("signature"); value.DeclarationSemanticSignature.Value.WritePayload(writer); }

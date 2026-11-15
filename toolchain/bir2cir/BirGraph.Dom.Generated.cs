@@ -42,6 +42,7 @@ internal static class BirGraphDom
                 case "declarationId": break;
                 case "declarationSourceName": break;
                 case "declarationSignatureAllocation": break;
+                case "constructorPrimary": break;
                 case "declarationSemanticSignature": break;
                 case "semanticReifiedIndices": break;
                 case "nullableWitnessIndices": break;
@@ -53,6 +54,7 @@ internal static class BirGraphDom
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
             DeclarationSignatureAllocation = Field<bool>(fields, "declarationSignatureAllocation", value => value!.GetValue<bool>()),
+            ConstructorPrimary = Field<bool>(fields, "constructorPrimary", value => value!.GetValue<bool>()),
             DeclarationSemanticSignature = Field<SourceDeclarationSignature>(fields, "declarationSemanticSignature", value => SourceDeclarationSignature.Read(value!)),
             SemanticReifiedIndices = Field<int[]>(fields, "semanticReifiedIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
@@ -1852,6 +1854,7 @@ internal static class BirGraphDom
                 case "vis": break;
                 case "attrs": break;
                 case "body": break;
+                case "primary": break;
                 case "declarationSignatureAllocation": break;
                 case "roundtripMetadataPending": break;
                 case "roundtripDeclarationIdentity": break;
@@ -1875,6 +1878,7 @@ internal static class BirGraphDom
             Vis = Field<string>(fields, "vis", value => value!.GetValue<string>()),
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             Body = Field<IBirStatement[]>(fields, "body", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
+            Primary = Field<bool>(fields, "primary", value => value!.GetValue<bool>()),
             DeclarationSignatureAllocation = Field<bool>(fields, "declarationSignatureAllocation", value => value!.GetValue<bool>()),
             RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
             RoundtripDeclarationIdentity = Field<BirRoundtripDeclarationIdentity>(fields, "roundtripDeclarationIdentity", value => ReadBirRoundtripDeclarationIdentity(value!)),

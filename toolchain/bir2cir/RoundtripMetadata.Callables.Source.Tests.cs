@@ -69,6 +69,7 @@ static partial class RoundtripMetadata
             || !ReferenceEquals(constructorSlot.Type.Value, signature) || constructor.RoundtripDeclarationIdentity.IsPresent)
             throw new InvalidOperationException("Typed runtime metadata lost exact declaration linkage, opaque slots, or nullable source facts");
         CallableMetadataSelfTest(user);
+        ConstructorKindSelfTest();
         Console.WriteLine("[typed callable metadata] self-test OK (runtime linkage, source payloads/order, exact eligibility and clock handoffs)");
     }
 
