@@ -107,8 +107,8 @@ static class TypedCallEvalLowering
         var positions = new Dictionary<string, int>(StringComparer.Ordinal);
         var deferred = new HashSet<string>(StringComparer.Ordinal);
         var rank = 0;
-        foreach (var reader in readers) ScanReads(reader, reads, positions, deferred, ref rank, true);
-        foreach (var binding in bindings) CountReads(Graph(binding.Expr.Value), reads);
+        foreach (var reader in readers) ScanReads(reader, reads, positions, deferred, ref rank, true, owned);
+        foreach (var binding in bindings) CountReads(Graph(binding.Expr.Value), reads, owned);
         var drop = bindings.Select((binding, index) => reads[ids[index]] == 0
             && ValueStability.IsDroppable((Graph(binding.Expr.Value) as BirGraphNode)?.Tag)).ToArray();
         if (force != null && force.Length != bindings.Length)
@@ -185,16 +185,17 @@ static class TypedCallEvalLowering
     {
         if (node == null || replacements.Count == 0) return node;
         var counts = replacements.Keys.ToDictionary(id => id, _ => 0, StringComparer.Ordinal);
-        CountReads(node, counts);
+        CountReads(node, counts, owned: true);
         foreach (var (id, count) in counts)
             if (count > 1 && replacements[id] is { } value && !IndependentRead(value))
                 throw new InvalidOperationException("An owning call-plan evaluation has multiple unmaterialized readers");
         var moved = new HashSet<string>(StringComparer.Ordinal);
         BirGraphValue Replace(BirGraphValue current)
         {
+            if (current is IBirExecutablePayload) return current;
             if (current is BirBindingReference reference && replacements.TryGetValue(reference.Id.Value, out var value))
                 return value == null ? null : moved.Add(reference.Id.Value) ? Graph(value) : Graph(value).DeepClone();
-            current.VisitChildSlots(slot => slot.Replace(Replace(slot.Value)));
+            foreach (var slot in OrderedChildren(current, owned: true)) slot.Replace(Replace(slot.Value));
             return current;
         }
         return Replace(node);
@@ -250,7 +251,8 @@ static class TypedCallEvalLowering
         if (!IsLvalueFormer(location)) return settled(location);
         foreach (var slot in LocationOperands(location))
             if (IsStoragePathOperand(location, slot, isValue)
-                ? !IsPinnedLocation(Expr(slot.Value), settled, isValue) : !settled(Expr(slot.Value))) return false;
+                ? !IsPinnedLocation(Expr(slot.Value), settled, isValue)
+                : !StaysWithoutPin(Expr(slot.Value)) && !settled(Expr(slot.Value))) return false;
         return true;
     }
 
@@ -270,14 +272,30 @@ static class TypedCallEvalLowering
         }
     }
 
-    static void CountReads(BirGraphValue node, Dictionary<string, int> counts) => node.Visit(value => {
-        if (value is BirBindingReference reference && counts.ContainsKey(reference.Id.Value)) counts[reference.Id.Value]++;
-    });
+    static void CountReads(BirGraphValue node, Dictionary<string, int> counts, bool owned = false)
+    {
+        if (node == null || owned && node is IBirExecutablePayload) return;
+        if (node is BirBindingReference reference && counts.ContainsKey(reference.Id.Value)) counts[reference.Id.Value]++;
+        foreach (var slot in OrderedChildren(node, owned)) CountReads(slot.Value, counts, owned);
+    }
 
-    static IEnumerable<BirGraphSlot> OrderedChildren(BirGraphValue node)
+    static IEnumerable<BirGraphSlot> OrderedChildren(BirGraphValue node, bool owned = false)
     {
         var slots = new List<BirGraphSlot>();
-        node.VisitChildSlots(slots.Add);
+        if (owned)
+        {
+            if (node is IBirExecutablePayload) return slots;
+            var currentFrame = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+            node.VisitCurrentFrameSlots(slot => currentFrame.Add(slot.Value));
+            node.VisitOwnChildSlots((_, role, slot) => {
+                if (currentFrame.Contains(slot.Value) && role is not (BirGenericFrameRole.ReferencedDeclaration
+                    or BirGenericFrameRole.ResolvedDeclaration or BirGenericFrameRole.OverrideDeclaration
+                    or BirGenericFrameRole.SharedCaptureDeclaration or BirGenericFrameRole.LocalDeclaration
+                    or BirGenericFrameRole.SyntheticDeclaration or BirGenericFrameRole.FrozenSourceFact
+                    or BirGenericFrameRole.StorageSourceType)) slots.Add(slot);
+            });
+        }
+        else node.VisitChildSlots(slots.Add);
         // callInline's argument vector is ordered before its receiver descriptor
         // by the current call-plan contract. It disappears during inline splicing;
         // retaining the explicit role here also covers plans authored by lowerings.
@@ -296,9 +314,9 @@ static class TypedCallEvalLowering
     }
 
     static void ScanReads(BirGraphValue node, Dictionary<string, int> counts, Dictionary<string, int> positions,
-        HashSet<string> deferred, ref int rank, bool eager)
+        HashSet<string> deferred, ref int rank, bool eager, bool owned = false)
     {
-        if (node == null) return;
+        if (node == null || owned && node is IBirExecutablePayload) return;
         if (node is BirBindingReference reference && counts.ContainsKey(reference.Id.Value))
         {
             counts[reference.Id.Value]++;
@@ -307,8 +325,8 @@ static class TypedCallEvalLowering
         }
         rank++;
         var eagerOperands = node is BirGraphNode expression && CallEvalLowering.IsEagerKind(expression.Tag);
-        foreach (var slot in OrderedChildren(node))
-            ScanReads(slot.Value, counts, positions, deferred, ref rank, eager && eagerOperands);
+        foreach (var slot in OrderedChildren(node, owned))
+            ScanReads(slot.Value, counts, positions, deferred, ref rank, eager && eagerOperands, owned);
     }
 
     internal static void SelfTest()

@@ -29,7 +29,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-static class SuspendLambdaLowering
+static partial class SuspendLambdaLowering
 {
     internal const string SplicedDeclarationFrameKey = "_suspendDeclarationTypeArgs";
     // A spliced source lambda retains its donor declaration. These are the only fields evaluated in

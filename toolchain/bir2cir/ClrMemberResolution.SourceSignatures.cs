@@ -21,6 +21,20 @@ static partial class ClrMemberResolution
         return id;
     }
 
+    // The cold-entry ABI extends the same preserved source row. Neither owning
+    // renderer reselects the hot method or admits a new signature catalogue.
+    static int? AppendReferencedStaticSignatureSnapshot(int id, TypeNode appendedParameter)
+        => KotlinSigSnapshots.TryGetValue(id, out var signature)
+            ? RememberKotlinSignature(signature.Append(appendedParameter)) : null;
+
+    internal static void CarryReferencedStaticCallSignatureSnapshot(BirCallStatic source, BirCallStatic target,
+        TypeNode appendedParameter)
+    {
+        if (source.DotktKotlinSigId.HasValue
+            && AppendReferencedStaticSignatureSnapshot(source.DotktKotlinSigId.Value, appendedParameter) is { } projected)
+            target.DotktKotlinSigId = projected;
+    }
+
     internal static void SourceSignatureSelfTest()
     {
         var arguments = new TypeNode[] { new TypeNode.Nullable(new TypeNode.Tv("method", 0)) };
@@ -48,10 +62,9 @@ static partial class ClrMemberResolution
                 || snapshot[0] is not TypeNode.Fqn { Args: { Length: 1 } saved }
                 || saved[0] is not TypeNode.Nullable { Of: TypeNode.Tv { Scope: "method", I: 0 } })
                 throw new InvalidOperationException("Source signatures lost their exact independent pre-erasure snapshot");
-            var projected = new System.Text.Json.Nodes.JsonObject();
-            CarryReferencedStaticCallSignatureSnapshot(outer.ToDom(), projected,
-                TypeJson.Write(new TypeNode.Fqn("probe.Completion")));
-            var projectedId = projected[KotlinSigSnapshotId].GetValue<int>();
+            var projected = new BirCallStatic();
+            CarryReferencedStaticCallSignatureSnapshot(outer, projected, new TypeNode.Fqn("probe.Completion"));
+            var projectedId = projected.DotktKotlinSigId.Value;
             try
             {
                 var cold = KotlinSigSnapshots[projectedId];

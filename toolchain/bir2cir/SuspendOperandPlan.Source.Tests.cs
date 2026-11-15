@@ -151,6 +151,13 @@ static partial class SuspendColdLowering
             && ReferenceEquals(statementBlock.Body.Value[1], write)
             && ReferenceEquals(write.Recv.Value, location) && location.Array.Value is BirLocal
             && ReferenceEquals(write.Value.Value, writeValue), "statement store copied storage or lost its ordered address pin");
+        var localLocation = new BirArrayGet { Elem = valueType, Array = new BirLocal { Name = "a" }, Index = new BirLocal { Name = "i" } };
+        write = new BirSetField { OwnerType = valueType, Recv = localLocation, Name = "value", Value = Suspend() };
+        file = File(new BirVariable { Name = "a", Type = new TypeNode.Array(valueType) },
+            new BirVariable { Name = "i", Type = integer }, write);
+        Plan(file);
+        Require(ReferenceEquals(file.Methods.Value[0].Body.Value[2], write) && ReferenceEquals(write.Recv.Value, localLocation),
+            "a storage path whose operands already stay pinned acquired a redundant snapshot");
 
         // Declaration parameters type constructor delegation operands as well
         // as ordinary method operands. Existing source indexes are only fallback.

@@ -502,12 +502,8 @@ static partial class ClrMemberResolution
         JsonNode appendedParameter)
     {
         if ((source[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
-            && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
-        {
-            // The caller owns this ABI extension (the cold entry's completion parameter).
-            // A hot signature snapshot must not validate the newly selected cold MethodDef.
-            target[KotlinSigSnapshotId] = RememberKotlinSignature(snapshot.Append(TypeJson.Read(appendedParameter)));
-        }
+            && AppendReferencedStaticSignatureSnapshot(snapshotId, TypeJson.Read(appendedParameter)) is { } projected)
+            target[KotlinSigSnapshotId] = projected;
     }
 
     static void WalkReferencedStaticCalls(JsonNode node, string context)
