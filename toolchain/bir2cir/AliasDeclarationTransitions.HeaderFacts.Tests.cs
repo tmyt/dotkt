@@ -20,15 +20,17 @@ sealed partial class AliasDeclarationTransitions
         var facts = ReadLogicalHeaderFacts(source);
         Require(ReferenceEquals(facts.TypeParams.Value, source.TypeParams.Value)
             && ReferenceEquals(facts.KotlinSupertypesPre.Value, source.KotlinSupertypesPre.Value)
-            && LogicalHeader(source).ToJsonString() == "{\"name\":\"Alias\",\"kind\":\"class\",\"generated\":false,\"typeParams\":[{\"name\":\"T\",\"variance\":\"out\"}],\"attrs\":[],\"kotlinSupertypesPre\":\"{}\"}",
-            "logical header bytes/order, actual parameter identity or narrow field boundary changed");
+            && facts.Name.Value == "Alias" && facts.Kind.Value == "class" && facts.Generated.HasValue && !facts.Generated.Value
+            && facts.TypeParams.Value[0].Name.Value == "T" && facts.TypeParams.Value[0].Variance.Value == "out"
+            && facts.Attrs.HasValue && facts.Attrs.Value.Length == 0 && facts.KotlinSupertypesPre.Value == SourceTypeFacts.Empty,
+            "logical header facts/presence or actual parameter identity changed");
         var empty = new BirInterfaceDefinition { TypeParams = Array.Empty<BirTypeParameter>(),
             Attrs = OptionalField<BirAttribute[]>.Null, KotlinSupertypesPre = OptionalField<SourceTypeFacts>.Null };
         var emptyFacts = ReadLogicalHeaderFacts(empty);
         Require(!emptyFacts.Name.IsPresent && emptyFacts.TypeParams.HasValue && emptyFacts.TypeParams.Value.Length == 0
             && emptyFacts.Attrs.IsNull && emptyFacts.KotlinSupertypesPre.IsNull
-            && LogicalHeader(empty).ToJsonString() == "{\"typeParams\":[],\"attrs\":null,\"kotlinSupertypesPre\":null}"
-            && LogicalHeader(new BirEnumDefinition()).ToJsonString() == "{}",
+            && !ReadLogicalHeaderFacts(new BirEnumDefinition()).Name.IsPresent
+            && !ReadLogicalHeaderFacts(new BirEnumDefinition()).KotlinSupertypesPre.IsPresent,
             "absent/null/empty header facts changed");
 
         var ledger = new AliasDeclarationTransitions();
@@ -80,6 +82,6 @@ sealed partial class AliasDeclarationTransitions
         ledger.Release();
         Require(!ledger.HasTransitions && !ledger.TryRetiredLogicalHeader("Alias", out _)
             && !ledger.TryRetiredLogicalHeader("Renamed", out _), "Release retained logical declaration identities");
-        Console.WriteLine("[alias logical-header facts] self-test OK (shared bytes/presence, explicit retirement, live facts, current-host separation and release)");
+        Console.WriteLine("[alias logical-header facts] self-test OK (actual header presence, explicit retirement, live facts, current-host separation and release)");
     }
 }

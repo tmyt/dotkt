@@ -72,14 +72,21 @@ static partial class FBoundStarProjectionErasure
                 && replacement.Sig.Value[1] is TypeNode.ByRef { Of: TypeNode.Tv { I: 0 } }
                 && !ReferenceEquals(replacement.Sig.Value, replacement.CalleeParams.Value),
                 "reference invocation lost target selection, common facts, receiver-first order or actual managed operands");
-            var projected = root.ToDom(context.Bindings.ObserveProjection);
-            Require(invocation.ClrOwnerResolved.Value
-                && !projected["types"][0]["methods"][0]["body"][0]["expr"].AsObject().ContainsKey("clrOwnerResolved"),
-                "a consumed instance-only owner-resolution fact leaked onto the selected static invoker");
-            context.Bindings.BindProjected();
-            Require(context.Bindings.GetPhysical(context.Owners["RefOwner"].DefinitionBinding.Physical)
-                == context.Owners["RefOwner"].DefinitionBinding, "reference synthesis broke exact original owner binding");
-            context.Declarations.ReleaseSourceRows();
+            // The generated static record has no instance-only ClrOwnerResolved
+            // field. Preserve the original input fact, not a serialized shadow.
+            Require(invocation.ClrOwnerResolved.Value && rewritten is BirCallStatic
+                && ReferenceEquals(((BirCallStatic)rewritten).Args.Value[0], receiver),
+                "reference binding changed the original instance fact or failed to select the static invoker");
+            var ledger = new SourceDeclarationProjection(new[] { root }, context.Bindings);
+            ledger.SealSourceContinuations();
+            var binding = context.Owners["RefOwner"].DefinitionBinding;
+            ledger.RequireOccurrence(definition);
+            Require(ReferenceEquals(binding.Source, definition)
+                && ReferenceEquals(context.Bindings.GetCapturedSource(definition), binding),
+                "reference synthesis broke exact original owner binding");
+            CompleteRealization(context);
+            context.Bindings.CompleteSourceCustody(ledger);
+            ledger.Release();
         }
         finally { OwnerConstrainedMethodLowering.Reset(references); }
         Console.WriteLine("[owning managed-reference contracts] self-test OK (invariant pointee frame, actual interface slot and raw ref invoker)");

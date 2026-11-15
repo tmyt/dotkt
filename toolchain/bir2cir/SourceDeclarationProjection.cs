@@ -1,11 +1,9 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
-// One explicit projection of producer-reported retired forests. This records
-// actual occurrences only; it neither selects source declarations nor admits
-// declarations from their IDs, names, metadata or former physical layout.
+// The SAME producer-report ledger validates terminal custody on actual records.
+// It never selects declarations from IDs, names, metadata or physical layout.
 sealed class SourceDeclarationProjection
 {
     sealed record TypeVector(BirFileDeclaration File, IBirTypeDeclaration[] Original,
@@ -34,14 +32,13 @@ sealed class SourceDeclarationProjection
     readonly Dictionary<BirFileDeclaration, TypeVector> types = new(ReferenceEqualityComparer.Instance);
     readonly HashSet<BirGraphValue> retired = new(ReferenceEqualityComparer.Instance);
     readonly HashSet<BirFunctionDeclaration> published = new(ReferenceEqualityComparer.Instance);
-    readonly Dictionary<BirGraphValue, JsonObject> projections = new(ReferenceEqualityComparer.Instance);
-    readonly Dictionary<BirFunctionDeclaration, JsonObject> methods = new(ReferenceEqualityComparer.Instance);
-    readonly List<JsonObject> forestRoots = new();
-    readonly HashSet<JsonObject> materializedMethods = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirFileDeclaration, MethodPlacement> placements = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<IBirTypeDeclaration, BirFunctionDeclaration[]> placementTargets = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirFunctionDeclaration, IdentityConsumption> consumedIdentities = new(ReferenceEqualityComparer.Instance);
-    bool projected;
+    readonly Dictionary<BirGraphValue, int> occurrences = new(ReferenceEqualityComparer.Instance);
+    readonly HashSet<BirGraphValue> retiredOccurrences = new(ReferenceEqualityComparer.Instance);
+    Action validateMethods;
+    bool isSealed;
     bool released;
 
     internal SourceDeclarationProjection(IReadOnlyList<BirFileDeclaration> roots, CurrentDeclarationBindings bindings)
@@ -54,8 +51,6 @@ sealed class SourceDeclarationProjection
         }
     }
 
-    internal IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> RetiredMethods => projected && !released ? methods : throw Mismatch();
-    internal IReadOnlySet<JsonObject> MaterializedMethods => projected && !released ? materializedMethods : throw Mismatch();
 
     // Physical name allocation consumes an emission identity, not the original
     // selection key. Only its producer can report this exact attached occurrence
@@ -76,7 +71,7 @@ sealed class SourceDeclarationProjection
     void ReportIdentityConsumption(BirFileDeclaration file, IBirTypeDeclaration owner,
         BirFunctionDeclaration method, string identity, BirRoundtripDeclarationIdentity metadata)
     {
-        if (projected || released || identity == null || !types.TryGetValue(file, out var row)
+        if (isSealed || released || identity == null || !types.TryGetValue(file, out var row)
             || !file.Types.OrEmpty().SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance)
             || owner != null && row.Continuing.Count(actual => ReferenceEquals(actual, owner)) != 1
             || CurrentMethods(file, owner).Count(actual => ReferenceEquals(actual, method)) != 1
@@ -86,21 +81,23 @@ sealed class SourceDeclarationProjection
 
     internal bool WasIdentityConsumed(BirFunctionDeclaration method, string identity)
     {
-        if (released) throw Mismatch();
+        RequirePhase();
         if (!consumedIdentities.TryGetValue(method, out var row)) return false;
-        if (!projected || row.Identity != identity || method.DeclarationId.IsPresent
+        ValidateIdentity(method, row);
+        if (row.Identity != identity) throw Mismatch();
+        return true;
+    }
+
+    static void ValidateIdentity(BirFunctionDeclaration method, IdentityConsumption row)
+    {
+        if (method.DeclarationId.IsPresent
             || CurrentMethods(row.File, row.Owner).Count(actual => ReferenceEquals(actual, method)) != 1)
             throw Mismatch();
         if (row.Metadata != null
             && (!method.RoundtripDeclarationIdentity.HasValue
                 || !ReferenceEquals(method.RoundtripDeclarationIdentity.Value, row.Metadata)
-                || row.Metadata.DeclarationId.OrDefault() != identity
-                || !projections.TryGetValue(row.Metadata, out var target)
-                || !ReferenceEquals(Get(method)["roundtripDeclarationIdentity"], target)
-                || target["declarationId"] is not JsonValue value
-                || !value.TryGetValue<string>(out var transferred) || transferred != identity))
+                || row.Metadata.DeclarationId.OrDefault() != row.Identity))
             throw Mismatch();
-        return true;
     }
 
     static BirFunctionDeclaration[] CurrentMethods(BirFileDeclaration file, IBirTypeDeclaration owner)
@@ -108,13 +105,13 @@ sealed class SourceDeclarationProjection
 
     internal void RetireForest(BirGraphValue actual)
     {
-        if (projected || actual == null || !retired.Add(actual)) throw Mismatch();
+        if (isSealed || actual == null || !retired.Add(actual)) throw Mismatch();
         bindings.RetireSourceForest(actual);
     }
 
     internal void AppendTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> appended)
     {
-        if (projected || !types.TryGetValue(file, out var row)) throw Mismatch();
+        if (isSealed || !types.TryGetValue(file, out var row)) throw Mismatch();
         var next = row.Continuing.Concat(appended).ToArray();
         if (next.Distinct(ReferenceEqualityComparer.Instance).Count() != next.Length
             || !file.Types.OrEmpty().SequenceEqual(next, ReferenceEqualityComparer.Instance)) throw Mismatch();
@@ -123,7 +120,7 @@ sealed class SourceDeclarationProjection
 
     internal void RetireTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> removed)
     {
-        if (projected || !types.TryGetValue(file, out var row)
+        if (isSealed || !types.TryGetValue(file, out var row)
             || !file.Types.OrEmpty().SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance)
             || removed.Distinct(ReferenceEqualityComparer.Instance).Count() != removed.Count
             || removed.Any(type => row.Continuing.Count(actual => ReferenceEquals(actual, type)) != 1
@@ -135,7 +132,7 @@ sealed class SourceDeclarationProjection
     internal void PublishMethods(BirFileDeclaration file, IBirTypeDeclaration owner,
         IReadOnlyList<BirFunctionDeclaration> appended)
     {
-        if (projected || released || !types.ContainsKey(file)
+        if (isSealed || released || !types.ContainsKey(file)
             || appended.Distinct(ReferenceEqualityComparer.Instance).Count() != appended.Count
             || appended.Any(published.Contains)) throw Mismatch();
         MethodPlacement placement = null;
@@ -162,7 +159,7 @@ sealed class SourceDeclarationProjection
     internal void MoveMethods(BirFileDeclaration file, BirFunctionDeclaration[] before,
         BirFunctionDeclaration[] after, IReadOnlyList<TypeOwnershipLowering.SourceMethodMove> moves)
     {
-        if (projected || released || !types.ContainsKey(file) || moves.Count == 0
+        if (isSealed || released || !types.ContainsKey(file) || moves.Count == 0
             || !placements.TryAdd(file, new(before, after, moves.ToArray()))) throw Mismatch();
         foreach (var owner in moves.Select(move => move.Destination).Distinct<IBirTypeDeclaration>(ReferenceEqualityComparer.Instance))
             placementTargets[owner] = owner.Methods.OrEmpty().ToArray();
@@ -170,66 +167,94 @@ sealed class SourceDeclarationProjection
 
     internal bool TryMethodPlacement(BirFileDeclaration file, out MethodPlacement placement)
     {
-        if (!projected || released) throw Mismatch();
+        if (!isSealed || released) throw Mismatch();
         return placements.TryGetValue(file, out placement);
     }
 
-    // This observer is composed with the sole continuing ToDom and reused for
-    // every retired forest root. Known bindings enforce their own uniqueness.
-    internal void ObserveProjection(BirGraphValue actual, JsonObject target)
+    // The backend owns the complete method vectors. Reuse its final validator
+    // rather than capturing another current method/selection catalog here.
+    internal void RegisterMethodVectorValidation(Action validate)
     {
-        bindings.ObserveProjection(actual, target);
-        if (actual is BirFileDeclaration or IBirTypeDeclaration or BirFunctionDeclaration or BirFieldDeclaration
-            or BirRefTypeDeclaration or BirRoundtripDeclarationIdentity
-            || bindings.TryGetCapturedSource(actual, out _))
-            if (!projections.TryAdd(actual, target)) throw Mismatch();
+        if (isSealed || released || validateMethods != null || validate == null) throw Mismatch();
+        validateMethods = validate;
     }
 
-    internal void ProjectRetiredForests()
+    internal void SealSourceContinuations()
     {
-        if (projected) throw Mismatch();
+        if (isSealed || released) throw Mismatch();
+        validateMethods?.Invoke();
         foreach (var row in types.Values)
             if (!row.File.Types.OrEmpty().SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance)) throw Mismatch();
         foreach (var (file, placement) in placements)
             if (!file.Methods.OrEmpty().SequenceEqual(placement.After, ReferenceEqualityComparer.Instance)) throw Mismatch();
         foreach (var (owner, methods) in placementTargets)
             if (!owner.Methods.OrEmpty().SequenceEqual(methods, ReferenceEqualityComparer.Instance)) throw Mismatch();
-        var live = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
-        foreach (var root in roots) Walk(root, value => live.Add(value));
-        if (retired.Any(live.Contains)) throw Mismatch();
 
-        // A containing retired type/method owns the descendant's one projection.
-        // Do not independently re-project a reported descendant inside it.
+        // Validation uses temporary reference counts, not a semantic index.
+        // Walk the old structural domain, including captured frozen anchors.
+        var counts = new Dictionary<BirGraphValue, int>(ReferenceEqualityComparer.Instance);
+        var live = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
+        foreach (var root in roots) Walk(root, value => {
+            counts[value] = counts.GetValueOrDefault(value) + 1;
+            live.Add(value);
+        });
         var descendants = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         foreach (var root in retired)
             root.VisitChildren(child => Walk(child, value => descendants.Add(value)));
+        var detached = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         foreach (var root in retired.Where(value => !descendants.Contains(value)))
-        {
-            var members = new List<BirGraphValue>();
-            Walk(root, members.Add);
-            if (members.Any(live.Contains)) throw Mismatch();
-            var dom = root.ToDom(ObserveProjection);
-            forestRoots.Add(dom);
-            foreach (var method in members.OfType<BirFunctionDeclaration>())
-                if (!methods.TryAdd(method, projections[method])) throw Mismatch();
-        }
+            Walk(root, value => {
+                if (live.Contains(value)) throw Mismatch();
+                counts[value] = counts.GetValueOrDefault(value) + 1;
+                detached.Add(value);
+            });
+        // Match the old observer's uniqueness domain. Shared pure metadata is
+        // not newly forbidden; any explicitly queried occurrence still must be unique.
+        foreach (var (actual, count) in counts)
+            if (count != 1 && (actual is BirFileDeclaration or IBirTypeDeclaration or BirFunctionDeclaration
+                or BirFieldDeclaration or BirRefTypeDeclaration or BirRoundtripDeclarationIdentity
+                || bindings.TryGetCapturedSource(actual, out _))) throw Mismatch();
+        foreach (var actual in retired)
+            if (!detached.Contains(actual)) throw Mismatch();
         foreach (var method in published)
-            if (!projections.TryGetValue(method, out var target) || !materializedMethods.Add(target)) throw Mismatch();
-        projected = true;
+            if (!live.Contains(method) || counts.GetValueOrDefault(method) != 1) throw Mismatch();
+        foreach (var (method, row) in consumedIdentities)
+        {
+            if (!live.Contains(method) || counts.GetValueOrDefault(method) != 1) throw Mismatch();
+            ValidateIdentity(method, row);
+        }
+        foreach (var (actual, count) in counts) occurrences.Add(actual, count);
+        retiredOccurrences.UnionWith(detached);
+        isSealed = true;
     }
 
-    internal bool TryGet(BirGraphValue actual, out JsonObject target)
+    void RequirePhase()
     {
-        if (released) throw Mismatch();
-        return projections.TryGetValue(actual, out target);
+        if (!isSealed || released) throw Mismatch();
     }
-    internal JsonObject Get(BirGraphValue actual) => TryGet(actual, out var target) ? target : throw Mismatch();
-    internal bool IsRetired(BirGraphValue actual, JsonObject target)
+
+    internal void RequireAuthority(CurrentDeclarationBindings actual)
     {
-        if (!projected || !TryGet(actual, out var expected) || !ReferenceEquals(expected, target)) return false;
-        JsonNode root = target;
-        while (root.Parent != null) root = root.Parent;
-        return forestRoots.Any(forest => ReferenceEquals(forest, root));
+        RequirePhase();
+        if (!ReferenceEquals(bindings, actual)) throw Mismatch();
+    }
+
+    internal void RequireOccurrence(BirGraphValue actual)
+    {
+        RequirePhase();
+        if (actual == null || occurrences.GetValueOrDefault(actual) != 1) throw Mismatch();
+    }
+
+    internal bool IsRetired(BirGraphValue actual)
+    {
+        RequireOccurrence(actual);
+        return retiredOccurrences.Contains(actual);
+    }
+
+    internal bool IsPublished(BirFunctionDeclaration method)
+    {
+        RequirePhase();
+        return published.Contains(method);
     }
 
     internal bool TryOwner(BirFileDeclaration file, int originalPosition, IBirTypeDeclaration owner,
@@ -246,30 +271,32 @@ sealed class SourceDeclarationProjection
         return true;
     }
 
-    internal IEnumerable<IBirTypeDeclaration> RetiredTypes => projected && !released
+    internal IEnumerable<IBirTypeDeclaration> RetiredTypes => isSealed && !released
         ? types.Values.SelectMany(row => row.Retired) : throw Mismatch();
-    internal IEnumerable<JsonObject> LogicalOwners(int fileIndex, JsonObject projection)
+
+    internal IEnumerable<IBirTypeDeclaration> LogicalOwners(int fileIndex)
     {
-        if (!projected || fileIndex >= roots.Length || !types.TryGetValue(roots[fileIndex], out var row)) throw Mismatch();
+        RequirePhase();
+        if (fileIndex < 0 || fileIndex >= roots.Length || !types.TryGetValue(roots[fileIndex], out var row)) throw Mismatch();
         foreach (var owner in row.Original)
         {
-            if (row.Retired.Contains(owner)) yield return Get((BirGraphValue)owner);
-            else
+            RequireOccurrence((BirGraphValue)owner);
+            if (row.Retired.Contains(owner))
             {
-                var index = Array.FindIndex(row.Continuing, current => ReferenceEquals(current, owner));
-                if (index < 0 || projection["types"] is not JsonArray declarations
-                    || index >= declarations.Count || declarations[index] is not JsonObject actual) throw Mismatch();
-                yield return actual;
+                if (!IsRetired((BirGraphValue)owner)) throw Mismatch();
             }
+            else if (!row.Continuing.Any(current => ReferenceEquals(current, owner))) throw Mismatch();
+            yield return owner;
         }
     }
+
     internal void Release()
     {
-        if (!projected || released) throw Mismatch();
+        RequirePhase();
         released = true;
-        Array.Clear(roots); types.Clear(); retired.Clear(); published.Clear(); projections.Clear(); methods.Clear();
-        forestRoots.Clear(); materializedMethods.Clear();
-        placements.Clear(); placementTargets.Clear(); consumedIdentities.Clear();
+        Array.Clear(roots); types.Clear(); retired.Clear(); published.Clear();
+        occurrences.Clear(); retiredOccurrences.Clear(); placements.Clear();
+        placementTargets.Clear(); consumedIdentities.Clear(); validateMethods = null;
     }
 
     static void Walk(BirGraphValue node, Action<BirGraphValue> visit)
@@ -278,5 +305,5 @@ sealed class SourceDeclarationProjection
         visit(node);
         node.VisitChildren(child => Walk(child, visit));
     }
-    static InvalidOperationException Mismatch() => new("Source declaration transition has no exact owning projection");
+    static InvalidOperationException Mismatch() => new("Source declaration transition has no exact owning continuation");
 }

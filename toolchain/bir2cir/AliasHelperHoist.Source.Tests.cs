@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -64,11 +63,11 @@ static partial class AliasHelperHoist
             && target.Params.Value[0].Type.Value == new TypeNode.Tv("method", 1)
             && target.Ret.Value == methodVariable && edge.CalleeOwner.Value == new TypeNode.Fqn("Facade"),
             "kept records or authored generated-helper frame association changed");
-        transitions.ValidateProjection(new JsonNode[] { rehomeRoot.ToDom() });
+        transitions.ValidateSourceContinuations(new[] { rehomeRoot });
         var retained = rehomeRoot.Types.Value;
         rehomeRoot.Types = new IBirTypeDeclaration[] { (BirClassDefinition)plain.DeepClone() };
         var refused = false;
-        try { transitions.ValidateProjection(new JsonNode[] { rehomeRoot.ToDom() }); } catch (InvalidOperationException) { refused = true; }
+        try { transitions.ValidateSourceContinuations(new[] { rehomeRoot }); } catch (InvalidOperationException) { refused = true; }
         Require(refused, "an unreported replacement was accepted");
         rehomeRoot.Types = retained;
         transitions.Release();
@@ -97,7 +96,7 @@ static partial class AliasHelperHoist
             throw new InvalidOperationException("Alias materialization accepted an unreported occurrence transition");
         }
         file.Types = new IBirTypeDeclaration[] { host, helper, kept, first };
-        Refused(() => transitions.ValidateProjection(new JsonNode[] { file.ToDom() }));
+        Refused(() => transitions.ValidateSourceContinuations(new[] { file }));
         file.Types = new IBirTypeDeclaration[] { host, kept, helper, first };
         Refused(() => transitions.AdmitMaterializedTypes(file, new[] { first }));
         file.Types = new IBirTypeDeclaration[] { host, helper, first };
@@ -113,11 +112,10 @@ static partial class AliasHelperHoist
         var contract = new BirInterfaceDefinition { Name = "ReferenceContract", Kind = "interface" };
         file.Types = file.Types.OrEmpty().Concat(new IBirTypeDeclaration[] { contract }).ToArray();
         transitions.AdmitMaterializedTypes(file, new IBirTypeDeclaration[] { contract });
-        var projection = file.ToDom();
-        transitions.ValidateProjection(new JsonNode[] { projection });
-        var owners = transitions.LogicalOwners(0, projection).ToArray();
-        if (owners.Length != 2 || owners[0]["name"]?.GetValue<string>() != "Alias"
-            || !ReferenceEquals(owners[1], projection["types"][2])
+        transitions.ValidateSourceContinuations(new[] { file });
+        var owners = transitions.LogicalOwners(0).ToArray();
+        if (owners.Length != 2 || !ReferenceEquals(owners[0], alias)
+            || !ReferenceEquals(owners[1], kept)
             || !transitions.TryOwner(file, 1, kept, out var position, out var retired) || position != 2 || retired
             || !transitions.TryOwner(file, 0, alias, out _, out retired) || !retired
             || !ReferenceEquals(original[0], alias) || !ReferenceEquals(continuing[2], kept))
@@ -174,7 +172,7 @@ static partial class AliasHelperHoist
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var policy = GenericRepresentationPolicy.CreateSource(new[] { file }, new Dictionary<string, string> {
             ["kotlin.Array"] = "System.Array", ["kotlin.IntArray"] = "System.Int32[]" }, refs);
-        policy.PrepareDomLocations(new[] { file });
+        policy.PrepareSourceLocations(new[] { file });
         var pending = UncheckedGenericCastReturnErasure.CaptureSource(new[] { file });
         UncheckedGenericCastReturnErasure.Apply(file, pending);
         var retiredMethods = new List<BirFunctionDeclaration>();
@@ -194,24 +192,37 @@ static partial class AliasHelperHoist
         FBoundStarProjectionErasure.RealizeCarriersSource(new[] { file }, realization,
             Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null,
             (owner, types) => transitions.AdmitMaterializedTypes(owner, types));
-        var projection = file.ToDom(declarations.ObserveProjection);
-        declarations.BindProjected();
-        var retiredMap = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
-        foreach (var method in retiredMethods) retiredMap.Add(method, method.ToDom());
-        policy.BindDomDeclarations(new JsonNode[] { projection }, transitions);
-        var index = UncheckedGenericCastReturnErasure.BindDomDeclarations(pending, new[] { projection }, retiredMap, transitions);
-        var logical = policy.LocalDeclaration(first.Name.Value);
-        if (logical == null || ReferenceEquals(logical, projection["types"][0]) || logical["fields"] != null || logical["methods"] != null
-            || KotlinSupertypesRecord.ReadNullableFrame(logical)?.SourceArity != 1
-            || logical["typeParams"][0]["variance"]?.GetValue<string>() != "out"
-            || !ReferenceEquals(index.ByIdentity["retired-alias"].Method, retiredMap[firstMethod])
-            || !ReferenceEquals(index.ByIdentity["kept-member"].Method, projection["types"][1]["methods"][0]))
-            throw new InvalidOperationException("Alias logical facts, retired method or shifted exact owner handoff changed");
-        FBoundStarProjectionErasure.BindRealizationContinuation(realization);
-        if (!ReferenceEquals(policy.LocalDeclaration(first.Name.Value), projection["types"][0])
-            || KotlinSupertypesRecord.ReadNullableFrame(policy.LocalDeclaration(first.Name.Value)) != null)
-            throw new InvalidOperationException("FBound kept a retired logical alias header instead of its actual physical host");
-        policy.CheckAliasNativeHandoff(projection, retired);
+        var ledger = new SourceDeclarationProjection(new[] { file }, declarations);
+        foreach (var method in retiredMethods) ledger.RetireForest(method);
+        foreach (var (_, field) in transitions.RetiredFields) ledger.RetireForest(field);
+        var retiredFacts = pending.SourceDeclarations.ByIdentity["retired-alias"];
+        var keptFacts = pending.SourceDeclarations.ByIdentity["kept-member"];
+        ledger.SealSourceContinuations();
+        policy.CompleteSourceContinuation(new[] { file }, transitions, ledger);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, new[] { file }, transitions, ledger);
+        var logical = AliasDeclarationTransitions.ReadLogicalHeaderFacts(first);
+        if (!ReferenceEquals(transitions.LogicalOwners(0, ledger).First(), first)
+            || ReferenceEquals(first, host) || logical.KotlinSupertypesPre.Value.NullableFrame.SourceArity != 1
+            || logical.TypeParams.Value[0].Variance.Value != "out"
+            || retiredFacts.SourceMethod != null || keptFacts.SourceMethod != null
+            || retiredFacts.Return != variable || keptFacts.Return != variable
+            || !ledger.IsRetired(firstMethod) || ledger.IsRetired(keptMethod)
+            || !ReferenceEquals(kept.Methods.Value[0], keptMethod)
+            || !transitions.IsReplacedLogicalOwner(first)
+            || transitions.IsReplacedLogicalOwner((BirClassDefinition)first.DeepClone()))
+            throw new InvalidOperationException("Alias logical facts, retired method or shifted exact owner continuation changed");
+        var wrongLogical = (BirClassDefinition)first.DeepClone();
+        var wrongRejected = false;
+        try { transitions.TryOwner(file, 0, wrongLogical, out _, out _); }
+        catch (InvalidOperationException) { wrongRejected = true; }
+        if (!wrongRejected) throw new InvalidOperationException("An equal unreported alias owner was admitted");
+        FBoundStarProjectionErasure.CompleteRealization(realization);
+        if (!ReferenceEquals(file.Types.Value[0], host)
+            || AliasDeclarationTransitions.ReadLogicalHeaderFacts(host).KotlinSupertypesPre.OrDefault()?.NullableFrame != null
+            || logical.KotlinSupertypesPre.Value.NullableFrame.SourceArity != 1)
+            throw new InvalidOperationException("Realization completion conflated a retired logical alias with its actual physical host");
+        policy.CheckAliasNativeHandoff(moved, retired, ledger);
+        declarations.CompleteSourceCustody(ledger);
         var retainedFields = host.Fields.Value;
         host.Fields = new[] { (BirFieldDeclaration)moved.DeepClone() };
         var refused = false;
@@ -219,16 +230,20 @@ static partial class AliasHelperHoist
         if (!refused) throw new InvalidOperationException("Alias handoff accepted an unreported native field replacement");
         host.Fields = retainedFields;
         transitions.Release();
+        ledger.Release();
     }
 }
 
 sealed partial class GenericRepresentationPolicy
 {
-    internal void CheckAliasNativeHandoff(JsonObject root, BirFieldDeclaration retired)
+    internal void CheckAliasNativeHandoff(BirFieldDeclaration moved, BirFieldDeclaration retired,
+        SourceDeclarationProjection ledger)
     {
-        if (_nativeFields.Count != 2 || !_nativeFields.Contains(root["types"][0]["fields"][0].AsObject())
-            || _nativeFields.Count(field => field.Parent == null && Text(field["name"]) == retired.Name.Value) != 1
-            || _sourceNativeStorage.Count != 0 || _pendingNativeOrigins != null)
-            throw new InvalidOperationException("Alias native storage did not retain its exact continuing/detached physical occurrences");
+        ledger.RequireOccurrence(moved); ledger.RequireOccurrence(retired);
+        if (!IsNativeField(moved) || !IsNativeField(retired)
+            || ledger.IsRetired(moved) || !ledger.IsRetired(retired)
+            || _sourceNativeStorage.Count != 0 || _pendingNativeOrigins != null
+            || _pendingNativePhysicalBindings != null)
+            throw new InvalidOperationException("Alias native storage lost its exact continuing/detached occurrences or retained source staging");
     }
 }

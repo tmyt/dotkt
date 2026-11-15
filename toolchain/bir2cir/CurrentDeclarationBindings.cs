@@ -1,29 +1,21 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
-// The current FBound input inventory keeps its membership through the one
-// projection. This is not another source-eligibility or member-selection index.
+// The captured input inventory keeps its SAME source anchors until terminal
+// custody completes. This is not another eligibility or physical-member index.
 sealed class CurrentDeclarationBindings
 {
     internal sealed class DeclarationBinding
     {
         BirGraphValue source;
-        JsonObject physical;
         internal DeclarationBinding(BirGraphValue source) => this.source = source;
-        internal DeclarationBinding(JsonObject physical) => this.physical = physical;
         internal BirGraphValue Source => source
             ?? throw new InvalidOperationException("Declaration already crossed its owning frontier");
-        internal JsonObject Physical => physical
-            ?? throw new InvalidOperationException("Declaration has not crossed its owning frontier");
-        internal bool IsPhysical => physical != null;
-        internal void Bind(JsonObject actual) { physical = actual; source = null; }
+        internal void ReleaseSource() => source = null;
     }
 
     readonly Dictionary<BirGraphValue, DeclarationBinding> source = new(ReferenceEqualityComparer.Instance);
-    readonly Dictionary<JsonObject, DeclarationBinding> physical = new(ReferenceEqualityComparer.Instance);
-    readonly Dictionary<BirGraphValue, JsonObject> projected = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirFunctionDeclaration, IBirTypeDeclaration> retiredMethods = new(ReferenceEqualityComparer.Instance);
     readonly List<(BirGraphValue Owner, BirPropertyDeclaration Property)> retiredProperties = new();
     readonly HashSet<BirGraphValue> retiredForests = new(ReferenceEqualityComparer.Instance);
@@ -148,74 +140,26 @@ sealed class CurrentDeclarationBindings
             throw new InvalidOperationException("Source forest retirement is duplicated or outside its owning phase");
     }
 
-    internal bool TryGetProjection(BirGraphValue actual, out JsonObject result)
+    internal void CompleteSourceCustody(SourceDeclarationProjection ledger)
     {
-        if (bound) throw new InvalidOperationException("Source projection read after binding");
-        return projected.TryGetValue(actual, out result);
-    }
-
-    // Called by the generated projector at the actual construction, not by
-    // walking an unrelated graph and matching IDs, names or physical layout.
-    internal void ObserveProjection(BirGraphValue actual, JsonObject result)
-    {
-        if (bound) throw new InvalidOperationException("Declaration projection observed after binding");
-        if (source.ContainsKey(actual) && !projected.TryAdd(actual, result))
-            throw new InvalidOperationException("A captured declaration has multiple projected occurrences");
-    }
-
-    internal void BindProjected() => BindProjected(projected);
-
-    internal void BindProjected(IReadOnlyDictionary<BirGraphValue, JsonObject> actual)
-    {
-        if (bound) throw new InvalidOperationException("Declaration projection was already bound");
-        var retired = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
-        void Collect(BirGraphValue value, HashSet<BirGraphValue> into)
-        {
-            if (value is IBirExecutablePayload || !into.Add(value)) return;
-            value.VisitChildren(child => Collect(child, into));
-        }
-        foreach (var forest in retiredForests) Collect(forest, retired);
-        var live = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
-        foreach (var file in sourceFiles) Collect(file, live);
-        if (retired.Any(live.Contains)
-            || retiredMethods.Any(row => !retired.Contains((BirGraphValue)row.Value)
+        if (bound) throw new InvalidOperationException("Source declaration custody was already completed");
+        ArgumentNullException.ThrowIfNull(ledger);
+        ledger.RequireAuthority(this);
+        foreach (var forest in retiredForests)
+            if (!ledger.IsRetired(forest))
+                throw new InvalidOperationException("A retired source forest has no exact reported continuation");
+        if (retiredMethods.Any(row => !ledger.IsRetired((BirGraphValue)row.Value)
                 && row.Value.Methods.OrEmpty().Any(method => ReferenceEquals(method, row.Key)))
-            || retiredProperties.Any(row => !retired.Contains(row.Owner)
+            || retiredProperties.Any(row => !ledger.IsRetired(row.Owner)
                 && CurrentProperties(row.Owner).Any(property => ReferenceEquals(property, row.Property))))
             throw new InvalidOperationException("A retired declaration is still owned by its producer");
-        var targets = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
-        foreach (var declaration in source.Keys)
-            if (!actual.TryGetValue(declaration, out var target) || target == null || !targets.Add(target))
-                throw new InvalidOperationException("A captured declaration has no unique actual DOM continuation");
-        // Validation above is complete before any binding changes phase.
-        foreach (var (declaration, binding) in source)
-        {
-            var target = actual[declaration];
-            binding.Bind(target);
-            physical.Add(target, binding);
-        }
+        foreach (var declaration in source.Keys) ledger.RequireOccurrence(declaration);
+        // All checks finish before releasing ANY captured binding. Failed
+        // completion leaves the same source authority available for diagnosis.
+        foreach (var binding in source.Values) binding.ReleaseSource();
         source.Clear();
-        projected.Clear();
-        retiredMethods.Clear();
-        retiredProperties.Clear();
-        retiredForests.Clear();
+        retiredMethods.Clear(); retiredProperties.Clear(); retiredForests.Clear();
         Array.Clear(sourceFiles);
         bound = true;
-    }
-
-    internal bool TryGetPhysical(JsonObject actual, out DeclarationBinding binding)
-    {
-        if (!bound) throw new InvalidOperationException("Physical declarations read before the owning frontier");
-        return physical.TryGetValue(actual, out binding);
-    }
-
-    internal DeclarationBinding GetPhysical(JsonObject actual) => TryGetPhysical(actual, out var binding)
-        ? binding : throw new InvalidOperationException("The declaration has no captured or explicitly admitted physical occurrence");
-
-    internal DeclarationBinding RegisterPhysical(JsonObject actual)
-    {
-        if (!bound) throw new InvalidOperationException("Physical declaration admitted before the owning frontier");
-        if (!physical.TryGetValue(actual, out var binding)) physical.Add(actual, binding = new(actual));
-        return binding;
     }
 }

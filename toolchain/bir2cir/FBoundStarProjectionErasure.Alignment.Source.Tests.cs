@@ -154,15 +154,15 @@ static partial class FBoundStarProjectionErasure
         if (returned.Value.Value is not BirCast cast || !ReferenceEquals(cast.E.Value, construction)
             || !ReferenceEquals(construction.Args.Value[0], donor))
             throw new InvalidOperationException("Inner-base wrapping replaced a captured operand or callable");
-        System.Text.Json.Nodes.JsonObject actualDonor = null;
+        var ledger = new SourceDeclarationProjection(roots, bindings);
+        ledger.SealSourceContinuations();
+        ledger.RequireOccurrence(donor);
         var occurrences = 0;
-        root.ToDom((source, physical) => {
-            bindings.ObserveProjection(source, physical);
-            if (ReferenceEquals(source, donor)) { actualDonor = physical; occurrences++; }
-        });
-        bindings.BindProjected();
-        if (occurrences != 1 || actualDonor == null || !ReferenceEquals(donorBinding.Physical, actualDonor))
-            throw new InvalidOperationException("Aligned nested callable lost its unique observed continuation");
+        root.Visit(actual => { if (ReferenceEquals(actual, donor)) occurrences++; });
+        if (occurrences != 1 || !ReferenceEquals(donorBinding.Source, donor))
+            throw new InvalidOperationException("Aligned nested callable lost its unique actual continuation");
+        bindings.CompleteSourceCustody(ledger);
+        ledger.Release();
         Console.WriteLine("[owning alignment handoff] self-test OK (captured operand, nested suspend donor and exact one-way binding)");
     }
 }

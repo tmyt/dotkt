@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -47,10 +46,13 @@ static partial class MemberStrip
         var values = ValueRepresentationLowering.CreateSource(roots, refs, false,
             new ValueRepresentationSourcePolicy(roots, refs, false), ValueRepresentationLowering.CaptureSource(roots), null);
         var generic = GenericRepresentationPolicy.CreateSource(roots, new Dictionary<string, string>(), refs);
-        generic.PrepareDomLocations(roots);
+        generic.PrepareSourceLocations(roots);
         var pending = UncheckedGenericCastReturnErasure.CaptureSource(roots);
         UncheckedGenericCastReturnErasure.Apply(source, pending);
-        var declarations = new SourceDeclarationProjection(roots, new CurrentDeclarationBindings(roots));
+        var capturedFacts = pending.SourceDeclarations.ByIdentity["captured"];
+        var survivorFacts = pending.SourceDeclarations.ByIdentity["survivor"];
+        var bindings = new CurrentDeclarationBindings(roots);
+        var declarations = new SourceDeclarationProjection(roots, bindings);
         var reports = new List<BirFunctionDeclaration>();
         Apply(source, refs, method => { values.RetireSourceDeclaration(method); declarations.RetireForest(method); reports.Add(method); });
         if (!reports.SequenceEqual(new[] { retiredSibling, getter, captured, prefix })
@@ -61,17 +63,18 @@ static partial class MemberStrip
             || owner.Properties.Value.Length != 1 || owner.Properties.Value[0].PropertyAssociation.Value != "unrelated"
             || !ReferenceEquals(iface.Methods.Value[0], ifaceMethod))
             throw new InvalidOperationException("Typed MemberStrip lost exact retirements, source vectors, property association or exclusions");
-        var continuing = source.ToDom(declarations.ObserveProjection);
-        declarations.ProjectRetiredForests();
-        var detached = declarations.RetiredMethods;
-        generic.BindDomDeclarations(new JsonNode[] { continuing }, declarations: declarations);
-        values.BindDomDeclarations(new JsonNode[] { continuing }, detached, declarations);
-        var uncheckedIndex = UncheckedGenericCastReturnErasure.BindDomDeclarations(pending, new[] { continuing }, detached,
-            declarations: declarations);
-        if (!ReferenceEquals(uncheckedIndex.ByIdentity["captured"].Method, detached[captured])
-            || !ReferenceEquals(uncheckedIndex.ByIdentity["survivor"].Method, continuing["types"][1]["methods"][0])
-            || detached[captured].Parent != null || !generic.IsNativeField(native))
-            throw new InvalidOperationException("MemberStrip retirement did not preserve the existing exact one-way declaration handoff");
+        declarations.SealSourceContinuations();
+        generic.CompleteSourceContinuation(roots, null, declarations);
+        values.CompleteSourceContinuation(roots, declarations);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, roots, null, declarations);
+        if (!declarations.IsRetired(captured) || declarations.IsRetired(survivor)
+            || !ReferenceEquals(owner.Methods.Value[0], survivor)
+            || capturedFacts.SourceMethod != null || survivorFacts.SourceMethod != null
+            || capturedFacts.Return != new TypeNode.Tv("method", 0) || survivorFacts.Return != capturedFacts.Return
+            || !generic.IsNativeField(native))
+            throw new InvalidOperationException("MemberStrip retirement changed exact actual continuation or original body-return facts");
+        bindings.CompleteSourceCustody(declarations);
+        declarations.Release();
         Console.WriteLine("[typed member strip] self-test OK (bound selection, exact retirement, ordinal shifts, same-ID sibling, native storage and associations)");
     }
 }

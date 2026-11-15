@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -74,23 +73,13 @@ sealed partial class AliasDeclarationTransitions
             !removed.Any(actual => ReferenceEquals(actual, owner))).ToArray() };
     }
 
-    internal void ValidateProjection(IReadOnlyList<JsonNode> roots)
+    internal void ValidateSourceContinuations(IReadOnlyList<BirFileDeclaration> roots)
     {
         if (files.Count == 0) return; // Reference builds do not run the representation owner.
         if (roots.Count != files.Count) throw Mismatch();
         for (var index = 0; index < files.Count; index++)
-        {
-            var entry = files[index];
-            if (!Same(entry.File.Types.OrEmpty(), entry.Continuing)
-                || roots[index] is not JsonObject root
-                || (root["fileClass"] as JsonValue)?.GetValue<string>() != entry.File.FileClass.OrDefault()) throw Mismatch();
-            var projected = root["types"] as JsonArray;
-            if (projected == null && entry.Continuing.Length == 0) continue;
-            if (projected == null || projected.Count != entry.Continuing.Length) throw Mismatch();
-            for (var type = 0; type < projected.Count; type++)
-                if (projected[type] is not JsonObject declaration
-                    || (declaration["name"] as JsonValue)?.GetValue<string>() != entry.Continuing[type].Name.OrDefault()) throw Mismatch();
-        }
+            if (!ReferenceEquals(roots[index], files[index].File)
+                || !Same(files[index].File.Types.OrEmpty(), files[index].Continuing)) throw Mismatch();
     }
 
     internal bool TryOwner(BirFileDeclaration file, int originalPosition, IBirTypeDeclaration original,
@@ -107,29 +96,38 @@ sealed partial class AliasDeclarationTransitions
         return true;
     }
 
-    internal IEnumerable<JsonObject> LogicalOwners(int fileIndex, JsonObject projection,
+    internal IEnumerable<IBirTypeDeclaration> LogicalOwners(int fileIndex,
         SourceDeclarationProjection declarations = null)
     {
+        if (fileIndex < 0 || fileIndex >= files.Count) throw Mismatch();
         var entry = files[fileIndex];
+        if (!Same(entry.File.Types.OrEmpty(), entry.Continuing)) throw Mismatch();
         foreach (var source in entry.Original)
         {
-            if (entry.Replacements.Any(row => ReferenceEquals(row.Source, source))) yield return LogicalHeader(source);
+            // A replacement retains only its original logical header facts.
+            // Returning that SAME source is not physical field/method admission.
+            if (entry.Replacements.Any(row => ReferenceEquals(row.Source, source))) yield return source;
             else if (retiredPhysicalOwners.Contains(source))
             {
-                if (declarations == null || !declarations.TryGet((BirGraphValue)source, out var retired)
-                    || !declarations.IsRetired((BirGraphValue)source, retired)) throw Mismatch();
-                yield return retired;
+                if (declarations == null || !declarations.IsRetired((BirGraphValue)source)) throw Mismatch();
+                yield return source;
             }
             else
             {
                 var position = Array.FindIndex(entry.Continuing, value => ReferenceEquals(value, source));
-                if (position < 0 || projection["types"] is not JsonArray types || types[position] is not JsonObject owner) throw Mismatch();
-                yield return owner;
+                if (position < 0) throw Mismatch();
+                declarations?.RequireOccurrence((BirGraphValue)source);
+                yield return source;
             }
         }
     }
 
     internal bool HasTransitions => files.Count != 0;
+
+    // A removed logical alias is an explicit producer disposition, not an
+    // absent physical owner to recover by name or by scanning its former body.
+    internal bool IsReplacedLogicalOwner(IBirTypeDeclaration actual)
+        => files.Any(file => file.Replacements.Any(row => ReferenceEquals(row.Source, actual)));
 
     internal void ValidateNativeField(BirFieldDeclaration actual)
     {
@@ -149,12 +147,6 @@ sealed partial class AliasDeclarationTransitions
                     yield return declaration;
         }
     }
-
-    // Only the header facts consumed by GenericRepresentationPolicy's existing
-    // declaration view cross here. Bodies and native fields have their own
-    // single projections; they are not copied into this logical header.
-    internal static JsonObject LogicalHeader(IBirTypeDeclaration source)
-        => ProjectLogicalHeader(ReadLogicalHeaderFacts(source));
 
     internal void Release() { files.Clear(); retiredLogicalOwners.Clear(); retiredPhysicalOwners.Clear(); }
     static InvalidOperationException Mismatch() => new("Alias representation does not match its reported source occurrences");

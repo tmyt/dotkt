@@ -125,29 +125,33 @@ static partial class FBoundStarProjectionErasure
             ClosureType = new TypeNode.Fqn("Arrays"), Method = "initialize" } }, ambiguous,
                 CarrierTypeContext.ForSource(ambiguous, refs), out _), "ambiguous local initializer was selected by a name fallback");
 
-        // The production binding boundary continues the exact prepared owners
-        // through their actual one-way projection.
+        // The same prepared owners and reservation set remain authoritative;
+        // terminal custody does not collect another declaration graph.
         var selectedOwner = plan.Owners["Exported"];
-        var projected = root.ToDom(bindings.ObserveProjection);
-        bindings.BindProjected();
-        var savedNames = _usedCarrierNames;
-        try
-        {
-            var continued = plan.BindOwners();
-            Require(ReferenceEquals(continued["Exported"], selectedOwner)
-                && ReferenceEquals(selectedOwner.Def, projected["types"][7])
-                && ReferenceEquals(selectedOwner.Root, projected) && selectedOwner.Needed
-                && _usedCarrierNames.Contains(selectedOwner.ErasedName), "frontier recollected an owner, demand or name reservation");
-            selectedOwner.Def["name"] = "CurrentPhysicalName";
-            Require(Str(selectedOwner.Def["name"]) == "CurrentPhysicalName", "continuation froze its declaration address");
-            var isolatedRoot = new BirFileDeclaration { FileClass = "Other", Types = new IBirTypeDeclaration[] { Generic("Exported") } };
-            var isolatedValues = GenericRepresentationPolicy.CreateSource(new[] { isolatedRoot }, refs.Aliases, refs);
-            var isolatedBindings = PrepareCurrentDeclarations(new[] { isolatedRoot }, isolatedValues, out var isolatedPreparation);
-            var isolated = PrepareCarrierDemand(isolatedPreparation, PrepareNativeProofs(isolatedBindings, refs, isolatedValues), refs, isolatedValues);
-            Require(isolated.Owners["Exported"].ErasedName == "Exported" + CarrierMark && !isolated.Owners["Exported"].Needed,
-                "a preceding module leaked carrier names or visibility demand");
-        }
-        finally { _usedCarrierNames = savedNames; }
+        var reservedNames = plan.ReservedNames;
+        var ledger = new SourceDeclarationProjection(new[] { root }, bindings);
+        ledger.SealSourceContinuations();
+        Require(ReferenceEquals(selectedOwner.DefinitionBinding.Source, exported)
+            && ReferenceEquals(selectedOwner.RootBinding.Source, root) && selectedOwner.Needed
+            && reservedNames.Contains(selectedOwner.ErasedName), "continuation recollected an owner, demand or name reservation");
+        exported.Name = "CurrentPhysicalName";
+        Require(((IBirTypeDeclaration)selectedOwner.DefinitionBinding.Source).Name.Value == "CurrentPhysicalName"
+            && ReferenceEquals(plan.Owners["Exported"], selectedOwner), "continuation froze the actual declaration or changed its selected key");
+        var isolatedRoot = new BirFileDeclaration { FileClass = "Other", Types = new IBirTypeDeclaration[] { Generic("Exported") } };
+        var isolatedValues = GenericRepresentationPolicy.CreateSource(new[] { isolatedRoot }, refs.Aliases, refs);
+        var isolatedBindings = PrepareCurrentDeclarations(new[] { isolatedRoot }, isolatedValues, out var isolatedPreparation);
+        var isolated = PrepareCarrierDemand(isolatedPreparation, PrepareNativeProofs(isolatedBindings, refs, isolatedValues), refs, isolatedValues);
+        Require(isolated.Owners["Exported"].ErasedName == "Exported" + CarrierMark && !isolated.Owners["Exported"].Needed
+            && !ReferenceEquals(isolated.ReservedNames, reservedNames) && ReferenceEquals(plan.ReservedNames, reservedNames)
+            && reservedNames.Contains(selectedOwner.ErasedName), "a preceding module leaked carrier names or visibility demand");
+        var isolatedLedger = new SourceDeclarationProjection(new[] { isolatedRoot }, isolatedBindings);
+        isolatedLedger.SealSourceContinuations();
+        isolated.CompleteSourceLifetime();
+        isolatedBindings.CompleteSourceCustody(isolatedLedger);
+        isolatedLedger.Release();
+        plan.CompleteSourceLifetime();
+        bindings.CompleteSourceCustody(ledger);
+        ledger.Release();
         Console.WriteLine("[owning carrier demand] self-test OK (typed demand, shared variance, local arrays, exact live continuation)");
     }
 }

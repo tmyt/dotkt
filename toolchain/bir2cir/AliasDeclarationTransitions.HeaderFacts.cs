@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
@@ -40,17 +39,4 @@ sealed partial class AliasDeclarationTransitions
         return false;
     }
 
-    static JsonObject ProjectLogicalHeader(LogicalHeaderFacts facts)
-    {
-        var header = new JsonObject();
-        void Add<T>(string key, OptionalField<T> value, Func<T, JsonNode> project)
-        { if (value.IsPresent) header[key] = value.IsNull ? null : project(value.Value); }
-        Add("name", facts.Name, value => JsonValue.Create(value));
-        Add("kind", facts.Kind, value => JsonValue.Create(value));
-        Add("generated", facts.Generated, value => JsonValue.Create(value));
-        Add("typeParams", facts.TypeParams, values => new JsonArray(values.Select(value => (JsonNode)value.ToDom()).ToArray()));
-        Add("attrs", facts.Attrs, values => new JsonArray(values.Select(value => (JsonNode)value.ToDom()).ToArray()));
-        Add(KotlinSupertypesRecord.PreKey, facts.KotlinSupertypesPre, SourceTypeFacts.ToDom);
-        return header;
-    }
 }
