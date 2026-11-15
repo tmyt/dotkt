@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -33,7 +32,7 @@ using DotKt.Cir;
 // in it implements a BCL enumerable interface and nothing there is owed a `GetEnumerator`.
 // General override allocation queries this protocol's slot ownership earlier, using the same provider/element
 // rule and physical interface identities, so it cannot install a competing foreign-base forwarding bridge.
-static class ReverseEnumeratorBridgeSynthesis
+static partial class ReverseEnumeratorBridgeSynthesis
 {
     // #68: `dotkt$…` uses Kotlin's own unspeakable `$`, so a compiler-owned name can never collide with source.
     public const string AdapterName = "dotkt$EnumeratorOverKotlinIterator";
@@ -104,148 +103,15 @@ static class ReverseEnumeratorBridgeSynthesis
 
     static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
     {
         if (def.Kind != "class" || FindIteratorProvider(def, defs, refs, declarations) is not { } iterator
             || Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
         return (iterator, element);
     }
 
-    /// <summary>
-    /// Author the reverse bridge across the whole compilation. Returns true when the adapter TypeDef was injected,
-    /// so the caller can record it in the emission unit's local-type set.
-    /// </summary>
-    public static bool ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
-    {
-        var defs = SupertypeGraph.Collect(roots);
-        JsonArray adapterHost = null;
-        foreach (var root in roots)
-        {
-            if (root is not JsonObject file || file["types"] is not JsonArray types) continue;
-            foreach (var type in Declared(types))
-            {
-                if (!Bridge(type, defs, refs)) continue;
-                // The adapter lives in the first file that owes a bridge; every other file's uses name it by the
-                // same module-wide identity, exactly like any other type declared next door.
-                adapterHost ??= types;
-            }
-        }
-        if (adapterHost == null) return false;
-        adapterHost.Add(Adapter(AdapterName, refs));
-        return true;
-    }
-
-    // Every type declaration in this file, nested types included, in declaration order.
-    static IEnumerable<JsonObject> Declared(JsonArray types)
-    {
-        foreach (var type in types.OfType<JsonObject>())
-        {
-            yield return type;
-            if (type["types"] is JsonArray nested)
-                foreach (var child in Declared(nested)) yield return child;
-        }
-    }
-
-    // Author both GetEnumerator halves on one class. False when the class is owed none.
-    static bool Bridge(JsonObject type, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
-        ReferenceMetadataIndex refs)
-    {
-        if (Str(type["kind"]) != "class") return false;                    // interfaces carry no bodies
-        if (Str(type["name"]) is not string owner || owner.Length == 0) return false;
-        if (type["methods"] is not JsonArray methods) return false;
-        if (!defs.TryGetValue(owner, out var def)) return false;
-        if (Plan(def, defs, refs) is not { } plan) return false;
-        var (iterator, element) = plan;
-
-        // The physical MethodDef `GetEnumerator()` may already be occupied by a Kotlin declaration of exactly that
-        // CLR signature — the allocated signature is name plus generic arity plus the parameter vector, so a second
-        // one is a duplicate MethodDef whatever its return type. Give the bridge a collision-free physical name in
-        // that case; it is bound by its MethodImpl descriptor and never by its name, and the author's own member
-        // keeps the public spelling. An OVERLOAD (`GetEnumerator(x)`) occupies a different signature entirely and
-        // must not suppress the bridge, which is the slot the CLR actually demands.
-        var nameTaken = methods.OfType<JsonObject>().Any(m =>
-            Str(m["name"]) == GetEnumeratorName && !Bool(m["static"])
-            && (m["params"] as JsonArray)?.Count == 0 && Arity(m) == 0);
-        var genericName = nameTaken ? AliasGetEnumeratorName : GetEnumeratorName;
-
-        var self = SelfOwner(owner, TypeParameterFrame.Count(type));
-        var iteratorCall = new JsonObject
-        {
-            ["k"] = "callInstance",
-            ["ownerType"] = TypeJson.Write(iterator.Owner),
-            ["virtual"] = true,
-            ["recv"] = new JsonObject { ["k"] = "this" },
-            ["method"] = iterator.Name,
-            ["sig"] = new JsonArray(),
-            ["ret"] = TypeJson.Write(iterator.Return),
-            ["args"] = new JsonArray(),
-        };
-        // The adapter stores the common iterator carrier and casts its object result directly to the CLR
-        // enumerable element. A second source-element generic argument would reify a Kotlin metadata type here,
-        // after physical lowering has finished, and is unnecessary for an erased iterator slot.
-        var genericBody = new JsonArray
-        {
-            new JsonObject
-            {
-                ["k"] = "return",
-                ["value"] = new JsonObject
-                {
-                    ["k"] = "new",
-                    ["type"] = TypeJson.Write(Constructed(AdapterName, element)),
-                    ["argTypes"] = new JsonArray(TypeJson.Write(KotlinIteratorPhysicalProtocol.Carrier(refs))),
-                    ["args"] = new JsonArray(iteratorCall),
-                    // The adapter declares exactly one constructor and this pass authored it; naming its index is
-                    // the same explicit local-declaration link every other CIR construction carries.
-                    ["localCtorIndex"] = 0,
-                },
-            },
-        };
-        var generic = Method(genericName, nameTaken ? "private" : "public",
-            Constructed(IEnumeratorT, element), genericBody);
-        if (nameTaken) generic["generated"] = true;
-        generic["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            Constructed(IEnumerableT, element), GetEnumeratorName, Constructed(IEnumeratorT, element)));
-
-        // `IEnumerator System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator()`. The non-generic slot
-        // differs from the generic one only in return type, which is not a Kotlin overload, so the body is a private
-        // MethodDef named after nothing and bound by its descriptor alone.
-        var nonGeneric = Method(NonGenericBridgeName, "private", new TypeNode.Fqn(IEnumerator), new JsonArray
-        {
-            new JsonObject
-            {
-                ["k"] = "return",
-                ["value"] = new JsonObject
-                {
-                    ["k"] = "callInstance",
-                    ["ownerType"] = TypeJson.Write(self),
-                    ["virtual"] = true,
-                    ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["method"] = genericName,
-                    ["sig"] = new JsonArray(),
-                    ["ret"] = TypeJson.Write(Constructed(IEnumeratorT, element)),
-                    ["args"] = new JsonArray(),
-                },
-            },
-        });
-        nonGeneric["generated"] = true;
-        nonGeneric["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            new TypeNode.Fqn(IEnumerable), GetEnumeratorName, new TypeNode.Fqn(IEnumerator)));
-
-        methods.Add(generic);
-        methods.Add(nonGeneric);
-        return true;
-    }
-
-    static string SourceName(JsonObject method) =>
-        Str(method["declarationSourceName"])
-        ?? Str(method[DeclarationRename.SourceMemberKey])
-        ?? Str(method["name"]);
-
-    // The preserved declaration fact chooses the Kotlin iteration protocol; the emitted return selects the call
-    // descriptor. Neither can be reconstructed from the other after existential representation lowering.
-    static TypeNode SemanticReturn(JsonObject method) =>
-        Str(method["retKotlinType"]) is string original ? TypeNode.Parse(original) : TypeJson.Read(method["ret"]);
-
+    // Preserved Kotlin declaration facts choose the iteration protocol; the
+    // current emitted return independently selects the physical call descriptor.
     sealed record IteratorProvider(TypeNode.Fqn Owner, string Name, TypeNode Return, TypeNode SemanticReturn, bool Abstract);
 
     // Resolve the declaration that supplies `iterator()` in the receiver's own type-parameter frame. Class members
@@ -254,7 +120,7 @@ static class ReverseEnumeratorBridgeSynthesis
     // defaults are rejected rather than selected by traversal order.
     static IteratorProvider FindIteratorProvider(SupertypeGraph.Def cls,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
     {
         var self = SelfOwner(cls.Name, cls.Arity) as TypeNode.Fqn;
         if (DeclaredIterator(self, cls, defs, refs, inherited: false, declarations) is { } own) return own;
@@ -307,7 +173,7 @@ static class ReverseEnumeratorBridgeSynthesis
     // source identity is authoritative for the Kotlin protocol; the physical name is only the call operand.
     static IteratorProvider DeclaredIterator(TypeNode.Fqn owner, SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs, bool inherited,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
     {
         var args = SupertypeGraph.EffectiveArgs(owner, def.Arity);
         if (args == null) return null;
@@ -329,18 +195,11 @@ static class ReverseEnumeratorBridgeSynthesis
     static IEnumerable<IteratorDeclaration> IteratorDeclarations(SupertypeGraph.Def definition,
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
     {
-        if (declarations != null)
-        {
-            foreach (var method in declarations[definition.Name].Methods.OrEmpty())
-                yield return new(method.DeclarationSourceName.OrDefault() ?? method.KotlinSourceMember.OrDefault() ?? method.Name.OrDefault(),
-                    method.Name.OrDefault(), method.Vis.OrDefault(), method.Static.OrDefault(),
-                    method.Params.HasValue ? method.Params.Value.Length : -1, method.TypeParams.OrEmpty().Length,
-                    method.Ret.OrDefault(), method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault());
-            yield break;
-        }
-        foreach (var method in definition.Methods.OfType<JsonObject>())
-            yield return new(SourceName(method), Str(method["name"]), Str(method["vis"]), Bool(method["static"]),
-                (method["params"] as JsonArray)?.Count ?? -1, Arity(method), TypeJson.Read(method["ret"]), SemanticReturn(method), Bool(method["abstract"]));
+        foreach (var method in declarations[definition.Name].Methods.OrEmpty())
+            yield return new(method.DeclarationSourceName.OrDefault() ?? method.KotlinSourceMember.OrDefault() ?? method.Name.OrDefault(),
+                method.Name.OrDefault(), method.Vis.OrDefault(), method.Static.OrDefault(),
+                method.Params.HasValue ? method.Params.Value.Length : -1, method.TypeParams.OrEmpty().Length,
+                method.Ret.OrDefault(), method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault());
     }
 
     static IteratorProvider ReferencedIterator(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
@@ -442,174 +301,7 @@ static class ReverseEnumeratorBridgeSynthesis
             : new TypeNode.Fqn(owner, Enumerable.Range(0, arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
 
     static TypeNode Constructed(string name, TypeNode arg) => new TypeNode.Fqn(name, new[] { arg });
-    static TypeNode Constructed(string name, TypeNode first, TypeNode second) =>
-        new TypeNode.Fqn(name, new[] { first, second });
-
-    static JsonObject Descriptor(TypeNode owner, string member, TypeNode ret) => new()
-    {
-        ["owner"] = TypeJson.Write(owner),
-        ["member"] = member,
-        ["arity"] = 0,
-        ["params"] = new JsonArray(),
-        ["ret"] = TypeJson.Write(ret),
-    };
-
-    // Every body authored here is a straight-line `return`/`throw` except the empty `Dispose`, so state that the
-    // body cannot fall through: without it the emitter appends its verifier-safe default-return epilogue, which is
-    // dead code plus a `.locals init` slot on every one of these methods.
-    static JsonObject Method(string name, string vis, TypeNode ret, JsonArray body, bool terminates = true)
-    {
-        var method = new JsonObject
-        {
-            ["name"] = name,
-            ["static"] = false,
-            ["override"] = false,
-            ["virtual"] = true,
-            ["abstract"] = false,
-            ["objectOverride"] = false,
-            ["vis"] = vis,
-            ["params"] = new JsonArray(),
-            ["ret"] = TypeJson.Write(ret),
-            ["body"] = body,
-        };
-        if (terminates) method["bodyTerminates"] = true;
-        return method;
-    }
-
-    // ---- the adapter -----------------------------------------------------------------------------------------
 
     static TypeNode Tv0 => new TypeNode.Tv("type", 0);
-
-    internal static JsonObject Adapter(string name, ReferenceMetadataIndex refs)
-    {
-        var sourceElement = Tv0;
-        var targetElement = Tv0;
-        var wrapped = KotlinIteratorPhysicalProtocol.Carrier(refs);
-        var self = TypeJson.Write(Constructed(name, Tv0));
-        var it = new JsonObject { ["k"] = "field", ["ownerType"] = self.DeepClone(), ["recv"] = This(), ["name"] = "_it" };
-
-        JsonObject Wrapped(string member, TypeNode ret) =>
-            KotlinIteratorPhysicalProtocol.Call(refs, it.DeepClone().AsObject(), member, sourceElement, ret);
-
-        // `bool MoveNext() { if (_it.hasNext()) { _cur = (TTarget)_it.next(); return true } return false }`.
-        // The cast is explicit CIR because adapting an iterator's element to the enumerable slot is bir2cir-owned
-        // representation work; ilemit only emits its ordinary box/cast/unbox sequence.
-        var moveNext = Method("MoveNext", "public", new TypeNode.Fqn("System.Boolean"), new JsonArray
-        {
-            new JsonObject
-            {
-                ["k"] = "if",
-                ["branches"] = new JsonArray(new JsonObject
-                {
-                    ["cond"] = Wrapped("hasNext", new TypeNode.Fqn("System.Boolean")),
-                    ["body"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["k"] = "setField",
-                            ["ownerType"] = self.DeepClone(),
-                            ["recv"] = This(),
-                            ["name"] = "_cur",
-                            ["value"] = Wrapped("next", targetElement),
-                        },
-                        Return(Const("System.Boolean", true)),
-                    },
-                }),
-            },
-            Return(Const("System.Boolean", false)),
-        });
-        moveNext["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            new TypeNode.Fqn(IEnumerator), "MoveNext", new TypeNode.Fqn("System.Boolean")));
-
-        // `T get_Current() => _cur` — the generic IEnumerator<T> slot.
-        var current = Method("get_Current", "public", targetElement,
-            new JsonArray { Return(Cur(self)) });
-        current["specialName"] = true;
-        current["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            Constructed(IEnumeratorT, targetElement), "get_Current", targetElement));
-
-        // `object System.Collections.IEnumerator.get_Current => _cur` — the non-generic slot. It differs from the
-        // generic one only in return type, so it is a private MethodDef bound by its descriptor; the value-type
-        // instantiation's box is the ordinary return coercion onto a reference return type.
-        var rawCurrent = Method(NonGenericCurrentName, "private", new TypeNode.Fqn("System.Object"),
-            new JsonArray { Return(Cur(self)) });
-        rawCurrent["specialName"] = true;
-        rawCurrent["generated"] = true;
-        rawCurrent["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            new TypeNode.Fqn(IEnumerator), "get_Current", new TypeNode.Fqn("System.Object")));
-
-        // `void Reset() => throw new NotSupportedException()` — a Kotlin iterator cannot be restarted.
-        var reset = Method("Reset", "public", new TypeNode.Fqn("void"), new JsonArray
-        {
-            new JsonObject
-            {
-                ["k"] = "throw",
-                ["value"] = new JsonObject
-                {
-                    ["k"] = "new",
-                    ["type"] = TypeJson.Fqn("System.NotSupportedException"),
-                    ["argTypes"] = new JsonArray(),
-                    ["args"] = new JsonArray(),
-                },
-            },
-        });
-        reset["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            new TypeNode.Fqn(IEnumerator), "Reset", new TypeNode.Fqn("void")));
-
-        // `void Dispose() {}` — nothing is held that the CLR could release.
-        var dispose = Method("Dispose", "public", new TypeNode.Fqn("void"), new JsonArray(), terminates: false);
-        dispose["clrInterfaceImpls"] = new JsonArray(Descriptor(
-            new TypeNode.Fqn(IDisposable), "Dispose", new TypeNode.Fqn("void")));
-
-        return new JsonObject
-        {
-            ["name"] = name,
-            ["kind"] = "class",
-            ["generated"] = true,
-            ["abstract"] = false,
-            ["final"] = true,
-            ["beforeFieldInit"] = true,
-            // Module-private: nothing outside this assembly can name the type, because no signature mentions it.
-            ["vis"] = "internal",
-            ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
-            ["base"] = null,
-            ["interfaces"] = new JsonArray(
-                TypeJson.Write(Constructed(IEnumeratorT, targetElement)),
-                TypeJson.Fqn(IEnumerator),
-                TypeJson.Fqn(IDisposable)),
-            ["fields"] = new JsonArray(
-                new JsonObject { ["name"] = "_it", ["type"] = TypeJson.Write(wrapped), ["vis"] = "private", ["initOnly"] = true },
-                new JsonObject { ["name"] = "_cur", ["type"] = TypeJson.Write(targetElement), ["vis"] = "private" }),
-            ["ctors"] = new JsonArray(new JsonObject
-            {
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "source", ["type"] = TypeJson.Write(wrapped) }),
-                ["baseArgs"] = null,
-                ["thisArgs"] = null,
-                ["vis"] = "public",
-                ["body"] = new JsonArray(new JsonObject
-                {
-                    ["k"] = "setField",
-                    ["ownerType"] = self.DeepClone(),
-                    ["recv"] = This(),
-                    ["name"] = "_it",
-                    ["value"] = new JsonObject { ["k"] = "local", ["name"] = "source" },
-                }),
-            }),
-            ["methods"] = new JsonArray(moveNext, current, rawCurrent, reset, dispose),
-        };
-    }
-
     const string NonGenericCurrentName = "dotkt$NonGenericCurrent";
-
-    static JsonObject This() => new() { ["k"] = "this" };
-    static JsonObject Cur(JsonNode self) => new()
-        { ["k"] = "field", ["ownerType"] = self.DeepClone(), ["recv"] = This(), ["name"] = "_cur" };
-    static JsonObject Return(JsonNode value) => new() { ["k"] = "return", ["value"] = value };
-
-    static JsonObject Const(string type, bool value) =>
-        new() { ["k"] = "const", ["type"] = TypeJson.Fqn(type), ["value"] = value };
-
-    static int Arity(JsonObject method) => (method["typeParams"] as JsonArray)?.Count ?? 0;
-    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
-    static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }
