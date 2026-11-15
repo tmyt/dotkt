@@ -81,10 +81,12 @@ if (args.Length == 2 && args[0] == "--projected-array-attributes")
     return;
 }
 
-if (args.Length == 3 && args[0] == "--projected-collection-returns")
+if ((args.Length == 3 || args.Length == 4 && args[3] == "--with-joined-return")
+    && args[0] == "--projected-collection-returns")
 {
-    ProjectedCollectionReturnInspector.Verify(args[1], args[2]);
+    ProjectedCollectionReturnInspector.Verify(args[1], args[2], withJoinedReturn: args.Length == 4);
     Console.WriteLine("opaque collection slots, exact native declarations and source KLIB projection: OK");
+    if (args.Length == 4) Console.WriteLine("joined return exact source and carrier associations: OK");
     return;
 }
 

@@ -499,7 +499,7 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  PROJECTED ARRAY ATTRIBUTE FAIL"
 			tail -25 "$ROOT/build/nunit-$name.projected-array-attributes.log"; rc=1
 		fi
-		if dotnet "$METADATA_INSPECTOR_DLL" --projected-collection-returns "$producer_dll" "$producer_klib" \
+		if dotnet "$METADATA_INSPECTOR_DLL" --projected-collection-returns "$producer_dll" "$producer_klib" --with-joined-return \
 			>"$ROOT/build/nunit-$name.projected-collection-returns.log" 2>&1; then
 			echo "  projected collection values preserve source signatures and exact native CLR declarations"
 		else

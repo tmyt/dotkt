@@ -1,7 +1,4 @@
-using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using DotKt.Bir;
 
 namespace GenericValueInterop;
 
@@ -39,25 +36,11 @@ public static class UpstreamMapCopies
         var declaration = value.GetType().Assembly
             .GetType("roundtrip.upstreamerasedstdlib.UpstreamErasedStdlibKt")!.GetMethod(method)!;
         var carrier = declaration.ReturnType;
-        var source = new TypeNode.Fqn("roundtrip.upstreamerasedstdlib.JoinedValue", new TypeNode[] { new TypeNode.Tv("method", 0) });
-        var projection = new TypeNode.Fqn("roundtrip.upstreamerasedstdlib.JoinedValue", new TypeNode[] { new TypeNode.Star() });
+        // Exact source/projection metadata is checked by the existing PE metadata inspector,
+        // keeping compiler codec APIs out of this Kotlin-consumed reference assembly.
         return carrier.IsInterface && !carrier.IsGenericType && carrier.IsAssignableFrom(value.GetType())
             && carrier.GetCustomAttributesData().Any(attribute => attribute.AttributeType.FullName ==
-                "System.Runtime.CompilerServices.CompilerGeneratedAttribute")
-            && TypeNodeDataEquality.Equal(KotlinType(declaration.ReturnParameter.GetCustomAttributesData()), source)
-            && TypeNodeDataEquality.Equal(KotlinType(carrier.GetCustomAttributesData()), projection);
-    }
-
-    static TypeNode KotlinType(IEnumerable<CustomAttributeData> attributes)
-    {
-        var attribute = attributes.Single(value => value.AttributeType.FullName ==
-            "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
-        var codec = (string)attribute.ConstructorArguments[0].Value!;
-        if (codec != TypeNodeCarrier.Codec)
-            throw new System.InvalidOperationException("Unexpected Kotlin type metadata codec");
-        var bytes = ((IEnumerable<CustomAttributeTypedArgument>)attribute.ConstructorArguments[1].Value!)
-            .Select(value => (byte)value.Value!).ToArray();
-        return TypeNodeCarrier.Decode(codec, bytes);
+                "System.Runtime.CompilerServices.CompilerGeneratedAttribute");
     }
 
     public static bool OverrideReturnMatches(object value, string method) =>
