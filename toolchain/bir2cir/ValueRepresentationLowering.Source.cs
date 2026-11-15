@@ -153,7 +153,7 @@ sealed partial class ValueRepresentationLowering
         // only the actual owning projection associates a continuing occurrence.
         foreach (var expected in sourceMethods.GroupBy(method => method.Fact.Id, StringComparer.Ordinal))
             if ((actual.GetValueOrDefault(expected.Key)?.Count ?? 0) != expected.Count(method => !method.Method.Retired
-                && !declarations.WasPhysicalIdentityConsumed(method.Method.SourceOccurrence, method.Fact.Id)))
+                && !declarations.WasIdentityConsumed(method.Method.SourceOccurrence, method.Fact.Id)))
                 throw new InvalidOperationException("Value representation source declaration occurrences changed before physical association: " + expected.Key);
         foreach (var method in sourceMethods)
         {
@@ -199,7 +199,7 @@ sealed partial class ValueRepresentationLowering
         {
             if (Retired || source == null) throw new InvalidOperationException("Value declaration has no live source occurrence");
             var declaration = projection.Get(source);
-            var consumed = projection.WasPhysicalIdentityConsumed(source, capturedIdentity);
+            var consumed = projection.WasIdentityConsumed(source, capturedIdentity);
             if (consumed ? declaration.ContainsKey(DeclarationIdentityBinding.Key)
                     || live.Any(actual => ReferenceEquals(actual, declaration))
                 : Text(declaration[DeclarationIdentityBinding.Key]) != capturedIdentity

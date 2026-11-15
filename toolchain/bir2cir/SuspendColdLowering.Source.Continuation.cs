@@ -160,6 +160,17 @@ static partial class SuspendColdLowering
             Projection.ReportPhysicalIdentityConsumption(file, owner, method, identity);
         }
 
+        internal void ReportMetadataIdentityTransfer(BirFileDeclaration file, IBirTypeDeclaration owner,
+            BirFunctionDeclaration method, BirRoundtripDeclarationIdentity identity)
+        {
+            var key = (BirGraphValue)owner ?? file;
+            if (!methodVectors.TryGetValue(key, out var row) || !ReferenceEquals(row.File, file)
+                || !ReferenceEquals(row.Owner, owner)
+                || !CurrentMethods(file, owner).SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance))
+                throw Mismatch();
+            Projection.ReportMetadataIdentityTransfer(file, owner, method, identity);
+        }
+
         void NotifyMethods(BirGraphValue value)
         {
             if (value is IBirExecutablePayload) return;
