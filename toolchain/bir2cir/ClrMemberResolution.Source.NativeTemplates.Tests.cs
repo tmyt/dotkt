@@ -156,15 +156,17 @@ static partial class ClrMemberResolution
             StampNativeDelegateArgumentTargets(new IBirExpression[] { start }, Array.Empty<TypeNode>(), threadConstructor, Array.Empty<TypeNode>());
             Need(start.DotktDelegateSlot.Value is TypeNode.Fqn { Name: "System.Threading.ThreadStart" },
                 "constructor MethodBase did not supply the exact native delegate slot");
-            var create = ResolveOwnerType(Type("System.Activator")).GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .Single(method => method.Name == "CreateInstance" && method.IsGenericMethodDefinition && method.GetParameters().Length == 0);
-            var facts = NativeResolvedMethodTypeParameters(create, 1);
+            var readMethod = ResolveOwnerType(Type("System.Runtime.InteropServices.MemoryMarshal")).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Single(method => method.Name == "Read" && method.IsGenericMethodDefinition && method.GetParameters().Length == 1);
+            var facts = NativeResolvedMethodTypeParameters(readMethod, 1);
             Need(facts.Value.Single().SpecialConstraints.Value.Contains("new")
-                && !NativeResolvedMethodTypeParameters(create, 0).IsPresent,
+                && facts.Value[0].SpecialConstraints.Value.Contains("struct")
+                && facts.Value[0].Constraints.Value.Contains(Type("System.ValueType"))
+                && !NativeResolvedMethodTypeParameters(readMethod, 0).IsPresent,
                 "selected native generic flags or absent type arguments changed");
-            Reject(() => NativeResolvedMethodTypeParameters(create, 2));
+            Reject(() => NativeResolvedMethodTypeParameters(readMethod, 2));
             facts.Value[0].Name = "mutated";
-            Need(NativeResolvedMethodTypeParameters(create, 1).Value[0].Name.Value != "mutated", "selected method facts were shared mutable output");
+            Need(NativeResolvedMethodTypeParameters(readMethod, 1).Value[0].Name.Value != "mutated", "selected method facts were shared mutable output");
         }
         finally { _refs = previousReferences; _localTypes = previousTypes; }
         Console.WriteLine("[typed native templates] self-test OK (roles, open frames, exact presence and operand identity)");
