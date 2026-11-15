@@ -9,8 +9,10 @@ static partial class CirDeclarationProjection
     // Current source fixtures enter the real owning projection directly. These
     // helpers are test-only, not a second implementation of physical projection.
     internal static CirFileDeclaration ReadCirFileDeclaration(JsonNode source, bool runtimeMode = false)
+        => ReadCirFileDeclaration(BirGraphDom.ReadBirFileDeclaration(source), runtimeMode);
+
+    static CirFileDeclaration ReadCirFileDeclaration(BirFileDeclaration graph, bool runtimeMode = false)
     {
-        var graph = BirGraphDom.ReadBirFileDeclaration(source);
         RoundtripMetadata.CompleteMetadata(graph, runtimeMode);
         var emitted = graph.Types.OrEmpty().Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
         return new TypedCirProjection(emitted, new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectCirFileDeclaration(graph);
@@ -32,10 +34,10 @@ static partial class CirDeclarationProjection
         CollectionIdentityRecord.RecordMemberSlots(source);
         if (!method.CollIdentityRet.HasValue || !method.Params.Value[0].CollIdentity.HasValue)
             throw new Exception("Collection metadata handoff control did not exercise its producer");
-        var file = source.ToDom();
-        RoundtripMetadata.PrepareMetadata(file, runtimeMode: false);
-        AddCarrierDefinition(file, "KotlinCollectionIdentityAttribute");
-        var declarations = ReadCirFileDeclaration(file);
+        RoundtripMetadata.PrepareMetadata(source, runtimeMode: false, (_, _, _, _) =>
+            throw new InvalidOperationException("Collection identity fixture has no raw method identity to transfer"));
+        AddCarrierDefinition(source, "KotlinCollectionIdentityAttribute");
+        var declarations = ReadCirFileDeclaration(source);
         AttributeApplication[][] sites = [declarations.Methods[0].RetAttrs.Value,
             declarations.Methods[0].Params[0].Attrs.Value, declarations.Fields[0].Attrs.Value,
             declarations.Properties.Value[0].Attrs.Value];
@@ -65,11 +67,19 @@ static partial class CirDeclarationProjection
                 ["name"] = "Companion", ["visibility"] = "public", ["physicalOwner"] = "Physical.Owner", ["physicalOwnerArity"] = 1 },
             ["staticCarrier"] = new JsonObject { ["owner"] = "Physical.Owner" }
         });
-        RoundtripMetadata.PrepareMetadata(runtime, runtimeMode: true);
-        AddCarrierDefinition(runtime, "KotlinDeclarationIdentityAttribute");
-        var runtimeDeclarations = ReadCirFileDeclaration(runtime, runtimeMode: true);
+        var runtimeSource = BirGraphDom.ReadBirFileDeclaration(runtime);
+        var transfers = 0;
+        RoundtripMetadata.PrepareMetadata(runtimeSource, runtimeMode: true, (file, owner, actualMethod, pending) => {
+            if (!ReferenceEquals(file, runtimeSource) || !ReferenceEquals(owner, runtimeSource.Types.Value[0])
+                || !ReferenceEquals(actualMethod, owner.Methods.Value[0]) || actualMethod.DeclarationId.Value != "probe:runtime"
+                || !ReferenceEquals(actualMethod.RoundtripDeclarationIdentity.Value, pending))
+                throw new InvalidOperationException("CIR metadata boundary lost its actual pending identity target");
+            transfers++;
+        });
+        AddCarrierDefinition(runtimeSource, "KotlinDeclarationIdentityAttribute");
+        var runtimeDeclarations = ReadCirFileDeclaration(runtimeSource, runtimeMode: true);
         var physical = runtimeDeclarations.Types[0].Methods.Value[0];
-        if (physical.Name != "M" || physical.TypeParams.Value.Length != 2 || !physical.Body.HasValue
+        if (transfers != 1 || physical.Name != "M" || physical.TypeParams.Value.Length != 2 || !physical.Body.HasValue
             || physical.Attrs.OrEmpty().Count(a => a.Attr is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute" }) != 1)
             throw new Exception("Runtime handoff consumption changed the physical declaration or its linkage");
         Console.WriteLine("[CIR declaration boundary] self-test OK (four collection carriers, five runtime handoffs, physical frames/linkage)");
@@ -85,11 +95,11 @@ static partial class CirDeclarationProjection
         ["methods"] = new JsonArray(methods.Cast<JsonNode>().ToArray()), ["types"] = new JsonArray()
     };
 
-    static void AddCarrierDefinition(JsonObject file, string name)
+    static void AddCarrierDefinition(BirFileDeclaration file, string name)
     {
         // Attribute admission is part of this boundary test; declaration emission is covered by real binaries.
-        ((JsonArray)file["types"]).Add(new JsonObject {
-            ["name"] = "DotKt.Runtime.CompilerServices." + name, ["kind"] = "class"
-        });
+        file.Types = file.Types.OrEmpty().Append<IBirTypeDeclaration>(new BirClassDefinition {
+            Name = "DotKt.Runtime.CompilerServices." + name, Kind = "class",
+        }).ToArray();
     }
 }

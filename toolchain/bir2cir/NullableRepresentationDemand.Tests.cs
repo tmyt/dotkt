@@ -415,7 +415,7 @@ static partial class NullableRepresentationDemand
         };
         var source = new BirFileDeclaration { FileClass = "FrameFile", Types = new IBirTypeDeclaration[] { sourceOwner },
             Methods = new[] { sourceMethod } };
-        var runtime = source.DeepClone().ToDom();
+        var runtime = (BirFileDeclaration)source.DeepClone();
         var signatures = new SourceDeclarationSignatures();
         signatures.Capture(new[] { new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
             DeclarationId = "frame-test-method", Params = Array.Empty<BirParameter>(), Ret = sourceResult,
@@ -427,9 +427,12 @@ static partial class NullableRepresentationDemand
         if (!ReferenceEquals(source.Methods.Value[0], sourceMethod) || sourceMethod.DeclarationId.Value != "frame-test-method"
             || sourceMethod.DeclarationSemanticSignature.Value.Return != sourceResult)
             throw new InvalidOperationException("Owning identity allocation changed the nullable metadata source authority");
-        var root = source.ToDom();
-        RoundtripMetadata.PrepareMetadata(root, runtimeMode: false);
-        var stamped = BirGraphDom.ReadBirFileDeclaration(root);
+        RoundtripMetadata.PrepareMetadata(source, runtimeMode: false, (_, _, actualMethod, pending) => {
+            if (!ReferenceEquals(actualMethod, sourceMethod) || actualMethod.DeclarationId.Value != "frame-test-method"
+                || !ReferenceEquals(actualMethod.RoundtripDeclarationIdentity.Value, pending))
+                throw new InvalidOperationException("Nullable metadata grant lost actual identity custody");
+        });
+        var stamped = source;
         RoundtripMetadata.CompleteMetadata(stamped, runtimeMode: false);
         var owner = ((BirGraphValue)stamped.Types.Value[0]).ToDom();
         var method = stamped.Methods.Value[0].ToDom();
@@ -450,8 +453,11 @@ static partial class NullableRepresentationDemand
             || methodPayload["signature"]["params"] is not JsonArray { Count: 0 }
             || owner[KotlinSupertypesRecord.PreKey] != null || method[NullableRepresentationTypes.MethodFrameKey] != null)
             throw new InvalidOperationException("Nullable representation metadata lost source facts or leaked transient frames");
-        RoundtripMetadata.PrepareMetadata(runtime, runtimeMode: true);
-        var stripped = BirGraphDom.ReadBirFileDeclaration(runtime);
+        RoundtripMetadata.PrepareMetadata(runtime, runtimeMode: true, (_, _, actualMethod, pending) => {
+            if (actualMethod.DeclarationId.Value != "frame-test-method" || !ReferenceEquals(actualMethod.RoundtripDeclarationIdentity.Value, pending))
+                throw new InvalidOperationException("Runtime metadata grant lost actual identity custody");
+        });
+        var stripped = runtime;
         RoundtripMetadata.CompleteMetadata(stripped, runtimeMode: true);
         var runtimeOwner = (BirClassDefinition)stripped.Types.Value[0];
         var runtimeMethod = stripped.Methods.Value[0];
