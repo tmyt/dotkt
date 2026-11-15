@@ -49,6 +49,41 @@ static class CurrentDeclarationBindingsTests
         var repeated = new CurrentDeclarationBindings(new[] { root });
         root.ToDom(repeated.ObserveProjection);
         Reject(() => root.ToDom(repeated.ObserveProjection));
+        RetiredPropertyOwners();
         Console.WriteLine("[current declaration bindings] self-test OK (generated projection, ID-less contexts, live handoff, exact admission and release)");
+
+        static void RetiredPropertyOwners()
+        {
+            foreach (var onFacade in new[] { false, true })
+            {
+                var property = new BirPropertyDeclaration { Name = "genericProperty" };
+                var type = new BirClassDefinition { Name = "PropertyOwner", Kind = "class",
+                    Properties = onFacade ? Array.Empty<BirPropertyDeclaration>() : new[] { property } };
+                var file = new BirFileDeclaration { FileClass = "Facade", Types = new IBirTypeDeclaration[] { type },
+                    Properties = onFacade ? new[] { property } : Array.Empty<BirPropertyDeclaration>() };
+                BirGraphValue owner = onFacade ? file : type;
+                var ledger = new CurrentDeclarationBindings(new[] { file });
+                var captured = ledger.GetSource(property);
+                Reject(() => ledger.RetireSourceProperties(onFacade ? type : file, new[] { property }));
+                Reject(() => ledger.RetireSourceProperties(owner, new[] { property, property }));
+                ledger.RetireSourceProperties(owner, new[] { property });
+                Reject(() => ledger.RetireSourceProperties(owner, new[] { property }));
+                // A detached declaration still has its original captured
+                // continuation, projected by the producer's retired forest.
+                ledger.RetireSourceForest(property);
+                file.ToDom(ledger.ObserveProjection);
+                Reject(ledger.BindProjected);
+                if (onFacade) file.Properties = Array.Empty<BirPropertyDeclaration>();
+                else type.Properties = Array.Empty<BirPropertyDeclaration>();
+                // The unsuccessful validation above must not consume bindings.
+                var actual = new Dictionary<BirGraphValue, JsonObject>();
+                file.ToDom((source, dom) => actual.Add(source, dom));
+                var retired = property.ToDom();
+                actual.Add(property, retired);
+                ledger.BindProjected(actual);
+                Require(ReferenceEquals(captured.Physical, retired), "retired property lost its exact projection");
+                Reject(() => ledger.RetireSourceProperties(owner, Array.Empty<BirPropertyDeclaration>()));
+            }
+        }
     }
 }

@@ -10,6 +10,10 @@ static partial class ConstFieldLowering
 
     internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs, bool referenceBuild)
     {
+        var names = roots.SelectMany(root => root.Types.OrEmpty().Select(type => type.Name.OrDefault())
+            .Prepend(root.FileClass.OrDefault())).OfType<string>().ToHashSet(StringComparer.Ordinal);
+        var literalContext = new BirTypeLowering.PhysicalTypeContext(false, refs.Aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, names, refs.NullableTypeFrames);
         var local = new Dictionary<(string Owner, string Name), Literal>();
         foreach (var root in roots)
         {
@@ -32,7 +36,8 @@ static partial class ConstFieldLowering
                 {
                     var semantic = declarationType ?? throw new InvalidOperationException($"const field '{name}' has no declaration type");
                     field.KotlinType = BirGraphValue.CopyType(semantic);
-                    field.Type = BirTypeLowering.LowerType(semantic, refBuild: false, force: true, typeArg: false);
+                    field.Type = BirTypeLowering.LowerSlot(semantic, literalContext,
+                        BirTypeLowering.PhysicalSlotRole.Value, force: true);
                 }
                 field.Constant = init.Value;
                 field.Init = default;

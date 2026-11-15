@@ -116,7 +116,7 @@ static partial class CirDeclarationProjection
                 Init = new CirConstant { Type = new TypeNode.Fqn("kotlin.Double"), Value = new AttributeArgument.Float64Value(BitConverter.DoubleToInt64Bits(1.0)) },
             } },
         };
-        var metadataPlaceholders = RefBodySquash.LowerLiteralPlaceholders(metadataOnly);
+        var metadataPlaceholders = RefBodySquash.LowerLiteralPlaceholders(metadataOnly, new BirTypeLowering.PhysicalTypeContext(refBuild: true));
         if (metadataPlaceholders.Fields[0].Init.Value is not CirConstant {
             Type: TypeNode.Fqn { Name: "System.Object" }, Value: AttributeArgument.NullValue })
             throw new InvalidOperationException("A metadata-only facade literal became a native runtime value");
@@ -146,8 +146,15 @@ static partial class CirDeclarationProjection
             if (stashed)
                 expression[expression.ContainsKey("type") ? NullableGenericErasure.SuspendFnPre
                     : NullableGenericErasure.RetSuspendFnPre] = suspendType.ToJsonString();
-            var lowered = BirTypeLowering.Lower(expression, refBuild: false,
-                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" });
+            var owning = BirGraphDom.ReadNode(expression);
+            var statement = owning is IBirStatement actualStatement ? actualStatement
+                : (IBirStatement)new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of((IBirExpression)owning) };
+            var sourceFile = new BirFileDeclaration { Methods = new[] {
+                new BirFunctionDeclaration { Name = "probe", Body = new[] { statement } },
+            } };
+            BirTypeLowering.Apply(sourceFile, new BirTypeLowering.PhysicalTypeContext(false,
+                new Dictionary<string, string> { ["kotlin.Nothing"] = "object" }));
+            var lowered = owning.ToDom();
             var node = ReadCirNode(lowered);
             if (node.Tag != expression["k"]!.GetValue<string>()
                 || lowered.AsObject().ContainsKey("suspendFnType")
@@ -181,7 +188,7 @@ static partial class CirDeclarationProjection
             ClrMemberResolution.Apply(operation, interopReferences, new HashSet<string>());
             var typedOperation = (BirGraphValue)BirGraphDom.ReadBirExpression(operation);
             ForeignNullableGenericCrossing.Check(typedOperation, "event-boundary");
-            var projectedEvent = (ICirExpression)new TypedCirProjection(new HashSet<string>()).ProjectNode(typedOperation);
+            var projectedEvent = (ICirExpression)new TypedCirProjection(new HashSet<string>(), new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectNode(typedOperation);
             using var physicalEvent = JsonDocument.Parse(JsonSerializer.Serialize(projectedEvent, AttributeJson.Options));
             var value = physicalEvent.RootElement;
             if (value.GetProperty("accessor").GetString() != accessor

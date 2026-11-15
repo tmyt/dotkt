@@ -22,13 +22,14 @@ static partial class RefBodySquash
     // ilemit's constant switch implicitly emitted null for these slots. Scalar projection preserves the literal
     // value first; this reference-only pass then replaces executable facade values with physical null placeholders.
     // Source semantics remain in the previously captured Kotlin metadata; this image is never executed.
-    public static CirFileDeclaration LowerLiteralPlaceholders(CirFileDeclaration root)
+    public static CirFileDeclaration LowerLiteralPlaceholders(CirFileDeclaration root,
+        BirTypeLowering.PhysicalTypeContext context)
     {
         return CirBodyRewrite.RewriteCirFileDeclaration(root, node =>
         {
             if (node is CirConstant { Type: TypeNode.Fqn facade } constant)
             {
-                var native = BirTypeLowering.LowerType(facade, refBuild: true, force: true, typeArg: false);
+                var native = BirTypeLowering.LowerSlot(facade, context, BirTypeLowering.PhysicalSlotRole.Value, force: true);
                 if (native is TypeNode.Fqn physical && facade.Name != physical.Name)
                     return constant with { Type = new TypeNode.Fqn("System.Object"), Value = new AttributeArgument.NullValue() };
             }

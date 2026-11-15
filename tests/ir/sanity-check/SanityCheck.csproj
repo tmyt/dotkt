@@ -5,11 +5,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>DotKt.Tests.SanityCheck</AssemblyName>
+    <DotKtBir2CirPath Condition="'$(DotKtBir2CirPath)' == ''">$(MSBuildThisFileDirectory)../../../build/bir2cir-bin/bir2cir.dll</DotKtBir2CirPath>
   </PropertyGroup>
   <ItemGroup>
     <!-- Exercise the actual checker compiled into ilemit, not another source-linked copy. -->
     <Reference Include="ilemit">
       <HintPath>../../../build/ilemit-bin/ilemit.dll</HintPath>
+    </Reference>
+    <!-- Source stamps exercise the actual owning bir2cir checkpoint. Alias the
+         compiler so its source-linked common types do not collide with ilemit. -->
+    <Reference Include="bir2cir" Aliases="source">
+      <HintPath>$(DotKtBir2CirPath)</HintPath>
     </Reference>
   </ItemGroup>
 </Project>

@@ -120,11 +120,6 @@ static partial class KotlinPropertyAccessors
         declaration.Remove(AssociationKey);
     }
 
-    public static void AllocateAll(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
-            IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors) =>
-        Walk(root, refs, localAccessors, stripPropertyIdentity: false);
-
     // #395 may rename an accessor only after CLR type lowering exposes its real MethodDef collision set. Keep #397's
     // exact association alive until that allocation is complete, then rebuild the Property descriptor from the
     // associated MethodDef names and consume the BIR-only facts. No get_/set_ spelling is parsed in either direction.
@@ -336,92 +331,6 @@ static partial class KotlinPropertyAccessors
                 string.Join(", ", crossGroupCollisions.Select(group =>
                     $"'{group.Key.Name}' with signature '{group.Key.Signature}'")) +
                 ". Assign distinct @get:ClrName values; automatic hash suffixes are not used");
-    }
-
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
-            IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors,
-        bool stripPropertyIdentity = false)
-    {
-        if (node is JsonObject obj)
-        {
-            var propertyAccess = Str(obj["prop"]);
-            if (Str(obj["k"]) is "callStatic" or "callInstance" or "constrainedCall"
-                && propertyAccess is "get" or "set"
-                && Str(obj["method"]) is string propertyName)
-            {
-                PreserveCallIdentity(obj, propertyName, propertyAccess);
-                var physicalName = PhysicalName(propertyName, propertyAccess);
-                // Static reference properties and companion-extension carriers have already consumed their exact
-                // metadata/binding before this final pass. A remaining callStatic is an ordinary local top-level or
-                // type-owned property and intentionally receives the same forward spelling as its declaration below.
-                // Instance calls additionally need the exact local/reference index because an override or bridge can
-                // carry a physical name allocated by an earlier representation pass.
-                var ownerSlot = Str(obj["k"]) == "constrainedCall" ? obj["iface"] : obj["ownerType"];
-                if (Str(obj["k"]) is "callInstance" or "constrainedCall"
-                    && TypeJson.Read(ownerSlot) is TypeNode.Fqn ownerType)
-                {
-                    var owner = ReferenceMetadataIndex.BareOwnerFqn(ownerType.Name);
-                    var paramCount = (obj["args"] as JsonArray)?.Count ?? 0;
-                    var signatureNode = obj["sig"] as JsonArray ?? obj["argTypes"] as JsonArray;
-                    var signature = signatureNode?.Select(TypeJson.Read).ToArray();
-                    if (signature != null &&
-                        (signature.Length != paramCount || signature.Any(type => type == null)))
-                        signature = null;
-                    var methodArity = (obj["typeArgs"] as JsonArray)?.Count ?? 0;
-                    if (localAccessors != null
-                        && MemberCallSubstitution.TryResolveLocalPropertyAccessor(localAccessors,
-                            owner, propertyName, propertyAccess, methodArity, paramCount, signature,
-                            ownerType.Args ?? Array.Empty<TypeNode>(), out var localName))
-                        physicalName = localName;
-                    else if (refs != null && refs.TryKotlinPropertyAccessor(owner, propertyName, propertyAccess,
-                                 paramCount, methodArity, signature, ownerType.Args ?? Array.Empty<TypeNode>(),
-                                 out var referencedName,
-                                 out var referencedVirtual))
-                    {
-                        physicalName = referencedName;
-                        // An earlier hierarchy pass may already have proved virtual dispatch through a referenced
-                        // ancestor. A direct lookup can add that fact, but must not erase it.
-                        // Virtual is a declaration fact, but Kotlin `super` has already selected non-virtual
-                        // dispatch. Allocating the referenced accessor name must not turn that call back into a
-                        // recursive callvirt on the current override.
-                        if (referencedVirtual && (obj["super"] as JsonValue)?.GetValue<bool>() != true)
-                            obj["virtual"] = true;
-                    }
-                }
-                obj["method"] = physicalName;
-                obj.Remove("prop");
-            }
-            if (obj["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    if (TryIdentity(method, out var sourceName, out var kind))
-                    {
-                        var current = Str(method["name"]);
-                        // A representation pass such as #389 may already have allocated a narrower core/container
-                        // identity through SetPhysicalName. Ordinary kotc declarations still carry their semantic
-                        // source name here and receive the uniform dedicated accessor spelling now.
-                        if (current == sourceName) SetPhysicalName(method, PhysicalName(sourceName, kind));
-                    }
-
-            if (obj["properties"] is JsonArray properties)
-            {
-                var ownerMethods = obj["methods"] is JsonArray ownerMethodArray
-                    ? ownerMethodArray.OfType<JsonObject>().ToArray()
-                    : Array.Empty<JsonObject>();
-                var unrepresentable = new List<JsonObject>();
-                foreach (var property in properties.OfType<JsonObject>())
-                    if (!AllocateProperty(property, ownerMethods, stripPropertyIdentity))
-                        unrepresentable.Add(property);
-                foreach (var property in unrepresentable)
-                    properties.Remove(property);
-            }
-
-            foreach (var child in obj.Select(pair => pair.Value).ToArray())
-                if (child != null) Walk(child, refs, localAccessors, stripPropertyIdentity);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array.ToArray())
-                if (child != null) Walk(child, refs, localAccessors, stripPropertyIdentity);
     }
 
     // Returns whether this semantic Kotlin property has a representable CLR Property signature. A MethodDef may own

@@ -25,8 +25,10 @@ static partial class FBoundStarProjectionErasure
         var ownerFrame = new NullableRepresentationFrame(1, new[] { 0 });
         var otherFrame = new NullableRepresentationFrame(2, Array.Empty<int>());
         var owned = new BirClassDefinition { Name = "Owned", Kind = "class", Vis = "public",
+            Base = new TypeNode.Fqn("kotlin.Any"),
             TypeParams = new[] { Parameter("T") } };
         var frameOwner = new BirClassDefinition { Name = "FrameOwner", Kind = "class", Vis = "public",
+            Base = new TypeNode.Fqn("kotlin.Any"),
             TypeParams = new[] { Parameter("T", "out"), Parameter("Nullable") },
             KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(ownerFrame) };
         var laterPhysicalOccurrence = new BirClassDefinition { Name = "FrameOwner", Kind = "class", Generated = true,
@@ -49,6 +51,7 @@ static partial class FBoundStarProjectionErasure
         var file = new BirFileDeclaration { FileClass = "ProjectionTests", Types = original };
         var aliases = new Dictionary<string, string>(refs.Aliases, StringComparer.Ordinal) {
             ["RetiredList"] = "System.Collections.Generic.List`1",
+            ["kotlin.Any"] = "System.Object",
         };
         var values = GenericRepresentationPolicy.CreateSource(new[] { file }, aliases, refs);
         values.PrepareDomLocations(new[] { file });
@@ -114,6 +117,15 @@ static partial class FBoundStarProjectionErasure
 
         // The actual one-way projection supplies addresses. This is the DOM
         // adapter to the SAME scalar projection body, not a historical oracle.
+        var originalHierarchy = bindings.SourceSupertypes["Owned"].Base;
+        BirTypeLowering.Apply(file, new BirTypeLowering.PhysicalTypeContext(false, aliases));
+        Require(frameOwner.Base.Value is TypeNode.Fqn { Name: "System.Object" }
+            && originalHierarchy is { Name: "kotlin.Any" }
+            && ReferenceEquals(bindings.SourceSupertypes["Owned"].Base, originalHierarchy)
+            && source.ProjectionCanChangeConstruction(currentApplication)
+            && !source.RequiresOpaqueVariantAlias(retiredApplication)
+            && ReferenceEquals(source.OwnerFrame(demand.Owners["FrameOwner"]), ownerFrame),
+            "physical types changed captured hierarchy or the live projection header's variance/frame policy");
         var physical = file.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
         values.BindDomDeclarations(new JsonNode[] { physical }, ledger);

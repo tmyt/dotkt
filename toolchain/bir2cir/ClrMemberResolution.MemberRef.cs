@@ -523,7 +523,7 @@ static partial class ClrMemberResolution
         // collapse but not the generic-classifier erasure, and not the contravariant `Comparable<Any?>` collapse.
         var head = BirTypeLowering.PhysicalHead(kotlinName,
             _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs,
-            _refs.NullableTypeFrames);
+            _refs.NullableTypeFrames, _refs.PhysicalTypeNames, _localTypes);
         return MetadataSpelling(head, def, kotlinName);
     }
 

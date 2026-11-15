@@ -107,6 +107,32 @@ static partial class ContinuationErasure
             && generic.IsNativeField(native) && !generic.IsNativeField(ordinary) && proofs.ExactTypeArgument(owner.Name.Value, 0),
             "physical erasure rebuilt source/proof catalogs, changed frozen signatures or widened native eligibility");
 
+        var scalarAliases = new Dictionary<string, string> { ["kotlin.Any"] = "System.Object" };
+        var runtimeContext = new BirTypeLowering.PhysicalTypeContext(false, scalarAliases);
+        var shadow = (BirFileDeclaration)file.DeepClone();
+        BirTypeLowering.Apply(shadow, runtimeContext);
+        // A private collision projection must not register cloned occurrences
+        // or mutate the actual declarations before their own physical rewrite.
+        Need(native.Type.Value == physicalContinuation
+            && ReferenceEquals(bindings.SourceDefinitions, definitions)
+            && ReferenceEquals(bindings.SourceLocalDeclarations, methods)
+            && !bindings.TryGetCapturedSource((BirGraphValue)shadow.Types.Value[0], out _),
+            "collision shadow changed or entered the actual declaration authority");
+        BirTypeLowering.Apply(file, runtimeContext);
+        var expectedNativeType = new TypeNode.Fqn(Cont, new TypeNode[] { new TypeNode.Fqn("System.Object") });
+        Need(TypeNodeDataEquality.Equal(native.Type.Value, expectedNativeType)
+            && TypeNodeDataEquality.Equal(parameter.Type.Value, expectedNativeType)
+            && ReferenceEquals(signature.Params.Value, parameters)
+            && ReferenceEquals(owner.Fields.Value, fields)
+            && native.KotlinType.Value == ownerContinuation
+            && signature.RetKotlinType.Value == methodContinuation
+            && ReferenceEquals(signatures.GetSourceSignature(signatureBinding), originalSignature)
+            && generic.ProjectArgumentHead(ownerType, true, null) == eligibility
+            && generic.IsNativeField(native) && !generic.IsNativeField(ordinary)
+            && proofs.ExactTypeArgument(owner.Name.Value, 0)
+            && uncheckedIndex.ByIdentity[uncheckedMethod.DeclarationId.Value].Return == methodVariable,
+            "physical type rewriting lost source signatures, ownership, unchecked guards or exact native authority");
+
         var projection = new SourceDeclarationProjection(roots, bindings);
         var dom = file.ToDom(projection.ObserveProjection);
         static bool HasOuter(JsonNode node) => node switch {

@@ -13,10 +13,10 @@ static partial class CirDeclarationProjection
         var graph = BirGraphDom.ReadBirFileDeclaration(source);
         RoundtripMetadata.CompleteMetadata(graph, runtimeMode);
         var emitted = graph.Types.OrEmpty().Select(TypedCirProjection.TypeName).ToHashSet(StringComparer.Ordinal);
-        return new TypedCirProjection(emitted).ProjectCirFileDeclaration(graph);
+        return new TypedCirProjection(emitted, new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectCirFileDeclaration(graph);
     }
 
-    static CirNode ReadCirNode(JsonNode source) => new TypedCirProjection(new HashSet<string>())
+    static CirNode ReadCirNode(JsonNode source) => new TypedCirProjection(new HashSet<string>(), new BirTypeLowering.PhysicalTypeContext(refBuild: true))
         .ProjectNode(BirGraphDom.ReadNode(source));
 
     internal static void SelfTest()

@@ -209,6 +209,10 @@ def compose_shapes(definitions):
 
 def outputs(root, definitions):
     shapes = compose_shapes(definitions)
+    physical_profile = definitions["birFileDeclaration"]["x-dotkt-model"]["physicalProjection"]
+    physical_values = set(physical_profile["valueFields"])
+    physical_returns = set(physical_profile["returnFields"])
+    physical_consumed = set(physical_profile["consumedFields"])
 
     def cs(field):
         return csharp_type(field, shapes)
@@ -480,6 +484,50 @@ def outputs(root, definitions):
                 body = slots(value, prop + ".Value", target=prop, optional=True, prefix=prefix)
                 model += [f"        if ({prop}.HasValue) {{ {body} }}"]
         model += ["    }"]
+        model += ["    public override void RewritePhysicalFieldsInPlace(",
+                  "        Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,",
+                  "        Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,",
+                  "        Action<string, BirPhysicalTypeRole, BirGraphSlot> child)", "    {"]
+        for field, value in fields:
+            if field in physical_consumed:
+                continue
+            if not is_type_slot(value) and not is_child(value):
+                continue
+            prop = member(field)
+            physical = "Structural"
+            if is_type_slot(value):
+                # Only known physical type fields enter the scalar engine. Other
+                # maintained TypeNode fields keep the old structural leaf effect.
+                if field in physical_returns:
+                    physical = "Return"
+                elif field == "funcType":
+                    physical = "Delegate"
+                elif field in {"ownerType", "owner", "declaringType"}:
+                    physical = "Owner"
+                elif field == "interfaces":
+                    physical = "Interfaces"
+                elif field == "typeArgs" or field == "elem" and info.get("domain") == "birCore" and shape["properties"]["k"]["const"] == "newList":
+                    physical = "GenericArgument"
+                elif field in physical_values or field in {"sig", "getSig", "setSig", "to"}:
+                    physical = "Value"
+            elif field == "attrs":
+                physical = "Attributes"
+            role = f"BirPhysicalTypeRole.{physical}"
+            if field == "ret" and "dotktValueReturn" in shape["properties"]:
+                role = f"(DotktValueReturn.OrDefault() ? BirPhysicalTypeRole.Value : {role})"
+            prefix = f"{json.dumps(field)}, {role}, "
+            if is_type_slot(value):
+                callback = "vector" if cs(value) == "TypeNode[]" else "type"
+                model += [f"        if ({prop}.HasValue) {prop} = OptionalField<{cs(value)}>.Of({callback}({prefix}{prop}.Value));"]
+            else:
+                body = slots(value, prop + ".Value", target=prop, optional=True, visitor="child", prefix=prefix)
+                model += [f"        if ({prop}.HasValue) {{ {body} }}"]
+        model += ["    }"]
+        consumed = [member(field) for field, _ in fields if field in physical_consumed]
+        if consumed:
+            model += ["    public override void ConsumePhysicalSourceFacts()", "    {"]
+            model += [f"        {prop} = default;" for prop in consumed]
+            model += ["    }"]
         if any(field == "sty" and is_type_slot(value) for field, value in fields):
             model += ["    public override void ClearResultTypeStamp() => Sty = default;"]
         model += ["    public override void VisitStringFields(Action<string> visit)", "    {"]

@@ -5,13 +5,13 @@ using DotKt.Bir;
 // COMPREHENSIVE reference-nullable strip (#37/#48). ilemit's MapType asserts that a `{t:nullable}` node it maps has a
 // VALUE inner (a reference `Nullable<referenceType>` is not a real CLR type — a reference is nullable in IL regardless).
 // So NO `{t:nullable,of:<reference>}` may reach ilemit in ANY position: not just decl `type`/`ret`/param slots (which
-// BirTypeLowering.LowerType visits), but also owner generic type-args (ilemit reaches these via ParseOwnerT), call
-// `argTypes`/`typeArgs`, expression `cast`/`type` fields, and any node child. LowerNode only routes the KNOWN type keys
-// through LowerType, so a Type object under a non-type key (or an owner's nested arg) can slip past — this crashed the
-// ref-stdlib emit on a `Continuation<Any?>`-shaped owner.
+// physical slot lowering visits), but also owner generic type-args (ilemit reaches these via ParseOwnerT), call
+// `argTypes`/`typeArgs`, expression `cast`/`type` fields, and any node child. Physical slot roles choose where to
+// lower value/return representations; this independent strip also reaches nested type arguments — the distinction
+// originally surfaced in the ref-stdlib emit on a `Continuation<Any?>`-shaped owner.
 //
-// This sweep is position-INDEPENDENT: it walks the ENTIRE BIR JSON tree, recognizes ANY structured Type node by its
-// `{t:…}` discriminator (regardless of the key it sits under), and recursively strips its reference nullables. A VALUE
+// This sweep is position-INDEPENDENT: it walks the generated structured type fields, including nested signatures,
+// and recursively strips their reference nullables, leaving encoded source leaves opaque. A VALUE
 // `{t:nullable,of:<value/struct/enum>}` STAYS `{t:nullable}` (ilemit builds `System.Nullable<T>`); a `Tv` inner is
 // non-value -> bare `Tv` (the object-erasure lifeline passes already converted the dataflow-critical unconstrained
 // `T?` to `object` upstream, so a surviving `Nullable(Tv)` is a non-erased usage that lowers to the bare tv).

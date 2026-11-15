@@ -4,9 +4,11 @@ using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
-// bir2cir's single, sole transform. Rewrites the Kotlin type vocabulary in a BIR-shaped JSON tree into the
-// CLR-codegen vocabulary ilemit consumes, producing a BIR-SHAPED CIR (same node shape; only type strings change).
+// Shared scalar CLR representation policy. The owning graph projection in the
+// Source partial applies this same engine through generated physical slot roles.
 //
 // Mode gate (a property of the build, selected by the `--build-stdlib` CLI flag):
 //   refBuild = StdlibMode == Metadata (`--build-stdlib=metadata`)  -> the pure-Kotlin REFERENCE surface.
@@ -14,12 +16,9 @@ using DotKt.Bir;
 // "kotlin.Int" stays "kotlin.Int"); the rewrite is a pure passthrough. In EVERY other build (the runtime stdlib,
 // and all app builds) a bare kotlin.* primitive lowers to its CLR token (kotlin.Int -> int, ...).
 //
-// COMPREHENSIVE WALK — kotc emits a bare `kotlin.*` FQN for every source-type primitive at EVERY position:
-// signatures, expression/statement type tokens (call owners, conv targets, generic constraints, array elem
-// types, lambda/func types, ...). So the lowering recurses the WHOLE node tree and rewrites every type-bearing
-// string (see TypeKeys + the `sig` comma-list + the `attrs`/attribute-class force path), not just the signature
-// keys — a primitive left un-lowered in an expression position reaches ilemit as `kotlin.Byte` and fails to
-// resolve ("cannot resolve .NET type kotlin.Byte").
+// Signatures, executable operands, owners, delegate slots and forced attributes
+// have distinct entry roles; no serialized graph or ambient last-file context
+// participates in the scalar recursion.
 static partial class BirTypeLowering
 {
     // A synthesized declaration/MethodImpl may fill a value-returning generic CLR slot even when its closed
@@ -149,12 +148,12 @@ static partial class BirTypeLowering
     // kotlin.UByte is an UNSIGNED byte = System.Byte, token "byte", NOT the signed "sbyte"). The whole set is
     // mode-gated by refBuild: the reference surface keeps kotlin.* verbatim, every other
     // build lowers. kotlin.Unit is the ONE token NOT here: it is position-dependent (return -> void via the
-    // ReturnKeys path; a Unit VALUE keeps the emitted Unit type — you cannot have a `void` field), handled
+    // Return slot; a Unit VALUE keeps the emitted Unit type — you cannot have a `void` field), handled
     // separately. KotlinAllToClr (the attribute-blob force map) additionally carries kotlin.Unit -> void and is
     // applied UNCONDITIONALLY because an attribute blob needs a concrete System.* type even in the ref build.
     // #55: the non-force `KotlinToClr` map was DELETED. It was pure redundancy — every entry (kotlin.Int -> "int",
     // kotlin.String -> "string", …) merely SHADOWED the primitive's own `@ClrTypeAlias("System.Int32"/"System.String"/…)`,
-    // which bir2cir already scans from the ref.dll into the `_aliases` index. A primitive now lowers to its BCL alias
+    // which bir2cir already scans from the ref.dll into the authoritative alias index. A primitive lowers to its BCL alias
     // (System.Int32/System.SByte/…) via `AliasBcl` in LowerType, exactly like every other @ClrTypeAlias type;
     // ilemit's MapType resolves `System.Int32` to `typeof(int)` identically to the old shorthand, and its three
     // name-keyed opcode switches (EmitConst/EmitConv/ConstArgValue) normalize the alias back to the shorthand alphabet.
@@ -210,70 +209,9 @@ static partial class BirTypeLowering
         ["kotlin.ULongArray"] = "kotlin.ULong",
     };
 
-    // Every JSON key whose string (or string[]) value is a TYPE reference, across signatures, expressions and
-    // statements. Lowering must catch a primitive WHEREVER it sits. Identity/data keys
-    // that may carry a kotlin.*-looking string but are NOT types (name/value/var/method/id/kind/...) are
-    // deliberately excluded — lowering them would corrupt a declaration name or a string literal. `sig` (a
-    // comma-joined type list) and `attrs` (attribute applications) get their own handling below.
-    static readonly HashSet<string> TypeKeys = new(StringComparer.Ordinal)
-    {
-        // signature positions (the original TypeProperties set)
-        "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig",
-        // BIR-only exact constructor declaration vector.  UnsafeAccessor consumes it when it rewrites the edge;
-        // otherwise same-unit constructor binding consumes its physically-lowered form after this pass.
-        "memberSignature", "calleeParams", FunctionSignatureIdentity.Key,
-        // expression / statement type positions
-        "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
-        "_capturedGenericResult",
-        "iterType", "accessOwner", "accessorOwner", "elem",
-        "samType", "closureType",
-        // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
-        // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
-        "resolvedMemberParams",
-        // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
-        "elemType", "accType", "clrType", "tupleType", "parameterTypes", "delegateType",
-        // A MethodImpl descriptor's parameter vector (`clrInterfaceImpls`/`clrBaseImpls`) is a RAW array of type
-        // nodes, and ilemit matches it against a method builder keyed by LOWERED declaration params — so it has to
-        // arrive in the same vocabulary. A declaration's own `params` are `{name, type}` objects rather than type
-        // nodes, so they take the ordinary recursive walk exactly as before; only the raw vector changes.
-        "params",
-    };
 
-    // The RETURN-slot keys. kotlin.Unit is the ONE position-dependent token: kotc's birType change made it emit
-    // bare "kotlin.Unit" everywhere (it was "void" in a return slot before). A Unit RETURN is the Kotlin "no value"
-    // convention -> CLR `void` (a Unit-returning fun is a void method; the entry point `fun main(): Unit` MUST be
-    // void or the CLR rejects the program). This is UNIFORM across ref AND substitute/app — a Unit-returning method
-    // is void in both, matching the prior behaviour — so it is NOT mode-gated. A kotlin.Unit VALUE (a field, a
-    // generic arg like Sequence<Unit>, a receiver) keeps the emitted Unit type (you cannot have a `void` field) — it
-    // rides as a structured `{t:fqn,name:"kotlin.Unit"}` node and passes through unchanged. (Mirrors kotc birTypeDeleg's
-    // "kotlin.Unit -> void in return, kotlin.Unit in type-arg" split.) The numeric primitives are NOT
-    // position-dependent — they lower uniformly everywhere via their @ClrTypeAlias (the AliasBcl path, #55).
-    // RETURN-POSITION type keys, grouped by a SHARED PROPERTY (a return-slot type, where kotlin.Unit lowers to
-    // `void` via LowerReturnValued) — NOT synonyms. The members are DISTINCT ROLES that can coexist on one node:
-    // `ret` (plain return), `dynRet` (@Clr dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's T of
-    // Continuation<T>) — e.g. a callInstance carries ret+dynRet, a newSuspendLambda carries ret+suspendRet. This is
-    // the return-position parallel to `TypeKeys` (value-position types). (Dead keys `selRet`/`returnType` — 0 BIR
-    // emit, no value ever read — were removed in #37 m5.)
-    static readonly HashSet<string> ReturnKeys = new(StringComparer.Ordinal)
-    {
-        "ret", "dynRet", "suspendRet", "getRet", "setRet",
-    };
-
-    // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for EVERY CLR-bound
-    // type token — the foundational primitives (kotlin.Int -> System.Int32, kotlin.String -> System.String, …) AND the
-    // rest (collections -> System...IReadOnlyCollection, StringBuilder, Regex, …). #55: the primitives are no longer
-    // shadowed by a hardcoded map; they resolve here like any other alias. Single-threaded per bir2cir run, so a static
-    // binding is sufficient.
-    static IReadOnlyDictionary<string, string> _aliases = new Dictionary<string, string>(StringComparer.Ordinal);
-    static IReadOnlyDictionary<string, NullableRepresentationFrame> _nullableFrames;
-
-    // The struct-ness ORACLE (#37/#48 nullability fold), set per top-level Lower() call. True for a VALUE type FQN
-    // (a foundational primitive, a ref.dll struct/enum, or a LOCAL enum/struct in this compilation). Decides whether a
-    // `{t:nullable}` node keeps its wrapper (value inner -> `System.Nullable<T>`) or is STRIPPED to the bare inner
-    // (reference inner -> the CLR type is nullable in IL regardless; the `?` rides an NRT byte the decl walk emitted).
-    static ValueTypeOracle _isValueFqn = _ => false;
-
-    static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
+    static string AliasBcl(string fqn, PhysicalTypeContext context) =>
+        context.Aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
 
     internal static bool UsesReadOnlyCollectionFace(string name) =>
         name is "kotlin.collections.List" or "kotlin.collections.Collection" or "kotlin.collections.Set";
@@ -314,7 +252,8 @@ static partial class BirTypeLowering
     /// `bcl` is the type's @ClrTypeAlias target, or null when it has none; `loweredArgs` is null for a leaf.
     /// </remarks>
     internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
+        IReadOnlyDictionary<string, string> physicalNames = null, IReadOnlySet<string> localTypes = null)
     {
         // An object-valued binding has no CLR generic TypeDef. Its source arguments remain metadata facts,
         // not physical arguments of System.Object (including the native/singleton enum union).
@@ -323,8 +262,8 @@ static partial class BirTypeLowering
         // A leaf: a @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) or a non-primitive
         // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /
         // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
-        if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn));
-        if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
+        if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn, physicalNames, localTypes));
+        if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn, physicalNames, localTypes), loweredArgs);
         // Companions belong to the Kotlin declaration/implementation frame, not the aliased CLR TypeDef.
         // The explicit correspondence also handles enclosing companions interleaved with ordinary parameters.
         if (nullableFrames != null && nullableFrames.TryGetValue(kotlinFqn, out var frame))
@@ -406,9 +345,9 @@ static partial class BirTypeLowering
     // is the structural `System.Nullable<T>`) — INCLUDING a constructed one: `ArraySegment<String>` is a struct and
     // `ArraySegment<String>?` is a `Nullable<ArraySegment<String>>`. The oracle answers false for a constructed
     // REFERENCE generic, so `List<String>?` still strips.
-    static bool IsValueNullableInner(TypeNode of) => of switch
+    static bool IsValueNullableInner(TypeNode of, PhysicalTypeContext context) => of switch
     {
-        TypeNode.Fqn f => _isValueFqn(f),
+        TypeNode.Fqn f => context.IsValue(f),
         _ => false,
     };
 
@@ -435,25 +374,25 @@ static partial class BirTypeLowering
         _ => false,
     };
 
-    static string PhysicalName(string semanticName) =>
-        _localTypeNames.Contains(semanticName) ? semanticName
-        : _physicalTypeNames.TryGetValue(semanticName, out var physical) ? physical : semanticName;
+    static string PhysicalName(string semanticName, IReadOnlyDictionary<string, string> physicalNames,
+        IReadOnlySet<string> localTypes) => localTypes?.Contains(semanticName) == true ? semanticName
+        : physicalNames?.TryGetValue(semanticName, out var physical) == true ? physical : semanticName;
 
     // Generic arguments and array elements are reified storage positions. They must use the same projection:
     // closing Array<T> with List<String> must name the same array as a concrete Array<List<String>> declaration.
     // Byref and function parameter/return slots remain method-slot positions.
-    public static TypeNode LowerType(TypeNode t, bool refBuild, bool force, bool typeArg)
+    static TypeNode LowerType(TypeNode t, PhysicalTypeContext context, bool force, bool typeArg)
     {
         switch (t)
         {
             case TypeNode.Fqn f:
                 {
-                    if (TryLowerNativeSignature(f, refBuild, force, typeArg, out var native)) return native;
+                    if (TryLowerNativeSignature(f, context, force, typeArg, out var native)) return native;
                     // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
-                    // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
+                    // the array REPRESENTATION, not a primitive substitution, so it fires before the context.RefBuild passthrough.
                     // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
                     if (f.Args == null && PrimArrayElem.TryGetValue(f.Name, out var arrElemFq))
-                        return new TypeNode.Array(LowerType(new TypeNode.Fqn(arrElemFq), refBuild, force, typeArg: false));
+                        return new TypeNode.Array(LowerType(new TypeNode.Fqn(arrElemFq), context, force, typeArg: false));
                     // dll2klib represents an ECMA unmanaged pointer as the compile-time Kotlin vocabulary
                     // `ClrPointer<T>`. It is not a nominal CLR class: materialize the physical pointer here, at the
                     // Kotlin-to-CLR representation boundary. A pointee is a value position, not a generic storage
@@ -464,45 +403,45 @@ static partial class BirTypeLowering
                             throw new InvalidDataException($"{PointerIntrinsicFqn} requires exactly one pointee type");
                         if (typeArg)
                             throw new InvalidDataException(
-                                $"bir2cir: {_file}: {PointerIntrinsicFqn} cannot occupy a CLR generic argument; "
+                                $"bir2cir: {context.File}: {PointerIntrinsicFqn} cannot occupy a CLR generic argument; "
                                 + "ECMA unmanaged pointers are signature types, not valid generic arguments");
                         if (f.Args[0] is TypeNode.Star)
                             throw new InvalidDataException(
-                                $"bir2cir: {_file}: {PointerIntrinsicFqn}<*> has no exact CLR pointee signature");
-                        var pointee = LowerNativeSlot(f.Args[0], refBuild, force, voidPosition: true);
+                                $"bir2cir: {context.File}: {PointerIntrinsicFqn}<*> has no exact CLR pointee signature");
+                        var pointee = LowerNativeSlot(f.Args[0], context, force, voidPosition: true);
                         return new TypeNode.Ptr(pointee);
                     }
                     // `kotlin.clr.Span<T>` -> the real `System.Span<T>` in EVERY build (ref included). A synthetic interop
                     // marker with NO ref.dll @ClrTypeAlias definition; kotc emits the FAITHFUL `kotlin.clr.Span` identity
                     // and bir2cir OWNS the BCL substitution (M11 — the last naked `System.*` name left in kotc). Placed
-                    // before the refBuild passthrough so the ref build substitutes it too, matching the former kotc birType
+                    // before the context.RefBuild passthrough so the ref build substitutes it too, matching the former kotc birType
                     // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
                     if (f.Name == SpanIntrinsicFqn && f.Args != null)
-                        return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
+                        return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, context, force, typeArg: true)).ToArray());
                     // The reference build keeps Kotlin type semantics verbatim, but CIR must still name an external
                     // DotKt TypeDef by its exact CLR metadata identity. This matters for nested types under generic owners:
                     // `Outer.Nested` physically lives at `Outer`1+Nested` even when Nested itself declares no arguments.
-                    if (!force && refBuild)
-                        return new TypeNode.Fqn(PhysicalName(f.Name),
-                            f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
+                    if (!force && context.RefBuild)
+                        return new TypeNode.Fqn(PhysicalName(f.Name, context.PhysicalNames, context.LocalNames),
+                            f.Args?.Select(a => LowerType(a, context, force: false, typeArg: true)).ToArray());
                     // PhysicalHead selects the common value view for Kotlin enum bases after lowering arguments.
                     var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
-                    var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
+                    var loweredArgs = f.Args?.Select(a => LowerType(a, context, force,
                         typeArg: methodSlotCarrier ? false : true)).ToArray();
                     if (loweredArgs == null)
                     {
                         // A leaf: a foundational primitive (numeric/bool/char + String/Any/Nothing + the unsigned set)
                         // lowers to the CLR type in EVERY position — a type-arg primitive reifies as the CLR value type
                         // (`List<Int>` -> IReadOnlyList<System.Int32>), the CLR-idiomatic form (the boxed `kotlin.*` isn't an
-                        // emitted type in the substitute/app build; the ref build keeps kotlin.* via the refBuild passthrough).
+                        // emitted type in the substitute/app build; the ref build keeps kotlin.* via the context.RefBuild passthrough).
                         // #55: the non-force path reads the primitive's `@ClrTypeAlias("System.Int32")` straight from the
                         // ref.dll index (AliasBcl below) — the hardcoded KotlinToClr shadow was DELETED. The force/attribute-
                         // blob path keeps KotlinAllToClr: a custom-attribute blob needs a concrete System.* even in the ref
                         // build, which has no ref.dll to read.
                         if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
                     }
-                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs,
-                        _nullableFrames);
+                    return PhysicalHead(f.Name, AliasBcl(f.Name, context), loweredArgs,
+                        context.NullableFrames, context.PhysicalNames, context.LocalNames);
                 }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
@@ -512,10 +451,10 @@ static partial class BirTypeLowering
                 // This erasure is also why LowerFnDelegate's arity ceiling does not reach a suspend function type,
                 // and why it must NOT be hoisted in front of this branch: a suspend type never becomes a delegate,
                 // so its arity costs nothing. MEASURED, not assumed — across the whole stdlib build every suspend fn
-                // that does reach the delegate path (LowerFuncTypeValued) has arity 1, the sequence/iterator receiver
+                // that does reach the Delegate slot role has arity 1, the sequence/iterator receiver
                 // lambda whose arity the stdlib's own signature fixes; an app's suspend lambda is replaced by its
                 // state machine before this pass runs. Coverage: roundtrip's cross-module invokeWideSuspend23.
-                return fn.Suspend ? ObjectType : LowerFnDelegate(fn, refBuild, force);
+                return fn.Suspend ? ObjectType : LowerFnDelegate(fn, context, force);
             case TypeNode.Nullable n:
                 {
                     // #37/#48: a VALUE `T?` stays `System.Nullable<T>` (ilemit builds it — the inner is kept verbatim in the
@@ -527,17 +466,17 @@ static partial class BirTypeLowering
                     // removes reference-`T?` wrappers — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
                     // type-arg (`Map<K, List<V>?>`) already had its `?` stripped and collapses via the bare-List path (Root-V).
                     // (This is why the #100/H3 "propagate typeArg through Nullable" idea was a no-op — the smuggle can't occur here.)
-                    var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
-                    return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
+                    var lowered = LowerType(n.Of, context, force, typeArg: false);
+                    return IsValueNullableInner(n.Of, context) ? new TypeNode.Nullable(lowered) : lowered;
                 }
             case TypeNode.Array a:
-                return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false), a.Rank, a.SzArray);
+                return new TypeNode.Array(LowerType(a.Elem, context, force, typeArg: false), a.Rank, a.SzArray);
             case TypeNode.ByRef b:
-                return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
+                return new TypeNode.ByRef(LowerType(b.Of, context, force, typeArg: false));
             case TypeNode.Mod modifier:
                 return new TypeNode.Mod(modifier.Req,
-                    LowerType(modifier.M, refBuild, force, typeArg: false),
-                    LowerType(modifier.Of, refBuild, force, typeArg));
+                    LowerType(modifier.M, context, force, typeArg: false),
+                    LowerType(modifier.Of, context, force, typeArg));
             case TypeNode.Oblivious ob:
                 // #8 — an NRT-OBLIVIOUS `T!` (a reference-KLIB-projected `[MaybeNull]`/platform-flexible type: a value-type
                 // arg OR a reference) lowers to the BARE lowered inner in EVERY build — NEVER a `Nullable<T>` wrapper. It
@@ -548,7 +487,7 @@ static partial class BirTypeLowering
                 // and the `== null` branch is statically false. A reference inner (`String!`) becomes a bare NRT-oblivious
                 // ref (its `?`-vs-not is a benign NullableFlags byte). ilemit has NO oblivious case, so the wrapper MUST
                 // NOT survive here (kotc emits Oblivious for `@kotlin.internal.ir.FlexibleNullability` — see bir-cir-spec §1).
-                return LowerType(ob.Of, refBuild, force, typeArg);
+                return LowerType(ob.Of, context, force, typeArg);
             default:
                 return t;
         }
@@ -586,98 +525,73 @@ static partial class BirTypeLowering
             || Equal(unit, VoidType, value: true))
             throw new InvalidOperationException("Slot comparison lost the distinction between Unit values and void returns");
         Console.WriteLine("[slot returns] self-test OK (source Unit, nullable Unit, physical Unit value)");
-        var accessor = Lower(JsonNode.Parse("""
-            {"getRet":{"t":"fqn","name":"kotlin.Int"},
-             "setRet":{"t":"fqn","name":"kotlin.Unit"}}
-            """), refBuild: false,
-            aliases: new Dictionary<string, string> { ["kotlin.Int"] = "System.Int32" });
-        if (TypeJson.Read(accessor["getRet"]) != new TypeNode.Fqn("System.Int32")
-            || TypeJson.Read(accessor["setRet"]) != VoidType)
+        var accessor = new BirPropertyDeclaration {
+            GetRet = new TypeNode.Fqn("kotlin.Int"), SetRet = unit,
+        };
+        Apply(new BirFileDeclaration { Properties = new[] { accessor } }, new PhysicalTypeContext(false,
+            aliases: new Dictionary<string, string> { ["kotlin.Int"] = "System.Int32" }));
+        if (accessor.GetRet.Value != new TypeNode.Fqn("System.Int32") || accessor.SetRet.Value != VoidType)
             throw new InvalidOperationException("Accessor return descriptors did not follow CLR return lowering");
-        var owner = TypeNode.Write(new TypeNode.Fqn("Box", new TypeNode[]
+        var owner = new TypeNode.Fqn("Box", new TypeNode[]
         {
             new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"), Array.Empty<TypeNode>()),
-        }));
-        var call = Lower(new JsonObject
-        {
-            ["ownerType"] = owner.DeepClone(),
-            ["memberRef"] = new JsonObject { ["declaringType"] = owner, ["name"] = "selected" },
-        }, refBuild: false);
-        if (TypeJson.Read(call["ownerType"]) != TypeJson.Read(call["memberRef"]["declaringType"])
-            || TypeJson.Read(call["memberRef"]["declaringType"]) is not TypeNode.Fqn
+        });
+        var selected = new BirMemberReference { DeclaringType = owner, Name = "selected" };
+        var call = new BirCallInstance { OwnerType = owner, MemberRef = selected };
+        Apply(new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
+            Body = new IBirStatement[] { new BirExpressionStatement { Expr = call } },
+        } } }, new PhysicalTypeContext(false));
+        if (call.OwnerType.Value != selected.DeclaringType.Value
+            || selected.DeclaringType.Value is not TypeNode.Fqn
                 { Args: [TypeNode.Fn { Clr: "System.Action" }] }
-            || call["memberRef"]["name"]?.GetValue<string>() != "selected")
+            || selected.Name.Value != "selected" || !ReferenceEquals(call.MemberRef.Value, selected))
             throw new InvalidOperationException("Selected member owner lost physical function-family lowering");
     }
 
     internal static void SelfTestMethodImplMetadata()
     {
-        var suspendFn = JsonNode.Parse("""{"t":"fn","suspend":true,"params":[],"ret":{"t":"fqn","name":"kotlin.Unit"}}""");
-        var nothing = TypeNode.Write(new TypeNode.Fqn("kotlin.Nothing"));
+        var suspendFn = new TypeNode.Fn(true, new TypeNode.Fqn("kotlin.Unit"), Array.Empty<TypeNode>());
+        var nothing = new TypeNode.Fqn("kotlin.Nothing");
         foreach (var carrier in new[] { "clrInterfaceImpls", "clrBaseImpls" })
-        foreach (var ret in new[] { suspendFn, nothing })
+        foreach (var ret in new TypeNode[] { suspendFn, nothing })
         foreach (var stashed in new[] { false, true })
         {
-            var descriptor = new JsonObject
-            {
-                ["owner"] = TypeNode.Write(new TypeNode.Fqn("Slot")),
-                ["member"] = "read", ["arity"] = 0, ["params"] = new JsonArray(),
-                ["ret"] = ret.DeepClone(),
+            var descriptor = new BirMethodImpl {
+                Owner = new TypeNode.Fqn("Slot"), Member = "read", Arity = 0,
+                Params = Array.Empty<TypeNode>(), Ret = ret,
             };
-            var method = new JsonObject
-            {
-                ["name"] = "read", ["params"] = new JsonArray(), ["ret"] = ret.DeepClone(),
-                [carrier] = new JsonArray(descriptor),
+            var method = new BirFunctionDeclaration {
+                Name = "read", Params = Array.Empty<BirParameter>(), Ret = ret,
             };
+            if (carrier == "clrInterfaceImpls") method.ClrInterfaceImpls = new[] { descriptor };
+            else method.ClrBaseImpls = new[] { descriptor };
             if (stashed && ReferenceEquals(ret, suspendFn))
-            {
-                descriptor[NullableGenericErasure.RetSuspendFnPre] = ret.ToJsonString();
-                method[NullableGenericErasure.RetSuspendFnPre] = ret.ToJsonString();
-            }
-            var lowered = Lower(method, refBuild: false,
-                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" });
-            var slot = lowered[carrier][0].AsObject();
-            var fact = ReferenceEquals(ret, suspendFn) ? "retSuspendFnType" : "retNothing";
-            if (lowered[fact] == null || slot.Count != 5
-                || slot["ret"]?["name"]?.GetValue<string>() != "object")
-                throw new InvalidOperationException($"MethodImpl must retain only physical slot facts while declarations retain Kotlin return metadata: {lowered}");
+                method.RetSuspendFnTypePre = suspendFn;
+            Apply(new BirFileDeclaration { Methods = new[] { method } }, new PhysicalTypeContext(false,
+                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" }));
+            var slot = descriptor.ToDom().AsObject();
+            var hasFact = ReferenceEquals(ret, suspendFn)
+                ? method.RetSuspendFnType.HasValue && TypeNodeDataEquality.Equal(method.RetSuspendFnType.Value, suspendFn)
+                : method.RetNothing.OrDefault();
+            if (!hasFact || method.RetSuspendFnTypePre.IsPresent || slot.Count != 5
+                || descriptor.Owner.Value != new TypeNode.Fqn("Slot") || descriptor.Member.Value != "read"
+                || descriptor.Arity.Value != 0 || descriptor.Params.Value.Length != 0
+                || descriptor.Ret.Value != new TypeNode.Fqn("object")
+                || slot.ContainsKey("retSuspendFnType") || slot.ContainsKey("retNothing"))
+                throw new InvalidOperationException("MethodImpl must retain only physical slot facts while declarations retain Kotlin return metadata");
         }
         Console.WriteLine("[MethodImpl metadata] self-test OK (interface/base slots, suspend/Nothing declaration facts)");
     }
 
-    // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type
-    // inside a CIR-only carrier. Configure the same facts Lower() will use and invoke the same recursive rule; a
-    // caller must not reproduce only the primitive, alias, collection-collapse or delegate branch it happened to
-    // encounter first. The statics are per-run state, so preserve them just as SamePhysicalSlotType historically did.
+    // Explicit-fact consumers and the structural owner share one recursive engine.
+    // No invocation installs a last-file context for another caller to inherit.
     internal static TypeNode LowerPhysicalType(TypeNode type,
         IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
         IReadOnlySet<string> localTypeNames = null, bool refBuild = false,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null)
-    {
-        var savedAliases = _aliases;
-        var savedIsValue = _isValueFqn;
-        var savedPhysicalNames = _physicalTypeNames;
-        var savedLocalNames = _localTypeNames;
-        var savedNullableFrames = _nullableFrames;
-        try
-        {
-            _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
-            _isValueFqn = isValueFqn ?? (_ => false);
-            _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
-            _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
-            _nullableFrames = nullableFrames;
-            return LowerType(type, refBuild, force: false, typeArg);
-        }
-        finally
-        {
-            _aliases = savedAliases;
-            _isValueFqn = savedIsValue;
-            _physicalTypeNames = savedPhysicalNames;
-            _localTypeNames = savedLocalNames;
-            _nullableFrames = savedNullableFrames;
-        }
-    }
+        => LowerType(type, new PhysicalTypeContext(refBuild, aliases, isValueFqn,
+            physicalTypeNames, localTypeNames, nullableFrames), force: false, typeArg);
 
     // CIR admits both the primitive shorthand used by metadata readers (`int`, `bool`, ...) and the corresponding
     // BCL FQN produced by @ClrTypeAlias lowering. ilemit maps each pair to the same System.Type, so an earlier
@@ -757,24 +671,24 @@ static partial class BirTypeLowering
     // given Kotlin function type has no CLR delegate at all, which is this layer's call to make and not ilemit's.
     // ilemit must not change the nominal ABI based on whether one of the resolved types happens to still be a
     // TypeBuilder.
-    internal static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
+    internal static TypeNode LowerFnDelegate(TypeNode.Fn fn, PhysicalTypeContext context, bool force)
     {
         // A function with an explicit CLR family already carries a physical return contract. In particular,
         // Func<..., Unit> must not become Action when a later member-binding step visits it again.
-        var ret = LowerType(DelegateReturnSlot(fn), refBuild, force, typeArg: false);
-        var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
-        var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
-        return PhysicalDelegate(ret, ps, recv, fn.Clr);
+        var ret = LowerType(DelegateReturnSlot(fn), context, force, typeArg: false);
+        var ps = fn.Params.Select(p => LowerType(p, context, force, typeArg: false)).ToArray();
+        var recv = fn.Recv == null ? null : LowerType(fn.Recv, context, force, typeArg: false);
+        return PhysicalDelegate(ret, ps, recv, fn.Clr, context.File);
     }
 
     // These slots already describe a CLR method: a Unit value return is not Kotlin's void convention.
     internal static TypeNode.Fn PhysicalDelegate(TypeNode ret, TypeNode[] ps,
-        TypeNode recv = null, string family = null)
+        TypeNode recv = null, string family = null, string file = null)
     {
         int arity = ps.Length + (recv == null ? 0 : 1);
         if (arity > CanonicalDelegateMaxArity)
             throw new InvalidOperationException(
-                $"bir2cir: {_file}: a function type of {arity} parameters has no CLR delegate. System.Func/Action "
+                $"bir2cir: {file ?? "<unknown>"}: a function type of {arity} parameters has no CLR delegate. System.Func/Action "
                 + $"carry arities 0..{MaxBclDelegateArity} and the DotKt stdlib defines KFunc/KAction for "
                 + $"{CanonicalDelegateMinArity}..{CanonicalDelegateMaxArity}; the family cannot go further because each arity "
                 + "is a distinct pre-baked type in the stdlib and Kotlin's function types are unbounded. A receiver "
@@ -814,206 +728,6 @@ static partial class BirTypeLowering
             : new TypeNode.Fqn(lowered.Clr, args);
     }
 
-    // Read a structured Type node out of the BIR JSON, lower it, and write it back.
-    static JsonNode LowerTypeObject(JsonNode node, bool refBuild, bool force, bool typeArg)
-    {
-        var tn = TypeNode.Parse(node.ToJsonString());
-        try { return TypeNode.Write(LowerType(tn, refBuild, force, typeArg)); }
-        catch (Exception error) when (error is InvalidOperationException or ArgumentException)
-        {
-            var call = node.Parent is JsonArray ? node.Parent.Parent as JsonObject : node.Parent as JsonObject;
-            throw new InvalidOperationException(
-                $"{_file}: {node.GetPath()} ({call?["k"]} {call?["method"]}): {error.Message}", error);
-        }
-    }
-
-    // True iff a JSON value is a structured Type node (has a `t` discriminator) rather than a k-tagged sub-node.
-    static bool IsTypeObject(JsonNode n) =>
-        n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
-
-    // The source file being lowered, for the refusals this pass can raise. Set per `Lower` call alongside the other
-    // per-call statics; there is no finer location to give, because a type node carries no position of its own.
-    static string _file = "<unknown>";
-    static IReadOnlyDictionary<string, string> _physicalTypeNames =
-        new Dictionary<string, string>(StringComparer.Ordinal);
-    static IReadOnlySet<string> _localTypeNames = new HashSet<string>(StringComparer.Ordinal);
-    static IReadOnlyDictionary<string, IReadOnlyList<string>> _interfaceMarkers = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-
-    public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
-        ValueTypeOracle isValueFqn = null, string file = null,
-        IReadOnlyDictionary<string, string> physicalTypeNames = null,
-        IReadOnlySet<string> localTypeNames = null,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers = null)
-    {
-        _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
-        _isValueFqn = isValueFqn ?? (_ => false);
-        _file = string.IsNullOrEmpty(file) ? "<unknown>" : file;
-        _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
-        _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
-        _nullableFrames = nullableFrames;
-        _interfaceMarkers = interfaceMarkers ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-        return LowerNode(root, refBuild, force: false);
-    }
-
-    // `force` == "this subtree carries attribute-blob metadata": lower with the FULL map, ignoring refBuild. It is
-    // set when entering an attribute-class declaration (base : System.Attribute) or an `attrs` application array,
-    // and propagates to the whole subtree.
-    static JsonNode LowerNode(JsonNode node, bool refBuild, bool force, bool methodImpl = false)
-    {
-        if (node is JsonObject obj)
-        {
-            var here = force || IsAttributeClass(obj);
-            // ROOT-V DEPTH: a list-CONSTRUCTION node's element type key is a generic type-argument of the
-            // built collection (depth >= 1), so it collapses like a `typeArgs` element — the literal `listOf(listOf(…))`
-            // must build a `List<IList<..>>` so it inhabits the collapsed consumer slot (pairnest). Native arrays
-            // use their ordinary element form, matching the declaration-owned ordinary generic parameter.
-            var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
-            if (nodeK == "new") ValidateCurrentNew(obj);
-            if (nodeK == "conv") ValidateCurrentConv(obj);
-            var collCtor = nodeK == "newList";
-            var arrayStorage = nodeK is "newArray" or "newArrayInit" or "newArraySized" or "spreadConcat"
-                or "arrayGet" or "arraySet" or "forArray";
-            var copy = new JsonObject();
-            foreach (var kv in obj)
-            {
-                // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
-                // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
-                // bir2cir-internal metadata and must be stripped before the CIR boundary.
-                if (kv.Key == DeclarationRename.SourceMemberKey)
-                {
-                    continue;
-                }
-                if (kv.Key is ValueReturnKey or FunctionValueRepresentation.RestorationKey or "overrides" or "fakeOverride"
-                    or KotlinPropertyAccessors.InheritedImplementationKey
-                    or KotlinPropertyAccessors.InheritedDefaultAccessorsKey
-                    or KotlinPropertyAccessors.InheritedDefaultMethodsKey
-                    or "inheritedClassMethods"
-                    or KotlinPropertyAccessors.SuspendSourceParamsKey
-                    or KotlinPropertyAccessors.SuspendSourceRetKey
-                    or KotlinPropertyAccessors.SuspendTaskResultKey
-                    or FBoundStarProjectionErasure.SourceMemberKey) continue;
-                // #122: the frontend static-type stamp `sty` is bir2cir-internal (consumed by StaticType up through the
-                // CharSequence bridge). Strip it here so it never reaches CIR/ilemit — a consumed hint, not a CIR slot.
-                if (kv.Key == "sty") continue;
-                if (kv.Value == null) { copy[kv.Key] = null; continue; }
-                // #395: this is an opaque snapshot of the frontend declaration signature. It exists precisely because
-                // the ordinary signature below may erase to the same CLR shape as another Kotlin overload, so applying
-                // this transform to the snapshot would destroy the only authoritative cross-module distinction.
-                if (kv.Key == DeclarationIdentityBinding.SemanticSignatureKey)
-                    copy[kv.Key] = kv.Value.DeepClone();
-                else if (kv.Key == "attrs")
-                    copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
-                else if (kv.Key is "clrInterfaceImpls" or "clrBaseImpls")
-                    copy[kv.Key] = LowerNode(kv.Value, refBuild, here, methodImpl: true);
-                else if (kv.Key is "sig" or "getSig" or "setSig")
-                    copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types
-                else if (ReturnKeys.Contains(kv.Key))
-                    copy[kv.Key] = kv.Key == "ret" && obj[ValueReturnKey]?.GetValue<bool>() == true
-                        ? LowerTypeValued(kv.Value, refBuild, here)
-                        : LowerReturnValued(kv.Value, refBuild, here);
-                else if (kv.Key == "funcType")
-                    copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
-                else if (kv.Key is "ownerType" or "owner" or "declaringType" && IsTypeObject(kv.Value))
-                    copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
-                else if (arrayStorage && kv.Key == "elem")
-                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: false);
-                else if (kv.Key == "typeArgs" || (collCtor && kv.Key == "elem"))
-                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
-                // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:
-                // a conversion names a Type, while a range loop names an expression. Do not classify the value by
-                // shape, and do not let an unknown node kind acquire a meaning for this field accidentally.
-                else if (kv.Key == "to")
-                    copy[kv.Key] = nodeK switch
-                    {
-                        "conv" => LowerTypeObject(kv.Value, refBuild, here, typeArg: false),
-                        "for" or "forRange" => LowerNode(kv.Value, refBuild, here),
-                        _ => throw new InvalidDataException(
-                            $"{_file}: malformed current node: field `to` is not defined for k={nodeK ?? "<missing>"}"),
-                    };
-                else if (kv.Key == "interfaces" && kv.Value is JsonArray interfaces && (!refBuild || here))
-                    copy[kv.Key] = new JsonArray(interfaces.SelectMany(type =>
-                        TypeJson.OwnerName(type) is string source && _interfaceMarkers.TryGetValue(source, out var markers)
-                            ? markers.Select(marker => (JsonNode)TypeJson.Fqn(marker))
-                            : new[] { LowerTypeValued(type, refBuild, here) })
-                        .DistinctBy(type => SupertypeGraph.TypeKey((TypeNode.Fqn)TypeJson.Read(type))).ToArray());
-                else if (TypeKeys.Contains(kv.Key))
-                    copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
-                else
-                    copy[kv.Key] = LowerNode(kv.Value, refBuild, here);
-            }
-            // H2 — SUSPEND FUNCTION-TYPE POSITION metadata. LowerType erases a suspend Fn node to `object` at a
-            // param/field/property `type` or a method `ret` (a suspend-lambda VALUE is a
-            // Continuation-based state-machine object, not a Func delegate). That fold destroys the suspend ORIGIN and
-            // its arg/return SHAPE in the CLR signature, so a re-consuming DotKt assembly can no longer tell
-            // `fun run(block: suspend () -> T)` from a plain function-typed one. Record the raw pre-erasure Fn node
-            // alongside so ilemit can stamp
-            // [KotlinSuspendFunctionType(raw)] and dll2klib restore the suspend function type on re-consumption. This
-            // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
-            // types are otherwise unrecoverable. MethodImpl descriptors identify physical slots, not declarations:
-            // their types still lower, but declaration-only positional metadata must not be added to them.
-            // Executable nodes likewise carry physical values, not re-consumable declaration signatures.
-            // The PRE-erasure shape wins where one was stashed: a `suspend (…) -> T?` has had its `Nullable(Tv)`
-            // object-erased by now (#86), and recording the erased shape would make this carrier faithfully restore
-            // `suspend () -> object` — a consumer then cannot bind the slot at all. See NullableGenericErasure's
-            // RecordSuspendFnShapes for why the fact is stashed there rather than carried by the nullable-generic
-            // carrier. The stash is consumed here and dropped: it is a bir2cir hand-off and never reaches CIR.
-            var h2t = StashedSuspendFn(obj, NullableGenericErasure.SuspendFnPre) ?? SuspendFnSlot(obj["type"]);
-            var h2r = StashedSuspendFn(obj, NullableGenericErasure.RetSuspendFnPre) ?? SuspendFnSlot(obj["ret"]);
-            var declarationMetadata = !methodImpl && nodeK == null;
-            if (declarationMetadata && h2t != null) copy["suspendFnType"] = h2t;
-            if (declarationMetadata && h2r != null) copy["retSuspendFnType"] = h2r;
-            copy.Remove(NullableGenericErasure.SuspendFnPre);
-            copy.Remove(NullableGenericErasure.RetSuspendFnPre);
-            // #133 case3 — KOTLIN `Nothing` RETURN metadata. LowerType erases a `kotlin.Nothing` return to `object`
-            // (KotlinAllToClr / the leaf map) — Nothing has no CLR analog. That fold destroys the "this never returns
-            // normally" fact, so a re-consuming DotKt assembly widens `if (c) x else fail()` to Any? instead of keeping
-            // x's type. Record the pre-erasure fact alongside (the `nullable`/`retSuspendFnType` positional-fact model)
-            // so RoundtripMetadata stamps a bare [KotlinNothing] on the return and dll2klib restores Nothing. A
-            // `Nothing?` return already stripped its reference-`?` (ReferenceNullableStrip) to a bare `kotlin.Nothing`
-            // here, its nullability carried by the [Nullable] byte — so the bare-Fqn check covers both.
-            if (declarationMetadata && IsNothingRet(obj["ret"])) copy["retNothing"] = true;
-            // ANNOTATION-BASE DERIVATION (annotation-base-lowering-to-bir2cir, USER 2026-07-02): kotc emits a user
-            // `annotation class` as a plain class carrying `"annotation":true` (base:null) — the Kotlin fact. bir2cir
-            // is the Kotlin<->CLR layer that DERIVES the CLR base: an annotation class extends System.Attribute. Set
-            // the base here (the `clr:` form ilemit resolves to the referenced .NET type) and drop the Kotlin-only
-            // flag so it never reaches the CIR/ilemit. The `here`/force path above already lowered its field/ctor
-            // types with the full map (IsAttributeClass recognizes the flag), so the attribute is emittable.
-            if (ModFlag(obj, "annotation"))
-            {
-                copy["base"] = TypeNode.Write(new TypeNode.Fqn("System.Attribute"));
-                // A source-implicit Any constructor becomes the selected CLR Attribute constructor. State the
-                // physical base call before member binding; the emitter must not infer it from the new base type.
-                if (copy["ctors"] is JsonArray constructors)
-                    foreach (var constructor in constructors.OfType<JsonObject>())
-                        if (constructor["baseArgs"] == null && constructor["thisArgs"] == null)
-                            constructor["baseArgs"] = new JsonArray();
-                (copy["mods"] as JsonObject)?.Remove("annotation");   // drop the Kotlin-only flag; never reaches CIR/ilemit
-            }
-            // UNIT -> void DERIVATION (unit-fold-in-bir2cir, USER 2026-07-05): kotc emits the pure Kotlin `kotlin.Unit`
-            // FQN identity for a "no value" position — the Unit-literal `const` type and a Unit-valued `try` expression
-            // `type` — instead of naming the CLR `void` shorthand. bir2cir DERIVES `void` HERE, node-kind-scoped, so
-            // ONLY these two value-slot positions fold. A Unit as a genuine VALUE elsewhere (a `var`/field/param type, a
-            // generic TYPE-ARG like `Continuation[kotlin.Unit]`) stays `kotlin.Unit` — a `void` field/param/arg is
-            // invalid metadata. (Return slots fold via the ReturnKeys path; this covers the rest.)
-            if (copy["k"] is JsonValue kv2 && kv2.TryGetValue<string>(out var kind2) && (kind2 == "const" || kind2 == "try")
-                && obj["type"] is JsonObject tobj && tobj["t"] is JsonValue tvt && tvt.TryGetValue<string>(out var tvts)
-                && tvts == "fqn" && tobj["name"] is JsonValue tnm && tnm.TryGetValue<string>(out var tnms) && tnms == "kotlin.Unit")
-                copy["type"] = TypeNode.Write(VoidType);
-            return copy;
-        }
-
-        if (node is JsonArray arr)
-        {
-            var copy = new JsonArray();
-            foreach (var item in arr)
-                copy.Add(item == null ? null : LowerNode(item, refBuild, force, methodImpl));
-            return copy;
-        }
-
-        return node.DeepClone();
-    }
-
     // A type declaration is an attribute class iff kotc flagged it `"annotation":true` (the pure-Kotlin "this is an
     // annotation" fact) — bir2cir DERIVES the `: System.Attribute` base from that flag (annotation-base-lowering-to-
     // bir2cir, USER 2026-07-02; kotc no longer names the CLR base). Also true once the base has already been derived
@@ -1027,134 +741,5 @@ static partial class BirTypeLowering
         (obj["base"] is JsonObject b && b["t"] is JsonValue bt && bt.TryGetValue<string>(out var bts) && bts == "fqn" &&
          b["name"] is JsonValue bn && bn.TryGetValue<string>(out var s) && s != null &&
          s.EndsWith("System.Attribute", StringComparison.Ordinal));
-
-    // If a `type`/`ret` slot holds a suspend function type (Fn{suspend:true}), return the STRUCTURED fn node for the
-    // H2 suspendFnType/retSuspendFnType metadata stamping (the slot's type itself is erased to `object` by LowerType,
-    // so its arg/return SHAPE would otherwise be unrecoverable). Spec §0/§1: the metadata IS the structured Type node
-    // (the old `sfunc:` string folds into it) — ilemit/dll2klib consume the Fn directly, never a re-rendered string.
-    // The PRE-erasure suspend function shape NullableGenericErasure stashed on this node, as the structured Fn node
-    // the carrier wants, or null when nothing was stashed.
-    static JsonNode StashedSuspendFn(JsonObject obj, string factKey)
-        => (obj[factKey] as JsonValue)?.TryGetValue<string>(out var s) == true && s != null
-            ? System.Text.Json.Nodes.JsonNode.Parse(s) : null;
-
-    static JsonNode SuspendFnSlot(JsonNode slot)
-    {
-        if (slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fn"
-            && o["suspend"] is JsonValue sv && sv.TryGetValue<bool>(out var susp) && susp)
-            return o.DeepClone();
-        return null;
-    }
-
-    // #133 case3 — true iff a `ret` slot is the bare `kotlin.Nothing` FQN (a `fun f(): Nothing`), the pre-erasure fact
-    // RoundtripMetadata reads to stamp [KotlinNothing]. A `Nothing?` return already stripped its reference-`?` to a bare
-    // `kotlin.Nothing` (ReferenceNullableStrip) by this point, so the bare-Fqn check covers the nullable case too.
-    static bool IsNothingRet(JsonNode slot) =>
-        slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fqn"
-        && o["name"] is JsonValue nv && nv.TryGetValue<string>(out var n) && n == "kotlin.Nothing";
-
-    // Current node-shape validation belongs at the complete type walk as the last common BIR path. Earlier binding
-    // stages validate the same facts before consuming them so malformed input cannot be repaired accidentally.
-    static void ValidateCurrentNew(JsonObject node)
-    {
-        if (node["args"] is not JsonArray args)
-            throw new InvalidDataException($"{_file}: malformed current `new` node: required `args` is absent or is not an array");
-        if (node["argTypes"] is not JsonArray argTypes)
-            throw new InvalidDataException($"{_file}: malformed current `new` node: required `argTypes` is absent or is not an array");
-        if (argTypes.Count != args.Count)
-            throw new InvalidDataException(
-                $"{_file}: malformed current `new` node: `argTypes` count {argTypes.Count} does not match `args` count {args.Count}");
-        for (var i = 0; i < argTypes.Count; i++)
-            if (!TypeJson.IsType(argTypes[i]))
-                throw new InvalidDataException(
-                    $"{_file}: malformed current `new` node: `argTypes[{i}]` is not a structured Type node");
-    }
-
-    static void ValidateCurrentConv(JsonObject node)
-    {
-        if (node["e"] == null)
-            throw new InvalidDataException($"{_file}: malformed current `conv` node: required `e` is absent");
-        if (!TypeJson.IsType(node["to"]))
-            throw new InvalidDataException($"{_file}: malformed current `conv` node: required `to` is not a structured Type node");
-    }
-
-    // A `sig` value is a STRUCTURED array of parameter-type TypeNodes (#37 m3b) — the overload key ilemit matches
-    // against a method def's lowered `params[].type`. Lower each element through the SAME structured type path the
-    // def params use (LowerTypeObject), so the call-side sig and the def-side params stay in the SAME vocabulary
-    // (identical SigTokenOf render), else overload resolution misses.
-    static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force)
-    {
-        if (val is not JsonArray values)
-            throw new InvalidDataException(
-                $"{_file}: malformed current signature: expected an array of structured Type nodes");
-        var copy = new JsonArray();
-        foreach (var item in values)
-        {
-            if (!TypeJson.IsType(item))
-                throw new InvalidDataException(
-                    $"{_file}: malformed current signature: every element must be a structured Type node");
-            copy.Add(LowerTypeObject(item!, refBuild, force, typeArg: false));
-        }
-        return copy;
-    }
-
-    // The `funcType` key names the DELEGATE type constructed by a newClosure/newDelegate/delegateInvoke. A suspend Fn
-    // here is a genuine CLR delegate — the pre-P3 sequence/iterator closure path — NOT an object-erased SM value slot.
-    // Fold suspend->false for THIS key only (delegate shape preserved), then lower normally; every OTHER type
-    // slot (param/field/return/receiver) erases `sfunc:`->`object`. The APP suspend-lambda SM path never reaches
-    // here: its `newSuspendLambda` is replaced by a `new <SM>` node (SuspendLambdaLowering) before type lowering.
-    static JsonNode LowerFuncTypeValued(JsonNode val, bool refBuild, bool force)
-    {
-        var tn = TypeNode.Parse(val.ToJsonString());
-        return TypeNode.Write(tn is TypeNode.Fn fn
-            ? LowerFnDelegate(fn, refBuild, force)
-            : LowerType(tn, refBuild, force, false));
-    }
-
-    // A return-slot value: a bare top-level `kotlin.Unit` -> `void` (UNIFORM, both modes); otherwise normal lowering.
-    static JsonNode LowerReturnValued(JsonNode val, bool refBuild, bool force)
-    {
-        var tn = TypeNode.Parse(val.ToJsonString());
-        if (tn is TypeNode.Fqn f && f.Args == null && f.Name == "kotlin.Unit")
-            return TypeNode.Write(VoidType);
-        return TypeNode.Write(LowerType(tn, refBuild, force, typeArg: false));
-    }
-
-    // An OWNER slot (`ownerType`/`owner`) value. A primitive-array owner (`intArray.iterator()`) stays the bare
-    // `kotlin.IntArray` FQN — ilemit's ParseOwnerSlot resolves that identity to the CLR array type directly (it
-    // expects a Fqn/string, NOT a decomposed `Array(elem)` node). Decomposing the owner to `Array(int)` here would
-    // hand ilemit an owner node it cannot read. Every OTHER owner (a collection, a user type, a primitive) lowers
-    // normally. Mirrors the pre-#73-2b-A behavior, where kotc emitted the un-lowered `kotlin.IntArray` owner.
-    static JsonNode LowerOwnerValued(JsonNode val, bool refBuild, bool force)
-    {
-        var type = TypeNode.Parse(val.ToJsonString());
-        if (type is TypeNode.Fqn f && f.Args == null && PrimArrayElem.ContainsKey(f.Name))
-            return TypeNode.Write(f);   // keep kotlin.IntArray verbatim for ilemit's array-owner resolution
-        return TypeNode.Write(LowerType(type, refBuild, force, typeArg: false));
-    }
-
-    // A usually type-bearing key's value is one Type node or an array containing Type nodes. Declaration `params`
-    // contains descriptors rather than raw types, so a non-Type object is an ordinary subtree and is walked
-    // structurally rather than interpreted as a type.
-    // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element, or a collection-
-    // construction element key on newList), so its element HEADS collapse per the Root-V rule.
-    // Default false: a `type`/`ret`/`argTypes`/`sig`/`base` head is depth-0 (keeps covariant); only its NESTED Args
-    // collapse via LowerType's own `typeArg:true` recursion.
-    static JsonNode LowerTypeValued(JsonNode val, bool refBuild, bool force, bool typeArg = false)
-    {
-        if (IsTypeObject(val))
-            return LowerTypeObject(val, refBuild, force, typeArg);
-
-        if (val is JsonArray arr)
-        {
-            var copy = new JsonArray();
-            foreach (var item in arr)
-                copy.Add(item == null ? null : IsTypeObject(item)
-                    ? LowerTypeObject(item, refBuild, force, typeArg)
-                    : LowerNode(item, refBuild, force));
-            return copy;
-        }
-        return LowerNode(val, refBuild, force);
-    }
 
 }
