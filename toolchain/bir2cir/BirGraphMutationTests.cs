@@ -10,6 +10,7 @@ internal static class BirGraphMutationTests
     internal static void SelfTest()
     {
         BirGraphFieldOrderTests.Run();
+        ObservedCloneSelfTest();
         TypeNode source = new TypeNode.Tv("method", 0);
         TypeNode target = new TypeNode.Fqn("kotlin.String");
         foreach (var origin in new BirGraphValue[] {
@@ -253,6 +254,31 @@ internal static class BirGraphMutationTests
     }
 
     static BirLocal Typed(TypeNode type) => new() { Name = "value", Sty = type };
+    static void ObservedCloneSelfTest()
+    {
+        var parameterLambda = new BirNewSuspendLambda { Body = Array.Empty<IBirStatement>() };
+        var bodyLambda = new BirNewSuspendLambda { Body = Array.Empty<IBirStatement>() };
+        var source = new BirFunctionDeclaration {
+            Params = new[] { new BirParameter { Name = "action", Default = parameterLambda } },
+            Body = new IBirStatement[] { new BirExpressionStatement { Expr = bodyLambda } },
+            Ret = OptionalField<TypeNode>.Null,
+        };
+        var births = new List<(BirGraphValue Source, BirGraphValue Copy)>();
+        var copy = (BirFunctionDeclaration)source.DeepClone((original, fresh) => births.Add((original, fresh)));
+        Require(copy.StructurallyEquals(source) && copy.Ret.IsNull && !copy.TypeParams.IsPresent,
+            "observed clone preserves complete data and presence");
+        Require(births.Count == 5 && ReferenceEquals(births[^1].Source, source)
+            && ReferenceEquals(births[^1].Copy, copy)
+            && births.All(pair => pair.Source.GetType() == pair.Copy.GetType() && !ReferenceEquals(pair.Source, pair.Copy))
+            && births.Single(pair => ReferenceEquals(pair.Source, parameterLambda)).Copy == copy.Params.Value[0].Default.Value
+            && births.Single(pair => ReferenceEquals(pair.Source, bodyLambda)).Copy == ((BirExpressionStatement)copy.Body.Value[0]).Expr.Value,
+            "clone birth reports each actual descendant and completed parent exactly once");
+        copy.Params.Value[0].Default = new BirConstant();
+        ((BirNewSuspendLambda)((BirExpressionStatement)copy.Body.Value[0]).Expr.Value).Body = new IBirStatement[] { new BirReturn() };
+        Require(ReferenceEquals(source.Params.Value[0].Default.Value, parameterLambda) && bodyLambda.Body.Value.Length == 0,
+            "observed clone does not alias mutable executable occurrences");
+    }
+
     static void Different(BirGraphValue left, BirGraphValue right, string label)
         => Require(!left.StructurallyEquals(right) && !right.StructurallyEquals(left), label);
     static void Require(bool condition, string label)

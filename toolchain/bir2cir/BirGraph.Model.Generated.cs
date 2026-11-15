@@ -55,6 +55,14 @@ internal sealed record EventPropertySourceFacts : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -167,6 +175,16 @@ internal sealed record BirRoundtripDeclarationIdentity : BirGraphValue
         SemanticReifiedIndices = SemanticReifiedIndices.HasValue ? OptionalField<int[]>.Of(SemanticReifiedIndices.Value.Select(item0 => item0).ToArray()) : SemanticReifiedIndices,
         NullableWitnessIndices = NullableWitnessIndices.HasValue ? OptionalField<int[]>.Of(NullableWitnessIndices.Value.Select(item0 => item0).ToArray()) : NullableWitnessIndices,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            SemanticReifiedIndices = SemanticReifiedIndices.HasValue ? OptionalField<int[]>.Of(SemanticReifiedIndices.Value.Select(item0 => item0).ToArray()) : SemanticReifiedIndices,
+            NullableWitnessIndices = NullableWitnessIndices.HasValue ? OptionalField<int[]>.Of(NullableWitnessIndices.Value.Select(item0 => item0).ToArray()) : NullableWitnessIndices,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -276,6 +294,15 @@ internal sealed record BirInnerConstructorFactory : BirGraphValue
     {
         TypeArgs = TypeArgs.HasValue ? OptionalField<int[]>.Of(TypeArgs.Value.Select(item0 => item0).ToArray()) : TypeArgs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            TypeArgs = TypeArgs.HasValue ? OptionalField<int[]>.Of(TypeArgs.Value.Select(item0 => item0).ToArray()) : TypeArgs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -370,6 +397,15 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     {
         Slots = Slots.HasValue ? OptionalField<int[]>.Of(Slots.Value.Select(item0 => item0).ToArray()) : Slots,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Slots = Slots.HasValue ? OptionalField<int[]>.Of(Slots.Value.Select(item0 => item0).ToArray()) : Slots,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -460,6 +496,15 @@ internal sealed record BirOpaqueBytes : BirGraphValue, IBirAttributeValue
     {
         Bytes = Bytes.HasValue ? OptionalField<byte[]>.Of(Bytes.Value.ToArray()) : Bytes,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Bytes = Bytes.HasValue ? OptionalField<byte[]>.Of(Bytes.Value.ToArray()) : Bytes,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -550,6 +595,15 @@ internal sealed record BirStaticCarrier : BirGraphValue
     {
         ProtectedNested = ProtectedNested.HasValue ? OptionalField<string[]>.Of(ProtectedNested.Value.Select(item0 => item0).ToArray()) : ProtectedNested,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            ProtectedNested = ProtectedNested.HasValue ? OptionalField<string[]>.Of(ProtectedNested.Value.Select(item0 => item0).ToArray()) : ProtectedNested,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -650,6 +704,14 @@ internal sealed record BirCompanionCarrier : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -762,6 +824,16 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -927,6 +999,23 @@ internal sealed record BirFileDeclaration : BirGraphValue
         Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : Attrs,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Fields,
+            Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Methods,
+            Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Properties,
+            Types = Types.HasValue ? OptionalField<IBirTypeDeclaration[]>.Of(Types.Value.Select(item0 => (IBirTypeDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Types,
+            RefTypes = RefTypes.HasValue ? OptionalField<BirRefTypeDeclaration[]>.Of(RefTypes.Value.Select(item0 => (BirRefTypeDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : RefTypes,
+            TypeAliases = TypeAliases.HasValue ? OptionalField<SourceTypeAlias[]>.Of(TypeAliases.Value.Select(item0 => item0).ToArray()) : TypeAliases,
+            AssemblyAttrs = AssemblyAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(AssemblyAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : AssemblyAttrs,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -1105,6 +1194,16 @@ internal sealed record BirBinaryOperation : BirGraphNode, IBirExpression, IBirAt
         Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Lhs.Value).DeepClone()) : Lhs,
         Rhs = Rhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Rhs.Value).DeepClone()) : Rhs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Lhs.Value).DeepClone(born)) : Lhs,
+            Rhs = Rhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Rhs.Value).DeepClone(born)) : Rhs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -1273,6 +1372,22 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         KotlinClassifierPredicate = KotlinClassifierPredicate.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinClassifierPredicate.Value).DeepClone()) : KotlinClassifierPredicate,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            KotlinTypeWitness = KotlinTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinTypeWitness.Value).DeepClone(born)) : KotlinTypeWitness,
+            KotlinRuntimeTypeWitness = KotlinRuntimeTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinRuntimeTypeWitness.Value).DeepClone(born)) : KotlinRuntimeTypeWitness,
+            KotlinClassifierPredicate = KotlinClassifierPredicate.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinClassifierPredicate.Value).DeepClone(born)) : KotlinClassifierPredicate,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -1491,6 +1606,21 @@ internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttribu
         KotlinClassifierPredicate = KotlinClassifierPredicate.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinClassifierPredicate.Value).DeepClone()) : KotlinClassifierPredicate,
         NullWitness = NullWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)NullWitness.Value).DeepClone()) : NullWitness,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            KotlinTypeWitness = KotlinTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinTypeWitness.Value).DeepClone(born)) : KotlinTypeWitness,
+            KotlinRuntimeTypeWitness = KotlinRuntimeTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinRuntimeTypeWitness.Value).DeepClone(born)) : KotlinRuntimeTypeWitness,
+            KotlinClassifierPredicate = KotlinClassifierPredicate.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinClassifierPredicate.Value).DeepClone(born)) : KotlinClassifierPredicate,
+            NullWitness = NullWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)NullWitness.Value).DeepClone(born)) : NullWitness,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -1678,6 +1808,20 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         KotlinRuntimeTypeWitness = KotlinRuntimeTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinRuntimeTypeWitness.Value).DeepClone()) : KotlinRuntimeTypeWitness,
         KotlinClassifierPredicate = KotlinClassifierPredicate.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinClassifierPredicate.Value).DeepClone()) : KotlinClassifierPredicate,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            KotlinTypeWitness = KotlinTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinTypeWitness.Value).DeepClone(born)) : KotlinTypeWitness,
+            KotlinRuntimeTypeWitness = KotlinRuntimeTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinRuntimeTypeWitness.Value).DeepClone(born)) : KotlinRuntimeTypeWitness,
+            KotlinClassifierPredicate = KotlinClassifierPredicate.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinClassifierPredicate.Value).DeepClone(born)) : KotlinClassifierPredicate,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -1836,6 +1980,17 @@ internal sealed record BirSafeValueCast : BirGraphNode, IBirExpression, IBirAttr
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone()) : CtorRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone(born)) : CtorRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -1954,6 +2109,15 @@ internal sealed record BirConcat : BirGraphNode, IBirExpression, IBirAttributeVa
     {
         Parts = Parts.HasValue ? OptionalField<IBirExpression[]>.Of(Parts.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Parts,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Parts = Parts.HasValue ? OptionalField<IBirExpression[]>.Of(Parts.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Parts,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -2054,6 +2218,15 @@ internal sealed record BirRuntimeClass : BirGraphNode, IBirExpression, IBirAttri
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -2169,6 +2342,17 @@ internal sealed record BirNullableWrap : BirGraphNode, IBirExpression, IBirAttri
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone()) : CtorRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone(born)) : CtorRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -2312,6 +2496,18 @@ internal sealed record BirArrayGet : BirGraphNode, IBirExpression, IBirAttribute
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Array.Value).DeepClone(born)) : Array,
+            Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Index.Value).DeepClone(born)) : Index,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(rewrite(_erasedValueVariable.Value)) : _erasedValueVariable,
@@ -2461,6 +2657,18 @@ internal sealed record BirArraySet : BirGraphNode, IBirExpression, IBirAttribute
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Array.Value).DeepClone(born)) : Array,
+            Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Index.Value).DeepClone(born)) : Index,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -2587,6 +2795,15 @@ internal sealed record BirArrayLength : BirGraphNode, IBirExpression, IBirAttrib
     {
         Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Array.Value).DeepClone()) : Array,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Array.Value).DeepClone(born)) : Array,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -2706,6 +2923,17 @@ internal sealed record BirNewArray : BirGraphNode, IBirExpression, IBirAttribute
         Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Elems,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Elems,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -2833,6 +3061,16 @@ internal sealed record BirNewArraySized : BirGraphNode, IBirExpression, IBirAttr
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
         Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Size.Value).DeepClone()) : Size,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Size.Value).DeepClone(born)) : Size,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -2972,6 +3210,19 @@ internal sealed record BirNewArrayInit : BirGraphNode, IBirExpression, IBirAttri
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone()) : InvokeRef,
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Size = Size.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Size.Value).DeepClone(born)) : Size,
+            Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Init.Value).DeepClone(born)) : Init,
+            InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone(born)) : InvokeRef,
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -3108,6 +3359,15 @@ internal sealed record BirSpreadPart : BirGraphValue
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -3244,6 +3504,20 @@ internal sealed record BirSpreadConcat : BirGraphNode, IBirExpression, IBirAttri
         AddRangeRef = AddRangeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AddRangeRef.Value).DeepClone()) : AddRangeRef,
         ToArrayRef = ToArrayRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)ToArrayRef.Value).DeepClone()) : ToArrayRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Parts = Parts.HasValue ? OptionalField<BirSpreadPart[]>.Of(Parts.Value.Select(item0 => (BirSpreadPart)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Parts,
+            CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone(born)) : CtorRef,
+            AddRef = AddRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AddRef.Value).DeepClone(born)) : AddRef,
+            AddRangeRef = AddRangeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AddRangeRef.Value).DeepClone(born)) : AddRangeRef,
+            ToArrayRef = ToArrayRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)ToArrayRef.Value).DeepClone(born)) : ToArrayRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -3392,6 +3666,16 @@ internal sealed record BirDefaultValue : BirGraphNode, IBirExpression, IBirAttri
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -3514,6 +3798,17 @@ internal sealed record BirEnumName : BirGraphNode, IBirExpression, IBirAttribute
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -3651,6 +3946,18 @@ internal sealed record BirEnumOrdinal : BirGraphNode, IBirExpression, IBirAttrib
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)((BirGraphValue)item0).DeepClone()).ToArray()) : Values,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Values,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -3789,6 +4096,17 @@ internal sealed record BirEnumParse : BirGraphNode, IBirExpression, IBirAttribut
         Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Arg.Value).DeepClone()) : Arg,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Arg.Value).DeepClone(born)) : Arg,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -3928,6 +4246,17 @@ internal sealed record BirObjectMethod : BirGraphNode, IBirExpression, IBirAttri
         Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Arg.Value).DeepClone()) : Arg,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Arg = Arg.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Arg.Value).DeepClone(born)) : Arg,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
@@ -4070,6 +4399,17 @@ internal sealed record BirCallBinding : BirGraphValue
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone()) : Expr,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone(born)) : Expr,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -4222,6 +4562,18 @@ internal sealed record BirCallEvaluation : BirGraphNode, IBirExpression, IBirAtt
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone()) : Expr,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Bindings = Bindings.HasValue ? OptionalField<BirCallBinding[]>.Of(Bindings.Value.Select(item0 => (BirCallBinding)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Bindings,
+            Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone(born)) : Expr,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -4343,6 +4695,14 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -4444,6 +4804,15 @@ internal sealed record BirOverride : BirGraphValue
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
@@ -4794,6 +5163,44 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            ShapeTypes = ShapeTypes.HasValue ? OptionalField<TypeNode[]>.Of(ShapeTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ShapeTypes,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            AwaitResult = AwaitResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(AwaitResult.Value)) : AwaitResult,
+            CalleeOwner = CalleeOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeOwner.Value)) : CalleeOwner,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            DefaultOwnerType = DefaultOwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DefaultOwnerType.Value)) : DefaultOwnerType,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberMethodTypeParams,
+            MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : MemberSignature,
+            MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberReturnType.Value)) : MemberReturnType,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            NullablePendingWitnesses = NullablePendingWitnesses.HasValue ? OptionalField<IBirExpression[]>.Of(NullablePendingWitnesses.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : NullablePendingWitnesses,
+            FunctionCallSignature = FunctionCallSignature.HasValue ? OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : FunctionCallSignature,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(DynRet.Value)) : DynRet,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
@@ -5478,6 +5885,44 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            ShapeTypes = ShapeTypes.HasValue ? OptionalField<TypeNode[]>.Of(ShapeTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ShapeTypes,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            DynRet = DynRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(DynRet.Value)) : DynRet,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            AwaitResult = AwaitResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(AwaitResult.Value)) : AwaitResult,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            DefaultOwnerType = DefaultOwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DefaultOwnerType.Value)) : DefaultOwnerType,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberMethodTypeParams,
+            MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : MemberSignature,
+            MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberReturnType.Value)) : MemberReturnType,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            NullablePendingWitnesses = NullablePendingWitnesses.HasValue ? OptionalField<IBirExpression[]>.Of(NullablePendingWitnesses.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : NullablePendingWitnesses,
+            FunctionCallSignature = FunctionCallSignature.HasValue ? OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : FunctionCallSignature,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -5968,6 +6413,20 @@ internal sealed record BirCallLocal : BirGraphNode, IBirExpression, IBirAttribut
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => rewrite(item0)).ToArray()) : Sig,
@@ -6241,6 +6700,29 @@ internal sealed record BirFieldGet : BirGraphNode, IBirExpression, IBirAttribute
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -6573,6 +7055,22 @@ internal sealed record BirStaticFieldGet : BirGraphNode, IBirExpression, IBirAtt
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone()) : FieldRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone(born)) : FieldRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
@@ -6861,6 +7359,27 @@ internal sealed record BirFieldSetExpression : BirGraphNode, IBirExpression, IBi
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -7144,6 +7663,20 @@ internal sealed record BirStaticFieldSet : BirGraphNode, IBirExpression, IBirAtt
         MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone()) : FieldRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+            FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone(born)) : FieldRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -7377,6 +7910,24 @@ internal sealed record BirLateinitGet : BirGraphNode, IBirExpression, IBirAttrib
         Exception = Exception.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Exception.Value).DeepClone()) : Exception,
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone()) : FieldRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            Exception = Exception.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Exception.Value).DeepClone(born)) : Exception,
+            FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone(born)) : FieldRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -7585,6 +8136,16 @@ internal sealed record BirLateinitIsInitialized : BirGraphNode, IBirExpression, 
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone()) : Recv,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -7716,6 +8277,14 @@ internal sealed record BirModifiers : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -7884,6 +8453,15 @@ internal sealed record BirDefaultBody : BirGraphValue
     {
         Body = Body.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Body.Value).DeepClone()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Body = Body.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Body.Value).DeepClone(born)) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -8014,6 +8592,19 @@ internal sealed record BirConstructorAdapterPayload : BirGraphValue, IBirExecuta
         Arguments = Arguments.HasValue ? OptionalField<IBirExpression[]>.Of(Arguments.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Arguments,
         TerminalSignature = TerminalSignature.HasValue ? OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : TerminalSignature,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Parameters = Parameters.HasValue ? OptionalField<string[]>.Of(Parameters.Value.Select(item0 => item0).ToArray()) : Parameters,
+            Signature = Signature.HasValue ? OptionalField<TypeNode[]>.Of(Signature.Value.Select(item0 => CopyType(item0)).ToArray()) : Signature,
+            Statements = Statements.HasValue ? OptionalField<IBirStatement[]>.Of(Statements.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Statements,
+            Arguments = Arguments.HasValue ? OptionalField<IBirExpression[]>.Of(Arguments.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Arguments,
+            TerminalSignature = TerminalSignature.HasValue ? OptionalField<TypeNode[]>.Of(TerminalSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : TerminalSignature,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Signature = Signature.HasValue ? OptionalField<TypeNode[]>.Of(Signature.Value.Select(item0 => rewrite(item0)).ToArray()) : Signature,
@@ -8199,6 +8790,20 @@ internal sealed record BirInlinePayload : BirGraphValue, IBirExecutablePayload
         Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone()).ToArray()) : Lifted,
         RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Lifted,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
@@ -8373,6 +8978,17 @@ internal sealed record BirAttributeNamedArgument : BirGraphValue
         Value = Value.HasValue ? OptionalField<IBirAttributeValue>.Of((IBirAttributeValue)((BirGraphValue)Value.Value).DeepClone()) : Value,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Value = Value.HasValue ? OptionalField<IBirAttributeValue>.Of((IBirAttributeValue)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -8525,6 +9141,19 @@ internal sealed record BirAttribute : BirGraphValue
         NamedArgs = NamedArgs.HasValue ? OptionalField<BirAttributeNamedArgument[]>.Of(NamedArgs.Value.Select(item0 => (BirAttributeNamedArgument)((BirGraphValue)item0).DeepClone()).ToArray()) : NamedArgs,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Attr = Attr.HasValue ? OptionalField<TypeNode>.Of(CopyType(Attr.Value)) : Attr,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            Args = Args.HasValue ? OptionalField<IBirAttributeValue[]>.Of(Args.Value.Select(item0 => (IBirAttributeValue)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            NamedArgs = NamedArgs.HasValue ? OptionalField<BirAttributeNamedArgument[]>.Of(NamedArgs.Value.Select(item0 => (BirAttributeNamedArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : NamedArgs,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Attr = Attr.HasValue ? OptionalField<TypeNode>.Of(rewrite(Attr.Value)) : Attr,
@@ -8751,6 +9380,29 @@ internal sealed record BirParameter : BirGraphValue
         NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
         SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnType.Value)) : SuspendFnType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            Default = Default.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Default.Value).DeepClone(born)) : Default,
+            DefaultBir = DefaultBir.HasValue ? OptionalField<BirDefaultBody>.Of((BirDefaultBody)((BirGraphValue)DefaultBir.Value).DeepClone(born)) : DefaultBir,
+            SharedCellType = SharedCellType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SharedCellType.Value)) : SharedCellType,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            CollIdentity = CollIdentity.HasValue ? OptionalField<TypeNode>.Of(CopyType(CollIdentity.Value)) : CollIdentity,
+            FunctionSignatureType = FunctionSignatureType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FunctionSignatureType.Value)) : FunctionSignatureType,
+            KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(KotlinType.Value)) : KotlinType,
+            NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGeneric.Value)) : NullableGeneric,
+            NominalParameterSignatureIdentity = NominalParameterSignatureIdentity.HasValue ? OptionalField<TypeNode>.Of(CopyType(NominalParameterSignatureIdentity.Value)) : NominalParameterSignatureIdentity,
+            GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => CopyType(item0)).ToArray()) : GenericParameterSignatureBounds,
+            NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
+            SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnType.Value)) : SuspendFnType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -8983,6 +9635,16 @@ internal sealed record BirDefaultCarrier : BirGraphNode, IBirExpression, IBirAtt
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone()) : Expr,
         Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone()).ToArray()) : Lifted,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone(born)) : Expr,
+            Lifted = Lifted.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Lifted.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Lifted,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -9093,6 +9755,15 @@ internal sealed record BirLocalFunction : BirGraphNode, IBirStatement
     {
         Decl = Decl.HasValue ? OptionalField<BirFunctionDeclaration>.Of((BirFunctionDeclaration)((BirGraphValue)Decl.Value).DeepClone()) : Decl,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Decl = Decl.HasValue ? OptionalField<BirFunctionDeclaration>.Of((BirFunctionDeclaration)((BirGraphValue)Decl.Value).DeepClone(born)) : Decl,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -9216,6 +9887,17 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : TypeParams,
         Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
@@ -9345,6 +10027,14 @@ internal sealed record BirDeclarationPosition : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -9736,6 +10426,51 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         RetNullableFlags = RetNullableFlags.HasValue ? OptionalField<int[]>.Of(RetNullableFlags.Value.Select(item0 => item0).ToArray()) : RetNullableFlags,
         RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnType.Value)) : RetSuspendFnType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendRet.Value)) : SuspendRet,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+            InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)((BirGraphValue)InheritedImplementation.Value).DeepClone(born)) : InheritedImplementation,
+            _syntheticTypeArgs = _syntheticTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_syntheticTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : _syntheticTypeArgs,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            RoundtripDeclarationIdentity = RoundtripDeclarationIdentity.HasValue ? OptionalField<BirRoundtripDeclarationIdentity>.Of((BirRoundtripDeclarationIdentity)((BirGraphValue)RoundtripDeclarationIdentity.Value).DeepClone(born)) : RoundtripDeclarationIdentity,
+            ExistentialInnerConstructorFactory = ExistentialInnerConstructorFactory.HasValue ? OptionalField<BirInnerConstructorFactory>.Of((BirInnerConstructorFactory)((BirGraphValue)ExistentialInnerConstructorFactory.Value).DeepClone(born)) : ExistentialInnerConstructorFactory,
+            CollIdentityRet = CollIdentityRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CollIdentityRet.Value)) : CollIdentityRet,
+            SemanticReifiedIndices = SemanticReifiedIndices.HasValue ? OptionalField<int[]>.Of(SemanticReifiedIndices.Value.Select(item0 => item0).ToArray()) : SemanticReifiedIndices,
+            NullableWitnessIndices = NullableWitnessIndices.HasValue ? OptionalField<int[]>.Of(NullableWitnessIndices.Value.Select(item0 => item0).ToArray()) : NullableWitnessIndices,
+            SuspendResult = SuspendResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendResult.Value)) : SuspendResult,
+            SuspendTaskResult = SuspendTaskResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendTaskResult.Value)) : SuspendTaskResult,
+            SuspendSourceParams = SuspendSourceParams.HasValue ? OptionalField<TypeNode[]>.Of(SuspendSourceParams.Value.Select(item0 => CopyType(item0)).ToArray()) : SuspendSourceParams,
+            SuspendSourceRet = SuspendSourceRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendSourceRet.Value)) : SuspendSourceRet,
+            RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetKotlinType.Value)) : RetKotlinType,
+            NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
+            NullableGenericSuspendRet = NullableGenericSuspendRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericSuspendRet.Value)) : NullableGenericSuspendRet,
+            PendingOverrideOwner = PendingOverrideOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(PendingOverrideOwner.Value)) : PendingOverrideOwner,
+            PendingOverrideReturn = PendingOverrideReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(PendingOverrideReturn.Value)) : PendingOverrideReturn,
+            KotlinPropertyAccessorCarrier = KotlinPropertyAccessorCarrier.HasValue ? OptionalField<EventPropertySourceFacts>.Of((EventPropertySourceFacts)((BirGraphValue)KotlinPropertyAccessorCarrier.Value).DeepClone(born)) : KotlinPropertyAccessorCarrier,
+            SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
+            RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : RetAttrs,
+            ClrOverrideRef = ClrOverrideRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)ClrOverrideRef.Value).DeepClone(born)) : ClrOverrideRef,
+            ClrInterfaceImpls = ClrInterfaceImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrInterfaceImpls.Value.Select(item0 => (BirMethodImpl)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ClrInterfaceImpls,
+            ClrBaseImpls = ClrBaseImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrBaseImpls.Value.Select(item0 => (BirMethodImpl)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ClrBaseImpls,
+            Pinvoke = Pinvoke.HasValue ? OptionalField<BirPInvoke>.Of((BirPInvoke)((BirGraphValue)Pinvoke.Value).DeepClone(born)) : Pinvoke,
+            InlineBir = InlineBir.HasValue ? OptionalField<byte[]>.Of(InlineBir.Value.ToArray()) : InlineBir,
+            RetNullableFlags = RetNullableFlags.HasValue ? OptionalField<int[]>.Of(RetNullableFlags.Value.Select(item0 => item0).ToArray()) : RetNullableFlags,
+            RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnType.Value)) : RetSuspendFnType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
@@ -10358,6 +11093,25 @@ internal sealed record BirConstructor : BirGraphValue
         PreStmts = PreStmts.HasValue ? OptionalField<IBirStatement[]>.Of(PreStmts.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : PreStmts,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            BaseArgs = BaseArgs.HasValue ? OptionalField<IBirExpression[]>.Of(BaseArgs.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : BaseArgs,
+            DelegationSig = DelegationSig.HasValue ? OptionalField<TypeNode[]>.Of(DelegationSig.Value.Select(item0 => CopyType(item0)).ToArray()) : DelegationSig,
+            ThisArgs = ThisArgs.HasValue ? OptionalField<IBirExpression[]>.Of(ThisArgs.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ThisArgs,
+            DelegationBindings = DelegationBindings.HasValue ? OptionalField<BirCallBinding[]>.Of(DelegationBindings.Value.Select(item0 => (BirCallBinding)((BirGraphValue)item0).DeepClone(born)).ToArray()) : DelegationBindings,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            RoundtripDeclarationIdentity = RoundtripDeclarationIdentity.HasValue ? OptionalField<BirRoundtripDeclarationIdentity>.Of((BirRoundtripDeclarationIdentity)((BirGraphValue)RoundtripDeclarationIdentity.Value).DeepClone(born)) : RoundtripDeclarationIdentity,
+            BaseCtorRef = BaseCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)BaseCtorRef.Value).DeepClone(born)) : BaseCtorRef,
+            PreStmts = PreStmts.HasValue ? OptionalField<IBirStatement[]>.Of(PreStmts.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : PreStmts,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         DelegationSig = DelegationSig.HasValue ? OptionalField<TypeNode[]>.Of(DelegationSig.Value.Select(item0 => rewrite(item0)).ToArray()) : DelegationSig,
@@ -10634,6 +11388,25 @@ internal sealed record BirFieldDeclaration : BirGraphValue
         SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnType.Value)) : SuspendFnType,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Init.Value).DeepClone(born)) : Init,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            CollIdentity = CollIdentity.HasValue ? OptionalField<TypeNode>.Of(CopyType(CollIdentity.Value)) : CollIdentity,
+            KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(KotlinType.Value)) : KotlinType,
+            NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGeneric.Value)) : NullableGeneric,
+            NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
+            SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnType.Value)) : SuspendFnType,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -10887,6 +11660,16 @@ internal sealed record BirRefTypeDeclaration : BirGraphValue
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : TypeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -11105,6 +11888,31 @@ internal sealed record BirPropertyDeclaration : BirGraphValue
         Recv = Recv.HasValue ? OptionalField<TypeNode>.Of(CopyType(Recv.Value)) : Recv,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            KotlinAccessors = KotlinAccessors.HasValue ? OptionalField<string[]>.Of(KotlinAccessors.Value.Select(item0 => item0).ToArray()) : KotlinAccessors,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            CollIdentity = CollIdentity.HasValue ? OptionalField<TypeNode>.Of(CopyType(CollIdentity.Value)) : CollIdentity,
+            KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(KotlinType.Value)) : KotlinType,
+            NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGeneric.Value)) : NullableGeneric,
+            GetSig = GetSig.HasValue ? OptionalField<TypeNode[]>.Of(GetSig.Value.Select(item0 => CopyType(item0)).ToArray()) : GetSig,
+            GetRet = GetRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(GetRet.Value)) : GetRet,
+            SetSig = SetSig.HasValue ? OptionalField<TypeNode[]>.Of(SetSig.Value.Select(item0 => CopyType(item0)).ToArray()) : SetSig,
+            SetRet = SetRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(SetRet.Value)) : SetRet,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
+            SuspendFnType = SuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnType.Value)) : SuspendFnType,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            Recv = Recv.HasValue ? OptionalField<TypeNode>.Of(CopyType(Recv.Value)) : Recv,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -11531,6 +12339,37 @@ internal sealed record BirInterfaceDefinition : BirGraphValue, IBirTypeDeclarati
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
         RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : RetAttrs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            Base = Base.HasValue ? OptionalField<TypeNode>.Of(CopyType(Base.Value)) : Base,
+            Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => CopyType(item0)).ToArray()) : Interfaces,
+            Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Fields,
+            Ctors = Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(Ctors.Value.Select(item0 => (BirConstructor)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Ctors,
+            Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Methods,
+            Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Properties,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(KotlinType.Value)) : KotlinType,
+            StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)((BirGraphValue)StaticCarrier.Value).DeepClone(born)) : StaticCarrier,
+            CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)((BirGraphValue)CompanionCarrier.Value).DeepClone(born)) : CompanionCarrier,
+            ManagedReferenceContract = ManagedReferenceContract.HasValue ? OptionalField<BirManagedReferenceContract>.Of((BirManagedReferenceContract)((BirGraphValue)ManagedReferenceContract.Value).DeepClone(born)) : ManagedReferenceContract,
+            InheritedDefaultMethods = InheritedDefaultMethods.HasValue ? OptionalField<BirInheritedDefaultMethod[]>.Of(InheritedDefaultMethods.Value.Select(item0 => (BirInheritedDefaultMethod)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InheritedDefaultMethods,
+            CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : CapturedTypeParams,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+            InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InterfaceSlotRefs,
+            ClrEvents = ClrEvents.HasValue ? OptionalField<BirClrEventBacking[]>.Of(ClrEvents.Value.Select(item0 => (BirClrEventBacking)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ClrEvents,
+            Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
+            Entries = Entries.HasValue ? OptionalField<BirEnumEntryDeclaration[]>.Of(Entries.Value.Select(item0 => (BirEnumEntryDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Entries,
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : RetAttrs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Base = Base.HasValue ? OptionalField<TypeNode>.Of(rewrite(Base.Value)) : Base,
@@ -11863,6 +12702,15 @@ internal sealed record BirEnumEntryDeclaration : BirGraphValue
     {
         Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : Attrs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -11976,6 +12824,15 @@ internal sealed record BirManagedReferenceContract : BirGraphValue
     {
         Slots = Slots.HasValue ? OptionalField<int[]>.Of(Slots.Value.Select(item0 => item0).ToArray()) : Slots,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Slots = Slots.HasValue ? OptionalField<int[]>.Of(Slots.Value.Select(item0 => item0).ToArray()) : Slots,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -12077,6 +12934,15 @@ internal sealed record BirClrEnumDeclaration : BirGraphValue
     {
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(rewrite(Underlying.Value)) : Underlying,
@@ -12346,6 +13212,36 @@ internal sealed record BirEnumDefinition : BirGraphValue, IBirTypeDeclaration
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
         RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : RetAttrs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            ClrEnum = ClrEnum.HasValue ? OptionalField<BirClrEnumDeclaration>.Of((BirClrEnumDeclaration)((BirGraphValue)ClrEnum.Value).DeepClone(born)) : ClrEnum,
+            Entries = Entries.HasValue ? OptionalField<BirEnumEntryDeclaration[]>.Of(Entries.Value.Select(item0 => (BirEnumEntryDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Entries,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+            StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)((BirGraphValue)StaticCarrier.Value).DeepClone(born)) : StaticCarrier,
+            CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)((BirGraphValue)CompanionCarrier.Value).DeepClone(born)) : CompanionCarrier,
+            BasicEnum = BasicEnum.HasValue ? OptionalField<BirBasicEnumCarrier>.Of((BirBasicEnumCarrier)((BirGraphValue)BasicEnum.Value).DeepClone(born)) : BasicEnum,
+            Base = Base.HasValue ? OptionalField<TypeNode>.Of(CopyType(Base.Value)) : Base,
+            Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => CopyType(item0)).ToArray()) : Interfaces,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : CapturedTypeParams,
+            Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Fields,
+            Ctors = Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(Ctors.Value.Select(item0 => (BirConstructor)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Ctors,
+            Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Methods,
+            Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Properties,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InterfaceSlotRefs,
+            ClrEvents = ClrEvents.HasValue ? OptionalField<BirClrEventBacking[]>.Of(ClrEvents.Value.Select(item0 => (BirClrEventBacking)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ClrEvents,
+            Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : RetAttrs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Base = Base.HasValue ? OptionalField<TypeNode>.Of(rewrite(Base.Value)) : Base,
@@ -12863,6 +13759,40 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
         RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : RetAttrs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Base = Base.HasValue ? OptionalField<TypeNode>.Of(CopyType(Base.Value)) : Base,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            Interfaces = Interfaces.HasValue ? OptionalField<TypeNode[]>.Of(Interfaces.Value.Select(item0 => CopyType(item0)).ToArray()) : Interfaces,
+            Fields = Fields.HasValue ? OptionalField<BirFieldDeclaration[]>.Of(Fields.Value.Select(item0 => (BirFieldDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Fields,
+            Ctors = Ctors.HasValue ? OptionalField<BirConstructor[]>.Of(Ctors.Value.Select(item0 => (BirConstructor)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Ctors,
+            Methods = Methods.HasValue ? OptionalField<BirFunctionDeclaration[]>.Of(Methods.Value.Select(item0 => (BirFunctionDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Methods,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            Properties = Properties.HasValue ? OptionalField<BirPropertyDeclaration[]>.Of(Properties.Value.Select(item0 => (BirPropertyDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Properties,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
+            KotlinCompanion = KotlinCompanion.HasValue ? OptionalField<BirKotlinCompanion>.Of((BirKotlinCompanion)((BirGraphValue)KotlinCompanion.Value).DeepClone(born)) : KotlinCompanion,
+            InheritedDefaultAccessors = InheritedDefaultAccessors.HasValue ? OptionalField<BirInheritedDefaultAccessor[]>.Of(InheritedDefaultAccessors.Value.Select(item0 => (BirInheritedDefaultAccessor)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InheritedDefaultAccessors,
+            InheritedDefaultMethods = InheritedDefaultMethods.HasValue ? OptionalField<BirInheritedDefaultMethod[]>.Of(InheritedDefaultMethods.Value.Select(item0 => (BirInheritedDefaultMethod)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InheritedDefaultMethods,
+            InheritedClassMethods = InheritedClassMethods.HasValue ? OptionalField<BirInheritedClassMethod[]>.Of(InheritedClassMethods.Value.Select(item0 => (BirInheritedClassMethod)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InheritedClassMethods,
+            ClrEvents = ClrEvents.HasValue ? OptionalField<BirClrEventBacking[]>.Of(ClrEvents.Value.Select(item0 => (BirClrEventBacking)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ClrEvents,
+            ClrEventForwarders = ClrEventForwarders.HasValue ? OptionalField<BirClrEventForwarder[]>.Of(ClrEventForwarders.Value.Select(item0 => (BirClrEventForwarder)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ClrEventForwarders,
+            RichEnum = RichEnum.HasValue ? OptionalField<BirRichEnumDeclaration>.Of((BirRichEnumDeclaration)((BirGraphValue)RichEnum.Value).DeepClone(born)) : RichEnum,
+            StaticCarrier = StaticCarrier.HasValue ? OptionalField<BirStaticCarrier>.Of((BirStaticCarrier)((BirGraphValue)StaticCarrier.Value).DeepClone(born)) : StaticCarrier,
+            CompanionCarrier = CompanionCarrier.HasValue ? OptionalField<BirCompanionCarrier>.Of((BirCompanionCarrier)((BirGraphValue)CompanionCarrier.Value).DeepClone(born)) : CompanionCarrier,
+            CapturedTypeParams = CapturedTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(CapturedTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : CapturedTypeParams,
+            InterfaceSlotRefs = InterfaceSlotRefs.HasValue ? OptionalField<BirInterfaceSlotSet[]>.Of(InterfaceSlotRefs.Value.Select(item0 => (BirInterfaceSlotSet)((BirGraphValue)item0).DeepClone(born)).ToArray()) : InterfaceSlotRefs,
+            Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
+            Entries = Entries.HasValue ? OptionalField<BirEnumEntryDeclaration[]>.Of(Entries.Value.Select(item0 => (BirEnumEntryDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Entries,
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            RetAttrs = RetAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(RetAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : RetAttrs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Base = Base.HasValue ? OptionalField<TypeNode>.Of(rewrite(Base.Value)) : Base,
@@ -13228,6 +14158,14 @@ internal sealed record BirKotlinCompanion : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -13324,6 +14262,14 @@ internal sealed record BirRichEnumEntry : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -13428,6 +14374,15 @@ internal sealed record BirRichEnumDeclaration : BirGraphValue
     {
         Entries = Entries.HasValue ? OptionalField<BirRichEnumEntry[]>.Of(Entries.Value.Select(item0 => (BirRichEnumEntry)((BirGraphValue)item0).DeepClone()).ToArray()) : Entries,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Entries = Entries.HasValue ? OptionalField<BirRichEnumEntry[]>.Of(Entries.Value.Select(item0 => (BirRichEnumEntry)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Entries,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -13570,6 +14525,21 @@ internal sealed record BirInheritedDefaultAccessor : BirGraphValue
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
         SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => CopyType(item0)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            Implementation = Implementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)((BirGraphValue)Implementation.Value).DeepClone(born)) : Implementation,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
+            SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => rewrite(item0)).ToArray()) : Params,
@@ -13749,6 +14719,21 @@ internal sealed record BirInheritedDefaultMethod : BirGraphValue
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
         SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => CopyType(item0)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            Implementation = Implementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)((BirGraphValue)Implementation.Value).DeepClone(born)) : Implementation,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
+            SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => rewrite(item0)).ToArray()) : Params,
@@ -13953,6 +14938,24 @@ internal sealed record BirInheritedClassMethod : BirGraphValue
         RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetKotlinType.Value)) : RetKotlinType,
         SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Params = Params.HasValue ? OptionalField<BirParameter[]>.Of(Params.Value.Select(item0 => (BirParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            InheritedImplementation = InheritedImplementation.HasValue ? OptionalField<BirInheritedImplementation>.Of((BirInheritedImplementation)((BirGraphValue)InheritedImplementation.Value).DeepClone(born)) : InheritedImplementation,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
+            RetKotlinType = RetKotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetKotlinType.Value)) : RetKotlinType,
+            SignatureOverrideDeclarations = SignatureOverrideDeclarations.HasValue ? OptionalField<string[]>.Of(SignatureOverrideDeclarations.Value.Select(item0 => item0).ToArray()) : SignatureOverrideDeclarations,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
@@ -14159,6 +15162,17 @@ internal sealed record BirClrEventBacking : BirGraphValue
         ClassOverrideOwner = ClassOverrideOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(ClassOverrideOwner.Value)) : ClassOverrideOwner,
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            HandlerType = HandlerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(HandlerType.Value)) : HandlerType,
+            ClassOverrideOwner = ClassOverrideOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(ClassOverrideOwner.Value)) : ClassOverrideOwner,
+            DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         HandlerType = HandlerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(HandlerType.Value)) : HandlerType,
@@ -14311,6 +15325,16 @@ internal sealed record BirClrEventForwarder : BirGraphValue
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone()) : Recv,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -14422,6 +15446,14 @@ internal sealed record BirClrEventAccessor : BirGraphNode, IBirStatement
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -14542,6 +15574,18 @@ internal sealed record BirNewSam : BirGraphNode, IBirExpression, IBirAttributeVa
         TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
         SynthClass = SynthClass.HasValue ? OptionalField<BirClassDefinition>.Of((BirClassDefinition)((BirGraphValue)SynthClass.Value).DeepClone()) : SynthClass,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            SamType = SamType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SamType.Value)) : SamType,
+            Captures = Captures.HasValue ? OptionalField<IBirExpression[]>.Of(Captures.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Captures,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            SynthClass = SynthClass.HasValue ? OptionalField<BirClassDefinition>.Of((BirClassDefinition)((BirGraphValue)SynthClass.Value).DeepClone(born)) : SynthClass,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         SamType = SamType.HasValue ? OptionalField<TypeNode>.Of(rewrite(SamType.Value)) : SamType,
@@ -14691,6 +15735,18 @@ internal sealed record BirSamConversion : BirGraphNode, IBirExpression, IBirAttr
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -14830,6 +15886,19 @@ internal sealed record BirCaptureDescriptor : BirGraphValue
         NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGeneric.Value)) : NullableGeneric,
         NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(KotlinType.Value)) : KotlinType,
+            NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGeneric.Value)) : NullableGeneric,
+            NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -15020,6 +16089,22 @@ internal sealed record BirClosureDefinition : BirGraphValue
         NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
         RetNullableFlags = RetNullableFlags.HasValue ? OptionalField<int[]>.Of(RetNullableFlags.Value.Select(item0 => item0).ToArray()) : RetNullableFlags,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Fields = Fields.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Fields.Value.Select(item0 => (BirCaptureDescriptor)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Fields,
+            Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            RetSuspendFnTypePre = RetSuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnTypePre.Value)) : RetSuspendFnTypePre,
+            NullableGenericRet = NullableGenericRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGenericRet.Value)) : NullableGenericRet,
+            RetNullableFlags = RetNullableFlags.HasValue ? OptionalField<int[]>.Of(RetNullableFlags.Value.Select(item0 => item0).ToArray()) : RetNullableFlags,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(rewrite(Ret.Value)) : Ret,
@@ -15244,6 +16329,22 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
         DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)DelegateCtorRef.Value).DeepClone()) : DelegateCtorRef,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            ClosureType = ClosureType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ClosureType.Value)) : ClosureType,
+            Captures = Captures.HasValue ? OptionalField<IBirExpression[]>.Of(Captures.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Captures,
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            SynthClass = SynthClass.HasValue ? OptionalField<BirClosureDefinition>.Of((BirClosureDefinition)((BirGraphValue)SynthClass.Value).DeepClone(born)) : SynthClass,
+            DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+            DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)DelegateCtorRef.Value).DeepClone(born)) : DelegateCtorRef,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         ClosureType = ClosureType.HasValue ? OptionalField<TypeNode>.Of(rewrite(ClosureType.Value)) : ClosureType,
@@ -15501,6 +16602,27 @@ internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttrib
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            CalleeOwner = CalleeOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeOwner.Value)) : CalleeOwner,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)DelegateCtorRef.Value).DeepClone(born)) : DelegateCtorRef,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
@@ -15820,6 +16942,24 @@ internal sealed record BirNewSuspendLambda : BirGraphNode, IBirExpression, IBirA
         _suspendDeclarationTypeArgs = _suspendDeclarationTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : _suspendDeclarationTypeArgs,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Captures = Captures.HasValue ? OptionalField<BirCaptureDescriptor[]>.Of(Captures.Value.Select(item0 => (BirCaptureDescriptor)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Captures,
+            CapValues = CapValues.HasValue ? OptionalField<IBirExpression?[]>.Of(CapValues.Value.Select(item0 => item0 is null ? null : (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : CapValues,
+            Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendRet.Value)) : SuspendRet,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            _suspendDeclarationTypeArgs = _suspendDeclarationTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(_suspendDeclarationTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : _suspendDeclarationTypeArgs,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         SuspendRet = SuspendRet.HasValue ? OptionalField<TypeNode>.Of(rewrite(SuspendRet.Value)) : SuspendRet,
@@ -16063,6 +17203,21 @@ internal sealed record BirEventGet : BirGraphNode, IBirExpression, IBirAttribute
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            Overrides = Overrides.HasValue ? OptionalField<BirOverride[]>.Of(Overrides.Value.Select(item0 => (BirOverride)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Overrides,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -16251,6 +17406,18 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Args,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -16458,6 +17625,27 @@ internal sealed record BirLambdaParameter : BirGraphValue
         NominalParameterSignatureIdentity = NominalParameterSignatureIdentity.HasValue ? OptionalField<TypeNode>.Of(CopyType(NominalParameterSignatureIdentity.Value)) : NominalParameterSignatureIdentity,
         GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => CopyType(item0)).ToArray()) : GenericParameterSignatureBounds,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            Mods = Mods.HasValue ? OptionalField<BirModifiers>.Of((BirModifiers)((BirGraphValue)Mods.Value).DeepClone(born)) : Mods,
+            Default = Default.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Default.Value).DeepClone(born)) : Default,
+            DefaultBir = DefaultBir.HasValue ? OptionalField<BirDefaultBody>.Of((BirDefaultBody)((BirGraphValue)DefaultBir.Value).DeepClone(born)) : DefaultBir,
+            SharedCellType = SharedCellType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SharedCellType.Value)) : SharedCellType,
+            Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
+            FunctionSignatureType = FunctionSignatureType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FunctionSignatureType.Value)) : FunctionSignatureType,
+            KotlinType = KotlinType.HasValue ? OptionalField<TypeNode>.Of(CopyType(KotlinType.Value)) : KotlinType,
+            NullableGeneric = NullableGeneric.HasValue ? OptionalField<TypeNode>.Of(CopyType(NullableGeneric.Value)) : NullableGeneric,
+            NullableFlags = NullableFlags.HasValue ? OptionalField<int[]>.Of(NullableFlags.Value.Select(item0 => item0).ToArray()) : NullableFlags,
+            NominalParameterSignatureIdentity = NominalParameterSignatureIdentity.HasValue ? OptionalField<TypeNode>.Of(CopyType(NominalParameterSignatureIdentity.Value)) : NominalParameterSignatureIdentity,
+            GenericParameterSignatureBounds = GenericParameterSignatureBounds.HasValue ? OptionalField<TypeNode[]>.Of(GenericParameterSignatureBounds.Value.Select(item0 => CopyType(item0)).ToArray()) : GenericParameterSignatureBounds,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -16695,6 +17883,19 @@ internal sealed record BirInlineCapture : BirGraphValue
         SharedCellTypeParams = SharedCellTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(SharedCellTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : SharedCellTypeParams,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            SharedCellType = SharedCellType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SharedCellType.Value)) : SharedCellType,
+            SharedCellTypeParams = SharedCellTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(SharedCellTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : SharedCellTypeParams,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -16877,6 +18078,18 @@ internal sealed record BirInlineLambda : BirGraphNode, IBirExpression, IBirAttri
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
         Result = Result.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Result.Value).DeepClone()) : Result,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Params = Params.HasValue ? OptionalField<BirLambdaParameter[]>.Of(Params.Value.Select(item0 => (BirLambdaParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Params,
+            Captures = Captures.HasValue ? OptionalField<BirInlineCapture[]>.Of(Captures.Value.Select(item0 => (BirInlineCapture)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Captures,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            Result = Result.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Result.Value).DeepClone(born)) : Result,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -17008,6 +18221,16 @@ internal sealed record BirStackAllocation : BirGraphNode, IBirExpression, IBirAt
         Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Count.Value).DeepClone()) : Count,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Count.Value).DeepClone(born)) : Count,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -17139,6 +18362,18 @@ internal sealed record BirStackGet : BirGraphNode, IBirExpression, IBirAttribute
         Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Index.Value).DeepClone()) : Index,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Ptr.Value).DeepClone(born)) : Ptr,
+            Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Len.Value).DeepClone(born)) : Len,
+            Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Index.Value).DeepClone(born)) : Index,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -17293,6 +18528,19 @@ internal sealed record BirStackSet : BirGraphNode, IBirExpression, IBirAttribute
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Ptr.Value).DeepClone(born)) : Ptr,
+            Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Len.Value).DeepClone(born)) : Len,
+            Index = Index.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Index.Value).DeepClone(born)) : Index,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -17441,6 +18689,17 @@ internal sealed record BirStackAsSpan : BirGraphNode, IBirExpression, IBirAttrib
         Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Len.Value).DeepClone()) : Len,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Ptr.Value).DeepClone(born)) : Ptr,
+            Len = Len.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Len.Value).DeepClone(born)) : Len,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -17579,6 +18838,18 @@ internal sealed record BirInlineReceivers : BirGraphValue
         DispatchTypeArgs = DispatchTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : DispatchTypeArgs,
         DispatchOwnerTypeArgs = DispatchOwnerTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : DispatchOwnerTypeArgs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Extension = Extension.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Extension.Value).DeepClone(born)) : Extension,
+            Dispatch = Dispatch.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Dispatch.Value).DeepClone(born)) : Dispatch,
+            DispatchTypeArgs = DispatchTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : DispatchTypeArgs,
+            DispatchOwnerTypeArgs = DispatchOwnerTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchOwnerTypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : DispatchOwnerTypeArgs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         DispatchTypeArgs = DispatchTypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(DispatchTypeArgs.Value.Select(item0 => rewrite(item0)).ToArray()) : DispatchTypeArgs,
@@ -17764,6 +19035,23 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
         CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
         PreparedDefaults = PreparedDefaults.HasValue ? OptionalField<IBirExpression?[]>.Of(PreparedDefaults.Value.Select(item0 => item0 is null ? null : (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : PreparedDefaults,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Callee = Callee.HasValue ? OptionalField<TypeNode>.Of(CopyType(Callee.Value)) : Callee,
+            Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            Recvs = Recvs.HasValue ? OptionalField<BirInlineReceivers>.Of((BirInlineReceivers)((BirGraphValue)Recvs.Value).DeepClone(born)) : Recvs,
+            Args = Args.HasValue ? OptionalField<IBirExpression?[]>.Of(Args.Value.Select(item0 => item0 is null ? null : (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            RetType = RetType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetType.Value)) : RetType,
+            ParamSig = ParamSig.HasValue ? OptionalField<TypeNode[]>.Of(ParamSig.Value.Select(item0 => CopyType(item0)).ToArray()) : ParamSig,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            PreparedDefaults = PreparedDefaults.HasValue ? OptionalField<IBirExpression?[]>.Of(PreparedDefaults.Value.Select(item0 => item0 is null ? null : (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : PreparedDefaults,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Callee = Callee.HasValue ? OptionalField<TypeNode>.Of(rewrite(Callee.Value)) : Callee,
@@ -18100,6 +19388,35 @@ internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirA
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            CalleeOwner = CalleeOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeOwner.Value)) : CalleeOwner,
+            CompanionReceiver = CompanionReceiver.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionReceiver.Value)) : CompanionReceiver,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberMethodTypeParams,
+            MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : MemberSignature,
+            MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberReturnType.Value)) : MemberReturnType,
+            DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)DelegateCtorRef.Value).DeepClone(born)) : DelegateCtorRef,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone(born)) : InvokeRef,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -18418,6 +19735,15 @@ internal sealed record BirByRefOf : BirGraphNode, IBirExpression, IBirAttributeV
     {
         Inner = Inner.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Inner.Value).DeepClone()) : Inner,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Inner = Inner.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Inner.Value).DeepClone(born)) : Inner,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -18528,6 +19854,16 @@ internal sealed record BirByRefLoad : BirGraphNode, IBirExpression, IBirAttribut
         Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Ptr.Value).DeepClone()) : Ptr,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Ptr.Value).DeepClone(born)) : Ptr,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -18661,6 +19997,17 @@ internal sealed record BirByRefStore : BirGraphNode, IBirExpression, IBirAttribu
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Ptr = Ptr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Ptr.Value).DeepClone(born)) : Ptr,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -18785,6 +20132,15 @@ internal sealed record BirReturnExpression : BirGraphNode, IBirExpression, IBirA
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -18880,6 +20236,14 @@ internal sealed record BirUnsupportedExpression : BirGraphNode, IBirExpression, 
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -18974,6 +20338,15 @@ internal sealed record BirPropertyFunction : BirGraphValue
     {
         Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(CopyType(Iface.Value)) : Iface,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(CopyType(Iface.Value)) : Iface,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(rewrite(Iface.Value)) : Iface,
@@ -19082,6 +20455,16 @@ internal sealed record BirConstant : BirGraphNode, IBirExpression, IBirAttribute
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -19201,6 +20584,16 @@ internal sealed record BirObjectEquals : BirGraphNode, IBirExpression, IBirAttri
         Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Lhs.Value).DeepClone()) : Lhs,
         Rhs = Rhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Rhs.Value).DeepClone()) : Rhs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Lhs = Lhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Lhs.Value).DeepClone(born)) : Lhs,
+            Rhs = Rhs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Rhs.Value).DeepClone(born)) : Rhs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -19309,6 +20702,15 @@ internal sealed record BirExpressionStatement : BirGraphNode, IBirStatement
     {
         Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone()) : Expr,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Expr = Expr.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Expr.Value).DeepClone(born)) : Expr,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -19409,6 +20811,15 @@ internal sealed record BirThrowExpression : BirGraphNode, IBirExpression, IBirAt
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -19511,6 +20922,15 @@ internal sealed record BirUnaryOperation : BirGraphNode, IBirExpression, IBirAtt
     {
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -19650,6 +21070,20 @@ internal sealed record BirConditional : BirGraphNode, IBirExpression, IBirAttrib
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone(born)) : Cond,
+            Then = Then.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Then.Value).DeepClone(born)) : Then,
+            Else = Else.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Else.Value).DeepClone(born)) : Else,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -19810,6 +21244,17 @@ internal sealed record BirNullableHasValue : BirGraphNode, IBirExpression, IBirA
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         HasValueRef = HasValueRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)HasValueRef.Value).DeepClone()) : HasValueRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            HasValueRef = HasValueRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)HasValueRef.Value).DeepClone(born)) : HasValueRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -19943,6 +21388,17 @@ internal sealed record BirNullableValue : BirGraphNode, IBirExpression, IBirAttr
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         ValueRef = ValueRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)ValueRef.Value).DeepClone()) : ValueRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+            ValueRef = ValueRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)ValueRef.Value).DeepClone(born)) : ValueRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -20077,6 +21533,16 @@ internal sealed record BirEnumValue : BirGraphNode, IBirExpression, IBirAttribut
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -20211,6 +21677,17 @@ internal sealed record BirEnumValues : BirGraphNode, IBirExpression, IBirAttribu
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)((BirGraphValue)item0).DeepClone()).ToArray()) : Values,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            Values = Values.HasValue ? OptionalField<BirPhysicalEnumValue[]>.Of(Values.Value.Select(item0 => (BirPhysicalEnumValue)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Values,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -20338,6 +21815,16 @@ internal sealed record BirCompanionValue : BirGraphNode, IBirExpression, IBirAtt
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
         CompanionType = CompanionType.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionType.Value)) : CompanionType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            CompanionType = CompanionType.HasValue ? OptionalField<TypeNode>.Of(CopyType(CompanionType.Value)) : CompanionType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -20460,6 +21947,16 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -20579,6 +22076,16 @@ internal sealed record BirNullableNull : BirGraphNode, IBirExpression, IBirAttri
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
         CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone()) : CtorRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone(born)) : CtorRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -20683,6 +22190,14 @@ internal sealed record BirDefaultParameter : BirGraphNode, IBirExpression, IBirA
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -20773,6 +22288,14 @@ internal sealed record BirDefaultReceiver : BirGraphNode, IBirExpression, IBirAt
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -20875,6 +22398,15 @@ internal sealed record BirBindingReference : BirGraphNode, IBirExpression, IBirA
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
@@ -20991,6 +22523,16 @@ internal sealed record BirLocalFunctionReference : BirGraphNode, IBirExpression,
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
         TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
@@ -21151,6 +22693,20 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Stmts = Stmts.HasValue ? OptionalField<IBirStatement[]>.Of(Stmts.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Stmts,
+            Result = Result.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Result.Value).DeepClone(born)) : Result,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -21390,6 +22946,27 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            PropertyFunction = PropertyFunction.HasValue ? OptionalField<BirPropertyFunction>.Of((BirPropertyFunction)((BirGraphValue)PropertyFunction.Value).DeepClone(born)) : PropertyFunction,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberMethodTypeParams = MemberMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberMethodTypeParams,
+            MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : MemberSignature,
+            MemberReturnType = MemberReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberReturnType.Value)) : MemberReturnType,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+            NullablePendingWitnesses = NullablePendingWitnesses.HasValue ? OptionalField<IBirExpression[]>.Of(NullablePendingWitnesses.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : NullablePendingWitnesses,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -21618,6 +23195,15 @@ internal sealed record BirThrow : BirGraphNode, IBirStatement
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -21718,6 +23304,15 @@ internal sealed record BirIf : BirGraphNode, IBirStatement
     {
         Branches = Branches.HasValue ? OptionalField<BirBranch[]>.Of(Branches.Value.Select(item0 => (BirBranch)((BirGraphValue)item0).DeepClone()).ToArray()) : Branches,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Branches = Branches.HasValue ? OptionalField<BirBranch[]>.Of(Branches.Value.Select(item0 => (BirBranch)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Branches,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -21818,6 +23413,15 @@ internal sealed record BirReturn : BirGraphNode, IBirStatement
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -21921,6 +23525,15 @@ internal sealed record BirSetLocal : BirGraphNode, IBirStatement
     {
         Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone()) : Value,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -22119,6 +23732,26 @@ internal sealed record BirSetField : BirGraphNode, IBirStatement
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(CopyType(OwnerType.Value)) : OwnerType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            MemberOwnerTypeParams = MemberOwnerTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(MemberOwnerTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : MemberOwnerTypeParams,
+            MemberType = MemberType.HasValue ? OptionalField<TypeNode>.Of(CopyType(MemberType.Value)) : MemberType,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         OwnerType = OwnerType.HasValue ? OptionalField<TypeNode>.Of(rewrite(OwnerType.Value)) : OwnerType,
@@ -22360,6 +23993,15 @@ internal sealed record BirBlock : BirGraphNode, IBirStatement
     {
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -22463,6 +24105,15 @@ internal sealed record BirBranchIf : BirGraphNode, IBirStatement
     {
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone()) : Cond,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone(born)) : Cond,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -22586,6 +24237,16 @@ internal sealed record BirCatch : BirGraphValue
         ExcType = ExcType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ExcType.Value)) : ExcType,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            ExcType = ExcType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ExcType.Value)) : ExcType,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         ExcType = ExcType.HasValue ? OptionalField<TypeNode>.Of(rewrite(ExcType.Value)) : ExcType,
@@ -22731,6 +24392,19 @@ internal sealed record BirTry : BirGraphNode, IBirStatement
         Finally = Finally.HasValue ? OptionalField<IBirStatement[]>.Of(Finally.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Finally,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            Catches = Catches.HasValue ? OptionalField<BirCatch[]>.Of(Catches.Value.Select(item0 => (BirCatch)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Catches,
+            Finally = Finally.HasValue ? OptionalField<IBirStatement[]>.Of(Finally.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Finally,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -22890,6 +24564,17 @@ internal sealed record BirForArray : BirGraphNode, IBirStatement
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Array = Array.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Array.Value).DeepClone(born)) : Array,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -23057,6 +24742,19 @@ internal sealed record BirForIn : BirGraphNode, IBirStatement
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
         Fallback = Fallback.HasValue ? OptionalField<BirBlock>.Of((BirBlock)((BirGraphValue)Fallback.Value).DeepClone()) : Fallback,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Src = Src.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Src.Value).DeepClone(born)) : Src,
+            SrcType = SrcType.HasValue ? OptionalField<TypeNode>.Of(CopyType(SrcType.Value)) : SrcType,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            Fallback = Fallback.HasValue ? OptionalField<BirBlock>.Of((BirBlock)((BirGraphValue)Fallback.Value).DeepClone(born)) : Fallback,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -23220,6 +24918,17 @@ internal sealed record BirVariable : BirGraphNode, IBirStatement
         Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Init.Value).DeepClone()) : Init,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Init = Init.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Init.Value).DeepClone(born)) : Init,
+            SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -23369,6 +25078,16 @@ internal sealed record BirLocal : BirGraphNode, IBirExpression, IBirAttributeVal
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
@@ -23493,6 +25212,15 @@ internal sealed record BirThis : BirGraphNode, IBirExpression, IBirAttributeValu
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
@@ -23598,6 +25326,15 @@ internal sealed record BirSourcePoint : BirGraphNode, IBirStatement
     {
         Span = Span.HasValue ? OptionalField<BirSourceSpan>.Of((BirSourceSpan)((BirGraphValue)Span.Value).DeepClone()) : Span,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Span = Span.HasValue ? OptionalField<BirSourceSpan>.Of((BirSourceSpan)((BirGraphValue)Span.Value).DeepClone(born)) : Span,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -23695,6 +25432,14 @@ internal sealed record BirBreak : BirGraphNode, IBirStatement
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -23793,6 +25538,14 @@ internal sealed record BirContinue : BirGraphNode, IBirStatement
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -23889,6 +25642,14 @@ internal sealed record BirGoto : BirGraphNode, IBirStatement
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -23981,6 +25742,14 @@ internal sealed record BirLabel : BirGraphNode, IBirStatement
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -24077,6 +25846,15 @@ internal sealed record BirBasicEnumCarrier : BirGraphValue
     {
         Entries = Entries.HasValue ? OptionalField<BirBasicEnumCarrierEntry[]>.Of(Entries.Value.Select(item0 => (BirBasicEnumCarrierEntry)((BirGraphValue)item0).DeepClone()).ToArray()) : Entries,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Entries = Entries.HasValue ? OptionalField<BirBasicEnumCarrierEntry[]>.Of(Entries.Value.Select(item0 => (BirBasicEnumCarrierEntry)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Entries,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -24176,6 +25954,14 @@ internal sealed record BirBasicEnumCarrierEntry : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -24273,6 +26059,14 @@ internal sealed record BirSourceSpan : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -24394,6 +26188,16 @@ internal sealed record BirWhile : BirGraphNode, IBirStatement
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone()) : Cond,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone(born)) : Cond,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -24538,6 +26342,17 @@ internal sealed record BirFor : BirGraphNode, IBirStatement
         To = To.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)To.Value).DeepClone()) : To,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            From = From.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)From.Value).DeepClone(born)) : From,
+            To = To.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)To.Value).DeepClone(born)) : To,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -24708,6 +26523,18 @@ internal sealed record BirForRange : BirGraphNode, IBirStatement
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
         RangeType = RangeType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RangeType.Value)) : RangeType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Range = Range.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Range.Value).DeepClone(born)) : Range,
+            AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessOwner.Value)) : AccessOwner,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            RangeType = RangeType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RangeType.Value)) : RangeType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         AccessOwner = AccessOwner.HasValue ? OptionalField<TypeNode>.Of(rewrite(AccessOwner.Value)) : AccessOwner,
@@ -24861,6 +26688,16 @@ internal sealed record BirConvert : BirGraphNode, IBirExpression, IBirAttributeV
         To = To.HasValue ? OptionalField<TypeNode>.Of(CopyType(To.Value)) : To,
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            To = To.HasValue ? OptionalField<TypeNode>.Of(CopyType(To.Value)) : To,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         To = To.HasValue ? OptionalField<TypeNode>.Of(rewrite(To.Value)) : To,
@@ -25004,6 +26841,19 @@ internal sealed record BirNewList : BirGraphNode, IBirExpression, IBirAttributeV
         AddRef = AddRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AddRef.Value).DeepClone()) : AddRef,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Elems = Elems.HasValue ? OptionalField<IBirExpression[]>.Of(Elems.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Elems,
+            CtorRef = CtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CtorRef.Value).DeepClone(born)) : CtorRef,
+            AddRef = AddRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AddRef.Value).DeepClone(born)) : AddRef,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -25186,6 +27036,21 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            MemberSignature = MemberSignature.HasValue ? OptionalField<TypeNode[]>.Of(MemberSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : MemberSignature,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -25491,6 +27356,33 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(CopyType(Iface.Value)) : Iface,
+            RecvType = RecvType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RecvType.Value)) : RecvType,
+            CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            NullablePendingWitnesses = NullablePendingWitnesses.HasValue ? OptionalField<IBirExpression[]>.Of(NullablePendingWitnesses.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : NullablePendingWitnesses,
+            FunctionCallSignature = FunctionCallSignature.HasValue ? OptionalField<TypeNode[]>.Of(FunctionCallSignature.Value.Select(item0 => CopyType(item0)).ToArray()) : FunctionCallSignature,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Iface = Iface.HasValue ? OptionalField<TypeNode>.Of(rewrite(Iface.Value)) : Iface,
@@ -25865,6 +27757,25 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -26159,6 +28070,26 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -26382,6 +28313,15 @@ internal sealed record BirClrStaticField : BirGraphNode, IBirExpression, IBirAtt
     {
         FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone()) : FieldRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            FieldRef = FieldRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)FieldRef.Value).DeepClone(born)) : FieldRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -26516,6 +28456,19 @@ internal sealed record BirEventAccessorBody : BirGraphNode, IBirStatement
         RemoveRef = RemoveRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)RemoveRef.Value).DeepClone()) : RemoveRef,
         CompareExchangeRef = CompareExchangeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CompareExchangeRef.Value).DeepClone()) : CompareExchangeRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
+            InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone(born)) : InvokeRef,
+            CombineRef = CombineRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CombineRef.Value).DeepClone(born)) : CombineRef,
+            RemoveRef = RemoveRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)RemoveRef.Value).DeepClone(born)) : RemoveRef,
+            CompareExchangeRef = CompareExchangeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CompareExchangeRef.Value).DeepClone(born)) : CompareExchangeRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DelegateType.Value)) : DelegateType,
@@ -26740,6 +28693,24 @@ internal sealed record BirEventAdd : BirGraphNode, IBirExpression, IBirAttribute
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Handler = Handler.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Handler.Value).DeepClone(born)) : Handler,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -27034,6 +29005,24 @@ internal sealed record BirEventRemove : BirGraphNode, IBirExpression, IBirAttrib
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Handler = Handler.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Handler.Value).DeepClone(born)) : Handler,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            DelegateType = DelegateType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DelegateType.Value)) : DelegateType,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -27370,6 +29359,30 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -27758,6 +29771,30 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -28121,6 +30158,26 @@ internal sealed record BirPropertyGet : BirGraphNode, IBirExpression, IBirAttrib
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -28475,6 +30532,26 @@ internal sealed record BirPropertySet : BirGraphNode, IBirExpression, IBirAttrib
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Value = Value.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Value.Value).DeepClone(born)) : Value,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+            _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
+            _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -28754,6 +30831,19 @@ internal sealed record BirDelegateInvoke : BirGraphNode, IBirExpression, IBirAtt
         InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone()) : InvokeRef,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            InvokeRef = InvokeRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)InvokeRef.Value).DeepClone(born)) : InvokeRef,
+            Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(CopyType(Sty.Value)) : Sty,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
@@ -28907,6 +30997,17 @@ internal sealed record BirEnumBits : BirGraphNode, IBirExpression, IBirAttribute
         Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Underlying = Underlying.HasValue ? OptionalField<TypeNode>.Of(CopyType(Underlying.Value)) : Underlying,
+            E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
@@ -29094,6 +31195,22 @@ internal sealed record BirForEach : BirGraphNode, IBirStatement, IBirExpression,
         CurrentErasedRef = CurrentErasedRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CurrentErasedRef.Value).DeepClone()) : CurrentErasedRef,
         MoveNextRef = MoveNextRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MoveNextRef.Value).DeepClone()) : MoveNextRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(CopyType(Elem.Value)) : Elem,
+            Src = Src.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Src.Value).DeepClone(born)) : Src,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+            EnumerableGetRef = EnumerableGetRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)EnumerableGetRef.Value).DeepClone(born)) : EnumerableGetRef,
+            EnumerableGetErasedRef = EnumerableGetErasedRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)EnumerableGetErasedRef.Value).DeepClone(born)) : EnumerableGetErasedRef,
+            CurrentRef = CurrentRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CurrentRef.Value).DeepClone(born)) : CurrentRef,
+            CurrentErasedRef = CurrentErasedRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)CurrentErasedRef.Value).DeepClone(born)) : CurrentErasedRef,
+            MoveNextRef = MoveNextRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MoveNextRef.Value).DeepClone(born)) : MoveNextRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Elem = Elem.HasValue ? OptionalField<TypeNode>.Of(rewrite(Elem.Value)) : Elem,
@@ -29366,6 +31483,28 @@ internal sealed record BirBoundClrDelegate : BirGraphNode, IBirExpression, IBirA
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            ClrType = ClrType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ClrType.Value)) : ClrType,
+            Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)DelegateCtorRef.Value).DeepClone(born)) : DelegateCtorRef,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
@@ -29702,6 +31841,28 @@ internal sealed record BirClrStaticDelegate : BirGraphNode, IBirExpression, IBir
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(CopyType(FuncType.Value)) : FuncType,
+            ClrType = ClrType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ClrType.Value)) : ClrType,
+            TypeArgs = TypeArgs.HasValue ? OptionalField<TypeNode[]>.Of(TypeArgs.Value.Select(item0 => CopyType(item0)).ToArray()) : TypeArgs,
+            DelegateCtorRef = DelegateCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)DelegateCtorRef.Value).DeepClone(born)) : DelegateCtorRef,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+            AccessorOwner = AccessorOwner.HasValue ? OptionalField<TypeNode>.Of(CopyType(AccessorOwner.Value)) : AccessorOwner,
+            Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            Sig = Sig.HasValue ? OptionalField<TypeNode[]>.Of(Sig.Value.Select(item0 => CopyType(item0)).ToArray()) : Sig,
+            CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
+            ArgTypes = ArgTypes.HasValue ? OptionalField<TypeNode[]>.Of(ArgTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ArgTypes,
+            _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            DotktDelegateSlot = DotktDelegateSlot.HasValue ? OptionalField<TypeNode>.Of(CopyType(DotktDelegateSlot.Value)) : DotktDelegateSlot,
+            ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
+            ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         FuncType = FuncType.HasValue ? OptionalField<TypeNode>.Of(rewrite(FuncType.Value)) : FuncType,
@@ -29951,6 +32112,16 @@ internal sealed record BirRepeat : BirGraphNode, IBirStatement, IBirExpression, 
         Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Count.Value).DeepClone()) : Count,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Count = Count.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Count.Value).DeepClone(born)) : Count,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -30094,6 +32265,18 @@ internal sealed record BirPInvoke : BirGraphValue
         PseudoFields = PseudoFields.HasValue ? OptionalField<string[]>.Of(PseudoFields.Value.Select(item0 => item0).ToArray()) : PseudoFields,
         AttributeCtorRef = AttributeCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AttributeCtorRef.Value).DeepClone()) : AttributeCtorRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            CallingConventionType = CallingConventionType.HasValue ? OptionalField<TypeNode>.Of(CopyType(CallingConventionType.Value)) : CallingConventionType,
+            CharSetType = CharSetType.HasValue ? OptionalField<TypeNode>.Of(CopyType(CharSetType.Value)) : CharSetType,
+            PseudoFields = PseudoFields.HasValue ? OptionalField<string[]>.Of(PseudoFields.Value.Select(item0 => item0).ToArray()) : PseudoFields,
+            AttributeCtorRef = AttributeCtorRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)AttributeCtorRef.Value).DeepClone(born)) : AttributeCtorRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         CallingConventionType = CallingConventionType.HasValue ? OptionalField<TypeNode>.Of(rewrite(CallingConventionType.Value)) : CallingConventionType,
@@ -30276,6 +32459,19 @@ internal sealed record BirMethodImpl : BirGraphValue
         TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : TypeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
+            Params = Params.HasValue ? OptionalField<TypeNode[]>.Of(Params.Value.Select(item0 => CopyType(item0)).ToArray()) : Params,
+            Ret = Ret.HasValue ? OptionalField<TypeNode>.Of(CopyType(Ret.Value)) : Ret,
+            TypeParams = TypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(TypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : TypeParams,
+            MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
@@ -30435,6 +32631,16 @@ internal sealed record BirInterfaceSlotSet : BirGraphValue
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
         Slots = Slots.HasValue ? OptionalField<BirMemberReference[]>.Of(Slots.Value.Select(item0 => (BirMemberReference)((BirGraphValue)item0).DeepClone()).ToArray()) : Slots,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(CopyType(Owner.Value)) : Owner,
+            Slots = Slots.HasValue ? OptionalField<BirMemberReference[]>.Of(Slots.Value.Select(item0 => (BirMemberReference)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Slots,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Owner = Owner.HasValue ? OptionalField<TypeNode>.Of(rewrite(Owner.Value)) : Owner,
@@ -30559,6 +32765,16 @@ internal sealed record BirBranch : BirGraphValue
         Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone()) : Cond,
         Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone()).ToArray()) : Body,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Cond = Cond.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Cond.Value).DeepClone(born)) : Cond,
+            Body = Body.HasValue ? OptionalField<IBirStatement[]>.Of(Body.Value.Select(item0 => (IBirStatement)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Body,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -30665,6 +32881,14 @@ internal sealed record BirPhysicalEnumValue : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
     };
@@ -30779,6 +33003,17 @@ internal sealed record BirTypeParameter : BirGraphValue
         ErasedInnerConstraints = ErasedInnerConstraints.HasValue ? OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => CopyType(item0)).ToArray()) : ErasedInnerConstraints,
         SpecialConstraints = SpecialConstraints.HasValue ? OptionalField<string[]>.Of(SpecialConstraints.Value.Select(item0 => item0).ToArray()) : SpecialConstraints,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            Constraints = Constraints.HasValue ? OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => CopyType(item0)).ToArray()) : Constraints,
+            ErasedInnerConstraints = ErasedInnerConstraints.HasValue ? OptionalField<TypeNode[]>.Of(ErasedInnerConstraints.Value.Select(item0 => CopyType(item0)).ToArray()) : ErasedInnerConstraints,
+            SpecialConstraints = SpecialConstraints.HasValue ? OptionalField<string[]>.Of(SpecialConstraints.Value.Select(item0 => item0).ToArray()) : SpecialConstraints,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Constraints = Constraints.HasValue ? OptionalField<TypeNode[]>.Of(Constraints.Value.Select(item0 => rewrite(item0)).ToArray()) : Constraints,
@@ -30936,6 +33171,17 @@ internal sealed record BirMemberReference : BirGraphValue
         ParameterTypes = ParameterTypes.HasValue ? OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ParameterTypes,
         ReturnType = ReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ReturnType.Value)) : ReturnType,
     };
+    public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
+    {
+        var result = this with
+        {
+            DeclaringType = DeclaringType.HasValue ? OptionalField<TypeNode>.Of(CopyType(DeclaringType.Value)) : DeclaringType,
+            ParameterTypes = ParameterTypes.HasValue ? OptionalField<TypeNode[]>.Of(ParameterTypes.Value.Select(item0 => CopyType(item0)).ToArray()) : ParameterTypes,
+            ReturnType = ReturnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(ReturnType.Value)) : ReturnType,
+        };
+        born(this, result);
+        return result;
+    }
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         DeclaringType = DeclaringType.HasValue ? OptionalField<TypeNode>.Of(rewrite(DeclaringType.Value)) : DeclaringType,
