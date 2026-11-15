@@ -148,11 +148,11 @@ static partial class CirDeclarationProjection
                     : NullableGenericErasure.RetSuspendFnPre] = suspendType.ToJsonString();
             var owning = BirGraphDom.ReadNode(expression);
             var statement = owning is IBirStatement actualStatement ? actualStatement
-                : (IBirStatement)new BirExpressionStatement { Expr = (IBirExpression)owning };
-            var source = new BirFileDeclaration { Methods = new[] {
+                : (IBirStatement)new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of((IBirExpression)owning) };
+            var sourceFile = new BirFileDeclaration { Methods = new[] {
                 new BirFunctionDeclaration { Name = "probe", Body = new[] { statement } },
             } };
-            BirTypeLowering.Apply(source, new BirTypeLowering.PhysicalTypeContext(false,
+            BirTypeLowering.Apply(sourceFile, new BirTypeLowering.PhysicalTypeContext(false,
                 new Dictionary<string, string> { ["kotlin.Nothing"] = "object" }));
             var lowered = owning.ToDom();
             var node = ReadCirNode(lowered);
