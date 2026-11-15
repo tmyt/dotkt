@@ -20,7 +20,7 @@ static partial class ClrMemberResolution
         {
             if (node is IBirExecutablePayload) return node;
             node.VisitOwnChildSlots((_, role, slot) => {
-                if (role != BirGenericFrameRole.FrozenSourceFact) slot.Value = Walk(slot.Value);
+                if (role != BirGenericFrameRole.FrozenSourceFact) slot.Replace(Walk(slot.Value));
             });
             // Explicit-null is an already-present descriptor, not an absent
             // selection. Preserve this distinction at both physical clocks.
