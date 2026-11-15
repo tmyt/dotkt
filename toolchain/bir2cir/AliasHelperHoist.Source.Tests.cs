@@ -113,9 +113,7 @@ static partial class AliasHelperHoist
         file.Types = file.Types.OrEmpty().Concat(new IBirTypeDeclaration[] { contract }).ToArray();
         transitions.AdmitMaterializedTypes(file, new IBirTypeDeclaration[] { contract });
         transitions.ValidateSourceContinuations(new[] { file });
-        var owners = transitions.LogicalOwners(0).ToArray();
-        if (owners.Length != 2 || !ReferenceEquals(owners[0], alias)
-            || !ReferenceEquals(owners[1], kept)
+        if (!transitions.IsReplacedLogicalOwner(alias) || transitions.IsReplacedLogicalOwner(kept)
             || !transitions.TryOwner(file, 1, kept, out var position, out var retired) || position != 2 || retired
             || !transitions.TryOwner(file, 0, alias, out _, out retired) || !retired
             || !ReferenceEquals(original[0], alias) || !ReferenceEquals(continuing[2], kept))
@@ -201,7 +199,10 @@ static partial class AliasHelperHoist
         policy.CompleteSourceContinuation(new[] { file }, transitions, ledger);
         UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, new[] { file }, transitions, ledger);
         var logical = AliasDeclarationTransitions.ReadLogicalHeaderFacts(first);
-        if (!ReferenceEquals(transitions.LogicalOwners(0, ledger).First(), first)
+        if (!transitions.TryOwner(file, 0, first, out var aliasPosition, out var aliasRetired)
+            || aliasPosition != -1 || !aliasRetired
+            || !transitions.TryOwner(file, 2, kept, out var keptPosition, out var keptRetired)
+            || keptPosition != 1 || keptRetired || ledger.RetiredTypes.Any()
             || ReferenceEquals(first, host) || logical.KotlinSupertypesPre.Value.NullableFrame.SourceArity != 1
             || logical.TypeParams.Value[0].Variance.Value != "out"
             || retiredFacts.SourceMethod != null || keptFacts.SourceMethod != null

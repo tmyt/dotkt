@@ -274,22 +274,6 @@ sealed class SourceDeclarationProjection
     internal IEnumerable<IBirTypeDeclaration> RetiredTypes => isSealed && !released
         ? types.Values.SelectMany(row => row.Retired) : throw Mismatch();
 
-    internal IEnumerable<IBirTypeDeclaration> LogicalOwners(int fileIndex)
-    {
-        RequirePhase();
-        if (fileIndex < 0 || fileIndex >= roots.Length || !types.TryGetValue(roots[fileIndex], out var row)) throw Mismatch();
-        foreach (var owner in row.Original)
-        {
-            RequireOccurrence((BirGraphValue)owner);
-            if (row.Retired.Contains(owner))
-            {
-                if (!IsRetired((BirGraphValue)owner)) throw Mismatch();
-            }
-            else if (!row.Continuing.Any(current => ReferenceEquals(current, owner))) throw Mismatch();
-            yield return owner;
-        }
-    }
-
     internal void Release()
     {
         RequirePhase();

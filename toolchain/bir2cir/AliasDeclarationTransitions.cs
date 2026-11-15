@@ -96,32 +96,6 @@ sealed partial class AliasDeclarationTransitions
         return true;
     }
 
-    internal IEnumerable<IBirTypeDeclaration> LogicalOwners(int fileIndex,
-        SourceDeclarationProjection declarations = null)
-    {
-        if (fileIndex < 0 || fileIndex >= files.Count) throw Mismatch();
-        var entry = files[fileIndex];
-        if (!Same(entry.File.Types.OrEmpty(), entry.Continuing)) throw Mismatch();
-        foreach (var source in entry.Original)
-        {
-            // A replacement retains only its original logical header facts.
-            // Returning that SAME source is not physical field/method admission.
-            if (entry.Replacements.Any(row => ReferenceEquals(row.Source, source))) yield return source;
-            else if (retiredPhysicalOwners.Contains(source))
-            {
-                if (declarations == null || !declarations.IsRetired((BirGraphValue)source)) throw Mismatch();
-                yield return source;
-            }
-            else
-            {
-                var position = Array.FindIndex(entry.Continuing, value => ReferenceEquals(value, source));
-                if (position < 0) throw Mismatch();
-                declarations?.RequireOccurrence((BirGraphValue)source);
-                yield return source;
-            }
-        }
-    }
-
     internal bool HasTransitions => files.Count != 0;
 
     // A removed logical alias is an explicit producer disposition, not an

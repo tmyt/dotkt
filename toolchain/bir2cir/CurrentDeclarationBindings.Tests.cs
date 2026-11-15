@@ -32,7 +32,9 @@ static class CurrentDeclarationBindingsTests
         ledger.RequireOccurrence(constructor); ledger.RequireOccurrence(donor);
         Require(ReferenceEquals(ctorBinding.Source, constructor) && ReferenceEquals(donorBinding.Source, donor)
             && ReferenceEquals(methodBinding.Source, method) && !ledger.IsRetired(method)
-            && ReferenceEquals(ledger.LogicalOwners(0).Single(), owner), "ID-less contexts lost their exact actual occurrence");
+            && ledger.TryOwner(root, 0, owner, out var ownerPosition, out var ownerRetired)
+            && ownerPosition == 0 && !ownerRetired && !ledger.RetiredTypes.Any(),
+            "ID-less contexts lost their exact actual occurrence");
         method.Name = "currentName";
         Require(((BirFunctionDeclaration)methodBinding.Source).Name.Value == "currentName"
             && ReferenceEquals(bindings.SourceLocalMethods["Owner\0run"][0], methodBinding),
@@ -68,8 +70,42 @@ static class CurrentDeclarationBindingsTests
         repeatedLedger.SealSourceContinuations();
         repeated.CompleteSourceCustody(repeatedLedger);
         repeatedLedger.Release();
+        SharedMetadataOccurrenceBoundary();
         RetiredPropertyOwners();
         Console.WriteLine("[current declaration bindings] self-test OK (same-record seal, ID-less contexts, exact admission, custody and release)");
+
+        static void SharedMetadataOccurrenceBoundary()
+        {
+            foreach (var capture in new[] { false, true })
+            {
+                var attribute = new BirAttribute { Attr = new TypeNode.Fqn("System.ObsoleteAttribute") };
+                var first = new BirParameter { Name = "first", Type = new TypeNode.Fqn("System.String"), Attrs = new[] { attribute } };
+                var second = new BirParameter { Name = "second", Type = new TypeNode.Fqn("System.String"), Attrs = new[] { attribute } };
+                var method = new BirFunctionDeclaration { Name = "sharedMetadata", Params = new[] { first, second },
+                    Body = Array.Empty<IBirStatement>() };
+                var file = new BirFileDeclaration { FileClass = "SharedMetadata", Methods = new[] { method } };
+                var bindings = new CurrentDeclarationBindings(new[] { file });
+                var ledger = new SourceDeclarationProjection(new[] { file }, bindings);
+                Require(ReferenceEquals(first.Attrs.Value[0], second.Attrs.Value[0])
+                    && !bindings.TryGetCapturedSource(attribute, out _), "pure shared metadata was automatically captured");
+                if (capture)
+                {
+                    var captured = bindings.GetSource(attribute);
+                    Reject(ledger.SealSourceContinuations);
+                    Require(!bindings.IsBound && ReferenceEquals(captured.Source, attribute),
+                        "a duplicate captured metadata occurrence consumed its source authority");
+                }
+                else
+                {
+                    ledger.SealSourceContinuations();
+                    ledger.RequireOccurrence(first);
+                    ledger.RequireOccurrence(second);
+                    Reject(() => ledger.RequireOccurrence(attribute));
+                    bindings.CompleteSourceCustody(ledger);
+                    ledger.Release();
+                }
+            }
+        }
 
         static void RetiredPropertyOwners()
         {
