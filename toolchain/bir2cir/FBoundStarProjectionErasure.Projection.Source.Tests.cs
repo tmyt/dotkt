@@ -144,11 +144,11 @@ static partial class FBoundStarProjectionErasure
             RewriteCarrierBodiesSource(new[] { file }, context, Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null);
             Require(parameter.Type.Value == projected && method.Ret.Value == projected && field.Type.Value == projected,
                 "owning declaration projection disagreed with source alias value policy");
+            RewriteLateTypesSource(new[] { file }, context);
             var physical = file.ToDom(context.Bindings.ObserveProjection);
             context.Bindings.BindProjected();
             context.Values.BindDomDeclarations(new System.Text.Json.Nodes.JsonNode[] { physical });
             BindRealizationContinuation(context);
-            RewriteLateTypes(new[] { physical }, new Dictionary<string, string>(), refs);
             Require(TypeJson.Read(physical["methods"][0]["params"][0]["type"]) == projected
                 && TypeJson.Read(physical["methods"][0]["ret"]) == projected
                 && Str(physical["methods"][0]["params"][0]["kotlinType"]) == TypeNode.ToJson(sourceType)
