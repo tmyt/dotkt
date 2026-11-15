@@ -1287,11 +1287,8 @@ static partial class FBoundStarProjectionErasure
         InnerFactoryArgumentsKey,
     };
 
-    // Owners moved before the strict address handoff still see its transport
-    // anchors. Their semantic domain excludes precisely what this cleanup
-    // consumes afterwards; do not turn these anchors into extra use-site types.
-    internal static bool IsTransientMarker(string field) => TransientMarkerKeys.Contains(field);
-
+    // These scalar transport facts survive until the strict address handoff.
+    // Generated graph/type visitors do not expose them as semantic child slots.
     static void RemoveTransientMarkers(JsonNode node)
     {
         switch (node)

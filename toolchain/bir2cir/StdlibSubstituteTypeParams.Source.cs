@@ -11,7 +11,6 @@ static partial class StdlibSubstituteTypeParams
             if (node is null or IBirExecutablePayload) return;
             var runtimeInterface = node is IBirTypeDeclaration owner && owner.Kind.OrDefault() == "interface";
             node.VisitOwnChildSlots((field, _, slot) => {
-                if (FBoundStarProjectionErasure.IsTransientMarker(field)) return;
                 // Captured enclosing parameters are not the declaration's own
                 // typeParams vector. The old owner intentionally leaves them.
                 if (field == "typeParams" && slot.Value is BirTypeParameter parameter)

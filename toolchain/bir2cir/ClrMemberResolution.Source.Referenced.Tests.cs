@@ -10,7 +10,7 @@ static partial class ClrMemberResolution
         { if (!value) throw new InvalidOperationException("Source final referenced calls: " + reason); }
         var previousReferences = _refs; var previousLocals = _localTypes;
         var previousCanonical = _externalCanonicalTypes; var previousIds = _localDeclarationIds;
-        var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var refs = ReferenceMetadataIndex.ReferencedSourceTestIndex(out var selectedPropertyId);
         var text = new TypeNode.Fqn("System.String"); var obj = new TypeNode.Fqn("System.Object");
         var integer = new TypeNode.Fqn("System.Int32"); var unit = new TypeNode.Fqn("void");
         // Incoming descriptors can use primitive tokens. The selected metadata
@@ -125,6 +125,54 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(methods[0].Body.Value, body) && ReferenceEquals(methods[0].InlineBir.Value, saved)
                 && ReferenceEquals(call.Args.Value, callArguments),
                 "local/source-bound priority, constrained ID guard or continuing graph identity changed");
+
+            var constrainedReceiver = new BirLocal { Name = "subject", Sty = new TypeNode.Tv("method", 0) };
+            var constrainedIndex = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) };
+            var selectedConstrained = new BirConstrainedCall { Iface = interfaceType,
+                RecvType = new TypeNode.Tv("method", 0), Recv = OptionalField<IBirExpression>.Of(constrainedReceiver),
+                Method = "element", Prop = "get", DeclarationId = selectedPropertyId,
+                Sig = new TypeNode[] { integer }, ArgTypes = new TypeNode[] { integer }, Args = new IBirExpression[] { constrainedIndex } };
+            var selectedReceiver = new BirLocal { Name = "list", Sty = listType };
+            var selectedIndex = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) };
+            var inheritedSelection = new BirCallInstance { OwnerType = listType,
+                Recv = OptionalField<IBirExpression>.Of(selectedReceiver), Method = "element", DeclarationId = selectedPropertyId,
+                Sig = new TypeNode[] { integer }, Args = new IBirExpression[] { selectedIndex } };
+            BirCallInstance Property(bool super) => new() { OwnerType = interfaceType,
+                Recv = OptionalField<IBirExpression>.Of(new BirLocal { Name = "list", Sty = listType }),
+                Method = "element", Prop = "get", Super = super, Virtual = false,
+                Sig = new TypeNode[] { integer }, Args = new IBirExpression[] {
+                    new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) } } };
+            var ordinaryProperty = Property(false);
+            var superProperty = Property(true);
+            var selectedRoot = File(selectedConstrained, inheritedSelection, ordinaryProperty, superProperty);
+            DeclarationIdentityBinding.BindReferenced(selectedRoot, refs, ids, preserveForScalarResolution: true);
+            Require(selectedConstrained.Method.Value == "get_Item" && !selectedConstrained.Prop.IsPresent
+                && !selectedConstrained.PropertyName.IsPresent && !selectedConstrained.PropertyAccessor.IsPresent
+                && selectedConstrained.DeclarationId.Value == selectedPropertyId
+                && inheritedSelection.DeclarationId.Value == selectedPropertyId,
+                "selected constrained property retained its semantic role or lost its scalar-resolution identity");
+            ResolveReferencedStaticCalls(selectedRoot, refs, locals, canonical, ids, "Selected.kt");
+            Require(selectedConstrained.MemberRef.Value.Name.Value == "get_Item"
+                && selectedConstrained.MemberRef.Value.DeclaringType.Value == interfaceType
+                && selectedConstrained.MemberRef.Value.ReturnType.Value == new TypeNode.Tv("type", 0)
+                && selectedConstrained.ResolvedMemberReturn.Value == new TypeNode.Tv("type", 0)
+                && selectedConstrained.DotktDeclarationIdentityBound.Value && !selectedConstrained.DeclarationId.IsPresent
+                && !selectedConstrained.ArgTypes.IsPresent && !selectedConstrained.PropertyName.IsPresent
+                && ReferenceEquals(selectedConstrained.Recv.Value, constrainedReceiver)
+                && ReferenceEquals(selectedConstrained.Args.Value[0], constrainedIndex),
+                "constrained identity selection reinterpreted a physical getter name, changed its frame or copied an operand");
+            Require(inheritedSelection.MemberRef.Value.DeclaringType.Value == interfaceType
+                && inheritedSelection.MemberRef.Value.ReturnType.Value == new TypeNode.Tv("type", 0)
+                && inheritedSelection.DotktDeclarationIdentityBound.Value && !inheritedSelection.DeclarationId.IsPresent
+                && ReferenceEquals(inheritedSelection.Recv.Value, selectedReceiver)
+                && ReferenceEquals(inheritedSelection.Args.Value[0], selectedIndex),
+                "selected interface MethodDef was not projected through the constructed implementing receiver");
+            foreach (var property in new[] { ordinaryProperty, superProperty })
+                Require(property.MemberRef.Value.Name.Value == "get_Item" && property.Method.Value == "get_Item"
+                    && property.PropertyName.Value == "element" && property.PropertyAccessor.Value == "get"
+                    && !property.Prop.IsPresent && property.Virtual.Value == !property.Super.Value
+                    && property.MemberRef.Value.DeclaringType.Value == interfaceType,
+                    "source property association changed its selected physical accessor or super dispatch");
             ResolveReferencedStaticCalls(File(sibling), refs, locals, canonical, ids, "Sibling.kt");
             Require(!sibling.DotktKotlinSigId.IsPresent && !KotlinSigSnapshots.ContainsKey(siblingId),
                 "a sibling file lost its own snapshot lifetime");
@@ -136,5 +184,28 @@ static partial class ClrMemberResolution
             _refs = previousReferences; _localTypes = previousLocals;
             _externalCanonicalTypes = previousCanonical; _localDeclarationIds = previousIds;
         }
+    }
+}
+
+sealed partial class ReferenceMetadataIndex
+{
+    internal static ReferenceMetadataIndex ReferencedSourceTestIndex(out string selectedPropertyId)
+    {
+        var index = Build(new[] { typeof(object).Assembly.Location });
+        // Like the physical-parameter facts tests, attach a trusted source
+        // association to an ACTUAL parsed reference row. Keep its exact token,
+        // physical owner, signature, staticness and virtual declaration facts.
+        var getter = typeof(IList<>).GetProperty("Item")!.GetMethod!;
+        var source = index._membersByOwner["System.Collections.Generic.IList"]
+            .Single(binding => binding.MetadataToken == getter.MetadataToken);
+        selectedPropertyId = "selected-reference-property-test";
+        var selected = source with { DeclarationId = selectedPropertyId,
+            DeclarationSourceName = "element", SourcePropertyName = "element", AccessorKind = "get" };
+        index._declarationById.Add(selectedPropertyId, selected);
+        index._declarationFamilyCounts.Add(DeclarationFamilyOf(selected), 1);
+        foreach (var rows in new[] { index._membersByOwner["System.Collections.Generic.IList"],
+            index._membersByPhysicalOwner[getter.DeclaringType!.FullName!] })
+            rows[rows.FindIndex(binding => ReferenceEquals(binding, source))] = selected;
+        return index;
     }
 }

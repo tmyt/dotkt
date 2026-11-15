@@ -15,11 +15,8 @@ static partial class ReferenceNullableStrip
             // Generated structural fields omit encoded source leaves, but
             // include structured signatures even when their frame is frozen
             // or foreign. That is the former whole-tree strip's exact domain.
-            node.RewriteOwnFieldsInPlace((field, _, type) =>
-                    FBoundStarProjectionErasure.IsTransientMarker(field) ? type : Strip(type, isValue),
-                (field, _, slot) => {
-                    if (!FBoundStarProjectionErasure.IsTransientMarker(field)) Walk(slot.Value);
-                });
+            node.RewriteOwnFieldsInPlace((_, _, type) => Strip(type, isValue),
+                (_, _, slot) => Walk(slot.Value));
         }
         Walk(root);
     }
