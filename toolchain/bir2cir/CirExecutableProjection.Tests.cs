@@ -169,24 +169,32 @@ static partial class CirDeclarationProjection
         foreach (var local in new[] { false, true })
         {
             var accessor = add ? "add_ProcessExit" : "remove_ProcessExit";
-            var operation = new JsonObject {
-                ["k"] = add ? "clrEventAdd" : "clrEventRemove", ["type"] = TypeJson.Fqn("System.AppDomain"),
-                ["event"] = "ProcessExit", ["static"] = false, ["recv"] = Local("receiver"),
-                ["handler"] = Local("handler"), ["handlerExact"] = true,
+            var receiver = new BirLocal { Name = "receiver" };
+            var handler = new BirLocal { Name = "handler" };
+            BirGraphValue typedOperation = add ? new BirEventAdd {
+                Type = new TypeNode.Fqn("System.AppDomain"), Event = "ProcessExit", Static = false,
+                Recv = OptionalField<IBirExpression>.Of(receiver), Handler = OptionalField<IBirExpression>.Of(handler), HandlerExact = true,
+                LocalAccessor = local ? OptionalField<bool>.Of(true) : default,
+                Accessor = local ? OptionalField<string>.Of(accessor) : default,
+                AccessorOwner = local ? OptionalField<TypeNode>.Of(new TypeNode.Fqn("LocalOwner")) : default,
+                DelegateType = local ? OptionalField<TypeNode>.Of(new TypeNode.Fqn("System.EventHandler")) : default,
+                Sig = local ? OptionalField<TypeNode[]>.Of(new TypeNode[] { new TypeNode.Fqn("System.EventHandler") }) : default,
+                Dispatch = local ? OptionalField<string>.Of("callvirt") : default,
+                DeclarationId = local ? OptionalField<string>.Of("selected-event-accessor") : default,
+                MemberVisibility = local ? OptionalField<string>.Of("public") : default,
+            } : new BirEventRemove {
+                Type = new TypeNode.Fqn("System.AppDomain"), Event = "ProcessExit", Static = false,
+                Recv = OptionalField<IBirExpression>.Of(receiver), Handler = OptionalField<IBirExpression>.Of(handler), HandlerExact = true,
+                LocalAccessor = local ? OptionalField<bool>.Of(true) : default,
+                Accessor = local ? OptionalField<string>.Of(accessor) : default,
+                AccessorOwner = local ? OptionalField<TypeNode>.Of(new TypeNode.Fqn("LocalOwner")) : default,
+                DelegateType = local ? OptionalField<TypeNode>.Of(new TypeNode.Fqn("System.EventHandler")) : default,
+                Sig = local ? OptionalField<TypeNode[]>.Of(new TypeNode[] { new TypeNode.Fqn("System.EventHandler") }) : default,
+                Dispatch = local ? OptionalField<string>.Of("callvirt") : default,
+                DeclarationId = local ? OptionalField<string>.Of("selected-event-accessor") : default,
+                MemberVisibility = local ? OptionalField<string>.Of("public") : default,
             };
-            if (local)
-            {
-                operation["localAccessor"] = true;
-                operation["accessor"] = accessor;
-                operation["accessorOwner"] = TypeJson.Fqn("LocalOwner");
-                operation["delegateType"] = TypeJson.Fqn("System.EventHandler");
-                operation["sig"] = new JsonArray(TypeJson.Fqn("System.EventHandler"));
-                operation["dispatch"] = "callvirt";
-                operation[DeclarationIdentityBinding.Key] = "selected-event-accessor";
-                operation["memberVisibility"] = "public";
-            }
-            ClrMemberResolution.Apply(operation, interopReferences, new HashSet<string>());
-            var typedOperation = (BirGraphValue)BirGraphDom.ReadBirExpression(operation);
+            ClrMemberResolution.Apply(typedOperation, interopReferences, new HashSet<string>());
             ForeignNullableGenericCrossing.Check(typedOperation, "event-boundary");
             var projectedEvent = (ICirExpression)new TypedCirProjection(new HashSet<string>(), new BirTypeLowering.PhysicalTypeContext(refBuild: true)).ProjectNode(typedOperation);
             using var physicalEvent = JsonDocument.Parse(JsonSerializer.Serialize(projectedEvent, AttributeJson.Options));

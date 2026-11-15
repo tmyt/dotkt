@@ -131,15 +131,8 @@ static partial class ClrMemberResolution
 
     static void StampSourceReferencedDelegateTargets(IBirExpression[] arguments, TypeNode[] methodArguments,
         ReferencedCallPlan plan)
-    {
-        if (arguments == null || methodArguments.Any(type => type == null)
-            || plan.Declaration.IsGenericMethodDefinition && methodArguments.Length != plan.Declaration.GetGenericArguments().Length) return;
-        var parameters = plan.Declaration.GetParameters();
-        if (arguments.Length != parameters.Length) return;
-        for (var index = 0; index < arguments.Length; index++)
-            MarkDelegateSlot((BirGraphValue)arguments[index], CloseDelegateArgumentSlot(RefTypeOf(parameters[index].ParameterType),
-                plan.DelegateOwnerArguments, methodArguments), _refs, _localTypes);
-    }
+        => StampNativeDelegateArgumentTargets(arguments, methodArguments,
+            plan.Declaration, plan.DelegateOwnerArguments);
 
     static void DropKotlinSigSnapshots(BirGraphValue node)
     {

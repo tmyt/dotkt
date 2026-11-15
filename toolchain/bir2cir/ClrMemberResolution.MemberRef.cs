@@ -40,18 +40,6 @@ static partial class ClrMemberResolution
     // after member resolution. The selected MethodDef alone owns these CLR flags/rows; ilemit never sees them.
     internal const string ResolvedMethodTypeParamsKey = "_resolvedMethodTypeParams";
 
-    internal static void StampResolvedMethodTypeParameters(JsonObject node, MethodInfo method)
-    {
-        var parameters = ResolvedMethodTypeParameters(method, (node["typeArgs"] as JsonArray)?.Count ?? 0);
-        if (parameters == null)
-        {
-            node.Remove(ResolvedMethodTypeParamsKey);
-            return;
-        }
-        node[ResolvedMethodTypeParamsKey] = new JsonArray(
-            parameters.Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
-    }
-
     static Type[] ResolvedMethodTypeParameters(MethodInfo method, int argumentCount)
     {
         method = OpenDeclarationOf(method);
