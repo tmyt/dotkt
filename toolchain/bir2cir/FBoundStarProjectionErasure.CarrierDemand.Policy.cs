@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -51,10 +50,6 @@ static partial class FBoundStarProjectionErasure
         internal ReferenceMetadataIndex References => references;
         internal ConstructionDeclaration Definition(string name) => definition(name);
         internal string Variance(string name, int arity, int index) => new ClrTypeVariance.Analysis(variance, references).Get(name, arity, index);
-        internal static CarrierTypeContext ForDom(IReadOnlyDictionary<string, JsonObject> definitions, ReferenceMetadataIndex refs) => new(
-            name => definitions.TryGetValue(name, out var type) ? new(Str(type["kind"]), TypeJson.Read(type["base"]) as TypeNode.Fqn,
-                (type["interfaces"] as JsonArray)?.Select(TypeJson.Read).OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>()) : null,
-            name => definitions.TryGetValue(name, out var type) ? ClrVarianceFacts.FromDom(type) : null, refs);
         internal static CarrierTypeContext ForSource(CurrentDeclarationPreparation preparation, ReferenceMetadataIndex refs) => new(
             name => preparation.Bindings.SourceDefinitions.TryGetValue(name, out var binding)
                 && binding.Source is IBirTypeDeclaration type ? new(type.Kind.OrDefault(), type.Base.OrDefault() as TypeNode.Fqn,

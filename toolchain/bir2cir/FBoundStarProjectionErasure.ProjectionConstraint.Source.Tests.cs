@@ -1,0 +1,155 @@
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
+
+static partial class FBoundStarProjectionErasure
+{
+    internal static void ProjectionConstraintSelfTest()
+    {
+        PhysicalAssignabilitySelfTest();
+        static void Need(bool value, string reason)
+        { if (!value) throw new InvalidOperationException("Constraint projections: " + reason); }
+        static BirClassDefinition Generic(string name, string variance = null) => new() {
+            Name = name, Kind = "class", TypeParams = new[] { new BirTypeParameter { Name = "T", Variance = variance } },
+        };
+        static BirExpressionStatement Evaluate(IBirExpression value) => new() { Expr = OptionalField<IBirExpression>.Of(value) };
+        var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var variable = new TypeNode.Tv("method", 0);
+        var exact = new TypeNode.Fqn("Bound", new TypeNode[] { variable });
+        var star = exact with { Args = new TypeNode[] { new TypeNode.Star() } };
+        var projected = exact with { Args = new TypeNode[] { new TypeNode.Projection("out", variable) } };
+        Need(!ContainsUseSiteProjection(exact) && ContainsUseSiteProjection(star)
+            && ContainsUseSiteProjection(new TypeNode.Nullable(star)) && ContainsUseSiteProjection(projected),
+            "star/exact argument distinction changed");
+
+        var inner = new TypeNode.Fqn("Owner.Item", new TypeNode[] { variable });
+        var innerOwner = Generic("Owner.Item");
+        innerOwner.SemanticOwner = "Owner"; innerOwner.Mods = new BirModifiers { Inner = true };
+        innerOwner.OuterTypeParamCount = 1;
+        var constructionFrame = new NullableRepresentationFrame(2,
+            Array.Empty<int>(), new[] { 2, 0, 3, 1 }, storageIndices: new[] { 0, 1 });
+        var constructionOwner = new BirClassDefinition { Name = "Construction", Kind = "class",
+            TypeParams = new[] { "P", "T", "Q", "U" }.Select(name => new BirTypeParameter { Name = name }).ToArray(),
+            KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(constructionFrame) };
+        var alias = Generic("SourceAlias");
+        alias.Attrs = new[] { new BirAttribute { Attr = new TypeNode.Fqn("kotlin.clr.ClrTypeAlias"),
+            Args = new IBirAttributeValue[] { new BirConstant { Value = new BirLiteral.TextLiteral("System.Collections.Generic.IReadOnlyList`1") } } } };
+        var local = new BirLocal { Name = "value", Sty = exact };
+        var exactCast = new BirCast { Type = exact, _physicalDeclarationSignature = true, E = OptionalField<IBirExpression>.Of(local) };
+        var physicalCall = new BirCallInstance { _physicalDeclarationSignature = true,
+            Sig = new[] { exact }, CalleeParams = new[] { exact }, Ret = exact, DynRet = exact, Sty = exact,
+            Args = new IBirExpression[] { exactCast } };
+        var factory = new BirCallStatic { _innerFactoryArguments = true,
+            TypeArgs = new TypeNode[] { inner, inner with { Args = new TypeNode[] { new TypeNode.Star() } } } };
+        var sourceDescriptor = new BirMethodImpl { Owner = new TypeNode.Fqn("SourceAlias", new TypeNode[] { inner }),
+            Params = Array.Empty<TypeNode>(), Ret = inner };
+        var nativeDescriptor = new BirMethodImpl {
+            Owner = new TypeNode.Fqn("System.Collections.Generic.IReadOnlyList`1", new TypeNode[] { inner }),
+            Params = Array.Empty<TypeNode>(), Ret = inner };
+        var operations = new BirGraphValue[] {
+            new BirNativeInstance { Type = inner }, new BirNativeStatic { Type = inner },
+            new BirGenericInstance { Type = inner }, new BirPropertyGet { Type = inner },
+            new BirPropertySet { Type = inner }, new BirNewClr { Type = inner },
+        };
+        var use = new BirFunctionDeclaration { Name = "use", Params = Array.Empty<BirParameter>(),
+            ClrInterfaceImpls = new[] { sourceDescriptor, nativeDescriptor },
+            Body = new IBirStatement[] { Evaluate(physicalCall), Evaluate(factory) }
+                .Concat(operations.Select(operation => (IBirStatement)Evaluate((IBirExpression)operation))).ToArray() };
+        var fixture = new BirClassDefinition { Name = "ProjectionFixture", Kind = "class", Generated = true, Methods = new[] { use } };
+        var late = Generic("LatePhysical"); late.Generated = true;
+        var root = new BirFileDeclaration { FileClass = "ProjectionConstraints", Types = new IBirTypeDeclaration[] {
+            Generic("Owner"), innerOwner, Generic("Bound"), constructionOwner, Generic("Variant", "out"), alias, fixture, late,
+        } };
+        var context = SourceSynthesisTestContext(root, refs);
+        foreach (var owner in context.Owners.Values) owner.Needed = true;
+        var projection = context.Projection;
+        TypeNode View(string name) => new TypeNode.Fqn(context.Owners[name].ErasedName);
+        FunctionRewriteTests.Check("F-bound rewrite", type => projection.Rewrite(type));
+        var function = new TypeNode.Fn(false, variable, new TypeNode[] { variable }, null, "System.Func");
+        Need(projection.Rewrite(new TypeNode.Mod(false, new TypeNode.Star(), function)) is
+            TypeNode.Mod { M: TypeNode.Fqn { Name: "kotlin.Any" }, Of: TypeNode.Fn { Clr: "System.Func" } },
+            "modifier traversal or physical delegate family changed");
+        Need(projection.Rewrite(inner) == View("Owner.Item") && projection.Rewrite(exact) == View("Bound")
+            && projection.Rewrite(inner, boundDeclaration: true) == inner
+            && projection.Rewrite(inner, preserveConstructedHead: true) == inner,
+            "ordinary carrier projection or exact linkage slot changed");
+
+        ProjectMaterializedTypesSource(new[] { fixture }, context);
+        Need(physicalCall.Sig.Value[0] == exact && physicalCall.CalleeParams.Value[0] == exact
+            && physicalCall.Ret.Value == exact && exactCast.Type.Value == exact && local.Sty.Value == View("Bound")
+            && ReferenceEquals(physicalCall.Args.Value[0], exactCast) && ReferenceEquals(exactCast.E.Value, local),
+            "physical adapter froze its ordinary operands or lost its declaration contract/identity");
+        Need(factory.TypeArgs.Value[0] == inner && factory.TypeArgs.Value[1] == View("Owner.Item"),
+            "inner factory lost its exact witness or fabricated a projected construction");
+        Need(sourceDescriptor.Ret.Value == View("Owner.Item") && nativeDescriptor.Ret.Value == inner,
+            "source alias and selected native MethodImpl lost their distinct value roles");
+        foreach (var operation in operations)
+            Need(operation.OwnTypeOrReturnStamp == inner,
+                "a CLR operation declaring owner became an ordinary Kotlin value slot");
+        RemoveTransientFacts(new[] { root });
+        Need(!physicalCall._physicalDeclarationSignature.IsPresent && !exactCast._physicalDeclarationSignature.IsPresent
+            && !factory._innerFactoryArguments.IsPresent,
+            "a consumed physical adapter/factory role remained in the owning graph");
+
+        var component = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
+        foreach (var element in new TypeNode[] { component, new TypeNode.Nullable(component) })
+            Need(projection.Rewrite(new TypeNode.Array(element)) == new TypeNode.Array(element),
+                "closed invariant array lost its exact allocation component");
+        var unresolved = new TypeNode.Fqn("Unresolved.Container", new TypeNode[] { inner });
+        var explicitUnresolved = unresolved with { Args = new TypeNode[] {
+            new TypeNode.Fqn("Unresolved.Other", new TypeNode[] { new TypeNode.Fqn("System.String") }) } };
+        Need(projection.Rewrite(unresolved, preserveConstructedHead: true)
+                == new TypeNode.Fqn(unresolved.Name, new[] { View("Owner.Item") })
+            && projection.Rewrite(explicitUnresolved, preserveConstructedHead: true) == explicitUnresolved
+            && projection.Rewrite(unresolved, boundDeclaration: true) == unresolved,
+            "unresolved operation values and bound descriptors were confused");
+        var construction = new TypeNode.Fqn("Construction", Enumerable.Repeat<TypeNode>(inner, 4).ToArray());
+        var rewritten = (TypeNode.Fqn)projection.Rewrite(construction, preserveConstructedHead: true);
+        Need(rewritten.Args[0] == View("Owner.Item") && rewritten.Args[1] == inner
+            && rewritten.Args[2] == View("Owner.Item") && rewritten.Args[3] == inner
+            && projection.Rewrite(construction) == View("Construction"),
+            "physical nullable frame confused ordinary witnesses and storage companions");
+        var lateType = new TypeNode.Fqn("LatePhysical", new TypeNode[] { variable });
+        Need(projection.Rewrite(lateType) == lateType && !projection.TryExistentialCarrier("LatePhysical", out _),
+            "late local physical definition consulted foreign carrier metadata");
+        var variant = new TypeNode.Fqn("Variant", new TypeNode[] { variable });
+        var variants = construction with { Args = Enumerable.Repeat<TypeNode>(variant, 4).ToArray() };
+        Need(((TypeNode.Fqn)projection.Rewrite(variants, preserveConstructedHead: true)).Args.All(argument => argument == View("Variant"))
+            && projection.Rewrite(variant, preserveConstructedHead: true) == variant,
+            "nested variance regained an invariant witness or changed an exact construction");
+        OwnerConstrainedMethodLowering.Reset(refs);
+        SourceProjectionContractSelfTest();
+        OwnerConstrainedMethodLowering.Reset(refs);
+        NativeProofSourceSelfTest();
+        LocalAliasDeclarationSelfTest();
+        Console.WriteLine("[constraint projections] self-test OK (owning roles, exact descriptors, source frames, physical adapters and shared scalar policies)");
+    }
+
+    static void PhysicalAssignabilitySelfTest()
+    {
+        var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
+        var definitions = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal) {
+            ["object"] = new BirClassDefinition { Name = "object", Kind = "class" },
+            ["Proof.Narrow"] = new BirClassDefinition { Name = "Proof.Narrow", Kind = "class", Base = new TypeNode.Fqn("object") },
+            ["Proof.Value"] = new BirClassDefinition { Name = "Proof.Value", Kind = "struct",
+                Interfaces = new TypeNode[] { new TypeNode.Fqn("Proof.Marker") } },
+            ["Proof.Marker"] = new BirInterfaceDefinition { Name = "Proof.Marker", Kind = "interface" },
+            ["Proof.Stream"] = new BirInterfaceDefinition { Name = "Proof.Stream", Kind = "interface",
+                TypeParams = new[] { new BirTypeParameter { Name = "T", Variance = "out" } } },
+        };
+        TypeNode Stream(string element) => new TypeNode.Fqn("Proof.Stream", new[] { new TypeNode.Fqn(element) });
+        if (!IsClrAssignable(new TypeNode.Fqn("Proof.Narrow"), new TypeNode.Fqn("object"), definitions, refs, physicalTypes: true)
+            || !IsClrAssignable(Stream("Proof.Narrow"), Stream("object"), definitions, refs, physicalTypes: true)
+            || IsClrAssignable(Stream("Proof.Value"), Stream("object"), definitions, refs, physicalTypes: true)
+            || IsClrAssignable(Stream("object"), Stream("Proof.Narrow"), definitions, refs, physicalTypes: true))
+            throw new InvalidOperationException("Physical assignability lost reference-only widening");
+        if (!IsClrAssignable(new TypeNode.Fqn("Proof.Value"), new TypeNode.Fqn("object"), definitions, refs,
+                physicalTypes: true, allowBoxing: true)
+            || !IsClrAssignable(new TypeNode.Fqn("Proof.Value"), new TypeNode.Fqn("Proof.Marker"), definitions, refs,
+                physicalTypes: true, allowBoxing: true)
+            || IsClrAssignable(Stream("Proof.Value"), Stream("object"), definitions, refs,
+                physicalTypes: true, allowBoxing: true))
+            throw new InvalidOperationException("Root boxing leaked into CLR generic variance or lost its interface");
+        Console.WriteLine("[physical assignability] self-test OK (reference widening, root boxing, invariant value arguments)");
+    }
+}

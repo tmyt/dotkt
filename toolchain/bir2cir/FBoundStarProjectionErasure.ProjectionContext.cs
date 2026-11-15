@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -8,8 +7,8 @@ static partial class FBoundStarProjectionErasure
     sealed record ProjectionDeclaration(string Kind, bool SourceGeneric, string[] Variances,
         NullableRepresentationFrame Frame);
 
-    // Declaration readers change at the owning frontier; representation policy
-    // does not. Current definitions and retained logical alias headers have
+    // Declaration readers vary by owning phase; representation policy does
+    // not. Current definitions and retained logical alias headers have
     // distinct, producer-owned membership and precedence.
     internal sealed class CarrierProjectionContext
     {
@@ -47,18 +46,11 @@ static partial class FBoundStarProjectionErasure
                 preparation.LocalClrAliases, Read);
         }
 
-        internal static CarrierProjectionContext ForDom(IReadOnlyDictionary<string, Owner> owners,
-            ReferenceMetadataIndex references, GenericRepresentationPolicy values, NativeProofPlan nativeProofs,
-            IReadOnlyDictionary<string, string> aliases = null) => new(null, owners, references, values, nativeProofs,
-                aliases, name => values?.LocalDeclaration(name) is JsonObject current ? new(
-                    Str(current["kind"]), IsSourceGeneric(current),
-                    (current["typeParams"] as JsonArray)?.Select(parameter => Str((parameter as JsonObject)?["variance"])).ToArray(),
-                    KotlinSupertypesRecord.ReadNullableFrame(current)) : null);
 
         internal static CarrierProjectionContext ForCurrentSource(CarrierRealizationContext realization,
             CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases = null)
         {
-            // Only the already allocated, needed names are exported by the old
+            // Only the already allocated, needed names are exported by the
             // continuation. Their current physical records supply owner frames.
             var owners = realization.Owners.Values.Where(owner => owner.Needed).ToDictionary(owner => owner.Name,
                 owner => current.Bindings.TryGetValue(owner.Name, out var binding)
@@ -70,8 +62,7 @@ static partial class FBoundStarProjectionErasure
         }
 
         // Collection helper signatures project referenced values, not local
-        // carrier owners. Keep that scope explicit before the DOM continuation
-        // installs its ambient policy, using the same current declaration facts.
+        // carrier owners. Keep that scope explicit with the SAME source facts.
         internal static CarrierProjectionContext ForReferencedValuesSource(CarrierRealizationContext realization,
             CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases = null) => new(
                 realization.Preparation, new Dictionary<string, Owner>(StringComparer.Ordinal),
@@ -105,9 +96,8 @@ static partial class FBoundStarProjectionErasure
         internal NullableRepresentationFrame OwnerFrame(Owner owner) => currentPhysical != null
             ? currentPhysical.Definitions.TryGetValue(owner.Name, out var actual)
                 ? NullableRepresentationViews.TypeFacts((BirGraphValue)actual)?.NullableFrame : null
-            : owner.DefinitionBinding is { IsPhysical: false } source
-                ? NullableRepresentationViews.TypeFacts(source.Source)?.NullableFrame
-                : KotlinSupertypesRecord.ReadNullableFrame(owner.Def);
+            : owner.DefinitionBinding is { } source
+                ? NullableRepresentationViews.TypeFacts(source.Source)?.NullableFrame : null;
 
         internal TypeNode Rewrite(TypeNode type, bool boundDeclaration = false,
             bool preserveConstructedHead = false, bool preserveArrayShape = false)

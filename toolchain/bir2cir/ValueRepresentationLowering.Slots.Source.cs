@@ -11,7 +11,7 @@ sealed partial class ValueRepresentationLowering
         Action<IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> appendedMethods)
     {
         if (members.Count == 0) return;
-        if (domBound) throw new InvalidOperationException("Source nominal slots used after declaration handoff");
+        if (sourceCompleted) throw new InvalidOperationException("Source nominal slots used after declaration handoff");
         var selection = KotlinOverrideSlotBridge.CreateSourceSelection(roots);
         var definitions = selection.Definitions;
         var actual = selection.Declarations;

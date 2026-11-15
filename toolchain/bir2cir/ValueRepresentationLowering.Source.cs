@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -74,7 +73,7 @@ sealed partial class ValueRepresentationLowering
     }
 
     readonly List<(SourceMethod Fact, LiveMethod Method)> sourceMethods = new();
-    bool domBound;
+    bool sourceCompleted;
     GenericRepresentationPolicy representations;
 
     internal static ValueRepresentationLowering CreateSource(IReadOnlyList<BirFileDeclaration> roots,
@@ -123,107 +122,87 @@ sealed partial class ValueRepresentationLowering
     internal void RetireSourceDeclaration(BirFunctionDeclaration actual)
     {
         ArgumentNullException.ThrowIfNull(actual);
-        if (domBound) throw new InvalidOperationException("Source value declaration retired after DOM handoff");
+        if (sourceCompleted) throw new InvalidOperationException("Source value declaration retired after source completion");
         // Expansion may create helpers outside the original source catalog. Only actual tracked occurrences retire.
         foreach (var method in sourceMethods)
             if (method.Method.IsSource(actual)) method.Method.Retire();
     }
 
-    internal void BindDomDeclarations(IReadOnlyList<JsonNode> roots,
-        IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> retiredDeclarations,
-        SourceDeclarationProjection declarations)
+    internal void CompleteSourceContinuation(IReadOnlyList<BirFileDeclaration> roots,
+        AliasDeclarationTransitions aliases, SourceDeclarationProjection declarations)
     {
         ArgumentNullException.ThrowIfNull(declarations);
-        if (domBound) throw new InvalidOperationException("Value representation declarations already handed to DOM");
+        if (sourceCompleted) throw new InvalidOperationException("Value representation declarations already completed their source continuation");
+        foreach (var root in roots) declarations.RequireOccurrence(root);
+        aliases?.ValidateSourceContinuations(roots);
         var identities = sourceMethods.Select(method => method.Fact.Id).ToHashSet(StringComparer.Ordinal);
-        var actual = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
-        void Index(JsonObject declaration)
+        var actual = new Dictionary<string, List<BirFunctionDeclaration>>(StringComparer.Ordinal);
+        void Methods(IEnumerable<BirFunctionDeclaration> methods)
         {
-            foreach (var method in (declaration["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>())
-                if (Text(method[DeclarationIdentityBinding.Key]) is string id && identities.Contains(id)
-                    && !declarations.MaterializedMethods.Contains(method))
+            foreach (var method in methods)
+                if (method.DeclarationId.HasValue && identities.Contains(method.DeclarationId.Value)
+                    && !declarations.IsPublished(method))
                 {
-                    if (!actual.TryGetValue(id, out var occurrences)) actual.Add(id, occurrences = new List<JsonObject>());
+                    if (!actual.TryGetValue(method.DeclarationId.Value, out var occurrences))
+                        actual.Add(method.DeclarationId.Value, occurrences = new());
                     occurrences.Add(method);
                 }
-            foreach (var type in (declaration["types"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()) Index(type);
         }
-        foreach (var root in roots.OfType<JsonObject>()) Index(root);
-        // ID counts validate original membership, not physical traversal order:
-        // only the actual owning projection associates a continuing occurrence.
+        foreach (var root in roots)
+        {
+            Methods(root.Methods.OrEmpty());
+            foreach (var type in root.Types.OrEmpty()) Methods(type.Methods.OrEmpty());
+        }
+        // Counts retain original membership, not current traversal order.
+        // Continuing repeated-ID rows are paired by the SAME actual occurrence.
         foreach (var expected in sourceMethods.GroupBy(method => method.Fact.Id, StringComparer.Ordinal))
             if ((actual.GetValueOrDefault(expected.Key)?.Count ?? 0) != expected.Count(method => !method.Method.Retired
                 && !declarations.WasIdentityConsumed(method.Method.SourceOccurrence, method.Fact.Id)))
                 throw new InvalidOperationException("Value representation source declaration occurrences changed before physical association: " + expected.Key);
         foreach (var method in sourceMethods)
         {
+            var source = method.Method.SourceOccurrence;
+            declarations.RequireOccurrence(source);
             if (method.Method.Retired)
             {
-                // This is the same one-way declaration frontier, including explicitly detached declarations.
-                method.Method.BindRetired(retiredDeclarations, declarations);
+                if (!declarations.IsRetired(source))
+                    throw new InvalidOperationException("Value declaration lacks its explicit source retirement");
                 continue;
             }
-            method.Method.BindProjected(declarations, method.Fact.Id,
-                (IReadOnlyList<JsonObject>)actual.GetValueOrDefault(method.Fact.Id) ?? Array.Empty<JsonObject>());
+            if (declarations.IsRetired(source))
+                throw new InvalidOperationException("Live value declaration is inside a reported retired forest");
+            var live = actual.GetValueOrDefault(method.Fact.Id) ?? new List<BirFunctionDeclaration>();
+            var consumed = declarations.WasIdentityConsumed(source, method.Fact.Id);
+            if (consumed ? source.DeclarationId.IsPresent || live.Any(row => ReferenceEquals(row, source))
+                : source.DeclarationId.OrDefault() != method.Fact.Id || !live.Any(row => ReferenceEquals(row, source)))
+                throw new InvalidOperationException("Value declaration is not its exact continuing occurrence");
         }
         sourceMethods.Clear();
-        domBound = true;
+        sourceCompleted = true;
     }
 
-    // A source occurrence and its continuing physical declaration are one authority, never two snapshots.
+    // Local current/retired methods stay the SAME owning records. References
+    // remain selected metadata facts; neither needs a rendered declaration.
     sealed class LiveMethod
     {
-        BirFunctionDeclaration source;
-        JsonObject dom;
+        readonly BirFunctionDeclaration source;
         readonly MemberBinding reference;
         internal LiveMethod(BirFunctionDeclaration source) => this.source = source;
         internal LiveMethod(MemberBinding reference) => this.reference = reference;
         internal bool HasSource => source != null;
         internal BirFunctionDeclaration SourceOccurrence => source
-            ?? throw new InvalidOperationException("Value declaration has already crossed its source frontier");
+            ?? throw new InvalidOperationException("Referenced value declaration has no local owning occurrence");
         internal bool Retired { get; private set; }
         internal bool IsSource(BirFunctionDeclaration declaration) => ReferenceEquals(source, declaration);
         internal void Retire() => Retired = true;
-        internal void BindRetired(IReadOnlyDictionary<BirFunctionDeclaration, JsonObject> declarations,
-            SourceDeclarationProjection projection)
-        {
-            if (!Retired || source == null || declarations == null
-                || !declarations.TryGetValue(source, out var declaration) || declaration == null
-                || !projection.IsRetired(source, declaration))
-                throw new InvalidOperationException("Value declaration lacks its explicit source retirement");
-            Bind(declaration);
-        }
-        internal void Bind(JsonObject declaration) { dom = declaration; source = null; }
-        internal void BindProjected(SourceDeclarationProjection projection, string capturedIdentity,
-            IReadOnlyList<JsonObject> live)
-        {
-            if (Retired || source == null) throw new InvalidOperationException("Value declaration has no live source occurrence");
-            var declaration = projection.Get(source);
-            var consumed = projection.WasIdentityConsumed(source, capturedIdentity);
-            if (consumed ? declaration.ContainsKey(DeclarationIdentityBinding.Key)
-                    || live.Any(actual => ReferenceEquals(actual, declaration))
-                : Text(declaration[DeclarationIdentityBinding.Key]) != capturedIdentity
-                    || !live.Any(actual => ReferenceEquals(actual, declaration)))
-                throw new InvalidOperationException("Value declaration is not its exact continuing occurrence");
-            Bind(declaration);
-        }
-        internal string Name => source != null ? source.Name.OrDefault() : reference != null
-            ? reference.SourcePropertyName ?? reference.DeclarationSourceName ?? reference.Name : Text(dom["name"]);
-        internal string Id => source != null ? source.DeclarationId.OrDefault() : reference?.DeclarationId ?? Text(dom[DeclarationIdentityBinding.Key]);
-        internal bool Abstract => source != null ? source.Abstract.OrDefault() : reference?.IsAbstract ?? Bool(dom["abstract"]);
-        internal bool HasParameters => source != null ? source.Params.HasValue : reference != null || dom["params"] is JsonArray;
+        internal string Name => source != null ? source.Name.OrDefault()
+            : reference.SourcePropertyName ?? reference.DeclarationSourceName ?? reference.Name;
+        internal string Id => source != null ? source.DeclarationId.OrDefault() : reference.DeclarationId;
+        internal bool Abstract => source != null ? source.Abstract.OrDefault() : reference.IsAbstract;
+        internal bool HasParameters => source != null ? source.Params.HasValue : true;
         internal TypeNode[] Parameters => source != null ? source.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray()
-            : reference != null ? reference.DeclarationSemanticParams ?? reference.ParamTypeNodes
-            : (dom["params"] as JsonArray ?? new()).OfType<JsonObject>().Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
-        internal TypeNode Return => source != null ? source.Ret.OrDefault() : reference != null
-            ? reference.DeclarationSemanticReturn ?? reference.ReturnTypeNode : TypeJson.Read(dom["ret"]);
-        internal JsonObject Dom => dom ??= reference != null ? new JsonObject {
-            ["name"] = Name, [KotlinPropertyAccessors.KindKey] = reference.AccessorKind,
-            [DeclarationIdentityBinding.Key] = Id, ["abstract"] = Abstract,
-            ["params"] = new JsonArray(Parameters.Select((type, index) => (JsonNode)new JsonObject {
-                ["name"] = "p" + index, ["type"] = TypeJson.Write(type) }).ToArray()),
-            ["ret"] = TypeJson.Write(Return),
-        } : throw new InvalidOperationException("Source value declaration used before its DOM handoff");
+            : reference.DeclarationSemanticParams ?? reference.ParamTypeNodes;
+        internal TypeNode Return => source != null ? source.Ret.OrDefault() : reference.DeclarationSemanticReturn ?? reference.ReturnTypeNode;
     }
 
     string HelperIdentity(string owner, string name, IReadOnlyList<TypeNode> parameters)

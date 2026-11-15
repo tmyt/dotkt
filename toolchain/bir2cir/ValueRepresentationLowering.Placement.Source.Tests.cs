@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -64,7 +63,7 @@ sealed partial class ValueRepresentationLowering
             var pending = UncheckedGenericCastReturnErasure.CaptureSource(roots);
             Require(pending.SourceDeclarations.ByIdentity.Count == 2, "fixture did not capture actual unchecked method facts");
             UncheckedGenericCastReturnErasure.Apply(file, pending);
-            generic.PrepareDomLocations(roots); generic.RefreshPhysicalNativeLocations(roots);
+            generic.PrepareSourceLocations(roots); generic.RefreshPhysicalNativeLocations(roots);
             var bindings = new CurrentDeclarationBindings(roots);
             var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, references, generic);
             proofs.Add(bindings.GetCapturedSource(owner), 0, native);
@@ -93,45 +92,44 @@ sealed partial class ValueRepresentationLowering
         actual.Transitions.PublishMethods(actual.File, actual.Owner, new[] { ownerAccessor });
         Reject(() => actual.Transitions.PublishMethods(actual.File, actual.Owner, new[] { ownerAccessor }),
             "a duplicate publication after placement");
-        var dom = actual.File.ToDom(actual.Transitions.Projection.ObserveProjection);
-        actual.Transitions.Projection.ProjectRetiredForests();
-        actual.Bindings.BindProjected();
-        var retired = actual.Transitions.Projection.RetiredMethods;
-        actual.Generic.BindDomDeclarations(new[] { dom }, declarations: actual.Transitions.Projection);
-        actual.Values.BindDomDeclarations(new[] { dom }, retired, actual.Transitions.Projection);
-        var uncheckedIndex = UncheckedGenericCastReturnErasure.BindDomDeclarations(actual.Pending, new[] { dom },
-            retired, declarations: actual.Transitions.Projection);
-        Require(actual.Transitions.Projection.MaterializedMethods.Count == 2
-            && actual.Transitions.Projection.MaterializedMethods.Contains(dom["methods"][2].AsObject())
-            && actual.Transitions.Projection.MaterializedMethods.Contains(dom["types"][1]["methods"][3].AsObject())
+        var movedFact = actual.Pending.SourceDeclarations.ByIdentity["moved"];
+        var stayingFact = actual.Pending.SourceDeclarations.ByIdentity["staying"];
+        actual.Transitions.Projection.SealSourceContinuations();
+        actual.Generic.CompleteSourceContinuation(new[] { actual.File }, null, actual.Transitions.Projection);
+        actual.Values.CompleteSourceContinuation(new[] { actual.File }, null, actual.Transitions.Projection);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(actual.Pending, new[] { actual.File },
+            null, actual.Transitions.Projection);
+        Require(actual.Transitions.Projection.IsPublished(facadeAccessor) && actual.Transitions.Projection.IsPublished(ownerAccessor)
             && !actual.Bindings.SourceLocalDeclarations.ContainsKey(("MovesFile", "facade-accessor"))
             && !actual.Bindings.SourceLocalDeclarations.ContainsKey(("MoveOwner", "owner-accessor")),
             "post-placement publication recaptured source eligibility or lost actual generated methods");
-        Require(ReferenceEquals(uncheckedIndex.ByIdentity["moved"].Method, dom["types"][1]["methods"][1])
-            && ReferenceEquals(uncheckedIndex.ByIdentity["staying"].Method, dom["methods"][0])
-            && uncheckedIndex.ByIdentity["moved"].Owner == "MovesFile" && uncheckedIndex.ByIdentity["moved"].TopLevel
-            && uncheckedIndex.ByIdentity["moved"].Return == variable
+        Require(movedFact.SourceMethod == null && stayingFact.SourceMethod == null
+            && ReferenceEquals(actual.Owner.Methods.Value[1], actual.Moved)
+            && ReferenceEquals(actual.File.Methods.Value[0], actual.Staying)
+            && movedFact.Owner == "MovesFile" && movedFact.TopLevel && movedFact.Return == variable
             && ReferenceEquals(actual.Bindings.SourceLocalDeclarations[("MovesFile", "moved")], originalSelectedMethod),
             "MOVE reselected a source declaration, changed its semantic frame or lost the preceding-removal shift");
-        Require(ReferenceEquals(actual.Values.locals["same-source"].Method.Dom, dom["types"][1]["methods"][0])
-            && !ReferenceEquals(actual.Values.locals["same-source"].Method.Dom, dom["types"][1]["methods"][2])
+        Require(ReferenceEquals(actual.Values.locals["same-source"].Method.SourceOccurrence, actual.Twin)
+            && !ReferenceEquals(actual.Values.locals["same-source"].Method.SourceOccurrence, actual.Owner.Methods.Value[2])
             && actual.Values.locals["same-source"].Owner == "MoveOwner",
             "physical traversal order paired the wrong repeated-ID source occurrence");
-        Require(ReferenceEquals(actual.Bindings.GetPhysical(dom["types"][1].AsObject()), ownerBinding)
+        Require(ReferenceEquals(ownerBinding.Source, actual.Owner)
             && !actual.Proofs.Bounds(ownerBinding, 0).Any() && !actual.Proofs.Bounds(ownerBinding, 1).Any()
-            && actual.Proofs.IsPhysicalConstraint(dom["types"][1]["capturedTypeParams"][0]["constraints"].AsArray(), native)
-            && actual.Proofs.IsPhysicalConstraint(dom["types"][1]["typeParams"][0]["constraints"].AsArray(), ownNative)
-            && !actual.Proofs.IsPhysicalConstraint(dom["types"][1]["typeParams"][0]["constraints"].AsArray(), native)
-            && actual.Generic.IsNativeField(dom["types"][1]["fields"][0].AsObject()),
+            && actual.Proofs.IsPhysicalConstraint(ownerBinding, 0, native)
+            && actual.Proofs.IsPhysicalConstraint(ownerBinding, 1, ownNative)
+            && !actual.Proofs.IsPhysicalConstraint(ownerBinding, 1, native)
+            && actual.Generic.IsNativeField(actual.Owner.Fields.Value[0]),
             "captured-prefix placement replaced the native declaration/proof/field authority");
+        actual.Bindings.CompleteSourceCustody(actual.Transitions.Projection);
         actual.Transitions.Release();
 
         var missing = Fixture();
         TypeOwnershipLowering.ApplyAll(new[] { missing.File }, (_, _) => { });
-        var missingDom = missing.File.ToDom(missing.Transitions.Projection.ObserveProjection);
-        missing.Transitions.Projection.ProjectRetiredForests();
-        Reject(() => UncheckedGenericCastReturnErasure.BindDomDeclarations(missing.Pending, new[] { missingDom },
-            missing.Transitions.Projection.RetiredMethods, declarations: missing.Transitions.Projection), "an unreported MOVE");
+        Reject(() => {
+            missing.Transitions.Projection.SealSourceContinuations();
+            UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(missing.Pending, new[] { missing.File },
+                null, missing.Transitions.Projection);
+        }, "an unreported MOVE");
 
         var wrongTarget = Fixture();
         Reject(() => TypeOwnershipLowering.ApplyAll(new[] { wrongTarget.File }, (file, moves) =>
@@ -142,19 +140,16 @@ sealed partial class ValueRepresentationLowering
         var replaced = Fixture();
         TypeOwnershipLowering.ApplyAll(new[] { replaced.File }, replaced.Transitions.MoveMethods);
         replaced.Owner.Methods.Value[1] = (BirFunctionDeclaration)replaced.Moved.DeepClone();
-        _ = replaced.File.ToDom(replaced.Transitions.Projection.ObserveProjection);
-        Reject(replaced.Transitions.Projection.ProjectRetiredForests, "a copied-ID replacement after MOVE");
+        Reject(replaced.Transitions.Projection.SealSourceContinuations, "a copied-ID replacement after MOVE");
         var reordered = Fixture();
         TypeOwnershipLowering.ApplyAll(new[] { reordered.File }, reordered.Transitions.MoveMethods);
         reordered.File.Methods = reordered.File.Methods.Value.Reverse().ToArray();
-        _ = reordered.File.ToDom(reordered.Transitions.Projection.ObserveProjection);
-        Reject(reordered.Transitions.Projection.ProjectRetiredForests, "an unreported retained-vector reorder");
+        Reject(reordered.Transitions.Projection.SealSourceContinuations, "an unreported retained-vector reorder");
         var unpublished = Fixture();
         TypeOwnershipLowering.ApplyAll(new[] { unpublished.File }, unpublished.Transitions.MoveMethods);
         unpublished.Owner.Methods = unpublished.Owner.Methods.Value
             .Append(Ordinary("unreported", "unreported", new TypeNode.Fqn("kotlin.Unit"))).ToArray();
-        _ = unpublished.File.ToDom(unpublished.Transitions.Projection.ObserveProjection);
-        Reject(unpublished.Transitions.Projection.ProjectRetiredForests, "an unreported destination append after MOVE");
-        Console.WriteLine("[owning placement continuation] self-test OK (actual MOVE, original semantic/native frames, repeated IDs and strict addresses)");
+        Reject(unpublished.Transitions.Projection.SealSourceContinuations, "an unreported destination append after MOVE");
+        Console.WriteLine("[owning placement continuation] self-test OK (actual MOVE, original semantic/native frames, repeated IDs and strict custody)");
     }
 }

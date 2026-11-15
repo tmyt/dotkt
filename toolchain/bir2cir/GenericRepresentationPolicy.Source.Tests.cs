@@ -1,10 +1,16 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
 sealed partial class GenericRepresentationPolicy
 {
+    static SourceDeclarationProjection SourcePolicyCustody(params BirFileDeclaration[] roots)
+    {
+        var custody = new SourceDeclarationProjection(roots, new CurrentDeclarationBindings(roots));
+        custody.SealSourceContinuations();
+        return custody;
+    }
+
     static void SourcePolicySelfTest()
     {
         var variable = new TypeNode.Tv("type", 0);
@@ -37,14 +43,8 @@ sealed partial class GenericRepresentationPolicy
                             Args = new IBirExpression[] { fieldUse, new BirByRefOf { Inner = companionUse }, cellUse } },
                     } } },
             } };
-        // The old initializer remains live for late physical storage. Compare
-        // that implementation on the same current, well-formed authored graph.
-        var oldRoot = root.ToDom();
-        _ = new GenericRepresentationPolicy(new Dictionary<string, string>(), roots: new[] { oldRoot });
         var policy = CreateSource(new[] { root }, new Dictionary<string, string>(), null);
-        var continuation = root.ToDom();
-        if (!JsonNode.DeepEquals(oldRoot, continuation)
-            || !exported._nativeLocation.OrDefault() || !addressed._nativeLocation.OrDefault()
+        if (!exported._nativeLocation.OrDefault() || !addressed._nativeLocation.OrDefault()
             || ordinary._nativeLocation.IsPresent || !first._nativeLocation.OrDefault()
             || !second._nativeLocation.OrDefault() || third._nativeLocation.IsPresent
             || !cell._nativeLocation.OrDefault() || !fieldUse._nativeFieldAddress.OrDefault()
@@ -54,10 +54,9 @@ sealed partial class GenericRepresentationPolicy
         var generatedApplication = new TypeNode.Fqn("GeneratedFrame", new TypeNode[] { text });
         if (!policy.OwnsValueSlots("SourceFrame") || !policy.OwnsValueSlots("SourceCell")
             || policy.ProjectArgumentHead(sourceApplication, true, null) is not TypeNode.Fqn { Args: [TypeNode.Star] }
-            || policy.ProjectArgumentHead(generatedApplication, true, null) != generatedApplication
-            || policy.LocalDeclaration("SourceFrame") != null)
-            throw new InvalidOperationException("Owning source policy mixed source eligibility with DOM declaration association");
-        policy.PrepareDomLocations(new[] { root });
+            || policy.ProjectArgumentHead(generatedApplication, true, null) != generatedApplication)
+            throw new InvalidOperationException("Owning source policy changed original generic eligibility");
+        policy.PrepareSourceLocations(new[] { root });
         // The selected source cell becomes real storage before the same owning
         // handoff; its native role must move to the actual generated field.
         BirFieldDeclaration materializedCell = null;
@@ -77,33 +76,27 @@ sealed partial class GenericRepresentationPolicy
         catch (InvalidOperationException) { duplicateMaterialization = true; }
         if (!duplicateMaterialization || policy._nativeStorageMaterializations.Count != 1)
             throw new InvalidOperationException("Selected native source storage accepted a second materialization notification");
+        var lateField = new BirFieldDeclaration { Name = "late", Type = text, Attrs = new[] { Export() } };
+        var lateOwner = new BirClassDefinition { Kind = "class", Name = "LatePhysical", Generated = true,
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Fields = new[] { lateField } };
+        root.Types = root.Types.Value.Append(lateOwner).ToArray();
+        policy.RegisterCurrentPhysicalOwners(new[] { "LatePhysical" }, new Dictionary<string, string>());
         policy.RefreshPhysicalNativeLocations(new[] { root });
-        continuation = root.ToDom();
-        policy.BindDomDeclarations(new JsonNode[] { continuation });
-        var boundOwner = continuation["types"][0].AsObject();
-        var boundField = boundOwner["fields"][1].AsObject();
-        var cellOwner = continuation["types"].AsArray().OfType<JsonObject>()
-            .Single(type => type["name"]?.GetValue<string>() == "SourceCell");
+        var custody = SourcePolicyCustody(root);
+        policy.CompleteSourceContinuation(new[] { root }, null, custody);
+        var lateApplication = new TypeNode.Fqn("LatePhysical", new[] { text });
         if (root.RefTypes.IsPresent || policy._nativeStorageMaterializations.Count != 0
-            || !policy.IsNativeField(cellOwner["fields"][0].AsObject())
-            || cellOwner["fields"][0][NativeLocationKey]?.GetValue<bool>() != true)
-            throw new InvalidOperationException("Selected native ref-cell storage lost its actual synthesized field at handoff");
-        if (!ReferenceEquals(policy.LocalDeclaration("SourceFrame"), boundOwner) || !policy.IsNativeField(boundField))
-            throw new InvalidOperationException("Source policy did not retain the actual continuing declaration identity");
-        boundField.Remove(NativeLocationKey);
-        boundField["name"] = "renamedPhysicalStorage";
-        if (!policy.IsNativeField(boundField))
-            throw new InvalidOperationException("Native storage identity was lost after physical field binding");
-        var lateField = new BirFieldDeclaration { Name = "late", Type = text, Attrs = new[] { Export() } }.ToDom();
-        boundOwner["fields"].AsArray().Add(lateField);
-        policy.RecordNativeFields(new JsonNode[] { continuation });
-        var lateOwner = new JsonObject { ["kind"] = "class", ["name"] = "LatePhysical", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }) };
-        policy.RegisterLocalDefinitions(new Dictionary<string, JsonObject> { ["LatePhysical"] = lateOwner }, new Dictionary<string, string>());
-        var lateApplication = new TypeNode.Fqn("LatePhysical", new TypeNode[] { text });
-        if (!policy.IsNativeField(lateField) || lateField[NativeLocationKey]?.GetValue<bool>() != true
+            || !ReferenceEquals(actualCell.Fields.Value[0], materializedCell)
+            || !policy.IsNativeField(materializedCell) || !materializedCell._nativeLocation.OrDefault()
+            || !policy.IsNativeField(addressed) || !policy.IsNativeField(lateField)
             || !policy.OwnsValueSlots("LatePhysical") || policy.ProjectArgumentHead(lateApplication, true, null) != lateApplication)
-            throw new InvalidOperationException("Late native storage discovery changed fixed source carrier eligibility");
-        Console.WriteLine("[source generic policy] self-test OK (native selection parity, companion/ref-cell storage, one-way identity, fixed eligibility)");
+            throw new InvalidOperationException("Native storage completion lost an actual materialized field or changed fixed source eligibility");
+        var refused = false;
+        try { policy.CompleteSourceContinuation(new[] { root }, null, custody); }
+        catch (InvalidOperationException) { refused = true; }
+        if (!refused) throw new InvalidOperationException("Native source custody completed twice");
+        custody.Release();
+        Console.WriteLine("[source generic policy] self-test OK (literal native selection, companion/ref-cell storage, exact typed custody, fixed eligibility)");
         NativePlacementSelfTest();
     }
 
@@ -132,7 +125,7 @@ sealed partial class GenericRepresentationPolicy
         source.Fields = Array.Empty<BirFieldDeclaration>();
         root.Types = new IBirTypeDeclaration[] { source, payload, carrier };
         transitions.AdmitMaterializedTypes(root, new[] { carrier });
-        policy.PrepareDomLocations(new[] { root });
+        policy.PrepareSourceLocations(new[] { root });
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
         var declarations = FBoundStarProjectionErasure.PrepareCurrentDeclarations(new[] { root }, policy, out var preparation);
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, policy);
@@ -143,24 +136,21 @@ sealed partial class GenericRepresentationPolicy
         FBoundStarProjectionErasure.RealizeCarriersSource(new[] { root }, realization,
             Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null,
             (owner, types) => transitions.AdmitMaterializedTypes(owner, types));
-        var continuation = root.ToDom(declarations.ObserveProjection);
-        declarations.BindProjected();
-        policy.BindDomDeclarations(new JsonNode[] { continuation }, transitions);
-        if (!policy.IsNativeField(continuation["types"][2]["fields"][0].AsObject())
+        var custody = SourcePolicyCustody(root);
+        policy.CompleteSourceContinuation(new[] { root }, transitions, custody);
+        if (!policy.IsNativeField(field)
             || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("PhysicalStorage"), "physicalValue", null)
             || !policy.IsNativeFieldUse("staticField", new TypeNode.Fqn("Source"), "value", null)
             || policy.ProjectArgumentHead(new TypeNode.Fqn("Source", new[] { text }), true, null)
                 is not TypeNode.Fqn { Args: [TypeNode.Star] }
             || policy.ProjectArgumentHead(new TypeNode.Fqn("PhysicalStorage", new[] { text }), true, null)
-                is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
-            || policy.LocalDeclaration("PhysicalStorage") != null)
+                is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "kotlin.String" }] })
             throw new InvalidOperationException("Native physical placement lost selected identity or recomputed source eligibility");
-        FBoundStarProjectionErasure.BindRealizationContinuation(realization);
-        if (TypeJson.Read(continuation["methods"][0]["body"][0]["value"]["sty"]) is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
-            || !TypeNodeDataEquality.Equal(TypeJson.Read(continuation["types"][2]["fields"][0]["type"]), valueType))
+        _ = FBoundStarProjectionErasure.CompleteRealization(realization);
+        if (use.Sty.OrDefault() is not TypeNode.Fqn { Name: "Payload", Args: [TypeNode.Fqn { Name: "kotlin.String" }] }
+            || !TypeNodeDataEquality.Equal(field.Type.Value, valueType))
             throw new InvalidOperationException("Native source-owner use lost its closed field witness before late physical binding");
-        if (!ReferenceEquals(policy.LocalDeclaration("PhysicalStorage"), continuation["types"][2]))
-            throw new InvalidOperationException("FBound did not associate an explicitly appended physical owner with its actual continuing declaration");
+        custody.Release();
         transitions.Release();
 
         foreach (var removeDeclaration in new[] { false, true })
@@ -168,12 +158,12 @@ sealed partial class GenericRepresentationPolicy
             var required = new BirFieldDeclaration { Name = "required", Type = text, Attrs = field.Attrs };
             var requiredRoot = new BirFileDeclaration { FileClass = "Required", Fields = new[] { required } };
             var requiredPolicy = CreateSource(new[] { requiredRoot }, new Dictionary<string, string>(), null);
-            requiredPolicy.PrepareDomLocations(new[] { requiredRoot });
-            var missing = requiredRoot.ToDom();
-            if (removeDeclaration) missing["fields"].AsArray().Clear();
-            else missing["fields"][0].AsObject().Remove(NativeLocationKey);
+            requiredPolicy.PrepareSourceLocations(new[] { requiredRoot });
+            if (removeDeclaration) requiredRoot.Fields = Array.Empty<BirFieldDeclaration>();
+            else required._nativeLocation = default;
+            var requiredCustody = SourcePolicyCustody(requiredRoot);
             var rejected = false;
-            try { requiredPolicy.BindDomDeclarations(new JsonNode[] { missing }); }
+            try { requiredPolicy.CompleteSourceContinuation(new[] { requiredRoot }, null, requiredCustody); }
             catch (InvalidOperationException) { rejected = true; }
             if (!rejected) throw new InvalidOperationException("Native binding accepted an absent or unmarked selected physical declaration");
         }
