@@ -58,6 +58,7 @@ static partial class NetInteropBinding
         internal OptionalField<bool> Super, Suspend;
         internal OptionalField<CapturedGenericArgument[]> CapturedArguments;
         internal OptionalField<TypeNode> CapturedResult;
+        internal OptionalField<BirExternalMemberBinding> ExternalMember;
 
         internal SourceCall(BirCallStatic call)
         {
@@ -73,6 +74,7 @@ static partial class NetInteropBinding
             Signature = call.Sig; Shapes = call.ShapeTypes; ArgumentTypes = call.ArgTypes; TypeArguments = call.TypeArgs;
             Receiver = call.Recv; Arguments = call.Args; Super = call.Super; Suspend = call.SuspendCall;
             CapturedArguments = call._capturedGenericArgument; CapturedResult = call._capturedGenericResult;
+            ExternalMember = call.ExternalMember;
         }
         internal void Retain(CallSelection plan)
         {
@@ -97,6 +99,7 @@ static partial class NetInteropBinding
         => !isStatic && call.Signature.HasValue ? OptionalField<SourceTypeVector>.Of(SourceTypeVector.Create(call.Signature.Value)) : default;
     static BirGraphValue LowerCall(SourceCall call, ReferenceMetadataIndex refs)
     {
+        if (call.ExternalMember.HasValue) return LowerSelectedExternalMember(call, refs);
         var args = call.Arguments.OrEmpty();
         var signatures = SelectSignatures(call.ArgumentTypes.OrDefault(), call.Shapes.OrDefault(), call.Signature.OrDefault());
         var plan = SelectCall(refs, call.Owner.OrDefault(), call.Method.OrDefault(), call.Static, call.Companion,

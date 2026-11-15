@@ -1455,7 +1455,7 @@ internal sealed class ArityNames
         string.IsNullOrEmpty(ns) ? name : ns + "." + name;
 }
 
-internal sealed class AssemblyScanner : IDisposable
+internal sealed partial class AssemblyScanner : IDisposable
 {
     private volatile bool _hasUtf16StringConstants;
     public bool HasUtf16StringConstants => _hasUtf16StringConstants;
@@ -3191,6 +3191,7 @@ internal sealed class AssemblyScanner : IDisposable
                 isStatic: (_md.GetMethodDefinition(representative).Attributes & MethodAttributes.Static) != 0));
         }
         AddEnumerableIterator(handle, def, result, names, signatures, typeContext);
+        AddNativeComparableViews(handle, def, result, names, signatures, typeContext);
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
         if (_companionCarriers.TryGetValue(handle, out var projectedCompanion) &&

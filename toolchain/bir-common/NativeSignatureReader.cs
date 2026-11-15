@@ -11,6 +11,19 @@ namespace DotKt.Bir;
 
 public sealed class NativeSignatureReader
 {
+    // An InterfaceImpl/base edge owns its constructed declaration frame just
+    // like a native member signature. Keep both readers on the same provider.
+    public static TypeNode Type(MetadataReader reader, EntityHandle handle, TypeNode[]? arguments = null)
+    {
+        var provider = new Provider(arguments);
+        return handle.Kind switch {
+            HandleKind.TypeDefinition => provider.GetTypeFromDefinition(reader, (TypeDefinitionHandle)handle, 0),
+            HandleKind.TypeReference => provider.GetTypeFromReference(reader, (TypeReferenceHandle)handle, 0),
+            HandleKind.TypeSpecification => provider.GetTypeFromSpecification(reader, reader, (TypeSpecificationHandle)handle, 0),
+            _ => throw new InvalidDataException("Native declaration owner is not a type"),
+        };
+    }
+
     public sealed record Signature(TypeNode Return, TypeNode[] Parameters);
     readonly Dictionary<(string Path, Guid Mvid, int Token), Signature> _methods = new();
     readonly Dictionary<(string Path, Guid Mvid, int Token), TypeNode> _fields = new();
@@ -49,7 +62,7 @@ public sealed class NativeSignatureReader
         return type;
     }
 
-    sealed class Provider : ISignatureTypeProvider<TypeNode, MetadataReader>
+    sealed class Provider(TypeNode[]? arguments = null) : ISignatureTypeProvider<TypeNode, MetadataReader>
     {
         public TypeNode GetArrayType(TypeNode element, ArrayShape shape)
         {
@@ -66,7 +79,8 @@ public sealed class NativeSignatureReader
             signature.Header.RawValue, signature.GenericParameterCount, signature.RequiredParameterCount,
             signature.ReturnType, signature.ParameterTypes.ToArray());
         public TypeNode GetGenericMethodParameter(MetadataReader reader, int index) => new TypeNode.Tv("method", index);
-        public TypeNode GetGenericTypeParameter(MetadataReader reader, int index) => new TypeNode.Tv("type", index);
+        public TypeNode GetGenericTypeParameter(MetadataReader reader, int index) =>
+            arguments is not null ? arguments[index] : new TypeNode.Tv("type", index);
         public TypeNode GetGenericInstantiation(TypeNode generic, ImmutableArray<TypeNode> arguments) => generic is TypeNode.Fqn named
             ? new TypeNode.Fqn(named.Name, arguments.ToArray())
             : throw new InvalidDataException("Native generic signature has no named definition");

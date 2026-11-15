@@ -672,6 +672,23 @@ internal static class BirGraphDom
         };
     }
 
+    internal static BirExternalMemberBinding ReadBirExternalMemberBinding(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "owner": break;
+                case "member": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirExternalMemberBinding at {source.GetPath()}");
+            }
+        return new BirExternalMemberBinding
+        {
+            Owner = Field<SourceDeclarationType>(fields, "owner", value => SourceDeclarationType.ReadFrozenText(value!.GetValue<string>())),
+            Member = Field<string>(fields, "member", value => value!.GetValue<string>()),
+        };
+    }
+
     internal static BirCallBinding ReadBirCallBinding(JsonNode source)
     {
         var fields = source.AsObject();
@@ -892,6 +909,7 @@ internal static class BirGraphDom
             {
                 case "k": if (field.Value?.GetValue<string>() != "callInstance") throw new FormatException(); break;
                 case "companionCall": break;
+                case "externalMember": break;
                 case "ownerType": break;
                 case "virtual": break;
                 case "recv": break;
@@ -952,6 +970,7 @@ internal static class BirGraphDom
         return new BirCallInstance
         {
             CompanionCall = Field<bool>(fields, "companionCall", value => value!.GetValue<bool>()),
+            ExternalMember = Field<BirExternalMemberBinding>(fields, "externalMember", value => ReadBirExternalMemberBinding(value!)),
             OwnerType = Field<TypeNode>(fields, "ownerType", value => TypeNode.Read(value) ?? throw new FormatException()),
             Virtual = Field<bool>(fields, "virtual", value => value!.GetValue<bool>()),
             Recv = Field<IBirExpression>(fields, "recv", value => ReadBirExpression(value!)),

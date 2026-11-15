@@ -386,6 +386,21 @@ data class BirObjectMethod(
     }
 }
 
+data class BirExternalMemberBinding(
+    val owner: String,
+    val member: String
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"owner\":")
+        TypeNodeJson.writeString(owner, output)
+        if (hasField) output.append(','); hasField = true; output.append("\"member\":")
+        TypeNodeJson.writeString(member, output)
+        output.append('}')
+    }
+}
+
 data class BirCallBinding(
     val id: String,
     val phase: String,
@@ -672,6 +687,7 @@ data class BirCallInstance(
     val method: String,
     val args: List<BirExpression>,
     val companionCall: Boolean? = null,
+    val externalMember: BirExternalMemberBinding? = null,
     val ownerType: TypeNode? = null,
     val virtual: Boolean? = null,
     val prop: String? = null,
@@ -705,6 +721,10 @@ data class BirCallInstance(
         companionCall?.let { value ->
             output.append(",\"companionCall\":")
             output.append(value)
+        }
+        externalMember?.let { value ->
+            output.append(",\"externalMember\":")
+            value.writeJson(output)
         }
         ownerType?.let { value ->
             output.append(",\"ownerType\":")

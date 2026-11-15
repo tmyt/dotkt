@@ -36,6 +36,7 @@ internal object BirMessagePack {
             is BirEnumOrdinal -> writeBirEnumOrdinal(value, packer, depth)
             is BirEnumParse -> writeBirEnumParse(value, packer, depth)
             is BirObjectMethod -> writeBirObjectMethod(value, packer, depth)
+            is BirExternalMemberBinding -> writeBirExternalMemberBinding(value, packer, depth)
             is BirCallBinding -> writeBirCallBinding(value, packer, depth)
             is BirCallEvaluation -> writeBirCallEvaluation(value, packer, depth)
             is BirDefaultArgument -> writeBirDefaultArgument(value, packer, depth)
@@ -442,6 +443,15 @@ internal object BirMessagePack {
         }
     }
 
+    private fun writeBirExternalMemberBinding(value: BirExternalMemberBinding, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(2)
+        packer.packString("owner")
+        MessagePackText.write(packer, value.owner)
+        packer.packString("member")
+        MessagePackText.write(packer, value.member)
+    }
+
     private fun writeBirCallBinding(value: BirCallBinding, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
         packer.packMapHeader(7)
@@ -662,12 +672,16 @@ internal object BirMessagePack {
 
     private fun writeBirCallInstance(value: BirCallInstance, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(4 + (if (value.companionCall == null) 0 else 1) + (if (value.ownerType == null) 0 else 1) + (if (value.virtual == null) 0 else 1) + (if (value.prop == null) 0 else 1) + (if (value.sig == null) 0 else 1) + (if (value.typeArgs == null) 0 else 1) + (if (value.shapeTypes == null) 0 else 1) + (if (value.argTypes == null) 0 else 1) + (if (value.dynRet == null) 0 else 1) + (if (value.ret == null) 0 else 1) + (if (value.suspendCall == null) 0 else 1) + (if (value.clrAwaitBridge == null) 0 else 1) + (if (value.awaitResult == null) 0 else 1) + (if (value.overrides == null) 0 else 1) + (if (value.anySlot == null) 0 else 1) + (if (value.superCall == null) 0 else 1) + (if (value.companionReceiver == null) 0 else 1) + (if (value.declarationId == null) 0 else 1) + (if (value.defaultDeclarationId == null) 0 else 1) + (if (value.defaultOwnerType == null) 0 else 1) + (if (value.dotktFrontendDeclarationConsumed == null) 0 else 1) + (if (value.clrFlagsOperation == null) 0 else 1) + (if (value.sty == null) 0 else 1) + (if (value.memberVisibility == null) 0 else 1) + (if (value.memberOwnerTypeParams == null) 0 else 1) + (if (value.memberMethodTypeParams == null) 0 else 1) + (if (value.memberSignature == null) 0 else 1) + (if (value.memberReturnType == null) 0 else 1))
+        packer.packMapHeader(4 + (if (value.companionCall == null) 0 else 1) + (if (value.externalMember == null) 0 else 1) + (if (value.ownerType == null) 0 else 1) + (if (value.virtual == null) 0 else 1) + (if (value.prop == null) 0 else 1) + (if (value.sig == null) 0 else 1) + (if (value.typeArgs == null) 0 else 1) + (if (value.shapeTypes == null) 0 else 1) + (if (value.argTypes == null) 0 else 1) + (if (value.dynRet == null) 0 else 1) + (if (value.ret == null) 0 else 1) + (if (value.suspendCall == null) 0 else 1) + (if (value.clrAwaitBridge == null) 0 else 1) + (if (value.awaitResult == null) 0 else 1) + (if (value.overrides == null) 0 else 1) + (if (value.anySlot == null) 0 else 1) + (if (value.superCall == null) 0 else 1) + (if (value.companionReceiver == null) 0 else 1) + (if (value.declarationId == null) 0 else 1) + (if (value.defaultDeclarationId == null) 0 else 1) + (if (value.defaultOwnerType == null) 0 else 1) + (if (value.dotktFrontendDeclarationConsumed == null) 0 else 1) + (if (value.clrFlagsOperation == null) 0 else 1) + (if (value.sty == null) 0 else 1) + (if (value.memberVisibility == null) 0 else 1) + (if (value.memberOwnerTypeParams == null) 0 else 1) + (if (value.memberMethodTypeParams == null) 0 else 1) + (if (value.memberSignature == null) 0 else 1) + (if (value.memberReturnType == null) 0 else 1))
         packer.packString("k")
         packer.packString("callInstance")
         value.companionCall?.let { child ->
             packer.packString("companionCall")
             packer.packBoolean(child)
+        }
+        value.externalMember?.let { child ->
+            packer.packString("externalMember")
+            writeBirExternalMemberBinding(child, packer, depth + 1)
         }
         value.ownerType?.let { child ->
             packer.packString("ownerType")
