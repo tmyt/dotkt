@@ -10,7 +10,7 @@ using DotKt.Cir;
 // expression has static type `I<object>`, a frontend cast target `D<T>` must become `D<object>` after an ABI erasure of
 // I; otherwise CLR reification turns the Kotlin-erased cast into an InvalidCastException. The hierarchy equation is
 // solved structurally, with ambiguity/incomplete mappings skipped.
-static class GenericDowncastRealignment
+static partial class GenericDowncastRealignment
 {
     public sealed class Def
     {

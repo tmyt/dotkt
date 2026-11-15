@@ -13,7 +13,7 @@ using DotKt.Bir;
 //     while ($seqIt$N.MoveNext()) { var <x> : elem = (elem) $seqIt$N.get_Current(); <body...> }
 // The `while` retains the loop label and element conversion, including value-element unboxing. Exact native
 // enumerable values keep their typed path. This runs before BirTypeLowering in executable builds.
-static class SequenceForEachLowering
+static partial class SequenceForEachLowering
 {
     static int _tmp;
 

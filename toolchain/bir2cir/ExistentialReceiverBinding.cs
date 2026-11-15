@@ -14,7 +14,7 @@ using DotKt.Bir;
 // table (or reference metadata), and ilemit merely emits the owner/member recorded here.
 // Inherited members and substituted CLR property nodes retain their frontend-selected identity;
 // the physical interface graph supplies reachable declarations, not Kotlin override precedence.
-static class ExistentialReceiverBinding
+static partial class ExistentialReceiverBinding
 {
     public sealed class Index
     {
@@ -243,6 +243,64 @@ static class ExistentialReceiverBinding
         var authoredSignature = ((call["sig"] ?? call["argTypes"]) as JsonArray)?
             .Select(TypeJson.Read).ToArray();
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
+        var selection = SelectSlot(index, refs, receiverType, authoredOwner, sourceMethod, accessorKind,
+            pc, ga, authoredSignature, Str(call[DeclarationIdentityBinding.Key]));
+        if (selection == null) return;
+        var (physicalOwner, physicalMethod, physicalDeclarationId, physicalParameters, physicalSignature, physicalResult) = selection;
+
+        if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot
+        // This exact existential slot replaces the selected generic source declaration. Keeping the source
+        // identity (or an earlier descriptor) would let final reference binding retarget it to G<T> again.
+        if (physicalDeclarationId != null) call[DeclarationIdentityBinding.Key] = physicalDeclarationId;
+        else call.Remove(DeclarationIdentityBinding.Key);
+        call.Remove("memberRef");
+        call.Remove("memberVisibility");
+        call.Remove("memberOwnerTypeParams");
+        call["ownerType"] = TypeJson.Write(physicalOwner);
+        if (clrPropertyKind != null)
+        {
+            call["k"] = "callInstance";
+            call["args"] = clrPropertyKind == "set"
+                ? new JsonArray(call["value"]?.DeepClone()) : new JsonArray();
+            call.Remove("value");
+            call.Remove("name");
+            call.Remove("type");
+        }
+        call["method"] = physicalMethod;
+        if (propertyCall)
+        {
+            KotlinPropertyAccessors.PreserveCallIdentity(call, sourcePropertyName, accessorKind);
+            call.Remove("prop");
+        }
+        if (physicalParameters != null)
+            call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
+        if (physicalSignature != null)
+            call["calleeParams"] = new JsonArray(physicalSignature.Select(TypeJson.Write).ToArray());
+        call["virtual"] = true;
+        AlignResult(call, physicalResult, expectedResult);
+    }
+
+    static void AlignResult(JsonObject call, TypeNode physicalResult, TypeNode expectedResult)
+    {
+        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+            ?? Array.Empty<TypeNode>();
+        physicalResult = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(physicalResult, methodArgs);
+        // Compiler-generated callable-reference invoke bodies can omit a node-local result stamp even though their
+        // enclosing return/local slot retains the exact Kotlin type. That expected slot is semantic source truth, not
+        // a reconstructed ABI: supply it when the call itself says nothing, then let the shared alignment author the
+        // physical inner call plus explicit projection.
+        if (NodeType.Stamp(call) == null && expectedResult != null)
+            call["sty"] = TypeJson.Write(expectedResult);
+        FBoundStarProjectionErasure.AlignCallResult(call, physicalResult, protectExactCast: false);
+    }
+
+    sealed record SlotSelection(TypeNode.Fqn Owner, string Method, string Identity,
+        TypeNode[] Parameters, TypeNode[] Signature, TypeNode Result);
+
+    static SlotSelection SelectSlot(Index index, ReferenceMetadataIndex refs, TypeNode.Fqn receiverType,
+        TypeNode.Fqn authoredOwner, string sourceMethod, string accessorKind, int pc, int ga,
+        TypeNode[] authoredSignature, string selectedId)
+    {
         string physicalMethod = null;
         string physicalDeclarationId = null;
         TypeNode[] physicalParameters = null;
@@ -250,7 +308,7 @@ static class ExistentialReceiverBinding
         TypeNode physicalResult = null;
 
         var physicalOwner = receiverType;
-        var selectedId = Str(call[DeclarationIdentityBinding.Key]);
+
         {
             var visited = new HashSet<string>(StringComparer.Ordinal);
             var frontier = new List<string> { receiverType.Name };
@@ -312,7 +370,7 @@ static class ExistentialReceiverBinding
             if (selectedId != null && refs.TryDeclarationIdentity(selectedId, out _, out var selectedOwner, out _, out _))
                 semanticOwner = new TypeNode.Fqn(selectedOwner);
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
-                    ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
+                    ga, authoredSignature, pc, selectedId,
                     out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
                     out var erasedResult)
                 && IsReachableReferenceCarrier(referencedReceiver, erasedOwner, refs))
@@ -326,50 +384,8 @@ static class ExistentialReceiverBinding
             return false;
         }
 
-        if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot
-        // This exact existential slot replaces the selected generic source declaration. Keeping the source
-        // identity (or an earlier descriptor) would let final reference binding retarget it to G<T> again.
-        if (physicalDeclarationId != null) call[DeclarationIdentityBinding.Key] = physicalDeclarationId;
-        else call.Remove(DeclarationIdentityBinding.Key);
-        call.Remove("memberRef");
-        call.Remove("memberVisibility");
-        call.Remove("memberOwnerTypeParams");
-        call["ownerType"] = TypeJson.Write(physicalOwner);
-        if (clrPropertyKind != null)
-        {
-            call["k"] = "callInstance";
-            call["args"] = clrPropertyKind == "set"
-                ? new JsonArray(call["value"]?.DeepClone()) : new JsonArray();
-            call.Remove("value");
-            call.Remove("name");
-            call.Remove("type");
-        }
-        call["method"] = physicalMethod;
-        if (propertyCall)
-        {
-            KotlinPropertyAccessors.PreserveCallIdentity(call, sourcePropertyName, accessorKind);
-            call.Remove("prop");
-        }
-        if (physicalParameters != null)
-            call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
-        if (physicalSignature != null)
-            call["calleeParams"] = new JsonArray(physicalSignature.Select(TypeJson.Write).ToArray());
-        call["virtual"] = true;
-        AlignResult(call, physicalResult, expectedResult);
-    }
-
-    static void AlignResult(JsonObject call, TypeNode physicalResult, TypeNode expectedResult)
-    {
-        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
-            ?? Array.Empty<TypeNode>();
-        physicalResult = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(physicalResult, methodArgs);
-        // Compiler-generated callable-reference invoke bodies can omit a node-local result stamp even though their
-        // enclosing return/local slot retains the exact Kotlin type. That expected slot is semantic source truth, not
-        // a reconstructed ABI: supply it when the call itself says nothing, then let the shared alignment author the
-        // physical inner call plus explicit projection.
-        if (NodeType.Stamp(call) == null && expectedResult != null)
-            call["sty"] = TypeJson.Write(expectedResult);
-        FBoundStarProjectionErasure.AlignCallResult(call, physicalResult, protectExactCast: false);
+        return physicalMethod == null ? null : new(physicalOwner, physicalMethod, physicalDeclarationId,
+            physicalParameters, physicalSignature, physicalResult);
     }
 
     static bool SignatureMatches(IReadOnlyList<TypeNode> declaration, IReadOnlyList<TypeNode> call)
