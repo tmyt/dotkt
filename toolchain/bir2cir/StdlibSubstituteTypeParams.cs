@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // #66 — kotc emits ONE substitute-INDEPENDENT BIR: the stdlib REFERENCE and RUNTIME builds get BIT-IDENTICAL type
@@ -18,28 +17,8 @@ using DotKt.Bir;
 //
 // Class and method bounds remain intact: BirTypeLowering projects them to their exact CLR declarations, including
 // IComparable<T>. Removing such a bound after constrained-call selection invalidates that call's verifier proof.
-static class StdlibSubstituteTypeParams
+static partial class StdlibSubstituteTypeParams
 {
-    public static void Apply(JsonNode node)
-    {
-        if (node is JsonObject o)
-        {
-            if (o["typeParams"] is JsonArray tps) Rewrite(tps, Str(o["kind"]) == "interface");
-            foreach (var kv in o) if (kv.Value != null) Apply(kv.Value);
-        }
-        else if (node is JsonArray a)
-            foreach (var it in a) if (it != null) Apply(it);
-    }
-
-    static void Rewrite(JsonArray tps, bool runtimeInterface)
-    {
-        for (int i = 0; i < tps.Count; i++)
-        {
-            var declaration = TypeParameterDeclaration.Read(tps[i]);
-            tps[i] = Rewrite(declaration, runtimeInterface).ToDom();
-        }
-    }
-
     internal static TypeParameterDeclaration Rewrite(TypeParameterDeclaration declaration, bool runtimeInterface) =>
         declaration with {
             Constraints = runtimeInterface ? null : declaration.Constraints,
@@ -48,16 +27,6 @@ static class StdlibSubstituteTypeParams
 
     internal static void SelfTest()
     {
-        var root = JsonNode.Parse("""
-        {"methods":[{"name":"compare","typeParams":[{"name":"T","constraints":[
-          {"t":"fqn","name":"kotlin.Comparable","args":[{"t":"tv","scope":"method","i":0}]}]}]}],
-         "types":[{"kind":"class","name":"Range","typeParams":[{"name":"T","constraints":[
-          {"t":"fqn","name":"kotlin.Comparable","args":[{"t":"tv","scope":"type","i":0}]}]}]}]}
-        """);
-        var expected = root.DeepClone();
-        Apply(root);
-        if (!JsonNode.DeepEquals(root, expected))
-            throw new System.InvalidOperationException("Runtime substitution removed a class or method bound required by constrained dispatch");
         var parameter = new TypeParameterDeclaration("T", Reified: true, Variance: "in",
             Constraints: [new TypeNode.Fqn("kotlin.Any")],
             ErasedInnerConstraints: [new TypeNode.Tv("type", 0)], SpecialConstraints: ["class"]);
@@ -72,8 +41,6 @@ static class StdlibSubstituteTypeParams
             || decoded.ErasedInnerConstraints?.Single() != parameter.ErasedInnerConstraints.Single()
             || decoded.SpecialConstraints?.Single() != "class")
             throw new System.InvalidOperationException("Generic declaration boundary changed current declaration facts");
-        System.Console.WriteLine("[runtime generic bounds] self-test OK (class and method CLR constraint proof retained)");
+        System.Console.WriteLine("[runtime generic bounds] self-test OK (shared declaration planner and current metadata facts)");
     }
-
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 }

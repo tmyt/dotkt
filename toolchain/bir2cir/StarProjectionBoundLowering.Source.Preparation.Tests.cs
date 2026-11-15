@@ -35,9 +35,10 @@ static partial class StarProjectionBoundLowering
         Check(captured.Args[0] is TypeNode.Fqn { Name: "System.String" }, "prepared mutation changed source bounds");
         captured.Args[0] = integer; copy.Args[0] = new TypeNode.Fqn("System.Int32");
         var application = new TypeNode.Fqn("Snapshot.Carrier", Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Any"), 3).ToArray());
-        var use = new BirFileDeclaration { Fields = new[] { new BirFieldDeclaration { Name = "use", Type = application } } }.ToDom();
+        var field = new BirFieldDeclaration { Name = "use", Type = application };
+        var use = new BirFileDeclaration { Fields = new[] { field } };
         Apply(use, bounds, ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location }));
-        var result = (TypeNode.Fqn)TypeJson.Read(use["fields"][0]["type"]);
+        var result = (TypeNode.Fqn)field.Type.Value;
         Check(TypeNodeDataEquality.Equal(result.Args[0], captured) && TypeNodeDataEquality.Equal(result.Args[1], own)
             && result.Args[2] is TypeNode.Fqn { Name: "kotlin.Any" }, "retained consumer ignored the prepared physical frame");
         Console.WriteLine("[star-bound preparation] self-test OK (captured/own order, first bound/owner, deep isolation and retained consumer)");

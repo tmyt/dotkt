@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // STAR-PROJECTION BOUND LOWERING (#2): a `T<*>` on a SELF-REF-BOUNDED generic `interface Key<E : Element>` is lowered by
@@ -39,41 +38,6 @@ static partial class StarProjectionBoundLowering
             new Dictionary<string, TypeNode[]>(), ReferenceMetadataIndex.Build(Array.Empty<string>())));
         FunctionRewriteTests.Check("star bound substitution", type => CloseEarlierOwnerTypeVars(type,
             Array.Empty<TypeNode>(), 0));
-    }
-
-    public static void Apply(JsonNode root, IReadOnlyDictionary<string, TypeNode[]> localBounds, ReferenceMetadataIndex refs)
-        => Walk(root, localBounds, refs);
-
-    static void Walk(JsonNode node, IReadOnlyDictionary<string, TypeNode[]> localBounds, ReferenceMetadataIndex refs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                foreach (var key in obj.Select(kv => kv.Key).ToList())
-                {
-                    var val = obj[key];
-                    if (val == null) continue;
-                    // `name` is a declaration's own identity and `owner` is a call's static container — neither is a
-                    // constructed-generic type slot to repoint (mirrors ContinuationErasure's identity-slot skip).
-                    if (key == "name" || key == "owner") continue;
-                    if (TypeJson.Read(val) is TypeNode tn)
-                        obj[key] = TypeJson.Write(Subst(tn, localBounds, refs));
-                    else
-                        Walk(val, localBounds, refs);
-                }
-                break;
-            case JsonArray arr:
-                for (var i = 0; i < arr.Count; i++)
-                {
-                    var val = arr[i];
-                    if (val == null) continue;
-                    if (TypeJson.Read(val) is TypeNode tn)
-                        arr[i] = TypeJson.Write(Subst(tn, localBounds, refs));
-                    else
-                        Walk(val, localBounds, refs);
-                }
-                break;
-        }
     }
 
     // Repoint an objectish arg of a bounded generic to its type-param BOUND, recursively through nested generics /
@@ -163,6 +127,4 @@ static partial class StarProjectionBoundLowering
         TypeNode.Fqn { Args: null } f => f.Name is "kotlin.Any" or "object" or "System.Object",
         _ => false,
     };
-
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 }

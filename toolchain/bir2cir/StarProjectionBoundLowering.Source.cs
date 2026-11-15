@@ -4,6 +4,22 @@ using DotKt.Cir;
 
 static partial class StarProjectionBoundLowering
 {
+    internal static void Apply(BirGraphValue root, IReadOnlyDictionary<string, TypeNode[]> localBounds,
+        ReferenceMetadataIndex references)
+    {
+        void Walk(BirGraphValue node)
+        {
+            if (node is null or IBirExecutablePayload) return;
+            // Static containers and declaration identity were excluded by the
+            // old owner, not by a general generic-frame-role classification.
+            static bool Excluded(string field) => field is "name" or "owner"
+                || FBoundStarProjectionErasure.IsTransientMarker(field);
+            node.RewriteOwnFieldsInPlace((field, _, type) => Excluded(field) ? type : Subst(type, localBounds, references),
+                (field, _, slot) => { if (!Excluded(field)) Walk(slot.Value); });
+        }
+        Walk(root);
+    }
+
     // Snapshot the complete captured + declared frame before ABI erasure.
     internal static Dictionary<string, TypeNode[]> CollectTypeParamBounds(IEnumerable<BirFileDeclaration> roots)
     {
