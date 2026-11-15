@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // THE DELEGATE A LAMBDA OR CALLABLE REFERENCE PHYSICALLY CONSTRUCTS.
@@ -51,6 +50,8 @@ static partial class ClrMemberResolution
 {
     // Transient: the delegate this construction's SLOT declares, as the resolved physical `fqn`. Consumed by
     // MaterializeDelegateSlots and never written to CIR.
+    // Record the selected slot, not adaptation before funcType is final. Later
+    // resolution may retarget the operation, so the last selected slot wins.
     const string DelegateSlotKey = "dotktDelegateSlot";
 
     static TypeNode CloseDelegateArgumentSlot(TypeNode parameter, TypeNode[] ownerArgs, TypeNode[] methodArgs)
@@ -75,32 +76,6 @@ static partial class ClrMemberResolution
             fn.Ctx?.Select(c => SubstituteMethodTypeArgs(c, args)).ToArray()),
         _ => type,
     };
-
-    /// <summary>
-    /// Record the delegate a construction's slot declares, when that slot is a delegate at all.
-    /// </summary>
-    /// <remarks>
-    /// Only the slot is recorded, never the outcome: the construction's own `funcType` can still be rewritten by
-    /// a later pass, so what to do about the pair is decided when both halves are final.
-    ///
-    /// LAST WRITER WINS. A later resolution can re-point the same operation at a different declaration; the mark
-    /// belongs to whichever declaration the operation ends up naming, and keeping the first would materialize a
-    /// slot the call no longer has.
-    /// </remarks>
-    internal static bool MarkDelegateSlot(JsonObject construction, TypeNode slotType)
-        => MarkDelegateSlot(construction, slotType, _refs, _localTypes);
-
-    internal static bool MarkDelegateSlot(JsonObject construction, TypeNode slotType,
-        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes)
-    {
-        if ((construction["k"] as JsonValue)?.GetValue<string>() is not
-            ("newDelegate" or "newClosure" or "newBoundDelegate" or "newBoundClrDelegate" or "newClrStaticDelegate"))
-            return false;
-        if (DelegateFqnOfSlot(slotType, refs, localTypes) is not TypeNode.Fqn slotDelegate)
-            return construction.ContainsKey(DelegateSlotKey);
-        construction[DelegateSlotKey] = TypeJson.Write(slotDelegate);
-        return true;
-    }
 
     // The physical delegate a declaration slot IS, or null when the slot is not a delegate.
     //

@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -15,11 +14,6 @@ static partial class ClrMemberResolution
             var count = 0;
             root.Visit(node => { if (ReferenceEquals(node, target)) count++; });
             return count;
-        }
-        static void SameCurrentRenderer(BirGraphValue typed, JsonObject dom)
-        {
-            if (!JsonNode.DeepEquals(typed.ToDom(), dom))
-                throw new InvalidOperationException("Typed exact CLR calls disagree with the live DOM renderer");
         }
         var previousReferences = _refs;
         try
@@ -58,7 +52,6 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(arguments[0], left) && ReferenceEquals(arguments[1], right)
                 && !ReferenceEquals(call.Args.Value, arguments) && !ReferenceEquals(call.Sig.Value, reference.ParameterTypes.Value),
                 "exact arguments were moved, reordered or shared instead of independently cloned/cast");
-            SameCurrentRenderer(call, ExactStaticCall(refs, concat, text, new JsonArray(left.ToDom(), right.ToDom())));
 
             var item = typeof(List<>).GetProperty("Item")!.GetMethod!;
             var owner = new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { text });
@@ -83,14 +76,13 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(receiverCast.E.Value, receiver) && Occurrences(instance, (BirGraphValue)receiver) == 1
                 && instance.Args.Value is [BirCast indexCast] && indexCast.Type.Value == integer
                 && !ReferenceEquals(indexCast.E.Value, index) && ((BirGraphValue)indexCast.E.Value).StructurallyEquals((BirGraphValue)index)
-                && !instance.MemberVisibility.IsPresent && !instance.MemberOwnerTypeParams.IsPresent && !instance.MemberReturnType.IsPresent,
+                && !instance.MemberVisibility.IsPresent && !instance.MemberOwnerTypeParams.IsPresent && !instance.MemberReturnType.IsPresent
+                && !instance.ArgTypes.IsPresent && !instance.DeclarationId.IsPresent,
                 "instance renderer lost receiver-once, open signature or the already-closed result/stamp");
             var closedItem = typeof(List<string>).GetProperty("Item")!.GetMethod!;
             var closedPlan = PlanExactDispatch(refs, closedItem, owner, isStatic: false);
             Require(closedPlan.Result == text && closedPlan.Reference.ReturnType == new TypeNode.Tv("type", 0),
                 "a reflected closed MethodDef was substituted twice or leaked its closed signature into the MemberRef");
-            SameCurrentRenderer(instance, ExactInstanceCall(refs, item, owner, ((BirGraphValue)receiver).ToDom(),
-                new JsonArray(((BirGraphValue)index).ToDom())));
 
             var clone = typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic)!;
             var protectedPlan = PlanExactDispatch(refs, clone, obj, isStatic: false);
@@ -108,19 +100,24 @@ static partial class ClrMemberResolution
                     && protectedCall.Sig.HasValue && protectedCall.Sig.Value.Length == 0
                     && protectedCall.Args.HasValue && protectedCall.Args.Value.Length == 0
                     && protectedCall.DotktDeclarationIdentityBound.Value && protectedCall.Virtual.Value
+                    && protectedCall.OwnerType.Value == obj && protectedCall.Method.Value == "MemberwiseClone"
+                    && protectedCall.MemberRef.Value.Kind.Value == MemberRefNode.Kinds.Method
+                    && protectedCall.MemberRef.Value.Assembly.Value == definingAssembly
+                    && protectedCall.MemberRef.Value.DeclaringType.Value == obj
+                    && protectedCall.MemberRef.Value.CallingConvention.Value == MemberRefNode.Instance
+                    && protectedCall.MemberRef.Value.GenericArity.Value == 0
                     && protectedCall.MemberRef.Value.Name.Value == "MemberwiseClone"
                     && protectedCall.MemberRef.Value.ParameterTypes.Value.Length == 0
-                    && protectedCall.MemberRef.Value.ReturnType.Value == obj && !protectedCall.ArgTypes.IsPresent,
+                    && protectedCall.MemberRef.Value.ReturnType.Value == obj && !protectedCall.ArgTypes.IsPresent
+                    && !protectedCall.DeclarationId.IsPresent,
                     "protected access metadata lost explicit null/empty presence, signature or result");
             Require(thisCall.Recv.Value is BirThis && !ReferenceEquals(thisCall.Recv.Value, self)
                 && Occurrences(thisCall, (BirGraphValue)self) == 0
                 && otherCall.Recv.Value is BirCast otherCast && otherCast.Type.Value == obj
                 && ReferenceEquals(otherCast.E.Value, other) && Occurrences(otherCall, (BirGraphValue)other) == 1,
                 "protected this must remain lexical while a non-this receiver is cast exactly once");
-            SameCurrentRenderer(thisCall, ExactInstanceCall(refs, clone, obj, ((BirGraphValue)self).ToDom(), new JsonArray()));
-            SameCurrentRenderer(otherCall, ExactInstanceCall(refs, clone, obj, ((BirGraphValue)other).ToDom(), new JsonArray()));
         }
         finally { _refs = previousReferences; }
-        Console.WriteLine("[typed exact CLR calls] self-test OK (real MethodDefs, open/closed signatures, argument copies, receiver-once, protected metadata and live renderer agreement)");
+        Console.WriteLine("[typed exact CLR calls] self-test OK (real MethodDefs, open/closed signatures, argument copies, receiver-once, protected metadata and exact optional presence)");
     }
 }

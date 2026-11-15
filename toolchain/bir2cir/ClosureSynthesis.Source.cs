@@ -64,7 +64,7 @@ static partial class ClosureSynthesis
         }
     }
 
-    // Shape admission is the same for the owning typed prefix and real late DOM adapter consumers.
+    // Shape admission is shared by the owning file and newly materialized typed work items.
     static TypeNode.Fqn ProjectedDelegateSamTarget(IReadOnlyList<TypeNode> interfaces, int methodCount, ReferenceMetadataIndex refs)
         => refs != null && interfaces.Count == 1 && interfaces[0] is TypeNode.Fqn target
             && refs.IsClrDelegate(target) && methodCount == 1 ? target : null;
