@@ -36,10 +36,10 @@ sealed partial class ReferenceMetadataIndex
                     throw new InvalidOperationException("Complete carrier scan lost its current payload or trusted/foreign distinction");
                 // Unlike initial MethodDef indexing, this real physical reader
                 // calls KotlinTypeOf even when the assembly is not DotKt-owned.
-                if (!index.TryResolveLiteralField(new TypeNode.Fqn("CarrierScanSubject"), "Literal", out var fieldType, out var value)
+                if (!index.TryResolveLiteralFieldValue(new TypeNode.Fqn("CarrierScanSubject"), "Literal", out var fieldType, out var value)
                     || (trusted ? !TypeNodeDataEquality.Equal(fieldType, semantic)
                         : fieldType != new TypeNode.Fqn("System.String"))
-                    || value?.GetValue<string>() != "literal")
+                    || value is not BirLiteral.TextLiteral { Value: "literal" })
                     throw new InvalidOperationException("Physical field lookup accepted a foreign carrier or lost its CLR fallback");
             }
             finally { File.Delete(file); }

@@ -15,13 +15,12 @@ sealed partial class ReferenceMetadataIndex
             "real Constant-table selector lost the physical scalar type/value");
         var cachedCount = refs._literalFieldCache.Count;
         Require(refs.TryResolveLiteralFieldValue(owner, "MaxValue", out var repeatedType, out var repeated)
-            && refs.TryResolveLiteralField(owner, "MaxValue", out var domType, out var dom)
             && refs._literalFieldCache.Count == cachedCount && ReferenceEquals(literal, repeated)
-            && repeatedType == type && domType == type && dom.ToJsonString() == int.MaxValue.ToString(),
-            "the real DOM leaf renderer and typed buyer did not share one selection/cache");
+            && repeatedType == type,
+            "the repeated typed read did not preserve its exact selection/cache");
         Require(!refs.TryResolveLiteralFieldValue(owner, "missing-constant", out _, out _), "missing field was synthesized");
         cachedCount = refs._literalFieldCache.Count;
-        Require(!refs.TryResolveLiteralField(owner, "missing-constant", out _, out _)
+        Require(!refs.TryResolveLiteralFieldValue(owner, "missing-constant", out _, out _)
             && refs._literalFieldCache.Count == cachedCount, "a literal miss did not share the same cache");
         Require(refs.TryResolveLiteralFieldValue(new TypeNode.Fqn("System.UInt32"), "MaxValue", out _, out var unsigned32)
             && unsigned32 == new BirLiteral.IntegerLiteral(-1)

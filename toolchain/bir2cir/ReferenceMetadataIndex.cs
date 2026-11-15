@@ -1931,14 +1931,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // A referenced Literal FieldDef has no storage to load. Select its exact Constant-table value and Kotlin surface
-    // type here so ConstFieldLowering can author a `const` CIR node; ilemit must not rediscover this representation.
-    public bool TryResolveLiteralField(TypeNode.Fqn owner, string name, out TypeNode type, out JsonNode value)
-    {
-        var found = TryResolveLiteralFieldValue(owner, name, out type, out var literal);
-        value = literal?.ToDom();
-        return found;
-    }
-
+    // type here so ConstFieldLowering can author an owning BIR constant; ilemit must not rediscover this representation.
     internal bool TryResolveLiteralFieldValue(TypeNode.Fqn owner, string name, out TypeNode type, out BirLiteral value)
     {
         type = null;
