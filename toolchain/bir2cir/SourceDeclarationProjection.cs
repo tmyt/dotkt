@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // One explicit projection of producer-reported retired forests. This records
 // actual occurrences only; it neither selects source declarations nor admits
