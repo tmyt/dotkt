@@ -2,8 +2,7 @@ using DotKt.Bir;
 
 static partial class FBoundStarProjectionErasure
 {
-    internal sealed record CarrierRealizationContinuation(IReadOnlyDictionary<string, string> LocalOwners,
-        Dictionary<string, string> PhysicalDeclarationSources);
+    internal sealed record CarrierRealizationContinuation(IReadOnlyDictionary<string, string> LocalOwners);
 
     // The frontier changes addresses, not membership or representation policy.
     // Later passes need the chosen names and declaration identities, not a
@@ -34,8 +33,7 @@ static partial class FBoundStarProjectionErasure
         _ = context.Surface.Signatures.BindPhysical();
         OwnerConstrainedMethodLowering.ConfigurePreparedMethods(preparation.Bindings, context.References);
         var result = new CarrierRealizationContinuation(context.Owners.Values.Where(owner => owner.Needed)
-            .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal),
-            context.Declarations.PhysicalDeclarationSources);
+            .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal));
         context.Declarations.ReleaseSourceRows();
         return result;
     }

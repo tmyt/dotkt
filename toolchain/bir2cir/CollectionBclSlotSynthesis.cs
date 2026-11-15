@@ -22,7 +22,7 @@ using DotKt.Bir;
 // IsReadOnly returns false. The return-DROPPING slots
 // (Add/set_Item/RemoveAt) join the common late KotlinOverrideSlotBridge allocation. Non-ref builds only (the ref surface
 // stays pure Kotlin). Modeled on ComparableBridgeSynthesis.
-static class CollectionBclSlotSynthesis
+static partial class CollectionBclSlotSynthesis
 {
     const string ICollection = "System.Collections.Generic.ICollection";
     const string IList = "System.Collections.Generic.IList";
@@ -30,25 +30,6 @@ static class CollectionBclSlotSynthesis
 
     static string FaceKey(TypeNode.Fqn face) => SupertypeGraph.TypeKey(
         BirTypeLowering.CanonicalPhysicalSlotType(CollectionFace(face)));
-
-    // Preserve the source obligation before physical lowering: a map or a foreign CLR interface can expose
-    // ICollection as storage without implementing Kotlin's mutable-collection query/default contract.
-    public static void RecordContracts(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
-    {
-        var definitions = SupertypeGraph.Collect(roots);
-        foreach (var definition in definitions.Values.Where(d => d.Kind == "class"))
-        {
-            var contracts = SupertypeGraph.Reachable(definition, definitions, refs,
-                    sourceFrames: true, physicalSourceApplications: true)
-                .Select(edge => new TypeNode.Fqn(ReferenceMetadataIndex.BareOwnerFqn(edge.spec.Name), edge.spec.Args))
-                .Where(owner => owner.Name is "kotlin.collections.MutableCollection"
-                    or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet")
-                .Select(owner => (JsonNode)JsonValue.Create(TypeJson.Write(owner).ToJsonString())).ToArray();
-            // The final argument frame is already allocated. Keep these obligation facts opaque to value erasure;
-            // an operational interface is not a collection value. Physical lowering consumes them once below.
-            if (contracts.Length != 0) definition.Node[ContractKey] = new JsonArray(contracts);
-        }
-    }
 
     internal static void SelfTest()
     {
@@ -69,10 +50,10 @@ static class CollectionBclSlotSynthesis
         var definitions = SupertypeGraph.Collect(roots);
         foreach (var definition in definitions.Values)
         {
-            var contracts = (definition.Node[ContractKey] as JsonArray)?
-                .Select(contract => lowerType(TypeJson.Read(JsonNode.Parse(contract.GetValue<string>()))) as TypeNode.Fqn)
-                .Where(contract => contract != null).Select(CollectionFace).OfType<TypeNode.Fqn>().ToList()
-                ?? new List<TypeNode.Fqn>();
+            var contracts = (definition.Node[ContractKey] is JsonValue encoded
+                ? SourceTypeVector.ReadFrozenText(encoded.GetValue<string>()).Types : Array.Empty<TypeNode>())
+                .Select(contract => lowerType(contract) as TypeNode.Fqn)
+                .Where(contract => contract != null).Select(CollectionFace).OfType<TypeNode.Fqn>().ToList();
             definition.Node.Remove(ContractKey);
             if (definition.Kind != "class") continue; // interfaces carry no bodies
             if (contracts.Count == 0) continue;

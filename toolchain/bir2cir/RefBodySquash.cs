@@ -1,7 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Cir;
 
@@ -17,9 +14,9 @@ using DotKt.Cir;
 // purely as metadata.
 //
 // Mutates the declaration tree after semantic metadata capture and before physical call binding. Only the hierarchy that ilemit emits as IL
-// bodies is touched: file-level methods, and per-type methods + constructors, recursively through nested types.
+// bodies is touched: file-level methods and the current flat type declarations' methods + constructors.
 // Property accessors are already represented as methods, so they are covered by the method pass.
-static class RefBodySquash
+static partial class RefBodySquash
 {
     // Metadata-only primitive facades are reference classes, not native literal stack types. Historically
     // ilemit's constant switch implicitly emitted null for these slots. Scalar projection preserves the literal
@@ -39,73 +36,4 @@ static class RefBodySquash
         });
     }
 
-    public static void Squash(JsonNode root)
-    {
-        if (root is not JsonObject file) return;
-        SquashMethods(file["methods"] as JsonArray);
-        SquashTypes(file["types"] as JsonArray);
-    }
-
-    static void SquashTypes(JsonArray types)
-    {
-        if (types == null) return;
-        foreach (var t in types)
-        {
-            if (t is not JsonObject type) continue;
-            SquashMethods(type["methods"] as JsonArray);
-            SquashCtors(type["ctors"] as JsonArray);
-            SquashTypes(type["types"] as JsonArray);   // nested types (local/object/companion)
-        }
-    }
-
-    static void SquashMethods(JsonArray methods)
-    {
-        if (methods == null) return;
-        foreach (var m in methods)
-        {
-            if (m is not JsonObject method) continue;
-            // Abstract/interface members have NO IL body — ilemit refuses a body for them; adding one would be
-            // emitted-as-nothing at best and is semantically wrong. We only squash a member that actually carries a
-            // `body` statement array. A declaration the suspend cold lowering left un-lowered is an ordinary member
-            // here: it carries a body like any other and is squashed like any other.
-            if (IsAbstract(method)) continue;
-            if (method["body"] is JsonArray body)
-            {
-                method["body"] = ThrowStubBody();
-            }
-        }
-    }
-
-    static void SquashCtors(JsonArray ctors)
-    {
-        if (ctors == null) return;
-        foreach (var c in ctors)
-        {
-            if (c is not JsonObject ctor) continue;
-            // Squash ONLY the body. Keep `baseArgs`/`thisArgs`: ilemit always emits the base/this constructor call
-            // from that metadata before the body, and a base without a default constructor would make a nulled-out
-            // base call un-resolvable. The chain-up is the minimal structurally-required prologue; the body throws.
-            if (ctor["body"] is JsonArray) ctor["body"] = ThrowStubBody();
-        }
-    }
-
-    static bool IsAbstract(JsonObject method) =>
-        method["abstract"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
-
-    // A one-statement CIR body: `throw new System.NotImplementedException()`. The reference-body contract preserves
-    // declarations while replacing executable bodies with this ordinary throw statement.
-    static JsonArray ThrowStubBody() => new()
-    {
-        new JsonObject
-        {
-            ["k"] = "throw",
-            ["value"] = new JsonObject
-            {
-                ["k"] = "newClr",
-                ["type"] = TypeJson.Fqn("System.NotImplementedException"),
-                ["argTypes"] = new JsonArray(),
-                ["args"] = new JsonArray(),
-            },
-        },
-    };
 }

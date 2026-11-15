@@ -94,6 +94,8 @@ static class Bir2Cir
                 ClrMemberResolution.SelfTestTypedBaseConstructors();
                 ClrMemberResolution.TypedExactCallSelfTest();
                 ClrMemberResolution.DeclarationBindingsSelfTest();
+                ClrMemberResolution.SourceDescriptorSelfTest();
+                ClrMemberResolution.SourceLocalDelegateTargetsSelfTest();
                 ClrMemberResolution.TypedGenericParameterFactsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -138,7 +140,13 @@ static class Bir2Cir
                 ClrEventImplBinding.SelfTestLocalEventRecipes();
                 ClrEventImplBinding.SelfTestTypedImplementations();
                 ClrEventImplBinding.SelfTestTypedEventSlots();
-                ExistentialReceiverBinding.SelfTest();
+                ExistentialReceiverBinding.SourceSelfTest();
+                GenericDowncastRealignment.SourceSelfTest();
+                SequenceForEachLowering.SourceSelfTest();
+                RefBodySquash.SourceSelfTest();
+                StarProjectionBoundLowering.SourcePreparationSelfTest();
+                ExternalGenericConstraintValidation.SourcePreparationSelfTest();
+                CollectionBclSlotSynthesis.SourcePreparationSelfTest();
                 MaterializedBirPayload.SelfTest();
                 InlineBirStashTests.SelfTest();
                 InlineExpansion.SelfTestHygiene();
@@ -198,6 +206,7 @@ static class Bir2Cir
                 PublishedApiTypeVisibilityLowering.SelfTestSourceVisibility();
                 ComparableBridgeSynthesis.SourceSelfTest();
                 ContinuationErasure.SelfTest();
+                ContinuationErasure.StrictFrontierSelfTest();
                 ReferenceNullableStrip.FunctionSelfTest();
                 StarProjectionBoundLowering.FunctionSelfTest();
                 ClrMemberResolution.InheritedGenericResultSelfTest();
@@ -536,7 +545,7 @@ sealed class Pipeline
         var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(captured);
         var localStatics = LocalStaticOwnerBinding.Collect(captured);
         var localReferenceTypes = AnySlotRebind.CollectLocalTypes(captured);
-        var moduleBindings = new ModuleBindingSnapshots(GenericDowncastRealignment.Collect(captured));
+        var genericDowncastHierarchy = GenericDowncastRealignment.Collect(captured);
         var iterableHierarchy = SupertypeGraph.CollectSource(captured);
         var syntheticTypes = captured.Select(source =>
             NullableTvErasureCallRealign.CaptureNewSyntheticTypes(source, nullableDeclarations)).ToArray();
@@ -917,13 +926,49 @@ sealed class Pipeline
         // Only then author its ordinary failure construction, without new types.
         LateinitGetLowering.ApplyAll(captured);
 
+        // Resolve the current local declaration descriptors before taking the
+        // module-wide inventories. These are physical snapshots at this clock,
+        // not a second capture of source eligibility or carrier demand.
+        foreach (var source in captured) ClrMemberResolution.EnsurePlainCallDescriptors(source);
+        ClrMemberResolution.ResolveLocalDelegateTargetsSource(captured, refs,
+            localCarriers: localExistentialOwners);
+        var physicalPreparation = new PhysicalAbiPreparation(
+            AnySlotRebind.CollectLocalTypes(captured).Keys.ToHashSet(StringComparer.Ordinal),
+            (appBuild ? captured.SelectMany(file => file.Types.OrEmpty())
+                .Where(type => type.Generated.OrDefault()).Select(type => type.Name.OrDefault())
+                .Where(name => !string.IsNullOrEmpty(name)
+                    && ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name)
+                    && refs.PhysicalTypeNamed(name) != null) : Enumerable.Empty<string>())
+                .ToHashSet(StringComparer.Ordinal),
+            StarProjectionBoundLowering.CollectTypeParamBounds(captured),
+            ExternalGenericConstraintValidation.Prepare(captured, refs, isValueFqn, enums.Basic),
+            MemberCallSubstitution.CollectLocalPropertyAccessors(captured),
+            new SourceModuleIndex(captured, refs.Aliases));
+        var existentialReceiverMembers = ExistentialReceiverBinding.Collect(captured,
+            carrierRealization.Declarations.PhysicalDeclarationSources);
+        if (!referenceBuild) CollectionBclSlotSynthesis.RecordContracts(captured, refs);
+        foreach (var source in captured)
+        {
+            // The coroutine ABI is monomorphic except for exact lexical and
+            // enclosing receiver frames. Consume outer facts only after erasure.
+            ContinuationErasure.Apply(source, refs);
+            ContinuationErasure.ConsumeExactOuterSource(source);
+            GenericDowncastRealignment.Apply(source, genericDowncastHierarchy);
+            ExistentialReceiverBinding.Apply(source, existentialReceiverMembers, refs);
+            if (!referenceBuild) SequenceForEachLowering.Apply(source);
+            // Body retirement must precede projection while actual registered
+            // owners remain attached. Signatures and opaque metadata survive.
+            if (referenceBuild) RefBodySquash.Squash(source, suspendTransitions.RetireDiscardedSubtree);
+        }
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
             // continuing projection, after slots, placement, exact generic uses,
-            // storage naming and lexical access. Retired facts use the same observer.
+            // storage, lexical access and pre-type ABI finishing. Retired facts
+            // use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -950,7 +995,7 @@ sealed class Pipeline
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
             new ModulePreparation(inventory, enums,
-                moduleBindings, carrierContinuation));
+                carrierContinuation, physicalPreparation));
     }
 
     List<CirFile> TransformFiles(LoadedBirModule module, ReferenceMetadataIndex refs)
@@ -987,7 +1032,6 @@ sealed class Pipeline
         // native-enum inventory already consumed by typed dispatch binding.
         var localBasicEnums = module.Preparation.Enums.Basic;
 
-        var genericDowncastHierarchy = module.Preparation.Bindings.GenericDowncastHierarchy;
         // Call-boundary materialization has completed in the owning prefix.
         // The remaining type/slot/suspend owners consume this module-wide set.
         var staged = new List<(JsonNode Root, string OutputName)>();
@@ -996,7 +1040,6 @@ sealed class Pipeline
 
         // Continue the owning prefix's selected carrier facts;
         // do not reselect them after the frontier.
-        var physicalDeclarationSources = module.Preparation.Carriers.PhysicalDeclarationSources;
         var localExistentialOwners = module.Preparation.Carriers.LocalOwners;
 
         // Suspend residue, logical results and final override slots have already
@@ -1012,53 +1055,15 @@ sealed class Pipeline
         // late foreign adapters and referenced existential ABI were resolved on
         // owning BIR. The remaining structural owners consume those exact facts.
 
-        // Storage and lexical access have completed on owning BIR. These
-        // transport markers stay until LoadBirInputs' strict address handoff has
-        // validated the selected native declarations; they are consumed now.
-        FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root), preserveExactOuter: true);
-
-        // Normalize every local call/delegate descriptor before the module-wide local member binding below. Generic
-        // delegate targets may carry a closed function shape while their declaration remains open; bir2cir owns the
-        // declaration lookup and records that open signature explicitly for one-to-one emission.
-        foreach (var stagedFile in staged)
-            ClrMemberResolution.EnsurePlainCallDescriptors(stagedFile.Root);
-        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root), refs,
-            localCarriers: localExistentialOwners);
-
-        // Suspend/state-machine and bridge synthesis above can add classes after the initial source-declaration
-        // inventory was collected. The final CLR-member stamping pass must see the complete emission-unit set so a
-        // local `new` is never mistaken for a referenced type and reflected against the compile universe.
-        var emittedLocalTypes = AnySlotRebind.CollectLocalTypes(staged.Select(s => s.Root))
-            .Keys.ToHashSet(StringComparer.Ordinal);
-        // Some generated declarations are representation templates for canonical TypeDefs emitted once by the
-        // runtime stdlib.  The shared catalog is the single ownership registry used by bir2cir and ilemit; the exact
-        // shipped type must also exist before an app can treat its template as external.
-        var externalCanonicalTypes = (_options.StdlibMode == BuildStdlibMode.App
-            ? staged.SelectMany(s => s.Root is JsonObject root && root["types"] is JsonArray types
-                ? types.OfType<JsonObject>()
-                : Enumerable.Empty<JsonObject>())
-            .Where(type => (type["generated"] as JsonValue)?.TryGetValue<bool>(out var generated) == true && generated)
-            .Select(type => (type["name"] as JsonValue)?.GetValue<string>())
-            .Where(name => !string.IsNullOrEmpty(name)
-                && ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name)
-                && refs.PhysicalTypeNamed(name) != null)
-            : Enumerable.Empty<string>())
-            .ToHashSet(StringComparer.Ordinal);
-
-        // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
-        // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
-        // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
-        // repointed to `Key<Element>` for the stdlib's OWN Key; a REFERENCED Key resolves via refs.TvBound instead.
-        var starProjBounds = StarProjectionBoundLowering.CollectTypeParamBounds(staged.Select(s => s.Root));
-        // The validator's local declaration index and referenced generic-declaration cache are module invariants.
-        // Prepare them once before per-file physical finishing; each root is checked only after its last BIR-space
-        // type-argument rewrite below.
-        var externalGenericConstraintValidation = ExternalGenericConstraintValidation.Prepare(
-            staged.Select(file => file.Root).ToList(), refs, isValueFqn, localBasicEnums);
-        // The early semantic index only prevents a local accessor call from being captured by an external ancestor.
-        // Capture the actual post-allocation MethodDef names now, once, for exact call allocation below.
-        var localPropertyAccessors = MemberCallSubstitution.CollectLocalPropertyAccessors(
-            staged.Select(s => s.Root));
+        // Native transport facts survive until LoadBirInputs' strict address
+        // handoff. Their consumers have finished; no source facts are recaptured.
+        FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root));
+        var physicalPreparation = module.Preparation.PhysicalAbi;
+        var emittedLocalTypes = physicalPreparation.EmittedLocalTypes;
+        var externalCanonicalTypes = physicalPreparation.ExternalCanonicalTypes;
+        var starProjBounds = physicalPreparation.StarProjectionBounds;
+        var externalGenericConstraintValidation = physicalPreparation.GenericConstraints;
+        var localPropertyAccessors = physicalPreparation.PropertyAccessors;
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         var pendingOutput = new List<(BirFileDeclaration Root, string OutputName)>();
@@ -1069,44 +1074,12 @@ sealed class Pipeline
         // Reference assemblies retain Kotlin type vocabulary, but their MethodDef names must match the runtime twin.
         // Derive the collision set from an isolated runtime-physical projection in every build mode.
         var declarationCollisionProjection = new List<JsonNode>();
-        var finalLocalDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(staged.Select(s => s.Root));
-        var declarationCollisionAliases = DeclarationIdentityBinding.CollisionAliases(
-            staged.Select(s => s.Root), refs.Aliases);
-        // Cold entries, state machines and their capture fields are now materialized. Index those actual
-        // declarations together with the source-to-slot relation carried by their allocating passes.
-        var existentialReceiverMembers = ExistentialReceiverBinding.Collect(
-            staged.Select(s => s.Root), physicalDeclarationSources);
-        if (!_options.RefBuild)
-            CollectionBclSlotSynthesis.RecordContracts(staged.Select(s => s.Root), refs);
+        var finalLocalDeclarationIds = physicalPreparation.Declarations.DeclarationIds;
+        var declarationCollisionAliases = physicalPreparation.Declarations.CollisionAliases;
         foreach (var (substituted, outputName) in staged)
         {
-            // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
-            // kotlin.coroutines.Continuation<object>. Ordinary Continuation[X] surfaces -> Continuation[kotlin.Any],
-            // while exact lexical declaring-owner operands retain their actual frame. The Result<X> protocol boundary
-            // follows the same erased value contract (Option A: the
-            // resumeWith method + its Result-construction call args). ALL builds (ref/rt agree), BEFORE type lowering
-            // (kotlin.Any then lowers to object in rt/app, verbatim in ref). Un-blocks BlockOnSink/startCoroutine/
-            // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
-            ContinuationErasure.Apply(substituted, refs);
-            // Exact enclosing receiver facts outlive the ordinary value projection through this final ABI erasure.
-            FBoundStarProjectionErasure.RemoveTransientFacts(new[] { substituted });
-            GenericDowncastRealignment.Apply(substituted, genericDowncastHierarchy);
-            // GenericDowncastRealignment aligns a local's declared type with an erased
-            // existential-carrier cast. Bind calls through that local to the exact synthesized
-            // existential slot before CLR type lowering.
-            ExistentialReceiverBinding.Apply(substituted, existentialReceiverMembers, refs);
-            // SEQUENCE for-in dispatch (#37 m1 wave-2, cases/il-seqforin): a `for (x in seq)` over a Kotlin Sequence
-            // lowers to `forEachInline` with a typed `IEnumerable<elem>::GetEnumerator` dispatch, but the anon Sequence
-            // `sequence { .. }` returns is erased to `IEnumerable<object>` at runtime (its lifted class carries no type
-            // param yet declares `IEnumerable<T>` over the enclosing method's T) -> the typed slot is absent
-            // (EntryPointNotFound). Re-point such a forEachInline onto the variance-immune non-generic
-            // `System.Collections.IEnumerable`/`IEnumerator` + an element cast. Non-ref; before type lowering (the src's
-            // `kotlin.sequences.Sequence` FQN is still in the source vocabulary).
-            if (!_options.RefBuild) SequenceForEachLowering.Apply(substituted);
-            // All declaration shaping and captured Kotlin body metadata are complete. A reference assembly has
-            // no executable implementation: remove its bodies before binding physical calls that will never be
-            // emitted. Signatures, constraints, constructor delegation, inline/default payloads and attributes stay.
-            if (_options.RefBuild) RefBodySquash.Squash(substituted);
+            // Coroutine ABI, exact receiver alignment, iteration and reference
+            // body retirement have completed on owning BIR before this frontier.
             // Resolve an attributed callStatic to the referenced declaration while its Kotlin descriptor still
             // distinguishes shapes that share one CLR erasure (`T?` vs object, function-return `T?` vs object).
             // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
@@ -1224,7 +1197,7 @@ sealed class Pipeline
         // Compare fully physical method returns: closing a generic R with Unit still returns a value,
         // whereas a declared Kotlin Unit return has lowered to void. Adapt the delegate, not the method.
         ClrMemberResolution.ResolveLocalDelegateTargets(loweredRoots.Select(s => s.Root), refs,
-            physicalDelegates: true, localCarriers: localExistentialOwners);
+            localCarriers: localExistentialOwners);
         // A call may retain a local receiver owner while its declaration lives on an inherited referenced
         // interface.  Resolve that local/external boundary only after every physically-lowered local declaration
         // is visible, so a stale shipped copy of a local owner can never win.
@@ -1668,9 +1641,15 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     ModulePreparation Preparation);
 sealed record ModulePreparation(TypedModuleInventory Inventory, EnumPreparation Enums,
-    ModuleBindingSnapshots Bindings,
-    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers);
-sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);
+    FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers,
+    PhysicalAbiPreparation PhysicalAbi);
+sealed record PhysicalAbiPreparation(HashSet<string> EmittedLocalTypes,
+    HashSet<string> ExternalCanonicalTypes,
+    IReadOnlyDictionary<string, TypeNode[]> StarProjectionBounds,
+    ExternalGenericConstraintValidation.Prepared GenericConstraints,
+    IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
+        IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> PropertyAccessors,
+    SourceModuleIndex Declarations);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -10,7 +9,7 @@ using DotKt.Cir;
 // expression has static type `I<object>`, a frontend cast target `D<T>` must become `D<object>` after an ABI erasure of
 // I; otherwise CLR reification turns the Kotlin-erased cast into an InvalidCastException. The hierarchy equation is
 // solved structurally, with ambiguity/incomplete mappings skipped.
-static class GenericDowncastRealignment
+static partial class GenericDowncastRealignment
 {
     public sealed class Def
     {
@@ -34,29 +33,6 @@ static class GenericDowncastRealignment
                             .Select(value => (TypeNode.Fqn)BirGraphValue.CopyType(value)).ToArray(),
                     };
         return result;
-    }
-
-    public static void Apply(JsonNode root, IReadOnlyDictionary<string, Def> defs)
-    {
-        RewriteCasts(root, defs);
-        AlignLocals(root, new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal));
-    }
-
-    static void RewriteCasts(JsonNode node, IReadOnlyDictionary<string, Def> defs)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if (Str(obj["k"]) == "cast" && TypeJson.Read(obj["type"]) is TypeNode.Fqn target
-                    && ExprType(obj["e"]) is TypeNode.Fqn source
-                    && Realign(target, source, defs) is TypeNode.Fqn aligned)
-                    obj["type"] = TypeJson.Write(aligned);
-                foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) RewriteCasts(value, defs);
-                break;
-            case JsonArray arr:
-                foreach (var value in arr) if (value != null) RewriteCasts(value, defs);
-                break;
-        }
     }
 
     static TypeNode.Fqn Realign(TypeNode.Fqn target, TypeNode.Fqn source, IReadOnlyDictionary<string, Def> defs)
@@ -110,44 +86,6 @@ static class GenericDowncastRealignment
         return pattern == actual;
     }
 
-    static void AlignLocals(JsonNode node, Dictionary<string, TypeNode.Fqn> locals)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if (obj["k"] == null && obj["body"] is JsonArray methodBody && obj["params"] is JsonArray)
-                {
-                    AlignLocals(methodBody, new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal));
-                    foreach (var kv in obj.Where(kv => kv.Key != "body").ToList())
-                        if (kv.Value != null) AlignLocals(kv.Value, new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal));
-                    return;
-                }
-                if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name
-                    && obj["init"] is JsonObject init && Str(init["k"]) == "cast"
-                    && TypeJson.Read(init["type"]) is TypeNode.Fqn castType)
-                {
-                    obj["type"] = TypeJson.Write(castType);
-                    locals[name] = castType;
-                }
-                if (Str(obj["k"]) == "callInstance" && obj["recv"] is JsonObject recv
-                    && Str(recv["k"]) == "local" && Str(recv["name"]) is string local
-                    && locals.TryGetValue(local, out var localType)
-                    && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn owner && owner.Name == localType.Name)
-                    obj["ownerType"] = TypeJson.Write(localType);
-                foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) AlignLocals(value, locals);
-                break;
-            case JsonArray arr:
-                foreach (var value in arr) if (value != null) AlignLocals(value, locals);
-                break;
-        }
-    }
-
-    static TypeNode ExprType(JsonNode node)
-    {
-        if (node is not JsonObject obj) return null;
-        return TypeJson.Read(obj["stype"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
-    }
-
     static TypeNode Subst(TypeNode type, TypeNode[] args) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
@@ -161,5 +99,4 @@ static class GenericDowncastRealignment
         _ => type,
     };
 
-    static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }

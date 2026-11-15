@@ -114,9 +114,9 @@ static partial class FBoundStarProjectionErasure
                 arguments[index] = argument["of"]!.DeepClone();
     }
 
-    public static void RemoveTransientFacts(IEnumerable<JsonNode> roots, bool preserveExactOuter = false)
+    public static void RemoveTransientFacts(IEnumerable<JsonNode> roots)
     {
-        foreach (var root in roots) RemoveTransientMarkers(root, preserveExactOuter);
+        foreach (var root in roots) RemoveTransientMarkers(root);
     }
 
     static void CollectDefinitions(JsonObject container, Dictionary<string, JsonObject> defs)
@@ -1279,7 +1279,7 @@ static partial class FBoundStarProjectionErasure
         if (protectExactCast) call["_exactBridgeCast"] = true;
     }
 
-    static void RemoveTransientMarkers(JsonNode node, bool preserveExactOuter = false)
+    static void RemoveTransientMarkers(JsonNode node)
     {
         switch (node)
         {
@@ -1287,18 +1287,18 @@ static partial class FBoundStarProjectionErasure
                 obj.Remove("_exactBridgeCast");
                 obj.Remove("reifiedTypeOperand");
                 obj.Remove(ExactBridgeOwnerCallKey);
-                if (!preserveExactOuter) obj.Remove(ExactOuterKey);
+                obj.Remove(ExactOuterKey);
                 obj.Remove(DelegationOuterSlotKey);
                 obj.Remove(GenericRepresentationPolicy.NativeLocationKey);
                 obj.Remove(GenericRepresentationPolicy.FieldAddressKey);
                 obj.Remove(GenericRepresentationPolicy.PhysicalDeclarationSignatureKey);
                 obj.Remove(InnerFactoryArgumentsKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
-                    if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
+                    if (value != null) RemoveTransientMarkers(value);
                 break;
             case JsonArray array:
                 foreach (var value in array)
-                    if (value != null) RemoveTransientMarkers(value, preserveExactOuter);
+                    if (value != null) RemoveTransientMarkers(value);
                 break;
         }
     }
