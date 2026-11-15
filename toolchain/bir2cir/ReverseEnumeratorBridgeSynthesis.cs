@@ -292,7 +292,7 @@ static class ReverseEnumeratorBridgeSynthesis
                 .FirstOrDefault(parent => parent != null);
         }
 
-        var declarations = SupertypeGraph.Reachable(cls, defs, refs)
+        var interfaceDeclarations = SupertypeGraph.Reachable(cls, defs, refs)
             .Where(reachable => reachable.isInterface)
             .Select(reachable =>
             {
@@ -302,7 +302,7 @@ static class ReverseEnumeratorBridgeSynthesis
             })
             .Where(candidate => candidate != null)
             .ToList();
-        var mostSpecific = declarations.Where(candidate => !declarations.Any(other =>
+        var mostSpecific = interfaceDeclarations.Where(candidate => !interfaceDeclarations.Any(other =>
                 !ReferenceEquals(candidate, other)
                 && SupertypeGraph.ReachesDeclaration(other.Owner, candidate.Owner, defs, refs)))
             .ToList();

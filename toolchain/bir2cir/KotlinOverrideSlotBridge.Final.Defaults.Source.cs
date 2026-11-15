@@ -73,10 +73,10 @@ static partial class KotlinOverrideSlotBridge
                 var semanticArguments = refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(selectedArguments) ?? selectedArguments;
                 ReferencedMethodDeclaration selected;
                 var found = selectedId != null && refs.HasDotKtOwner(spec.Name)
-                    ? refs.TrySelectedOverrideDeclaration(spec.Name,implementation.Member.Value,null,arity,fact.Params.Value,
+                    ? refs.TrySelectedSourceOverrideDeclaration(spec.Name,implementation.Member.Value,arity,fact.Params.Value,
                         selectedArguments,SemanticMethodTypeParameters(implementation),semanticArguments,false,out selected,
-                        semanticConstraints:true,selectedDeclarationId:selectedId)
-                    : refs.TrySelectedMethodDeclaration(spec.Name,implementation.Member.Value,arity,fact.Params.Value,fact.Ret.Value,
+                        selectedDeclarationId:selectedId)
+                    : refs.TrySelectedSourceMethodDeclaration(spec.Name,implementation.Member.Value,arity,fact.Params.Value,fact.Ret.Value,
                         selectedArguments,SemanticMethodTypeParameters(implementation),semanticArguments,out selected);
                 if (!found || selected.Return == null || selected.Parameters == null || selected.Parameters.Any(type => type == null)) continue;
                 var physicalParameters = selected.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type,selectedArguments)).ToArray();
