@@ -20,12 +20,13 @@ static partial class ForeignStarProjectionBinding
             var signature = access == "get" ? new[] { Int } : new[] { Int, AnyN };
             var propertyReceiver = new BirLocal { Name = "list", Sty = projectedList };
             var property = new BirConstrainedCall { Iface = projectedList, Method = "Item", Prop = access,
-                Recv = propertyReceiver, Sig = signature, Args = Array.Empty<IBirExpression>() };
+                Recv = propertyReceiver, Sig = signature, Args = signature.Select((type, index) =>
+                    (IBirExpression)new BirLocal { Name = "argument" + index, Sty = type }).ToArray() };
             var input = ReadSourceCall(property);
             Need(input.Property == access && ReferenceEquals(input.Receiver, propertyReceiver)
                 && ReferenceEquals(input.Signature, signature), "constrained property lost its accessor role or original operands");
-            var selected = SelectForeignMember(projectedList, input.Name, input.Property, input.Kind, 0, signature, refs);
-            Need(selected.Method.IsSpecialName && selected.Method.Name == access + "_Item",
+            var selectedAccessor = SelectForeignMember(projectedList, input.Name, input.Property, input.Kind, 0, signature, refs);
+            Need(selectedAccessor.Method.IsSpecialName && selectedAccessor.Method.Name == access + "_Item",
                 "constrained property did not select the actual CLR accessor");
         }
         RequireRuntimeFallback();
