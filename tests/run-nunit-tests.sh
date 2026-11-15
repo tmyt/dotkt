@@ -60,10 +60,10 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=1063
 	["tests/coroutines"]=274
-	["tests/roundtrip/consumer"]=779
+	["tests/roundtrip/consumer"]=780
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=2
 	["tests/roundtrip/bidirectional/consumer"]=56
-	["tests/interop/consumer"]=518
+	["tests/interop/consumer"]=519
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -546,6 +546,12 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  TYPE VISIBILITY FAIL"
 			tail -25 "$ROOT/build/nunit-$name.type-visibility.log"; rc=1
 		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" --constructor-kinds "$producer_klib" \
+			>"$ROOT/build/nunit-$name.constructor-kinds.log" 2>&1; then
+			echo "  exact source constructor kinds survive fresh DLL/KLIB projection"
+		else
+			echo "  CONSTRUCTOR KIND FAIL"; tail -25 "$ROOT/build/nunit-$name.constructor-kinds.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --callable-declaration-visibility "$producer_dll" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.callable-visibility.log" 2>&1 \
 			&& dotnet "$METADATA_INSPECTOR_DLL" --inherited-callable-visibility \
@@ -845,6 +851,12 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
+		if dotnet "$METADATA_INSPECTOR_DLL" --native-constructor-kinds "$interop_klib" \
+			>"$ROOT/build/nunit-$name.constructor-kinds.log" 2>&1; then
+			echo "  native ordinary constructors are secondary; annotation constructor model retained"
+		else
+			echo "  NATIVE CONSTRUCTOR KIND FAIL"; tail -25 "$ROOT/build/nunit-$name.constructor-kinds.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/interop/assert-native-overload-identity.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/NativeOverloadIdentityTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/NativeOverloadIdentityTests.cir.json" \

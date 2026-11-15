@@ -1773,7 +1773,8 @@ data class BirConstructor(
     val declarationId: String? = null,
     val declarationSourceName: String? = null,
     val vis: String? = null,
-    val attrs: List<BirAttribute>? = null
+    val attrs: List<BirAttribute>? = null,
+    val primary: Boolean? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -1865,6 +1866,10 @@ data class BirConstructor(
             item0.writeJson(output)
         }
         output.append(']')
+        primary?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"primary\":")
+            output.append(value)
+        }
         output.append('}')
     }
 }
