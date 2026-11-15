@@ -1,22 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Kotlin covariance needs a private exact-return CLR MethodImpl body while
 // retaining the authored narrow declaration and its virtual forwarding slot.
-// The owning source producer is in Source.cs; the remaining DOM slot key is
-// consumed by the later suspend/override capability after the single frontier.
+// The owning source producer and the final override consumer retain the actual
+// implementation occurrence together with the exact physical descriptor key.
 static partial class CovariantInterfaceReturnBridge
 {
-    internal readonly record struct BridgedSlot(JsonObject Implementation, string Descriptor);
-
-    internal static BridgedSlot BridgedSlotKey(JsonObject implementation, TypeNode.Fqn descriptorOwner,
-        string descriptorMember, int methodArity, IEnumerable<TypeNode> slotParams, TypeNode slotRet,
-        ReferenceMetadataIndex refs, ValueTypeOracle isValue)
-        => new(implementation, DescriptorKey(descriptorOwner, descriptorMember, methodArity, slotParams, slotRet, refs, isValue));
-
     internal static string DescriptorKey(TypeNode.Fqn descriptorOwner, string descriptorMember, int methodArity,
         IEnumerable<TypeNode> slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {

@@ -97,10 +97,6 @@ static class ReverseEnumeratorBridgeSynthesis
         }
     }
 
-    public static SlotReservation ReserveSlots(SupertypeGraph.Def def,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs)
-        => Plan(def, defs, refs) is { } plan ? new SlotReservation(plan.Element) : null;
-
     internal static SlotReservation ReserveSlots(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
@@ -240,13 +236,6 @@ static class ReverseEnumeratorBridgeSynthesis
         return true;
     }
 
-    // This class's own `Iterable.iterator()` implementation: an instance, nullary, non-generic declaration under the
-    // Kotlin member name whose result IS a `kotlin.collections.Iterator`. Both halves are the Kotlin contract —
-    // `Iterable<T>.iterator(): Iterator<T>` — and the return is checked through the supertype graph rather than
-    // against a list of names, because an override may narrow it to any subtype (`MutableIterator<T>`,
-    // `ListIterator<T>`, the primitive `IntIterator`/`CharIterator`/`LongIterator`, or a user iterator class).
-    // DeclarationIdentityBinding may already have allocated a collision-free CLR MethodDef name. Its retained
-    // source identity is authoritative for the Kotlin protocol; the physical name is only the call operand.
     static string SourceName(JsonObject method) =>
         Str(method["declarationSourceName"])
         ?? Str(method[DeclarationRename.SourceMemberKey])
@@ -309,6 +298,13 @@ static class ReverseEnumeratorBridgeSynthesis
         return mostSpecific.Count == 1 && !mostSpecific[0].Abstract ? mostSpecific[0] : null;
     }
 
+    // This class's own `Iterable.iterator()` implementation: an instance, nullary, non-generic declaration under the
+    // Kotlin member name whose result IS a `kotlin.collections.Iterator`. Both halves are the Kotlin contract —
+    // `Iterable<T>.iterator(): Iterator<T>` — and the return is checked through the supertype graph rather than
+    // against a list of names, because an override may narrow it to any subtype (`MutableIterator<T>`,
+    // `ListIterator<T>`, the primitive `IntIterator`/`CharIterator`/`LongIterator`, or a user iterator class).
+    // DeclarationIdentityBinding may already have allocated a collision-free CLR MethodDef name. Its retained
+    // source identity is authoritative for the Kotlin protocol; the physical name is only the call operand.
     static IteratorProvider DeclaredIterator(TypeNode.Fqn owner, SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs, bool inherited,
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations = null)

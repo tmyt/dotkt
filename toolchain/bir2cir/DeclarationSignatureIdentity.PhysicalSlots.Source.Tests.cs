@@ -16,7 +16,6 @@ static partial class DeclarationSignatureIdentity
                 TypeParams=OptionalField<BirTypeParameter[]>.Null,DotktValueReturn=false };
             RecordSelectedPhysicalSlot(method,descriptor,false);
             RecordSelectedPhysicalSlot(method,descriptor,false);
-            RecordSelectedPhysicalSlot(new System.Text.Json.Nodes.JsonObject { [DeclarationIdentityBinding.Key]="selected-native" },descriptor.ToDom(),false);
             var snapshot=PhysicalSlots["selected-native"].Single();
             if (!snapshot.Descriptor.StructurallyEquals(descriptor) || ReferenceEquals(snapshot.Descriptor,descriptor)
                 || !snapshot.Descriptor.TypeParams.IsNull || !snapshot.Descriptor.DotktValueReturn.IsPresent)

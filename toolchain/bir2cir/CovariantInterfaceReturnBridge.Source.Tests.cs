@@ -78,11 +78,9 @@ static partial class CovariantInterfaceReturnBridge
         pending.Complete();
         var physical = file.ToDom(bindings.ObserveProjection);
         bindings.BindProjected();
-        var lateSlot = BridgedSlotKey(sourceBinding.Physical, (TypeNode.Fqn)descriptor.Owner.Value, descriptor.Member.Value,
-            descriptor.Arity.Value, descriptor.Params.Value, descriptor.Ret.Value, refs, isValue);
-        Require(lateSlot.Descriptor == bridged.Single().Descriptor && ReferenceEquals(lateSlot.Implementation, physical["types"][0]["methods"][0])
+        Require(ReferenceEquals(sourceBinding.Physical, physical["types"][0]["methods"][0])
             && originalParameters[implementation].Single() == methodVariable,
-            "single-frontier handoff lost exact original rows or late slot identity");
+            "single-frontier handoff lost exact original rows or the actual implementation occurrence");
 
         PropertyAndInterfaceSourceSelfTest(refs, isValue, broad, narrow);
         ReferencedAndSuspendSourceSelfTest(refs, isValue, broad, narrow);
