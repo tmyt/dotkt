@@ -1,32 +1,33 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Count on a physical raw collection cast binds to System.Collections.ICollection.Count, not a generic
 // IReadOnlyCollection<object> slot. StarProjectionLowering still produces raw IDictionary for Map; Collection
 // and List families instead use their composite classifier/member paths. Explicit raw BCL casts can also occur.
 // App build only.
-static class StarProjectionCountLowering
+static partial class StarProjectionCountLowering
 {
-    public static void Apply(JsonNode node)
+    internal static void Apply(BirFileDeclaration root)
     {
-        if (node is JsonObject o)
+        void Walk(BirGraphValue node)
         {
-            // Preserve the actual non-generic receiver and bind its inherited Count declaration.
-            if (Str(o["k"]) == "clrPropGet" && Str(o["name"]) == "Count" && o["recv"] is JsonObject rc
-                && Str(rc["k"]) == "cast" && IsNonGenericBclCollection(TypeJson.Read(rc["type"])))
+            if (node is IBirExecutablePayload) return;
+            if (node is BirPropertyGet { Name.HasValue: true, Recv.HasValue: true } property
+                && property.Name.Value == "Count"
+                && property.Recv.Value is BirCast { Type.HasValue: true } cast
+                && IsNonGenericBclCollection(cast.Type.Value))
             {
-                o["type"] = TypeJson.Fqn("System.Collections.ICollection");
-                rc["type"] = TypeJson.Fqn("System.Collections.ICollection");
+                property.Type = new TypeNode.Fqn("System.Collections.ICollection");
+                cast.Type = new TypeNode.Fqn("System.Collections.ICollection");
             }
-            foreach (var kv in o) if (kv.Value != null) Apply(kv.Value);
+            node.VisitOwnChildSlots((_, role, slot) => {
+                if (!NullableRepresentationViews.Frozen(role)) Walk(slot.Value);
+            });
         }
-        else if (node is JsonArray a)
-            foreach (var it in a) if (it != null) Apply(it);
+        Walk(root);
     }
 
     // Raw BCL interfaces that inherit ICollection.Count. IEnumerable has no Count.
     static bool IsNonGenericBclCollection(TypeNode t) => t is TypeNode.Fqn { Args: null } f
         && f.Name is "System.Collections.ICollection" or "System.Collections.IList" or "System.Collections.IDictionary";
-
-    static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
 }

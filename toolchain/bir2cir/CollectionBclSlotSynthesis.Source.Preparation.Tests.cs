@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -52,24 +51,26 @@ static partial class CollectionBclSlotSynthesis
             refs.PhysicalTypeNames, localNames);
         BirTypeLowering.Apply(first, physicalContext);
         BirTypeLowering.Apply(second, physicalContext);
-        var projections = 0;
-        var projectedChild = first.ToDom((actual, _) => { if (ReferenceEquals(actual, child)) projections++; });
-        var projectedBase = second.ToDom();
-        Check(projections == 1 && projectedChild["types"][0][ContractKey].GetValue<string>() == frozen,
-            "the one owning projection changed contract text");
-        var lowered = new JsonNode[] { projectedChild, projectedBase };
-        ApplyAll(lowered, refs, type => BirTypeLowering.LowerPhysicalType(type, aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames));
-        var physicalChild = lowered[0]["types"][0].AsObject();
-        var physicalBase = lowered[1]["types"][0].AsObject();
-        var methods = physicalBase["methods"].AsArray().OfType<JsonObject>().ToArray();
-        Check(!physicalBase.ContainsKey(ContractKey) && !physicalChild.ContainsKey(ContractKey)
-            && methods.Select(method => method["name"].GetValue<string>()).Order().SequenceEqual(new[] { "Contains", "CopyTo", "get_IsReadOnly" }.Order())
-            && physicalChild["methods"].AsArray().Count == 0,
-            "retained consumer did not consume frozen contracts or duplicated inherited native slots");
-        var contains = methods.Single(method => method["name"].GetValue<string>() == "Contains");
-        Check(TypeJson.Read(contains["params"][0]["type"]) is TypeNode.Tv { Scope: "type", I: 1 },
+        var publications = 0;
+        ApplyAll(new[] { first, second }, refs, type => BirTypeLowering.LowerPhysicalType(type, aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames), (file, owner, appended) => {
+                Check(ReferenceEquals(file, second) && ReferenceEquals(owner, baseType)
+                    && appended.Count == 3 && appended.All(method => owner.Methods.Value.Any(actual => ReferenceEquals(actual, method))),
+                    "publication did not report the actual attached native methods");
+                publications++;
+            });
+        var methods = baseType.Methods.Value;
+        Check(publications == 1 && !baseType.DotktKotlinMutableCollectionContract.IsPresent && !child.DotktKotlinMutableCollectionContract.IsPresent
+            && methods.Select(method => method.Name.Value).Order().SequenceEqual(new[] { "Contains", "CopyTo", "get_IsReadOnly" }.Order())
+            && child.Methods.Value.Length == 0,
+            "typed consumer did not consume frozen contracts or duplicated inherited native slots");
+        var contains = methods.Single(method => method.Name.Value == "Contains");
+        Check(contains.Params.Value[0].Type.Value is TypeNode.Tv { Scope: "type", I: 1 },
             "native consumer lost the exact physical captured-prefix position");
-        Console.WriteLine("[mutable-contract preparation] self-test OK (source closure, immutable continuation fact, owning frontier and retained slot consumer)");
+        var projections = 0;
+        first.ToDom((actual, _) => { if (ReferenceEquals(actual, child)) projections++; });
+        Check(projections == 1 && childContract.FrozenText == frozen,
+            "the one owning projection or late consumer changed an independent captured snapshot");
+        Console.WriteLine("[mutable-contract preparation] self-test OK (source closure, immutable continuation fact, typed consumer and actual publication)");
     }
 }
