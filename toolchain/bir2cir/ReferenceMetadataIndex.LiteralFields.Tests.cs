@@ -8,8 +8,10 @@ sealed partial class ReferenceMetadataIndex
         { if (!value) throw new InvalidOperationException("Typed reference literal: " + message); }
         var refs = Build(new[] { typeof(object).Assembly.Location });
         var owner = new TypeNode.Fqn("System.Int32");
+        // MetadataLoadContext types retain the existing TypeNodeOf FQN here;
+        // this selector does not perform the later CLR shorthand lowering.
         Require(refs.TryResolveLiteralFieldValue(owner, "MaxValue", out var type, out var literal)
-            && type == new TypeNode.Fqn("int") && literal == new BirLiteral.IntegerLiteral(int.MaxValue),
+            && type == new TypeNode.Fqn("System.Int32") && literal == new BirLiteral.IntegerLiteral(int.MaxValue),
             "real Constant-table selector lost the physical scalar type/value");
         var cachedCount = refs._literalFieldCache.Count;
         Require(refs.TryResolveLiteralFieldValue(owner, "MaxValue", out var repeatedType, out var repeated)
