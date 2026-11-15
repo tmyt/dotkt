@@ -22,7 +22,8 @@ var views = Discover("SourceInterfaceViews");
 var cases = new List<(int Input, string Name, int Expected)> {
     (0, "DateTime", 1), (0, "IComparable`1", 0),
     (1, "NativeOrder", 1), (1, "InheritedOrder", 1), (1, "ExplicitOrder", 1),
-    (1, "InheritedExplicitOrder", 1), (1, "DualOrder", 2), (1, "PermutedOrder`2", 1), (1, "MutableOrder", 1),
+    (1, "InheritedExplicitOrder", 1), (1, "DualOrder", 2), (1, "PermutedOrder`2", 1),
+    (1, "NullableArgumentOrder`1", 1), (1, "MutableOrder", 1),
 };
 if (inputs.Length > 3) cases.AddRange(cases.Where(test => test.Input == 1).Select(test => (3, test.Name, test.Expected)).ToArray());
 var runtimeTargets = new Dictionary<string, string[]>();
@@ -76,6 +77,15 @@ foreach (var (inputIndex, typeName, expected) in cases) {
         }
         if (typeName is "DateTime" or "MutableOrder" && (bool)Get(parameter, "Nullable"))
             throw new Exception("A value-type contract argument became nullable");
+        if (typeName == "NullableArgumentOrder`1") {
+            var nativeParameter = Get(Items(original.Single(), "ValueParameter").Single(), "Type");
+            var nativeArgument = Get(Items(nativeParameter, "Argument").Single(), "Type");
+            var argument = Get(Items(parameter, "Argument").Single(), "Type");
+            if (!(bool)Get(nativeParameter, "Nullable") || !(bool)Get(nativeArgument, "Nullable"))
+                throw new Exception("Native nullable-argument fixture lost its declared source shape");
+            if (!(bool)Get(parameter, "Nullable") || !(bool)Get(argument, "Nullable"))
+                throw new Exception("Selected interface edge lost its nullable argument");
+        }
         if (typeName == "DualOrder" && (bool)Get(parameter, "Nullable") != facts["memberOwner"].Contains("System.String"))
             throw new Exception("Constructed reference/value argument nullability changed");
         owners.Add(facts["memberOwner"]);

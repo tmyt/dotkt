@@ -56,6 +56,13 @@ public sealed class PermutedOrder<A, B> : IComparable<Box<B>>
     public int CompareTo(Box<B>? other) => Value - (other?.Value ?? 0);
 }
 
+public sealed class NullableArgumentOrder<T> : IComparable<Box<T?>> where T : class
+{
+    public int Value { get; }
+    public NullableArgumentOrder(int value) => Value = value;
+    public int CompareTo(Box<T?>? other) => Value - (other?.Value ?? 0);
+}
+
 public struct MutableOrder : IComparable<MutableOrder>
 {
     public int Value;

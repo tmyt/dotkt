@@ -5,6 +5,7 @@ import NativeComparison.InheritedExplicitOrder
 import NativeComparison.InheritedOrder
 import NativeComparison.MutableOrder
 import NativeComparison.NativeOrder
+import NativeComparison.NullableArgumentOrder
 import NativeComparison.OtherOrder
 import NativeComparison.PermutedOrder
 import System.DateTime
@@ -63,6 +64,7 @@ class NativeComparableOperatorTests {
     @Test
     fun genericOwnerMappingAndValueReceiverAddressStayExact() {
         check(PermutedOrder<String, Int>(2) < Box<Int>(9))
+        check(NullableArgumentOrder<String>(2) < Box<String?>(9))
         var value = MutableOrder(2)
         check(value < MutableOrder(9))
         check(value.Calls == 1)

@@ -21,6 +21,17 @@ static partial class NetInteropBinding
         var method = open.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Single(method => method.Name == binding.Member.Value);
         var reference = ClrMemberResolution.MemberRefOf(refs, method, MemberRefNode.Kinds.Method, open, owner.Args);
+        // A reference receiver can be a subtype of its declaration owner. Its
+        // value is interface-compatible, but &Subtype is not &DeclarationOwner.
+        if (!refs.IsValueType(sourceOwner))
+            return new BirNativeInstance {
+                Type = owner, Method = method.Name,
+                Recv = call.Receiver, Args = call.Arguments, Ret = call.Ret, Sty = call.Sty,
+                Dispatch = "callvirt", Sig = reference.ParameterTypes, CalleeParams = reference.ParameterTypes,
+                MemberRef = BirMemberReference.FromPhysical(reference), ResolvedMemberReturn = reference.ReturnType,
+                SuspendCall = call.Suspend, _capturedGenericArgument = call.CapturedArguments,
+                _capturedGenericResult = call.CapturedResult,
+            };
         return new BirConstrainedCall {
             Iface = owner, RecvType = sourceOwner, Method = method.Name,
             Recv = call.Receiver, Args = call.Arguments, Ret = call.Ret, Sty = call.Sty,

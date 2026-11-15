@@ -27,13 +27,17 @@ internal sealed partial class AssemblyScanner
             var visitKey = current.DefinitionPath + ":" + MetadataTokens.GetRowNumber(current.Handle) + ":" +
                 string.Join(",", physicalArguments?.Select(TypeNode.ToJson) ?? []);
             if (!visited.Add(visitKey)) return;
-            IEnumerable<EntityHandle> edges = currentDefinition.GetInterfaceImplementations()
-                .Select(handle => reader.GetInterfaceImplementation(handle).Interface);
-            if (!currentDefinition.BaseType.IsNil) edges = edges.Append(currentDefinition.BaseType);
-            foreach (var edge in edges)
+            var edges = currentDefinition.GetInterfaceImplementations()
+                .Select(handle => (Type: reader.GetInterfaceImplementation(handle).Interface, Slot: (EntityHandle)handle));
+            if (!currentDefinition.BaseType.IsNil) edges = edges.Append((currentDefinition.BaseType, (EntityHandle)current.Handle));
+            foreach (var (edge, slot) in edges)
             {
                 if (!_publicTypeCatalog.TryResolveDefinition(reader, edge, out var target, current.DefinitionPath)) continue;
-                var sourceType = SubstituteTypeParameters(decoder.DecodeEntity(edge, frame, platform: false), arguments);
+                // NRT describes this declaration-shaped edge. Read it before
+                // inserting the inherited owner's argument trees.
+                var declaredEdge = ProjectInheritedType(reader, slot,
+                    decoder.DecodeEntity(edge, frame, platform: false), current.Handle, decoder);
+                var sourceType = SubstituteTypeParameters(declaredEdge, arguments);
                 var physicalType = (TypeNode.Fqn)NativeSignatureReader.Type(reader, edge, physicalArguments);
                 var targetDefinition = target.Reader.GetTypeDefinition(target.Handle);
                 var targetDecoder = DecoderFor(target.Reader, names, signatures, target.DefinitionPath);

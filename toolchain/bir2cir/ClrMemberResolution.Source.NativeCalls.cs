@@ -31,6 +31,11 @@ static partial class ClrMemberResolution
                     call.ArgTypes.OrDefault(), call.ResolvedMemberParams.OrDefault(), false, false,
                     call.TypeArgs.OrEmpty().Length != 0, call.Args.OrDefault());
                 break;
+            case BirNativeInstance call when call.MemberRef.HasValue && call.ResolvedMemberReturn.HasValue && call.Dispatch.HasValue:
+                // An earlier owning binder has already authored this exact
+                // declaration and dispatch, not an overload-search descriptor.
+                call.ArgTypes = default; call.ResolvedMemberParams = default;
+                break;
             case BirNativeInstance call:
                 ResolvePlainNativeCallSource(call, call.Type.OrDefault(), call.Method.OrDefault(),
                     call.ArgTypes.OrDefault(), call.ResolvedMemberParams.OrDefault(), true, call.Super.OrDefault(),
