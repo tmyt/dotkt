@@ -60,7 +60,7 @@ static partial class RefBodySquash
         var pending = UncheckedGenericCastReturnErasure.CaptureSource(roots);
         Check(pending.SourceDeclarations.ByIdentity.ContainsKey("reference-read"), "fixture did not use the actual unchecked selector");
         pending.EraseOwnedReturn(pending.SourceDeclarations.ByIdentity["reference-read"]);
-        generic.PrepareDomLocations(roots); generic.RefreshPhysicalNativeLocations(roots);
+        generic.PrepareSourceLocations(roots); generic.RefreshPhysicalNativeLocations(roots);
         var bindings = new CurrentDeclarationBindings(roots);
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, references, generic);
         var donorBinding = bindings.GetCapturedSource(donor);
@@ -91,21 +91,28 @@ static partial class RefBodySquash
             "stub shape or abstract/empty/absent/null distinction changed");
         Check(ReferenceEquals(method.InlineBir.Value, payloadBytes) && payloadBytes.AsSpan().SequenceEqual(ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, payload))
             && ReferenceEquals(method.Params.Value[0].Attrs.Value[0], defaultAttribute), "opaque source payload was rewritten");
-        var dom = file.ToDom(transitions.Projection.ObserveProjection);
-        transitions.Projection.ProjectRetiredForests();
-        var donorDom = transitions.Projection.Get(donor);
-        Check(transitions.Projection.IsRetired(donor, donorDom) && !transitions.Projection.IsRetired(continuing, transitions.Projection.Get(continuing)),
+        var uncheckedIndex = pending.SourceDeclarations;
+        transitions.Projection.SealSourceContinuations();
+        Check(transitions.Projection.IsRetired(donor) && !transitions.Projection.IsRetired(continuing),
             "retired body and continuing prologue overlapped");
-        bindings.BindProjected();
-        generic.BindDomDeclarations(new[] { dom }, declarations: transitions.Projection);
-        values.BindDomDeclarations(new[] { dom }, transitions.Projection.RetiredMethods, transitions.Projection);
-        var uncheckedIndex = UncheckedGenericCastReturnErasure.BindDomDeclarations(pending, new[] { dom },
-            transitions.Projection.RetiredMethods, declarations: transitions.Projection);
-        Check(ReferenceEquals(bindings.GetPhysical(donorDom), donorBinding)
-            && ReferenceEquals(bindings.GetPhysical(transitions.Projection.Get(continuing)), continuingBinding)
-            && ReferenceEquals(uncheckedIndex.ByIdentity["reference-read"].Method, transitions.Projection.Get(method))
-            && generic.IsNativeField(transitions.Projection.Get(owner.Fields.Value[0])), "strict frontier lost the original callable/native/source authorities");
+        Check(ReferenceEquals(bindings.GetCapturedSource(donor), donorBinding)
+            && ReferenceEquals(donorBinding.Source, donor)
+            && ReferenceEquals(bindings.GetCapturedSource(continuing), continuingBinding)
+            && ReferenceEquals(continuingBinding.Source, continuing)
+            && ReferenceEquals(uncheckedIndex.ByIdentity["reference-read"].SourceMethod, method)
+            && generic.IsNativeField(owner.Fields.Value[0]), "strict custody lost the original callable/native/source authorities");
+        generic.CompleteSourceContinuation(roots, null, transitions.Projection);
+        values.CompleteSourceContinuation(roots, null, transitions.Projection);
+        UncheckedGenericCastReturnErasure.CompleteSourceDeclarations(pending, roots, null, transitions.Projection);
+        Check(uncheckedIndex.ByIdentity["reference-read"].SourceMethod == null
+            && uncheckedIndex.ByIdentity["reference-read"].Return == variable,
+            "unchecked completion retained a callable or replaced its frozen return");
+        bindings.CompleteSourceCustody(transitions.Projection);
+        var released = false;
+        try { _ = donorBinding.Source; } catch (InvalidOperationException) { released = true; }
+        Check(released && ReferenceEquals(constructor.PreStmts.Value, pre)
+            && ReferenceEquals(method.Params.Value, originalParameters), "terminal custody retained an anchor or changed a continuing region");
         transitions.Release();
-        Console.WriteLine("[typed reference body] self-test OK (exact discarded forests, one frontier, strict buyers, prologue/payload/presence preservation)");
+        Console.WriteLine("[typed reference body] self-test OK (exact discarded forests, terminal custody, strict buyers, prologue/payload/presence preservation)");
     }
 }
