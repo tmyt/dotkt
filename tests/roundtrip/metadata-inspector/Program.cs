@@ -23,6 +23,21 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 1 && args[0] == "--decode-type-carriers")
+{
+    using var input = JsonDocument.Parse(Console.In.ReadToEnd());
+    using var output = new Utf8JsonWriter(Console.OpenStandardOutput());
+    output.WriteStartArray();
+    foreach (var request in input.RootElement.EnumerateArray())
+    {
+        using var payload = DecodeTypeCarrierContent(request[0].GetString()!, Convert.FromBase64String(request[1].GetString()!));
+        payload.RootElement.WriteTo(output);
+    }
+    output.WriteEndArray();
+    output.Flush();
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--decode-carrier")
 {
     var content = Convert.FromBase64String(args[2]);
@@ -66,10 +81,12 @@ if (args.Length == 2 && args[0] == "--projected-array-attributes")
     return;
 }
 
-if (args.Length == 3 && args[0] == "--projected-collection-returns")
+if ((args.Length == 3 || args.Length == 4 && args[3] == "--with-joined-return")
+    && args[0] == "--projected-collection-returns")
 {
-    ProjectedCollectionReturnInspector.Verify(args[1], args[2]);
+    ProjectedCollectionReturnInspector.Verify(args[1], args[2], withJoinedReturn: args.Length == 4);
     Console.WriteLine("opaque collection slots, exact native declarations and source KLIB projection: OK");
+    if (args.Length == 4) Console.WriteLine("joined return exact source and carrier associations: OK");
     return;
 }
 
@@ -1440,8 +1457,9 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
     {
         var attribute = parameter["attrs"]!.AsArray().OfType<JsonObject>().Single(attribute =>
             Text(attribute["attr"]?["name"]) == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
-        return BirCarrier.DecodeBody(Text(attribute["args"]?[0]?["value"])!,
-            Convert.FromBase64String(Text(attribute["args"]?[1]?["bytes"])!)).AsObject();
+        using var payload = DecodeTypeCarrierContent(Text(attribute["args"]?[0]?["value"])!,
+            Convert.FromBase64String(Text(attribute["args"]?[1]?["bytes"])!));
+        return JsonNode.Parse(payload.RootElement.GetRawText())!.AsObject();
     }
     var sparseLocal = primaryLocalMethods.Single(method =>
         Objects(method).Any(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond"));
@@ -1669,7 +1687,8 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         var definition = producerMd.GetTypeDefinition(handle);
         if ((definition.Attributes & TypeAttributes.Interface) == 0
             || !HasAttribute(producerMd, handle, "DotKt.Runtime.CompilerServices.KotlinTypeAttribute")) return false;
-        using var source = CarrierDocument(producerMd, handle, "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
+        using var source = DecodeTypeCarrierDocument(producerMd, producerMd.GetTypeDefinition(handle).GetCustomAttributes(),
+            "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
         return source.RootElement.GetProperty("name").GetString() == "roundtrip.nc.NestedGenericPrivateDefaultOwner.Entry";
     });
     var innerGetter = producerMd.GetTypeDefinition(innerCarrier).GetMethods().Single(handle =>
@@ -2625,7 +2644,7 @@ static void VerifyThrowableSourceIdentity(string dllPath, string klibPath)
             "acceptThrowable no longer takes exactly CLR System.Exception");
         var parameter = method.GetParameters().Select(md.GetParameter)
             .Single(parameter => parameter.SequenceNumber == 1);
-        using var source = DecodeCarrierDocument(md, parameter.GetCustomAttributes(),
+        using var source = DecodeTypeCarrierDocument(md, parameter.GetCustomAttributes(),
             "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
         Require(source.RootElement.GetProperty("t").GetString() == "fqn" &&
                 source.RootElement.GetProperty("name").GetString() == "kotlin.Throwable",
@@ -2681,6 +2700,28 @@ static void VerifyThrowableSourceIdentity(string dllPath, string klibPath)
 static JsonDocument DecodeCarrierDocument(
     MetadataReader md, CustomAttributeHandleCollection handles, string attributeName)
 {
+    var (version, payload) = CarrierPayload(md, handles, attributeName);
+    if (attributeName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute")
+        Require(version == BirCarrier.MessagePackV1, "executable inline carrier is not MessagePack");
+    return DecodeCarrierContent(version, payload);
+}
+
+static JsonDocument DecodeTypeCarrierDocument(
+    MetadataReader md, CustomAttributeHandleCollection handles, string attributeName)
+{
+    var (version, payload) = CarrierPayload(md, handles, attributeName);
+    return DecodeTypeCarrierContent(version, payload);
+}
+
+static JsonDocument DecodeTypeCarrierContent(string version, byte[] payload)
+{
+    Require(version == TypeNodeCarrier.Codec, "compiler TypeNode carrier did not use its selected codec");
+    return JsonDocument.Parse(TypeNode.ToJson(TypeNodeCarrier.Decode(version, payload)));
+}
+
+static (string Version, byte[] Payload) CarrierPayload(
+    MetadataReader md, CustomAttributeHandleCollection handles, string attributeName)
+{
     var attributes = handles
         .Select(md.GetCustomAttribute)
         .Where(attribute => AttributeName(md, attribute) == attributeName)
@@ -2689,14 +2730,12 @@ static JsonDocument DecodeCarrierDocument(
     var blob = md.GetBlobReader(attributes[0].Value);
     Require(blob.ReadUInt16() == 1, $"invalid [{attributeName}] prolog");
     var version = blob.ReadSerializedString() ?? throw new InvalidDataException($"missing [{attributeName}] version");
-    if (attributeName == "DotKt.Runtime.CompilerServices.KotlinInlineAttribute")
-        Require(version == BirCarrier.MessagePackV1, "executable inline carrier is not MessagePack");
     var length = blob.ReadInt32();
     Require(length >= 0 && length <= blob.RemainingBytes - 2, $"invalid [{attributeName}] payload length");
     var payload = blob.ReadBytes(length);
     Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0,
         $"unexpected named arguments in [{attributeName}]");
-    return DecodeCarrierContent(version, payload);
+    return (version, payload);
 }
 
 // Test-only inspection dump; production carrier readers use owning typed codecs.
@@ -2720,7 +2759,7 @@ static void VerifyNestedTypeCarriers(string path)
             .Single(method => md.GetString(method.Name) == name);
         var parameter = method.GetParameters().Select(md.GetParameter)
             .Single(parameter => parameter.SequenceNumber == 1);
-        using var document = DecodeCarrierDocument(md, parameter.GetCustomAttributes(),
+        using var document = DecodeTypeCarrierDocument(md, parameter.GetCustomAttributes(),
             "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
         var type = document.RootElement;
         Require(type.GetProperty("t").GetString() == "fqn" &&

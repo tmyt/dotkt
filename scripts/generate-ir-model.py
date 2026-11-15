@@ -757,6 +757,7 @@ def outputs(schema):
     executable_model = executable_models(definitions)
     return {
         ROOT / "toolchain/cir-common/MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null),
+        ROOT / "toolchain/bir-common/TypeNode.MessagePack.Generated.cs": cir_messagepack(definitions, model_type, non_null_field, allows_null, type_only=True),
         **type_parameter_models(definitions),
         **bir_literal_outputs(ROOT, definitions),
         **bir_core_outputs(ROOT, definitions),

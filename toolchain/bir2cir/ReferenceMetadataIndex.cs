@@ -6165,7 +6165,13 @@ sealed partial class ReferenceMetadataIndex
         }
     }
 
-    static bool IsDotKtEmittedAssembly(Assembly asm)
+    sealed record AssemblyProvenance(bool DotKtEmitted);
+    static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Assembly, AssemblyProvenance> assemblyProvenance = new();
+
+    static bool IsDotKtEmittedAssembly(Assembly asm) => asm != null
+        && assemblyProvenance.GetValue(asm, assembly => new AssemblyProvenance(ReadDotKtEmittedAssembly(assembly))).DotKtEmitted;
+
+    static bool ReadDotKtEmittedAssembly(Assembly asm)
     {
         try
         {
@@ -6471,30 +6477,42 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Decode a compiler-owned round-trip TypeNode carrier (`[KotlinType]`, `[KotlinNullableGeneric]` — both ride the
-    // same `(version, bytes)` BirCarrier envelope).  Full-name equality is insufficient: a foreign
-    // assembly may define a lookalike.  The containing assembly has already passed the DotKt marker + generated
-    // carrier test; additionally require this embedded attribute type to come from that assembly and itself carry
+    // same explicitly declared TypeNode codec envelope). Full-name equality is insufficient: a foreign
+    // assembly may define a lookalike. Require the containing assembly's DotKt marker + generated
+    // carrier test here too: physical field/signature readers also call this outside the initial scan. Require
+    // this embedded attribute type to come from that assembly and itself carry
     // [CompilerGenerated], matching dll2klib's provenance rule.
     static TypeNode CarrierTypeOf(IList<CustomAttributeData> attrs, Assembly declaringAssembly, string attrFullName)
     {
-        if (declaringAssembly == null) return null;
+        if (!IsDotKtEmittedAssembly(declaringAssembly)) return null;
         foreach (var cad in attrs)
         {
+            string codec;
+            byte[] content;
             try
             {
                 if (cad.AttributeType.FullName != attrFullName
                     || cad.AttributeType.Assembly != declaringAssembly
                     || !HasAttribute(cad.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)
                     || cad.ConstructorArguments.Count != 2
-                    || cad.ConstructorArguments[0].Value is not string version)
+                    || cad.ConstructorArguments[0].Value is not string declaredCodec)
                     continue;
-                var content = ReadByteArrayArg(cad.ConstructorArguments[1]);
-                return TypeNode.Parse(BirCarrier.DecodeBody(version, content).ToJsonString());
+                codec = declaredCodec;
+                content = ReadByteArrayArg(cad.ConstructorArguments[1]);
             }
             catch
             {
-                // A malformed carrier is not authority to alter the CLR call shape.  Ignore it and retain the ordinary
-                // reflected Object return; the downstream verifier will surface any actually required conversion.
+                // Reflection/provenance probing cannot authenticate this candidate.
+                continue;
+            }
+            // An authenticated compiler carrier owns its explicitly declared
+            // codec. Decoder failures must not select a reflected fallback.
+            try { return TypeNodeCarrier.Decode(codec, content); }
+            catch (Exception ex) when (ex is not InvalidDataException)
+            {
+                // Both surrounding scan boundaries propagate InvalidDataException.
+                // Authenticated payload failures must not leave a partial index.
+                throw new InvalidDataException("malformed trusted TypeNode carrier", ex);
             }
         }
         return null;
@@ -8014,6 +8032,7 @@ sealed partial class ReferenceMetadataIndex
 
     internal static void SelfTest()
     {
+        CarrierScanSelfTest();
         SelectedSourceConstraintShapeSelfTest();
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();

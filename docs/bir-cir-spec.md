@@ -156,8 +156,10 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
-  with the same logical keys and values. Source alias and executable inline/default/constructor-adapter carriers emit MessagePack;
-  remaining non-executable carriers emit JSON until their typed codecs migrate. Neither identifier is a
+  with the same logical keys and values. Source alias, executable inline/default/constructor-adapter, and
+  TypeNode carriers (`KotlinType`, `KotlinNullableGeneric`, `KotlinCollectionIdentity`,
+  `KotlinSuspendFunctionType`, `KotlinSuspendResult`) emit MessagePack. Remaining metadata object carriers
+  emit JSON until their typed codecs migrate. Neither identifier is a
   compiler-compatibility promise.
 - `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
   callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`

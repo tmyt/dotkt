@@ -4,6 +4,7 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Bir;
 
 // A private source member can be reached through its compiler-authored value carrier without a caller-side
 // UnsafeAccessor. Pin the complete replacement path, not merely a smaller count of accessors.
@@ -25,7 +26,7 @@ static class UnsafeCarrierInspector
         TypeDefinitionHandle Carrier(string name) => producer.TypeDefinitions.Single(handle =>
         {
             if ((producer.GetTypeDefinition(handle).Attributes & TypeAttributes.Interface) == 0) return false;
-            var fact = Fact(producer, producer.GetTypeDefinition(handle).GetCustomAttributes(), "KotlinType");
+            var fact = TypeFact(producer, producer.GetTypeDefinition(handle).GetCustomAttributes(), "KotlinType");
             return fact?.GetProperty("name").GetString() == name;
         });
 
@@ -52,7 +53,7 @@ static class UnsafeCarrierInspector
                 Require(original.GetGenericParameters().Count == 2, ownerName + ": original method frame lost");
                 var parameter = slot.GetParameters().Select(producer.GetParameter)
                     .Single(parameter => parameter.SequenceNumber == 1);
-                var sourceType = Fact(producer, parameter.GetCustomAttributes(), "KotlinType")!.Value;
+                var sourceType = TypeFact(producer, parameter.GetCustomAttributes(), "KotlinType")!.Value;
                 Require(sourceType.GetProperty("t").GetString() == "tv"
                     && sourceType.GetProperty("scope").GetString() == "method"
                     && sourceType.GetProperty("i").GetInt32() == 0,
@@ -166,7 +167,15 @@ static class UnsafeCarrierInspector
         Require(blob.RemainingBytes == 0, "carrier signature has unaccounted physical slots");
     }
 
-    static JsonElement? Fact(MetadataReader md, CustomAttributeHandleCollection attrs, string name)
+    static JsonElement? TypeFact(MetadataReader md, CustomAttributeHandleCollection attrs, string name) =>
+        Fact(md, attrs, name, (codec, bytes) =>
+        {
+            Require(codec == TypeNodeCarrier.Codec, "unexpected TypeNode metadata codec");
+            return JsonDocument.Parse(TypeNode.ToJson(TypeNodeCarrier.Decode(codec, bytes)));
+        });
+
+    static JsonElement? Fact(MetadataReader md, CustomAttributeHandleCollection attrs, string name,
+        Func<string, byte[], JsonDocument>? decode = null)
     {
         var selected = attrs.Select(md.GetCustomAttribute).Where(attr =>
         {
@@ -178,9 +187,12 @@ static class UnsafeCarrierInspector
         if (selected.Length == 0) return null;
         Require(selected.Length == 1, "duplicate metadata fact " + name);
         var blob = md.GetBlobReader(selected[0].Value);
-        Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "unexpected metadata codec");
-        using var document = JsonDocument.Parse(blob.ReadBytes(blob.ReadInt32()));
+        Require(blob.ReadUInt16() == 1, "unexpected metadata prolog");
+        var codec = blob.ReadSerializedString();
+        var bytes = blob.ReadBytes(blob.ReadInt32());
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected metadata arguments");
+        if (decode == null) Require(codec == BirCarrier.JsonV1, "unexpected metadata codec");
+        using var document = decode == null ? JsonDocument.Parse(bytes) : decode(codec!, bytes);
         return document.RootElement.Clone();
     }
 

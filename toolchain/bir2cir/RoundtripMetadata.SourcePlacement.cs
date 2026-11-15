@@ -23,11 +23,11 @@ static partial class RoundtripMetadata
             writer.WriteEndObject();
         });
 
-    static BirAttribute PlacementCarrier(string name, byte[] content) => new() {
+    static BirAttribute PlacementCarrier(string name, byte[] content, string codec = BirCarrier.JsonV1) => new() {
         Attr = new TypeNode.Fqn(name),
         ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.String"), new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
         Args = new IBirAttributeValue[] {
-            new BirAttributeLiteral { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) },
+            new BirAttributeLiteral { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(codec) },
             new BirOpaqueBytes { Bytes = content },
         },
     };

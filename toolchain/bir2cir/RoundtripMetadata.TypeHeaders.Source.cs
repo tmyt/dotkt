@@ -163,8 +163,7 @@ static partial class RoundtripMetadata
         if (type is not BirInterfaceDefinition { KotlinType.HasValue: true } representation) return;
         // KotlinType associates a compiler-synthesized physical declaration
         // with its logical Kotlin type (for example an existential interface).
-        AppendHeader(type, PlacementCarrier(AKType, BirCarrier.EncodeBody(BirCarrier.JsonV1,
-            representation.KotlinType.Value, TypeNode.WriteJson)));
+        AppendHeader(type, TypeCarrier(AKType, representation.KotlinType.Value));
         representation.KotlinType = default;
     }
 

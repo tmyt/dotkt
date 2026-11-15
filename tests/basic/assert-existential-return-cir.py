@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Assert that existential calls and generated capture storage state exact physical carriers."""
 
-import base64
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -16,22 +19,25 @@ def objects(node):
             yield from objects(value)
 
 
-if len(sys.argv) != 2:
+if len(sys.argv) != 3:
     raise SystemExit(
-        "usage: assert-existential-return-cir.py <RuntimeTypes...cir.json>"
+        "usage: assert-existential-return-cir.py <RuntimeTypes...cir.json> <metadata-inspector.dll>"
     )
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
 
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[2])
+
 
 def logical_return(method):
-    payloads = [attribute["args"] for attribute in method.get("retAttrs", [])
+    payloads = [attribute for attribute in method.get("retAttrs", [])
                 if attribute.get("attr", {}).get("name")
                 == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]
-    if len(payloads) != 1 or len(payloads[0]) != 2 or payloads[0][0].get("value") != "bir-json/1":
+    if len(payloads) != 1:
         raise SystemExit(f"{method.get('name')} lost its exact Kotlin return metadata: {payloads!r}")
-    return json.loads(base64.b64decode(payloads[0][1]["bytes"]))
+    return decoded_types[id(payloads[0])]
 
 if any(node.get("generatedEqualsFieldRead") is not None for node in objects(root)):
     raise SystemExit("CIR: unconsumed generated-equality field-read fact")

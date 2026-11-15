@@ -24,6 +24,7 @@ static class Bir2Cir
             if (args.Length == 1 && args[0] == "--selftest")
             {
                 TypeNodeSelfTest.Run();
+                TypeNodeCarrierSelfTest.Run();
                 MemberRefNodeSelfTest.Run();
                 DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
                 AttributeProjection.SelfTest();

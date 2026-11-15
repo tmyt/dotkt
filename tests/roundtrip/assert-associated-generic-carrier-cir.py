@@ -3,6 +3,7 @@
 import base64
 import json
 import sys
+from carrier_inspection import type_payloads
 
 
 def nodes(value):
@@ -16,13 +17,16 @@ def nodes(value):
 
 
 def payloads(method, name):
-    return [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+    return [decoded_types[id(attribute)] if name == "KotlinType"
+            else json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
             for attribute in method.get("attrs", [])
             if attribute.get("attr", {}).get("name")
             == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 
 
-producer, source, consumer = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]
+producer, source, consumer = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:4]]
+decoded_types = type_payloads([node for node in nodes(producer) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[4])
 owner = "roundtrip.capturedgeneric.CapturedContextReader"
 selected = [node for node in nodes(source) if node.get("k") == "callInstance"
             and node.get("ownerType", {}).get("name") == owner + "`2"]

@@ -2,16 +2,18 @@ using System.IO.Compression;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
+using DotKt.Bir;
 using DotKt.Klib.Metadata;
 
 internal static class ProjectedCollectionReturnInspector
 {
     const string Package = "roundtrip.projectedcollectionreturns";
 
-    internal static void Verify(string dllPath, string klibPath)
+    internal static void Verify(string dllPath, string klibPath, bool withJoinedReturn = false)
     {
         using var pe = new PEReader(File.OpenRead(dllPath));
         var metadata = pe.GetMetadataReader();
+        if (withJoinedReturn) VerifyJoinedReturnAssociation(metadata);
         MethodDefinition Method(string name) => metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
             .Single(method => metadata.GetString(method.Name) == name);
 
@@ -90,7 +92,36 @@ internal static class ProjectedCollectionReturnInspector
             "nested Comparable<*> did not survive DLL import");
     }
 
-    static JsonDocument Payload(MetadataReader metadata, CustomAttributeHandleCollection handles)
+    static void VerifyJoinedReturnAssociation(MetadataReader metadata)
+    {
+        const string owner = "roundtrip.upstreamerasedstdlib.UpstreamErasedStdlibKt";
+        const string source = "roundtrip.upstreamerasedstdlib.JoinedValue";
+        var declaration = metadata.TypeDefinitions.Select(metadata.GetTypeDefinition).Single(type =>
+            metadata.GetString(type.Namespace) + "." + metadata.GetString(type.Name) == owner);
+        var method = declaration.GetMethods().Select(metadata.GetMethodDefinition)
+            .Single(method => metadata.GetString(method.Name) == "concreteJoinedValue");
+        var returned = method.GetParameters().Select(metadata.GetParameter).Single(parameter => parameter.SequenceNumber == 0);
+        Require(TypePayload(metadata, returned.GetCustomAttributes()) is TypeNode.Fqn {
+            Name: source, Classifier: null, Args: [TypeNode.Tv { Scope: "method", I: 0 }] },
+            "joined value return lost its exact source method-variable association");
+        var signature = metadata.GetBlobReader(method.Signature);
+        var header = signature.ReadSignatureHeader();
+        if (header.IsGeneric) signature.ReadCompressedInteger();
+        signature.ReadCompressedInteger();
+        Require(signature.ReadSignatureTypeCode() == SignatureTypeCode.TypeHandle,
+            "joined return no longer names an exact erased physical declaration");
+        var handle = signature.ReadTypeHandle();
+        Require(handle.Kind == HandleKind.TypeDefinition, "joined return does not name its producer-owned carrier");
+        var carrier = metadata.GetTypeDefinition((TypeDefinitionHandle)handle);
+        Require(TypePayload(metadata, carrier.GetCustomAttributes()) is TypeNode.Fqn {
+            Name: source, Classifier: null, Args: [TypeNode.Star] },
+            "joined value carrier lost its exact star-projected source association");
+    }
+
+    static JsonDocument Payload(MetadataReader metadata, CustomAttributeHandleCollection handles) =>
+        JsonDocument.Parse(TypeNode.ToJson(TypePayload(metadata, handles)));
+
+    static TypeNode TypePayload(MetadataReader metadata, CustomAttributeHandleCollection handles)
     {
         var attribute = handles.Select(metadata.GetCustomAttribute).Single(attribute =>
         {
@@ -112,12 +143,14 @@ internal static class ProjectedCollectionReturnInspector
             return false;
         });
         var blob = metadata.GetBlobReader(attribute.Value);
-        Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "invalid collection source carrier");
+        Require(blob.ReadUInt16() == 1, "invalid collection source carrier");
+        var codec = blob.ReadSerializedString();
+        Require(codec == TypeNodeCarrier.Codec, "source carrier did not use the selected TypeNode codec");
         var length = blob.ReadInt32();
         Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid collection source carrier length");
-        var document = JsonDocument.Parse(blob.ReadBytes(length));
+        var type = TypeNodeCarrier.Decode(codec!, blob.ReadBytes(length));
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "invalid collection source carrier suffix");
-        return document;
+        return type;
     }
 
     static string Name(PackageFragment fragment, int id)

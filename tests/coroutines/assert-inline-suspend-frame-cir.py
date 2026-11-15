@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Assert that #557's inline-spliced suspend carrier captures only its caller-frame T."""
 
-import base64
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -23,17 +26,17 @@ def kotlin_type(declaration):
     ]
     if len(attributes) != 1:
         raise SystemExit(f"CIR: expected one KotlinType carrier, got {len(attributes)}")
-    arguments = attributes[0].get("args", [])
-    if len(arguments) != 2 or arguments[0].get("value") != "bir-json/1":
-        raise SystemExit("CIR: KotlinType carrier has the wrong codec envelope")
-    return json.loads(base64.b64decode(arguments[1]["bytes"], validate=True))
+    return decoded_types[id(attributes[0])]
 
 
-if len(sys.argv) != 2:
-    raise SystemExit("usage: assert-inline-suspend-frame-cir.py <CrossinlineSuspendObjectTests.cir.json>")
+if len(sys.argv) != 3:
+    raise SystemExit("usage: assert-inline-suspend-frame-cir.py <CrossinlineSuspendObjectTests.cir.json> <metadata-inspector.dll>")
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
+
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[2])
 
 state_machines = [
     item

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-import base64
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -14,14 +17,17 @@ def objects(node):
             yield from objects(value)
 
 
-if len(sys.argv) != 2:
+if len(sys.argv) != 3:
     raise SystemExit(
         "usage: assert-unchecked-generic-unsafe-accessor-cir.py "
-        "<UncheckedGenericCastReturnTests.cir.json>"
+        "<UncheckedGenericCastReturnTests.cir.json> <metadata-inspector.dll>"
     )
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     root = json.load(handle)
+
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute"], sys.argv[2])
 
 owners = [item for item in root.get("types", []) if item.get("name") == "ProtectedIntArithmetic"]
 if len(owners) != 1:
@@ -96,7 +102,7 @@ field = next(field for field in field_owner["fields"] if field.get("name") == "s
 nullable_slot = {"t": "tv", "scope": "type", "i": 1}
 if field.get("type") != nullable_slot:
     raise SystemExit(f"native nullable field lost its declared companion slot: {field!r}")
-field_logical = [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+field_logical = [decoded_types[id(attribute)]
                  for attribute in field.get("attrs", [])
                  if attribute.get("attr", {}).get("name")
                  == "DotKt.Runtime.CompilerServices.KotlinNullableGenericAttribute"]
