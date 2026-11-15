@@ -67,29 +67,36 @@ static partial class KotlinOverrideSlotBridge
         // A single selected source declaration has two CURRENT physical obligations after Cold.
         foreach (var reverse in new[] { false,true })
         {
-            var task=Method("NativeRun","source-run",obj,obj);
-            var cold=Method("NativeRunCold","source-run|cold",obj,obj,obj);
-            task.KotlinSourceMember="run"; cold.KotlinSourceMember="run$cold";
+            var taskResult=new TypeNode.Fqn("System.Threading.Tasks.Task",new TypeNode[] { obj });
+            var continuation=new TypeNode.Fqn("kotlin.coroutines.Continuation",new TypeNode[] { obj });
+            var task=Method("NativeRun","source-run",taskResult,obj);
+            var cold=Method("NativeRun$dotkt_suspend","source-run|cold",obj,obj,continuation);
+            task.KotlinSourceMember="run"; cold.KotlinSourceMember="run";
             task.Abstract=true; cold.Abstract=true; task.Body=default; cold.Body=default;
-            task.SuspendSourceParams=Array.Empty<TypeNode>(); cold.SuspendSourceParams=Array.Empty<TypeNode>();
+            task.SuspendSourceParams=new TypeNode[] { obj }; cold.SuspendSourceParams=new TypeNode[] { obj };
             task.SuspendSourceRet=obj; cold.SuspendSourceRet=obj;
             var contract=new BirInterfaceDefinition { Kind="interface", Name="Run", Methods=new[] { task,cold } };
-            var taskBody=Method("run","body-run",obj,obj);
-            var coldBody=Method("run$cold","body-run|cold",obj,obj,obj);
+            var taskBody=Method("run","body-run",taskResult,obj);
+            var coldBody=Method("run$dotkt_suspend","body-run|cold",obj,obj,continuation);
+            taskBody.KotlinSourceMember="run"; coldBody.KotlinSourceMember="run";
+            taskBody.SuspendSourceParams=new TypeNode[] { obj }; coldBody.SuspendSourceParams=new TypeNode[] { obj };
+            taskBody.SuspendSourceRet=obj; coldBody.SuspendSourceRet=obj;
             taskBody.Overrides=new[] { Edge("Run","run","source-run") };
-            coldBody.Overrides=new[] { Edge("Run","run$cold","source-run|cold") };
-            taskBody.SuspendTaskOnlyBridge=true;
+            coldBody.Overrides=new[] { Edge("Run","run","source-run") };
+            coldBody.Overrides.Value[0].PhysicalDeclarationId="source-run|cold";
+            var taskOnly=Method("taskOnlyBridge",null,taskResult,obj);
+            taskOnly.Generated=true; taskOnly.PhysicalSlotBridge=true; taskOnly.SuspendTaskOnlyBridge=true;
             var owner=new BirClassDefinition { Kind="class",Name="Runner",Interfaces=new TypeNode[] { new TypeNode.Fqn("Run") },
-                Methods=new[] { taskBody,coldBody } };
+                Methods=new[] { taskBody,coldBody,taskOnly } };
             var first=new BirFileDeclaration { Types=new IBirTypeDeclaration[] { contract } };
             var second=new BirFileDeclaration { Types=new IBirTypeDeclaration[] { owner } };
             Apply(reverse ? new[] { second,first } : new[] { first,second });
-            Require(!taskBody.SuspendTaskOnlyBridge.IsPresent && !coldBody.SuspendTaskOnlyBridge.IsPresent,
+            Require(!taskOnly.SuspendTaskOnlyBridge.IsPresent && !taskBody.SuspendTaskOnlyBridge.IsPresent && !coldBody.SuspendTaskOnlyBridge.IsPresent,
                 "final-only suspend marker escaped owning stage");
             Require(ReferenceEquals(owner.Methods.Value[0],taskBody) && ReferenceEquals(owner.Methods.Value[1],coldBody),
                 "Task/cold source membership reordered");
             Require(taskBody.ClrInterfaceImpls.Value.Single().Member.Value=="NativeRun"
-                && coldBody.ClrInterfaceImpls.Value.Single().Member.Value=="NativeRunCold",
+                && coldBody.ClrInterfaceImpls.Value.Single().Member.Value=="NativeRun$dotkt_suspend",
                 "Task/cold projections did not retain separate final physical obligations");
         }
 
