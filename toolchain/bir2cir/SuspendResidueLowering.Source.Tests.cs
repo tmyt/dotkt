@@ -6,6 +6,7 @@ static partial class SuspendResidueLowering
 {
     internal static void SourceSelfTest()
     {
+        SourceDropModifierSelfTest();
         static void Check(bool condition, string reason)
         { if (!condition) throw new InvalidOperationException("Typed suspend residue: " + reason); }
         static BirFunctionDeclaration Method(string name) => new() { Name = name,
@@ -96,5 +97,70 @@ static partial class SuspendResidueLowering
         invalid.SuspendResult = logical;
         RoundtripMetadata.RequireSuspendResults(new[] { validRoot });
         Console.WriteLine("[typed suspend residue] self-test OK (retirement before detach, declaration identity, body presence, app guard and logical source facts)");
+    }
+
+    internal static void SourceDropModifierSelfTest()
+    {
+        static void Need(bool condition, string reason)
+        { if (!condition) throw new InvalidOperationException("Owning suspend metadata transfer: " + reason); }
+        static BirFunctionDeclaration Method(string name, OptionalField<bool> suspend) => new() {
+            Name = name, Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("void"),
+            Body = Array.Empty<IBirStatement>(), Mods = new BirModifiers { Suspend = suspend },
+        };
+        var enabled = Method("enabled", true);
+        var disabled = Method("disabled", false);
+        var explicitNull = Method("explicitNull", OptionalField<bool>.Null);
+        var missing = Method("missing", default);
+        // A saved result must not be overwritten when there is no raw suspend
+        // fact to transfer (for example on an already-processed declaration).
+        missing.RoundtripSuspend = false;
+        var absentMods = new BirFunctionDeclaration { Name = "absentMods" };
+        var nullMods = new BirFunctionDeclaration { Name = "nullMods", Mods = OptionalField<BirModifiers>.Null };
+        var unrelated = Method("unrelatedModifiers", true); unrelated.Mods.Value.Inline = true;
+        var interfaceMethod = Method("interfaceMember", false);
+        var classMethod = Method("classMember", true);
+        var cls = new BirClassDefinition { Name = "Owner", Kind = "class", Methods = new[] { classMethod } };
+        var iface = new BirInterfaceDefinition { Name = "Interface", Kind = "interface", Methods = new[] { interfaceMethod } };
+        var methods = new[] { enabled, disabled, explicitNull, missing, absentMods, nullMods, unrelated };
+        var file = new BirFileDeclaration { FileClass = "SuspendMetadata", Methods = methods,
+            Types = new IBirTypeDeclaration[] { cls, iface } };
+        var typeVector = file.Types.Value;
+        var actualModifiers = enabled.Mods.Value; var emptyModifiers = missing.Mods.Value;
+        var memberVector = cls.Methods.Value; var body = enabled.Body.Value; var parameters = enabled.Params.Value;
+        var transfers = 0;
+        // Exercise the real preceding grant, not a manually fabricated pending
+        // marker. There are no raw IDs here, so identity custody is not invoked.
+        RoundtripMetadata.PrepareMetadata(file, runtimeMode: false,
+            (_, _, _, _) => transfers++);
+        Need(transfers == 0 && enabled.RoundtripMetadataPending.Value && classMethod.RoundtripMetadataPending.Value
+            && interfaceMethod.RoundtripMetadataPending.Value, "actual metadata grant did not precede modifier transfer");
+        var unmarked = Method("authoredAfterGrant", true);
+        var falseGrant = Method("notGranted", true); falseGrant.RoundtripMetadataPending = false;
+        file.Methods = file.Methods.Value.Concat(new[] { unmarked, falseGrant }).ToArray();
+        var continuingMethods = file.Methods.Value;
+        DropModifier(file);
+        Need(enabled.RoundtripSuspend.HasValue && enabled.RoundtripSuspend.Value
+            && disabled.RoundtripSuspend.HasValue && !disabled.RoundtripSuspend.Value
+            && explicitNull.RoundtripSuspend.IsNull && missing.RoundtripSuspend.HasValue && !missing.RoundtripSuspend.Value,
+            "true/false/null/absent suspend facts were collapsed or an absent raw fact overwrote saved metadata");
+        Need(!unmarked.RoundtripSuspend.IsPresent && !falseGrant.RoundtripSuspend.IsPresent
+            && !unmarked.Mods.Value.Suspend.IsPresent && !falseGrant.Mods.Value.Suspend.IsPresent
+            && classMethod.RoundtripSuspend.Value && interfaceMethod.RoundtripSuspend.HasValue && !interfaceMethod.RoundtripSuspend.Value,
+            "ungranted declarations acquired metadata or actual type methods were skipped");
+        Need(!absentMods.Mods.IsPresent && nullMods.Mods.IsNull
+            && !absentMods.RoundtripSuspend.IsPresent && !nullMods.RoundtripSuspend.IsPresent
+            && ReferenceEquals(enabled.Mods.Value, actualModifiers) && !actualModifiers.Suspend.IsPresent
+            && ReferenceEquals(missing.Mods.Value, emptyModifiers) && !emptyModifiers.Suspend.IsPresent
+            && unrelated.Mods.Value.Inline.Value && !unrelated.Mods.Value.Suspend.IsPresent,
+            "absent/null/empty mods presence, unrelated modifiers or actual modifiers ownership changed");
+        Need(ReferenceEquals(file.Types.Value, typeVector) && ReferenceEquals(file.Methods.Value, continuingMethods)
+            && ReferenceEquals(cls.Methods.Value, memberVector) && ReferenceEquals(enabled.Body.Value, body)
+            && ReferenceEquals(enabled.Params.Value, parameters) && ReferenceEquals(file.Methods.Value[0], methods[0]),
+            "modifier transfer replaced declarations, operands, signatures or owning vectors");
+        DropModifier(file);
+        Need(enabled.RoundtripSuspend.Value && explicitNull.RoundtripSuspend.IsNull
+            && ReferenceEquals(enabled.Mods.Value, actualModifiers) && !unmarked.RoundtripSuspend.IsPresent,
+            "repeated modifier transfer fabricated or lost metadata");
+        Console.WriteLine("[owning suspend metadata transfer] real grant, exact scalar/modifier presence, capability and ownership: OK");
     }
 }

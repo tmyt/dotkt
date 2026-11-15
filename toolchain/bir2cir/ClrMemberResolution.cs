@@ -23,7 +23,6 @@ using DotKt.Bir;
 // exactly as ilemit's GenericParamMatches `ownerArgs` branch does with reflected Types.
 static partial class ClrMemberResolution
 {
-    const string KotlinSigSnapshotId = "dotktKotlinSigId";
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
     static readonly Dictionary<int, TypeNode[]> KotlinSigSnapshots = new();
     static int _nextKotlinSigSnapshotId;
@@ -116,31 +115,6 @@ static partial class ClrMemberResolution
             case "setField": ResolveFieldAccess(node, write: true); break;
         }
     }
-
-
-    // Normalize the frontend/synthetic call dialect to an explicit declaration signature. Empty accessors commonly
-    // omitted `sig`; CLR emission must see `[]`, not absence. For non-empty calls, only an already-carried declaration
-    // vector (`shapeTypes` for a generic declaration, otherwise `argTypes`) may supply it — expression arity/types are
-    // never consulted here. `shapeTypes` is consumed before type lowering so its open method TVs follow the ordinary
-    // `sig` lowering path and do not leak as a second descriptor dialect into CIR.
-    public static void EnsurePlainCallDescriptors(JsonNode node)
-    {
-        if (node is JsonObject obj)
-        {
-            foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) EnsurePlainCallDescriptors(value);
-            var kind = (obj["k"] as JsonValue)?.GetValue<string>();
-            var construction = kind is "newDelegate" or "newBoundDelegate";
-            if (!construction && kind is not ("callStatic" or "callInstance" or "constrainedCall")) return;
-            TypeNode[] Vector(string key) => (obj[key] as JsonArray)?.Select(TypeJson.Read).ToArray();
-            var plan = PlanPlainDescriptor(construction, Vector("sig"), Vector("shapeTypes"), Vector("argTypes"),
-                obj["args"] is JsonArray { Count: 0 }, construction ? TypeJson.Read(obj["funcType"]) : null);
-            if (plan.Signature != null) obj["sig"] = new JsonArray(plan.Signature.Select(TypeJson.Write).ToArray());
-            if (plan.ConsumeShapes) obj.Remove("shapeTypes");
-        }
-        else if (node is JsonArray array)
-            foreach (var item in array.ToList()) if (item != null) EnsurePlainCallDescriptors(item);
-    }
-
 
     // ---- constructors --------------------------------------------------------------------------
 

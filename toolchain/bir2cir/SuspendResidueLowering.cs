@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using DotKt.Bir.Lowering;
 
 // bir2cir — the PHYSICAL BODY of a suspend declaration the cold-core lowering deliberately does not lower, and the
 // disposal of the Kotlin `suspend` modifier at the CIR boundary.
@@ -36,37 +36,25 @@ using System.Text.Json.Nodes;
 // and IrSanity refuses one that survives.
 static partial class SuspendResidueLowering
 {
-    // Remove the Kotlin-only `suspend` modifier from every method of a lowered file. Called after PrepareMetadata
-    // grants declaration obligations; eligible methods transfer the exact scalar to the typed metadata completion.
-    public static void DropModifier(JsonNode root)
+    internal static void DropModifier(BirFileDeclaration file)
     {
-        if (root is not JsonObject file) return;
-        DropInMethods(file["methods"] as JsonArray);
-        DropInTypes(file["types"] as JsonArray);
-    }
+        DropMethods(file.Methods.OrEmpty());
+        // Final type placement has already flattened the actual owning vector.
+        foreach (var type in file.Types.OrEmpty()) DropMethods(type.Methods.OrEmpty());
 
-    static void DropInTypes(JsonArray types)
-    {
-        if (types == null) return;
-        foreach (var t in types)
+        static void DropMethods(IEnumerable<BirFunctionDeclaration> methods)
         {
-            if (t is not JsonObject type) continue;
-            DropInMethods(type["methods"] as JsonArray);
-            DropInTypes(type["types"] as JsonArray);
+            foreach (var method in methods)
+            {
+                if (!method.Mods.HasValue) continue;
+                var modifiers = method.Mods.Value;
+                // The grant owns the metadata obligation. Presence, not the
+                // scalar's truth value, preserves false/null and an empty mods
+                // object for the later typed metadata completion.
+                if (method.RoundtripMetadataPending.OrDefault() && modifiers.Suspend.IsPresent)
+                    method.RoundtripSuspend = modifiers.Suspend;
+                modifiers.Suspend = default;
+            }
         }
     }
-
-    static void DropInMethods(JsonArray methods)
-    {
-        if (methods == null) return;
-        foreach (var m in methods)
-            if (m is JsonObject method && method["mods"] is JsonObject mods)
-            {
-                if (method["roundtripMetadataPending"]?.GetValue<bool>() == true
-                    && mods.TryGetPropertyValue("suspend", out var suspend))
-                    method["roundtripSuspend"] = suspend?.DeepClone();
-                mods.Remove("suspend");
-            }
-    }
-
 }
