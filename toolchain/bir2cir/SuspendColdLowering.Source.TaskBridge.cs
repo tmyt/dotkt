@@ -1,0 +1,157 @@
+using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
+
+static partial class SuspendColdLowering
+{
+    internal sealed partial class SourceFunGen
+    {
+        BirFunctionDeclaration BuildBridge()
+        {
+            var isUnit = IsUnitTn(_resultType) && !_resultNullable && !_m.DotktValueReturn.OrDefault();
+            var result = IsUnitTn(_resultType) ? UnitTn : _taskResultType;
+            var resultSlot = BirTypeLowering.AsReadonlyResultSlot(result);
+            var taskType = new TypeNode.Fqn(_taskBcl, new[] { resultSlot });
+            var taskReturn = isUnit ? new TypeNode.Fqn(_taskBcl) : taskType;
+            var method = new BirFunctionDeclaration {
+                Name = _name, Static = _memberAbstract ? false : !_isMember,
+                Override = _memberOverride, Virtual = _memberAbstract || _memberVirtual,
+                Abstract = _memberAbstract, ObjectOverride = false,
+                SuspendBridge = true, SuspendResult = BirGraphValue.CopyType(_logicalSuspendResult),
+                Vis = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
+                Params = CloneNamedParameters(), Ret = taskReturn, Body = Array.Empty<IBirStatement>(),
+                Attrs = Array.Empty<BirAttribute>(),
+            };
+            if (!_memberAbstract)
+            {
+                var tcs = new TypeNode.Fqn(_tcsBcl, new[] { resultSlot });
+                var root = new TypeNode.Fqn(RootContinuationFqn, new[] { resultSlot });
+                var body = BridgePrelude(tcs, root);
+                body.Add(new BirVariable { Name = BridgeResultLocal, Type = AnyTn, Init = Suspended() });
+                body.Add(new BirTry {
+                    Type = VoidTn,
+                    Body = new IBirStatement[] { new BirSetLocal { Name = BridgeResultLocal, Value = OptionalField<IBirExpression>.Of(BridgeColdCall()) } },
+                    Catches = new[] { new BirCatch { ExcType = new TypeNode.Fqn("kotlin.Throwable"), Var = BridgeExceptionLocal,
+                        Body = new IBirStatement[] {
+                            new BirExpressionStatement { Expr = RootResumeFailure() },
+                            new BirSetLocal { Name = BridgeResultLocal, Value = Suspended() },
+                        } } },
+                });
+                var skip = NextLabel();
+                body.Add(BrIf(new BirBinaryOperation { Op = "===", Lhs = Local(BridgeResultLocal), Rhs = Suspended() }, true, skip));
+                IBirExpression value = IsAnyTn(resultSlot) ? Local(BridgeResultLocal)
+                    : new BirCast { Type = resultSlot, E = Local(BridgeResultLocal) };
+                body.Add(new BirExpressionStatement { Expr = TcsCall(tcs, "TrySetResult", resultSlot, value) });
+                body.Add(Label(skip));
+                IBirExpression task = new BirPropertyGet { Type = tcs, Name = "Task", Static = false,
+                    Recv = Local(TaskCompletionSourceLocal), Ret = taskType };
+                if (isUnit) task = new BirCast { Type = taskReturn, E = OptionalField<IBirExpression>.Of(task) };
+                body.Add(Ret(task));
+                method.Body = body.ToArray();
+            }
+            FinishBridgeDeclaration(method, taskReturn);
+            return method;
+        }
+
+        List<IBirStatement> BridgePrelude(TypeNode tcs, TypeNode root) => new() {
+            new BirVariable { Name = TaskCompletionSourceLocal, Type = tcs,
+                Init = new BirNewClr { Type = tcs, ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() } },
+            new BirVariable { Name = RootContinuationLocal, Type = root,
+                Init = new BirNew { Type = root, ArgTypes = new[] { tcs }, Args = new IBirExpression[] { Local(TaskCompletionSourceLocal) } } },
+        };
+
+        void FinishBridgeDeclaration(BirFunctionDeclaration method, TypeNode.Fqn taskReturn)
+        {
+            if (_typeParams.Count > 0) method.TypeParams = _methodTypeParamDecls.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray();
+            if (_generated) method.Generated = true;
+            CarrySourceDeclaration(method);
+            CarryKotlinDeclarationMetadata(method);
+            CarryOverrideMarkers(method);
+            CarryPhysicalSlotFacts(method, false);
+            if (TaskReturnNullableFlags(taskReturn) is { } flags) method.RetNullableFlags = flags;
+            if (_resultNullableGeneric != null) method.NullableGenericRet = BirGraphValue.CopyType(_resultNullableGeneric);
+            if (_companionReceiver.HasValue) method.CompanionReceiver = BirGraphValue.CopyType(_companionReceiver.Value);
+            if (_companionSourceName.HasValue) method.CompanionSourceName = _companionSourceName;
+            if (_companionMemberKind.HasValue) method.CompanionMemberKind = _companionMemberKind;
+            if (_declarationId != null)
+            {
+                method.DeclarationId = _declarationId;
+                method.DeclarationSourceName = _declarationSourceName
+                    ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
+            }
+            if (_explicitClrName != null) method.ExplicitClrName = _explicitClrName;
+            if (IsNothingTn(_resultType)) method.RetNothing = true;
+        }
+
+        int[] TaskReturnNullableFlags(TypeNode.Fqn taskReturn)
+        {
+            if (taskReturn.Args == null) return null;
+            var result = taskReturn.Args[0];
+            if (_resultNullable && result is not TypeNode.Nullable) result = new TypeNode.Nullable(result);
+            return NullableFlags.ComputeValues(new TypeNode.Fqn(taskReturn.Name, new[] { result }),
+                _isValueFqn, NullableFlags.Convention.ClrSignature,
+                type => BirTypeLowering.AnnotationArguments(type, _refs.Aliases, _isValueFqn,
+                    _refs.PhysicalTypeNames, _localTypeFqns, nullableFrames: _refs.NullableTypeFrames));
+        }
+
+        IBirExpression BridgeColdCall()
+        {
+            var args = _params.Select(parameter => (IBirExpression)Local(parameter.Name))
+                .Append(new BirCast { Type = ContAny(), E = Local(RootContinuationLocal) }).ToArray();
+            var signature = _params.Select(parameter => BirGraphValue.CopyType(parameter.Type)).Append(ContAny()).ToArray();
+            var typeArguments = _typeParams.Count > 0
+                ? OptionalField<TypeNode[]>.Of(Enumerable.Range(0, _typeParams.Count).Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray())
+                : default;
+            if (_isMember)
+                return new BirCallInstance {
+                    OwnerType = _selfType, Virtual = false, ClrOwnerResolved = true, Recv = new BirThis(),
+                    Method = _coldName, Sig = signature, Args = args, Ret = AnyTn, TypeArgs = typeArguments,
+                    DeclarationId = _declarationId == null ? default : OptionalField<string>.Of(_declarationId + "|cold"),
+                };
+            return new BirCallStatic {
+                OwnerType = _staticMember && _ownerClass != null ? OptionalField<TypeNode>.Of(_selfType) : OptionalField<TypeNode>.Null,
+                CalleeOwner = _staticMember && _ownerClass != null ? _selfType : new TypeNode.Fqn(_fileClass),
+                Method = _coldName, Sig = signature, Args = args, Ret = AnyTn, TypeArgs = typeArguments,
+                DeclarationId = _declarationId == null ? default : OptionalField<string>.Of(_declarationId + "|cold"),
+            };
+        }
+
+        BirCallInstance RootResumeFailure() => new() {
+            OwnerType = ContAny(), Virtual = true,
+            Recv = new BirCast { Type = ContAny(), E = Local(RootContinuationLocal) },
+            Method = "resumeWith", Sig = new TypeNode[] { new TypeNode.Fqn("kotlin.Result", new[] { AnyTn }) }, Ret = VoidTn,
+            Args = new IBirExpression[] { CompanionFactoryCall("kotlin.Result", "failure", new TypeNode[] { AnyTn },
+                new TypeNode[] { new TypeNode.Fqn("kotlin.Throwable") }, new IBirExpression[] { Local(BridgeExceptionLocal) },
+                new TypeNode.Fqn("kotlin.Result", new[] { AnyTn })) },
+        };
+
+        BirNativeInstance TcsCall(TypeNode owner, string method, TypeNode argumentType, IBirExpression argument) => new() {
+            Type = owner, Method = method, Recv = Local(TaskCompletionSourceLocal),
+            ArgTypes = new[] { argumentType }, Args = new[] { argument }, Ret = BoolTn,
+        };
+
+        BirFunctionDeclaration DrainMain()
+        {
+            var tcs = new TypeNode.Fqn(_tcsBcl, new[] { UnitTn });
+            var task = new TypeNode.Fqn(_taskBcl, new[] { UnitTn });
+            var root = new TypeNode.Fqn(RootContinuationFqn, new[] { UnitTn });
+            var plan = _refs.ResolveAwaitable(_taskBcl, 1) ?? throw new InvalidOperationException(
+                $"suspend main drain: '{_taskBcl}<Unit>' has no conforming GetAwaiter in referenced metadata");
+            var awaiter = CloseAwaitTemplate(plan.AwaiterTemplate, task, Array.Empty<TypeNode>());
+            var body = BridgePrelude(tcs, root);
+            body.Add(new BirVariable { Name = BridgeResultLocal, Type = AnyTn, Init = OptionalField<IBirExpression>.Of(BridgeColdCall()) });
+            var skip = NextLabel();
+            body.Add(BrIf(new BirBinaryOperation { Op = "===", Lhs = Local(BridgeResultLocal), Rhs = Suspended() }, false, skip));
+            var taskValue = new BirPropertyGet { Type = tcs, Name = "Task", Static = false,
+                Recv = Local(TaskCompletionSourceLocal), Ret = task };
+            var getAwaiter = BuildGetAwaiter(plan, task, awaiter, taskValue, captureValue: null,
+                resultTok: UnitTn, methodTypeArgs: Array.Empty<TypeNode>());
+            body.Add(new BirExpressionStatement { Expr = new BirNativeInstance { Type = awaiter, Method = "GetResult",
+                Recv = OptionalField<IBirExpression>.Of(getAwaiter), ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(), Ret = UnitTn } });
+            body.Add(Label(skip));
+            return new BirFunctionDeclaration { Name = "main", Static = true, Override = false, Virtual = false,
+                Abstract = false, ObjectOverride = false, Vis = "public", Params = CloneNamedParameters(),
+                Ret = UnitTn, Body = body.ToArray(), Attrs = Array.Empty<BirAttribute>() };
+        }
+    }
+}

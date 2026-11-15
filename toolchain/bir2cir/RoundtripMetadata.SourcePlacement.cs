@@ -44,4 +44,19 @@ static partial class RoundtripMetadata
     internal static void AddSourceMethodIdentity(BirFunctionDeclaration method, string sourceName,
         string sourceDeclaration = null) => method.Attrs = method.Attrs.OrEmpty()
             .Append(PlacementCarrier(AKSourceMethod, SourceMethodIdentityContent(sourceName, sourceDeclaration))).ToArray();
+
+    internal static void CopySourceOverloadPriority(BirFunctionDeclaration source, BirFunctionDeclaration target)
+    {
+        foreach (var attribute in source.Attrs.OrEmpty())
+            if (attribute.Attr.OrDefault() is TypeNode.Fqn { Name: SourceLowPriority })
+                target.Attrs = target.Attrs.OrEmpty().Append((BirAttribute)attribute.DeepClone()).ToArray();
+    }
+
+    internal static void CopySourceMethodIdentity(BirFunctionDeclaration source, BirFunctionDeclaration target)
+    {
+        if (target.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AKSourceMethod })) return;
+        foreach (var attribute in source.Attrs.OrEmpty())
+            if (attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AKSourceMethod })
+                target.Attrs = target.Attrs.OrEmpty().Append((BirAttribute)attribute.DeepClone()).ToArray();
+    }
 }
