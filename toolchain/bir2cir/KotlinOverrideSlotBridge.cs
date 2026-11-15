@@ -78,26 +78,11 @@ static partial class KotlinOverrideSlotBridge
     // bridge built before it exists would carry a MethodImpl for the constructed interface and leave the existential
     // one unimplemented. Nothing between the two points can introduce a new nested move — an existential view's slots
     // are copies of the erased ones — so the halves do not race.
-    //
-    // Adapt differing suspend results before they become invariant Task<T> signatures. This includes Unit in a
-    // value slot and a covariant result supplied by an inherited implementation. Cold lowering drives a Task of the
-    // slot's result from the selected implementation's cold call; it must not cast the public Task result.
-    internal static TypeNode[] ReadParameterTypes(JsonObject method) =>
-        (method["params"] as JsonArray)?.OfType<JsonObject>()
-            .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
-
-    // The bridge half.
+    // Declaration moves and pre-cold suspend bridges have owning source entries.
+    // This remaining DOM owner realizes only the later physical CLR bridges.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypeNames, bool refBuild, GenericRepresentationPolicy representations,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null,
-        IReadOnlyDictionary<string, string> localCarriers = null) =>
-        ApplyAll(roots, isValue, refs, representations, Phase.PhysicalBridges, localTypeNames, covariantBridgedSlots,
-            refBuild, localCarriers: localCarriers);
-
-    static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
-        GenericRepresentationPolicy representations, Phase phase, IReadOnlySet<string> localTypeNames,
-        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null, bool refBuild = false,
-        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters = null,
         IReadOnlyDictionary<string, string> localCarriers = null)
     {
         var rootList = roots.ToArray();
@@ -120,7 +105,7 @@ static partial class KotlinOverrideSlotBridge
                 && Core(view) is TypeNode.Fqn carrier
                 && (localCarriers?.TryGetValue(construction.Name, out var local) == true && local == carrier.Name
                     || refs.TryExistentialPhysicalOwner(construction.Name, out var referenced) && referenced == carrier.Name);
-            return phase == Phase.PhysicalBridges && (Matches(left, right) || Matches(right, left));
+            return Matches(left, right) || Matches(right, left);
         }
         var frames = refs.NullableTypeFrames.ToDictionary(pair => pair.Key, pair => pair.Value);
         foreach (var def in defs.Values)
@@ -149,38 +134,36 @@ static partial class KotlinOverrideSlotBridge
                     is string sourceAssociation)
                 exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyClass(cls, defs, isValue, refs, phase, refBuild, exactBridgeSources, localTypeNames,
-                covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), sourceParameters, representations,
+            ApplyClass(cls, defs, isValue, refs, refBuild, exactBridgeSources, localTypeNames,
+                covariantBridgedSlots, AnnotationArguments, SourceMapping(cls), representations,
                 CarrierParameterSeam, CanForwardPhysicalValue, CanForwardReturn);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
         // make correctness depend on source/file order.
-        if (phase == Phase.PhysicalBridges)
-            foreach (var cls in defs.Values.Where(d => d.Kind == "class").ToList())
-            {
-                if (cls.Node["methods"] is not JsonArray methods) continue;
-                var inheritedBridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-                var ordinal = 0;
-                AddInheritedDefaultPropertyBridges(cls, defs, methods, ClassOwnArgs(cls), refs, isValue,
-                    exactBridgeSources, inheritedBridges, ref ordinal, localTypeNames);
-                AddInheritedDefaultMethodBridges(cls, defs, methods, ClassOwnArgs(cls), refs, isValue,
-                    exactBridgeSources, inheritedBridges, ref ordinal, localTypeNames);
-            }
-        if (phase == Phase.PhysicalBridges)
-            foreach (var method in defs.Values.SelectMany(def => def.Methods.OfType<JsonObject>()))
-                method.Remove(KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey);
+        foreach (var cls in defs.Values.Where(d => d.Kind == "class").ToList())
+        {
+            if (cls.Node["methods"] is not JsonArray methods) continue;
+            var inheritedBridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            var ordinal = 0;
+            AddInheritedDefaultPropertyBridges(cls, defs, methods, ClassOwnArgs(cls), refs, isValue,
+                exactBridgeSources, inheritedBridges, ref ordinal, localTypeNames);
+            AddInheritedDefaultMethodBridges(cls, defs, methods, ClassOwnArgs(cls), refs, isValue,
+                exactBridgeSources, inheritedBridges, ref ordinal, localTypeNames);
+        }
+        foreach (var method in defs.Values.SelectMany(def => def.Methods.OfType<JsonObject>()))
+            method.Remove(KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey);
     }
 
     static TypeNode DeclaredSlot(TypeNode type, ValueTypeOracle isValue, bool physical) =>
         physical ? type : NullableGenericErasure.EraseNullableTv(type, isValue);
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
-        ReferenceMetadataIndex refs, Phase phase, bool refBuild, IDictionary<JsonObject, string> exactBridgeSources,
+        ReferenceMetadataIndex refs, bool refBuild, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames,
         IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots,
         Func<TypeNode.Fqn, TypeNode[]> annotationArguments, NullableRepresentationTypes sourceMapping,
-        IReadOnlyDictionary<JsonObject, TypeNode[]> sourceParameters, GenericRepresentationPolicy representations,
+        GenericRepresentationPolicy representations,
         Func<TypeNode, TypeNode, bool> CarrierParameterSeam, Func<TypeNode, TypeNode, bool> CanForwardPhysicalValue,
         Func<TypeNode, TypeNode, bool> CanForwardReturn)
     {
@@ -192,7 +175,7 @@ static partial class KotlinOverrideSlotBridge
         var candidates = methods.OfType<JsonObject>().ToList();
         var inheritedOwners = new Dictionary<JsonObject, TypeNode.Fqn>(ReferenceEqualityComparer.Instance);
         var inheritedSignatures = new Dictionary<JsonObject, TypeNode[]>(ReferenceEqualityComparer.Instance);
-        var enumerationSlots = !refBuild && phase == Phase.PhysicalBridges
+        var enumerationSlots = !refBuild
             ? ReverseEnumeratorBridgeSynthesis.ReserveSlots(cls, defs, refs) : null;
         TypeNode PhysicalSlotType(TypeNode type) => BirTypeLowering.LowerPhysicalType(
             type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
@@ -240,7 +223,7 @@ static partial class KotlinOverrideSlotBridge
             return Prove(source);
         }
         CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
-            phase == Phase.SuspendValueBridges);
+            suspendValues: false);
 
         // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
         // slot that needs filling". A supertype absent from `defs` is declared elsewhere and goes to the referenced
@@ -283,7 +266,7 @@ static partial class KotlinOverrideSlotBridge
 
             var methodView = new OverrideMethod(impl);
             var assessment = AssessFit(methodView, ownArgs, slotParams, slotRet, unitValueReturn, slotSignature,
-                supIsInterface, referencedSlot, descriptorSpec, propertyAccessor, phase, inheritedOwner != null,
+                supIsInterface, referencedSlot, descriptorSpec, propertyAccessor, Phase.PhysicalBridges, inheritedOwner != null,
                 isValue, refs, localTypeNames, sourceMapping, PhysicalSlotType, CarrierParameterSeam,
                 CanForwardPhysicalValue, type => CanPassAsObject(type, impl),
                 (source, target) => CanForwardClassReturn(source, target, impl),
@@ -300,7 +283,7 @@ static partial class KotlinOverrideSlotBridge
             var declParams = impl["params"] as JsonArray;
             var declRet = TypeJson.Read(impl["ret"]);
 
-            ApplyDeclarationEdits(methodView, ownArgs, slotParams, slotRet, assessment, phase, isValue, annotationArguments);
+            ApplyDeclarationEdits(methodView, ownArgs, slotParams, slotRet, assessment, Phase.PhysicalBridges, isValue, annotationArguments);
 
             // A Kotlin accessor keeps its dedicated physical name even when it implements a property imported from a
             // CLR interface whose slot uses the ordinary get_/set_ convention. With an otherwise-identical signature,
@@ -329,7 +312,7 @@ static partial class KotlinOverrideSlotBridge
             var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot || needsExactLocalBaseSlot;
             var constructedSlotTypeParams = SubstituteOwnerTypeParameterConstraints(
                 slotTypeParams, semanticSpec.Args ?? Array.Empty<TypeNode>());
-            if (phase == Phase.PhysicalBridges && !needsSignatureBridge && cls.Kind == "class"
+            if (!needsSignatureBridge && cls.Kind == "class"
                 && inheritedOwner == null && IsNativeSlotOwner(descriptorSpec.Name, defs, refs.HasDotKtOwner))
                 DeclarationSignatureIdentity.RecordSelectedPhysicalSlot(impl,
                     ImplDescriptor(descriptorSpec, descriptorMember, (impl["typeParams"] as JsonArray)?.Count ?? 0,
@@ -434,16 +417,12 @@ static partial class KotlinOverrideSlotBridge
                     $"dotkt$ovslot${SafeName(identityName)}${bridgeOrdinal}", isValue, refs,
                     callOwner: inheritedOwner,
                     callMember: inheritedOwner == null ? null : Str(impl[DeclarationIdentityBinding.ExplicitNameKey]),
-                    unitValueReturn: unitValueReturn, physicalImplementation: phase == Phase.PhysicalBridges);
+                    unitValueReturn: unitValueReturn, physicalImplementation: true);
                 if (slotSignature != null && bridge["params"] is JsonArray bridgeParameters)
                     for (var i = 0; i < slotSignature.Length; i++)
                         if (slotSignature[i] is TypeNode.Mod { Req: false } signature
                             && bridgeParameters[i] is JsonObject parameter)
                             parameter[FunctionSignatureIdentity.Key] = TypeJson.Write(signature.M);
-                // Cold suspend entries share an object result, but a parameter conversion still
-                // needs its own MethodImpl there as well as on the public Task entry.
-                if (phase == Phase.SuspendValueBridges && !fit.Contains(Fit.Bridge))
-                    bridge[KotlinPropertyAccessors.SuspendTaskOnlyBridgeKey] = true;
                 if (propertyAccessor == null)
                 {
                     RoundtripMetadata.AddSourceMethodIdentity(bridge, identityName,
@@ -503,13 +482,12 @@ static partial class KotlinOverrideSlotBridge
 
         var declarationViews = new OverrideViews();
         SelectSlots(declarationViews.Owner(cls), defs, declarationViews, candidates.Select(declarationViews.Method), ownArgs,
-            isValue, refs, phase, refBuild, localTypeNames, sourceMapping, representations, CarrierParameterSeam,
+            isValue, refs, Phase.PhysicalBridges, refBuild, localTypeNames, sourceMapping, representations, CarrierParameterSeam,
             slot => Fill(slot.SemanticSpec, slot.DescriptorSpec, slot.IsInterface, slot.Referenced, slot.HasDefault,
                 slot.IdentityName, slot.DescriptorMember, slot.PropertyAccessor, slot.Parameters, slot.Return,
                 slot.Implementation.Dom, ParametersDom(slot.TypeParameters), slot.UnitValueReturn, slot.Signature,
                 slot.ReferenceMember, slot.SemanticReturn, slot.SelectedLocal?.Dom, slot.SelectedReferencedDeclarationId),
-            inheritedSignatures.ToDictionary(pair => declarationViews.Method(pair.Key), pair => pair.Value),
-            sourceParameters?.ToDictionary(pair => declarationViews.Method(pair.Key), pair => pair.Value));
+            inheritedSignatures.ToDictionary(pair => declarationViews.Method(pair.Key), pair => pair.Value));
 
     }
 
@@ -1608,8 +1586,8 @@ static partial class KotlinOverrideSlotBridge
     // still runs; a referenced CLR DIM is called non-virtually to avoid redispatch to the colliding class method.
     // Each argument is narrowed out of the slot's `object` into the declared type
     // (`unbox.any` for a value, `castclass` for a reference) and the result widened back.
-    // Only the final physical phase owns a frozen implementation descriptor; earlier suspend/value adapters still
-    // carry semantic signatures that the ordinary representation pass must project.
+    // Physical slot bridges freeze their implementation descriptor. The separate late signature-allocation
+    // forwarder still leaves its conversions to the ordinary representation policy.
     internal static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
         ValueTypeOracle isValue, ReferenceMetadataIndex refs, TypeNode.Fqn callOwner = null,
         bool virtualCall = true, string callMember = null, bool unitValueReturn = false,
