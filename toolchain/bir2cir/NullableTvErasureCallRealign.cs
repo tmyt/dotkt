@@ -446,17 +446,6 @@ static partial class NullableTvErasureCallRealign
     static TypeNode[] OwnerArguments(TypeNode.Fqn owner) =>
         _sourceApplicationOrder?.DeclarationArguments(owner) ?? owner?.Args;
 
-    // The SAME-MODULE inherited-member half. A call emitted against its Kotlin receiver owner can only be matched to
-    // the declaration that owns its nullable-generic slot after InheritedMemberOwnerBinding closes the base-chain
-    // substitution (`Derived : Base<String>` reading `Base<T>.values: Array<T?>`). Until then the source-use pass has
-    // no declaration under `Derived` and correctly refuses to guess. Re-flow after that distinct identity transition
-    // so the physical result remains `Subst(Erase(declaration))`; for a reference array, ApplyDerivedRet authors the
-    // explicit checked projection back to the concrete Kotlin array seen by the consumer. The same gates make this
-    // idempotent for calls already handled by either earlier phase.
-    public static void ApplyAfterInheritedOwnerBinding(
-        JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-        => ApplyPhysicalUses(root, idx, isValue, refs);
-
     // UnsafeAccessorLowering replaces a Kotlin member edge with a newly-declared wrapper call. The wrapper's
     // declaration is the first authoritative statement of that new call's physical result; re-flow once after the
     // holder types have been admitted to the index so an object-erased result is projected at its actual consumer.

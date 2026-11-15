@@ -4,6 +4,26 @@ using DotKt.Cir;
 
 static partial class UncheckedGenericCastReturnErasure
 {
+    // Continue the captured declaration selection after the inherited target
+    // becomes exact. Do not rerun return erasure or source-body preparation.
+    internal static void ApplyAfterInheritedOwnerBinding(BirFileDeclaration root, PendingSourceIndex pending)
+    {
+        var index = pending.SourceDeclarations;
+        foreach (var method in root.Methods.OrEmpty()) RewriteSourceMethod(method.Body.OrEmpty().Cast<BirGraphValue>(), index);
+        foreach (var field in root.Fields.OrEmpty())
+            if (field.Init.HasValue) RewriteSourceMethod(new[] { (BirGraphValue)field.Init.Value }, index);
+        foreach (var type in root.Types.OrEmpty())
+        {
+            foreach (var method in type.Methods.OrEmpty()) RewriteSourceMethod(method.Body.OrEmpty().Cast<BirGraphValue>(), index);
+            foreach (var constructor in type.Ctors.OrEmpty())
+                RewriteSourceMethod(constructor.PreStmts.OrEmpty().Cast<BirGraphValue>()
+                    .Concat((constructor.ThisArgs.HasValue ? constructor.ThisArgs.Value : constructor.BaseArgs.OrEmpty()).Cast<BirGraphValue>())
+                    .Concat(constructor.Body.OrEmpty().Cast<BirGraphValue>()), index);
+            foreach (var field in type.Fields.OrEmpty())
+                if (field.Init.HasValue) RewriteSourceMethod(new[] { (BirGraphValue)field.Init.Value }, index);
+        }
+    }
+
     internal static void Apply(BirFileDeclaration root, PendingSourceIndex pending)
     {
         var index = pending.SourceDeclarations;

@@ -370,6 +370,9 @@ static partial class ClrMemberResolution
     /// </remarks>
     static void ResolveConstrainedCall(JsonObject node)
     {
+        // Lexical super access has already passed UnsafeAccessor lowering.
+        // The constrained operand now owns the final dispatch instruction.
+        node.Remove("super");
         if (node.ContainsKey("memberRef")) return;
         if (TypeJson.Read(node["iface"]) is not TypeNode.Fqn iface) return;
         if ((node["method"] as JsonValue)?.GetValue<string>() is not string name) return;

@@ -118,6 +118,10 @@ static class Bir2Cir
                 AnySlotRebind.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
                 InheritedMemberOwnerBinding.SourceProjectionSelfTest();
+                InheritedMemberOwnerBinding.FinalSourceSelfTest();
+                NullableTvErasureCallRealign.SelfTestInheritedSource();
+                UncheckedGenericCastReturnErasure.SelfTestInheritedSource();
+                ConstrainedTypeParameterReceiverBinding.SelfTestSourceDispatch();
                 TypedExecutableFrames.SelfTest();
                 ClosureSynthesis.TypedMaterializedSelfTest();
                 SharedSyntheticSynthesis.SelfTest();
@@ -174,6 +178,8 @@ static class Bir2Cir
                 SourceCollectionInputs.SelfTest();
                 IntrinsicExtensionRepresentation.SelfTest();
                 ReferenceExistentialAbiBinding.SelfTest();
+                ReferenceExistentialAbiBinding.SourceSelfTest();
+                ForeignStarProjectionBinding.SelfTestLateSource();
                 KotlinCollectionSlotSynthesis.SelfTest();
                 CollectionBclSlotSynthesis.SelfTest();
                 KotlinOverrideSlotBridge.SelfTest();
@@ -855,6 +861,34 @@ sealed class Pipeline
         VolatileFieldLowering.ApplyAll(captured, refs);
         ConstFieldLowering.ApplyAll(captured, refs, referenceBuild);
 
+        if (!referenceBuild)
+        {
+            ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(captured);
+            InheritedMemberOwnerBinding.ApplyAll(captured, refs);
+            foreach (var source in captured)
+            {
+                NullableTvErasureCallRealign.ApplyAfterInheritedOwnerBinding(
+                    source, nullableDeclarations, isValueFqn, refs);
+                UncheckedGenericCastReturnErasure.ApplyAfterInheritedOwnerBinding(source, uncheckedDeclarations);
+            }
+            ConstrainedTypeParameterReceiverBinding.ApplyAll(captured, isValueFqn, refs, localExistentialOwners);
+            var lateProjection = FBoundStarProjectionErasure.CarrierProjectionContext.ForCurrentSource(
+                carrierRealization, finalCarrierTypes, aliasTransitions);
+            ForeignStarProjectionBinding.ContinueWithProjection((type, shape) =>
+                lateProjection.Rewrite(type, preserveArrayShape: shape));
+            ForeignStarProjectionBinding.ApplyLate(captured, localExistentialOwners, refs,
+                (file, appended) => suspendTransitions.PublishTypes(file, appended),
+                appended => {
+                    if (appended.Count == 0) return;
+                    finalCarrierTypes = FBoundStarProjectionErasure.RefreshCurrentPhysicalTypesSource(captured, carrierRealization);
+                    lateProjection = FBoundStarProjectionErasure.CarrierProjectionContext.ForCurrentSource(
+                        carrierRealization, finalCarrierTypes, aliasTransitions);
+                    FBoundStarProjectionErasure.ProjectMaterializedTypesSource(
+                        appended, carrierRealization, finalCarrierTypes, lateProjection);
+                });
+            foreach (var source in captured) ReferenceExistentialAbiBinding.Apply(source, refs);
+        }
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -875,7 +909,9 @@ sealed class Pipeline
         currentDeclarations.BindProjected();
         genericRepresentations.BindDomDeclarations(continuingRoots, aliasTransitions, suspendTransitions.Projection);
         valueRepresentations.BindDomDeclarations(continuingRoots, retiredDom, suspendTransitions.Projection);
-        var uncheckedReturns = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
+        // Its last call consumer ran on owning BIR. Validate the original
+        // declaration continuation, then let this source-only ledger retire.
+        _ = UncheckedGenericCastReturnErasure.BindDomDeclarations(uncheckedDeclarations,
             continuingRoots.Cast<JsonObject>().ToArray(), retiredDom, aliasTransitions, suspendTransitions.Projection);
         var carrierContinuation = FBoundStarProjectionErasure.BindRealizationContinuation(
             carrierRealization, finalCarrierTypes);
@@ -885,7 +921,7 @@ sealed class Pipeline
         suspendModule.ReleaseSourceDeclarations();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
-            new ModulePreparation(inventory, nullableDeclarations, uncheckedReturns, enums,
+            new ModulePreparation(inventory, nullableDeclarations, enums,
                 moduleBindings, carrierContinuation));
     }
 
@@ -919,11 +955,6 @@ sealed class Pipeline
         // Declaration returns were snapshotted before typed erasure. Re-derive
         // each use from that declaration, not the frontend's substituted return.
         var nullableTvDeclRets = module.Preparation.NullableDeclarations;
-        // Snapshot every method whose source-level `T` return is produced by an unchecked cast from a nullable/object
-        // carrier.  Its physical CLR ABI must return object so narrowing can be delayed until the value is consumed;
-        // the exact Kotlin `T` return is retained through [KotlinType].  Collected module-wide so cross-file local calls
-        // are matched by exact frontend declaration identity and owner, never by a library/name heuristic.
-        var uncheckedGenericCastRets = module.Preparation.UncheckedReturns;
 
         // Rich-enum declarations require their API metadata even in a runtime
         // stdlib build; the typed prefix has already resolved their uses.
@@ -953,58 +984,9 @@ sealed class Pipeline
         // Placed generic self/delegate/static owners, volatile ordering and CLR
         // literal fields were resolved before the owning projection.
 
-        // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 1 of 2: kotc names a type-parameter receiver's classifier with
-        // a BARE token (`fun <N : Node<N>> N.close()` -> `Node`). Close it from N's own lexical bound, which source
-        // writes constructed, so the inherited-owner walk immediately below has a constructed type to substitute the
-        // exact DECLARING owner into. The node stays a callInstance; only the token changes.
-        if (!_options.RefBuild)
-            ConstrainedTypeParameterReceiverBinding.CloseOpenOwners(staged.Select(s => s.Root).ToList());
-
-        // INHERITED GENERIC MEMBER OWNER BINDING: BIR keeps the Kotlin receiver owner (`Derived<T>.m`), while a CLR
-        // MemberRef must name the exact CONSTRUCTED declaring owner (`Base<T>.m`). Resolve that hierarchy substitution
-        // here, from local declarations + kotc's override facts, before type lowering. This removes a semantic inference
-        // from ilemit and prevents open-generic member operands ("containing type is not fully instantiated"). Exact
-        // signature/arity matches only; ambiguous overloads are never guessed. No library/member names are special.
-        if (!_options.RefBuild)
-            InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-
-        // A local inherited call only acquires its exact declaring owner in the transition above. Re-apply the
-        // nullable-generic use contract now: `Derived : Base<String>` reading `Base<T>.values: Array<T?>` must call
-        // the physical `object[]` slot and state the checked `string[]` projection explicitly. This is also before
-        // UnsafeAccessorLowering, so a protected/private inherited edge and its synthesized wrapper agree on the same
-        // physical result instead of leaving ilemit an impossible `object[] -> string[]` stack edge.
-        if (!_options.RefBuild)
-            foreach (var stagedFile in staged)
-            {
-                NullableTvErasureCallRealign.ApplyAfterInheritedOwnerBinding(
-                    stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
-                UncheckedGenericCastReturnErasure.ApplyAfterInheritedOwnerBinding(
-                    stagedFile.Root, uncheckedGenericCastRets);
-            }
-
-        // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 2 of 2: a member called on a receiver whose static type is a
-        // type PARAMETER (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a
-        // `!!T`, not an interface reference, so ECMA-335 requires an address plus `constrained. !!T ; callvirt`.
-        // Author that dispatch now that the walk above has named the exact constructed DECLARING owner: naming the
-        // receiver's bound instead would emit a MemberRef on a type that merely inherits the member, which binds
-        // locally only through a fake override and has nothing to bind to across an assembly boundary.
-        if (!_options.RefBuild)
-            ConstrainedTypeParameterReceiverBinding.ApplyAll(
-                staged.Select(s => s.Root).ToList(), isValueFqn, refs, localExistentialOwners);
-
-        // Safe-call and other receiver normalization can postpone a projected type-parameter call until constrained
-        // dispatch is selected above. Its exact source constraint is now present again; bind that remaining foreign
-        // projected owner through the same metadata-identity runtime lane as the early calls.
-        if (!_options.RefBuild)
-            ForeignStarProjectionBinding.ApplyLate(
-                staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
-
-        // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
-        // its compiler-generated existential carrier. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
-        // CLR type lowering; ilemit must never infer the hidden physical signature.
-        if (!_options.RefBuild)
-            foreach (var stagedFile in staged)
-                ReferenceExistentialAbiBinding.Apply(stagedFile.Root, refs);
+        // Inherited owners, their erased call boundaries, constrained dispatch,
+        // late foreign adapters and referenced existential ABI were resolved on
+        // owning BIR. The remaining structural owners consume those exact facts.
 
         // Every structural synthesizer has now run. Allocate the complete declaration/property set before any pass
         // consumes physical Property descriptors: BackingFieldRename distinguishes receiverless storage ownership by
@@ -1704,7 +1686,7 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     ModulePreparation Preparation);
 sealed record ModulePreparation(TypedModuleInventory Inventory,
     NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
-    UncheckedGenericCastReturnErasure.DeclIndex UncheckedReturns, EnumPreparation Enums,
+    EnumPreparation Enums,
     ModuleBindingSnapshots Bindings,
     FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);

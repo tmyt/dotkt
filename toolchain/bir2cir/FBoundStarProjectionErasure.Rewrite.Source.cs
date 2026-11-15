@@ -39,8 +39,14 @@ static partial class FBoundStarProjectionErasure
 
     internal static void ProjectMaterializedTypesSource(IReadOnlyList<BirClassDefinition> types,
         CarrierRealizationContext context)
+        => ProjectMaterializedTypesSource(types, new SourceRewriteState(context, (_, _) => null));
+
+    internal static void ProjectMaterializedTypesSource(IReadOnlyList<BirClassDefinition> types,
+        CarrierRealizationContext context, CurrentPhysicalTypeView current, CarrierProjectionContext projection)
+        => ProjectMaterializedTypesSource(types, new SourceRewriteState(context, (_, _) => null, current, projection));
+
+    static void ProjectMaterializedTypesSource(IReadOnlyList<BirClassDefinition> types, SourceRewriteState state)
     {
-        var state = new SourceRewriteState(context, (_, _) => null);
         foreach (var type in types)
             RewriteSource(new BirGraphSlot(() => type, replacement => {
                 if (!ReferenceEquals(replacement, type)) throw new InvalidOperationException("Late carrier projection replaced a type declaration");

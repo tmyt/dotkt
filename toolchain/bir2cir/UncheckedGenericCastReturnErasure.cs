@@ -52,147 +52,11 @@ static partial class UncheckedGenericCastReturnErasure
         && castType is TypeNode.Tv variable && variable == expected
         && IsNullableOrObjectSource(sourceType);
 
-    // An inherited call initially names its receiver rather than the declaration owner. Only after owner binding
-    // can the selected object-returning declaration be closed in its exact frame. Preserve its Kotlin result as an
-    // explicit use projection before BirTypeLowering consumes sty; PhysicalValueCoercion materializes the cast.
-    public static void ApplyAfterInheritedOwnerBinding(JsonNode root, DeclIndex index)
-    {
-        ApplyCallsOnly(root, index);
-    }
-
     static bool IsObject(TypeNode type) =>
         type is TypeNode.Fqn f && f.Name is "System.Object" or "object" or "kotlin.Any";
 
     static bool IsUnit(TypeNode type) =>
         type is TypeNode.Fqn f && f.Name is "kotlin.Unit" or "void" or "System.Void";
-
-    static void ApplyCallsOnly(JsonNode node, DeclIndex index)
-    {
-        if (node is not JsonObject obj) return;
-        RewriteMethods(obj["methods"], index);
-        RewriteMethods(obj["ctors"], index);
-        if (obj["fields"] is JsonArray fields)
-            foreach (var field in fields.OfType<JsonObject>())
-            {
-                var deferred = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
-                RewriteDeferredLocals(field["init"], index, deferred);
-                if (deferred.Count > 0) RenarrowTypedUses(field["init"], deferred);
-            }
-        if (obj["types"] is JsonArray types)
-            foreach (var type in types)
-                if (type != null) ApplyCallsOnly(type, index);
-    }
-
-    static void RewriteMethods(JsonNode methods, DeclIndex index)
-    {
-        if (methods is not JsonArray array) return;
-        foreach (var method in array.OfType<JsonObject>())
-        {
-            var deferred = new Dictionary<string, TypeNode.Tv>(StringComparer.Ordinal);
-            var regions = new[] { method["preStmts"], method["thisArgs"] ?? method["baseArgs"], method["body"] };
-            foreach (var region in regions) RewriteDeferredLocals(region, index, deferred);
-            if (deferred.Count > 0)
-                foreach (var region in regions) RenarrowTypedUses(region, deferred);
-        }
-    }
-
-    static void RewriteDeferredLocals(JsonNode node, DeclIndex index,
-        Dictionary<string, TypeNode.Tv> deferred)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-                if (Str(obj["k"]) == "var"
-                    && Str(obj["name"]) is string localName
-                    && TypeJson.Read(obj["type"]) is TypeNode.Tv localType
-                    && obj["init"] is JsonObject call
-                    && TryResolve(call, index, out var logicalReturn)
-                    && logicalReturn is TypeNode.Tv resolved
-                    && resolved == localType)
-                {
-                    obj["type"] = TypeJson.Fqn("object");
-                    call["ret"] = TypeJson.Fqn("object");
-                    if (call["dynRet"] != null) call["dynRet"] = TypeJson.Fqn("object");
-                    if (call["sty"] != null) call["sty"] = TypeJson.Fqn("object");
-                    deferred[localName] = localType;
-                }
-                if (obj["ret"] == null && TypeJson.Read(obj["sty"]) is TypeNode expected
-                    && !IsObject(expected) && !IsUnit(expected)
-                    && TryResolve(obj, index, out var projectedReturn) && projectedReturn.Equals(expected))
-                    obj["ret"] = obj["sty"].DeepClone();
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
-                    RewriteDeferredLocals(child, index, deferred);
-                break;
-            case JsonArray arr:
-                foreach (var child in arr.Where(v => v != null).ToList())
-                    RewriteDeferredLocals(child, index, deferred);
-                break;
-        }
-    }
-
-    // A deferred object local must be explicitly narrowed when it enters a Tv-typed call slot.  Although ilemit's
-    // ordinary argument coercion handles reflected methods, a same-assembly call re-anchored on a TypeBuilder generic
-    // owner cannot always expose its substituted ParameterInfo.  State the conversion in CIR with a cast so emission
-    // remains mechanical.  Object/null tests and branches are not call arguments and therefore remain non-narrowing.
-    static void RenarrowTypedUses(JsonNode node, IReadOnlyDictionary<string, TypeNode.Tv> deferred)
-    {
-        switch (node)
-        {
-            case JsonObject obj:
-            {
-                var ownerArgs = TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn owner
-                    ? owner.Args ?? Array.Empty<TypeNode>()
-                    : Array.Empty<TypeNode>();
-                var methodArgs = ReadTypes(obj["typeArgs"]);
-                var sig = ReadTypes(obj["sig"]);
-                if (sig.Length == 0) sig = ReadTypes(obj["argTypes"]);
-                if (obj["args"] is JsonArray args && sig.Length == args.Count)
-                    for (var i = 0; i < args.Count; i++)
-                    {
-                        var expected = Substitute(sig[i], ownerArgs, methodArgs);
-                        if (args[i] is JsonObject arg
-                            && Str(arg["k"]) == "local"
-                            && Str(arg["name"]) is string name
-                            && deferred.TryGetValue(name, out var logical)
-                            && expected.Equals(logical))
-                            args[i] = new JsonObject
-                            {
-                                ["k"] = "cast",
-                                ["type"] = TypeJson.Write(logical),
-                                ["e"] = arg.DeepClone(),
-                            };
-                    }
-
-                // Generic-receiver calls carry the receiver's required type directly.  Narrow only an exact Tv owner;
-                // concrete/object owners deliberately keep the erased local as a reference.
-                if (obj["recv"] is JsonObject recv
-                    && Str(recv["k"]) == "local"
-                    && Str(recv["name"]) is string recvName
-                    && deferred.TryGetValue(recvName, out var recvLogical)
-                    && TypeJson.Read(obj["ownerType"]) is TypeNode.Tv recvExpected
-                    && recvExpected == recvLogical)
-                    obj["recv"] = new JsonObject
-                    {
-                        ["k"] = "cast",
-                        ["type"] = TypeJson.Write(recvLogical),
-                        ["e"] = recv.DeepClone(),
-                    };
-
-                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
-                    RenarrowTypedUses(child, deferred);
-                break;
-            }
-            case JsonArray arr:
-                foreach (var child in arr.Where(v => v != null).ToList())
-                    RenarrowTypedUses(child, deferred);
-                break;
-        }
-    }
-
-    static bool TryResolve(JsonObject call, DeclIndex index, out TypeNode logicalReturn)
-        => TryResolve(Str(call["k"]), Str(call[DeclarationIdentityBinding.Key]), TypeJson.Read(call["ownerType"]),
-            new[] { "owner", "calleeOwner", "ownerType" }.Where(key => call[key] != null)
-                .Select(key => TypeJson.Read(call[key])).ToArray(), ReadTypes(call["typeArgs"]), index, out logicalReturn);
 
     static bool TryResolve(string kind, string identity, TypeNode instanceOwner, TypeNode[] staticOwners,
         TypeNode[] methodArguments, DeclIndex index, out TypeNode logicalReturn)
@@ -230,13 +94,6 @@ static partial class UncheckedGenericCastReturnErasure
 
         logicalReturn = Substitute(decl.Return, ownerArgs, methodArguments);
         return logicalReturn != null;
-    }
-
-    static TypeNode[] ReadTypes(JsonNode node)
-    {
-        if (node is not JsonArray arr) return Array.Empty<TypeNode>();
-        var result = arr.Select(TypeJson.Read).ToArray();
-        return result.Any(t => t == null) ? Array.Empty<TypeNode>() : result;
     }
 
     static TypeNode Substitute(TypeNode type, TypeNode[] ownerArgs, TypeNode[] methodArgs) => type switch
