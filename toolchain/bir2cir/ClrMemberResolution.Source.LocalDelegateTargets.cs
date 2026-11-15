@@ -34,8 +34,33 @@ static partial class ClrMemberResolution
 
     static string[] LocalDelegateKeys(IEnumerable<TypeNode> types) => types.Select(SupertypeGraph.TypeKey).ToArray();
 
-    // Shared with the genuine post-type DOM owner, retaining its exact
-    // positional closure grammar rather than a second source-only matcher.
+    static Dictionary<string, List<BirFunctionDeclaration>> SourceLocalDelegateOwners(IReadOnlyList<BirFileDeclaration> roots)
+    {
+        var owners = new Dictionary<string, List<BirFunctionDeclaration>>(StringComparer.Ordinal);
+        void Add(string owner, BirFunctionDeclaration[] methods)
+        {
+            if (!owners.TryGetValue(owner, out var declarations)) owners[owner] = declarations = new();
+            declarations.AddRange(methods);
+        }
+        foreach (var root in roots)
+        {
+            if (root.FileClass.HasValue && root.Methods.HasValue) Add(root.FileClass.Value, root.Methods.Value);
+            foreach (var type in root.Types.OrEmpty())
+                if (type.Name.HasValue && type.Methods.HasValue) Add(type.Name.Value, type.Methods.Value);
+        }
+        return owners;
+    }
+
+    static LocalDelegateCandidate[] SourceLocalDelegateCandidates(IReadOnlyList<BirFunctionDeclaration> methods)
+        => methods.Select((method, index) => {
+            var parameters = method.Params.OrDefault();
+            return new LocalDelegateCandidate(index, method.Name.OrDefault(), method.DeclarationId.OrDefault(),
+                method.TypeParams.OrEmpty().Length, parameters?.Select(parameter => parameter.Type.OrDefault()).ToArray(),
+                parameters?.Select(parameter => parameter.FunctionSignatureType.OrDefault() ?? parameter.Type.OrDefault()).ToArray());
+        }).ToArray();
+
+    // The early and physical owners share this exact positional closure
+    // grammar rather than maintaining separate source/physical matchers.
     static TypeNode SubstituteLocalDelegateMethodType(TypeNode type, TypeNode[] arguments) => type switch
     {
         TypeNode.Tv { Scope: "method" } variable when variable.I >= 0 && variable.I < arguments.Length => arguments[variable.I],
@@ -58,18 +83,7 @@ static partial class ClrMemberResolution
     {
         _refs = references ?? throw new ArgumentNullException(nameof(references));
         _localCarriers = localCarriers;
-        var owners = new Dictionary<string, List<BirFunctionDeclaration>>(StringComparer.Ordinal);
-        void Add(string owner, BirFunctionDeclaration[] methods)
-        {
-            if (!owners.TryGetValue(owner, out var declarations)) owners[owner] = declarations = new();
-            declarations.AddRange(methods);
-        }
-        foreach (var root in roots)
-        {
-            if (root.FileClass.HasValue && root.Methods.HasValue) Add(root.FileClass.Value, root.Methods.Value);
-            foreach (var type in root.Types.OrEmpty())
-                if (type.Name.HasValue && type.Methods.HasValue) Add(type.Name.Value, type.Methods.Value);
-        }
+        var owners = SourceLocalDelegateOwners(roots);
         var localTypes = owners.Keys.ToHashSet(StringComparer.Ordinal);
         void Walk(BirGraphValue node)
         {
@@ -81,12 +95,7 @@ static partial class ClrMemberResolution
             if (view == null || view.Owner is not TypeNode.Fqn owner || !owners.TryGetValue(owner.Name, out var methods)
                 || view.Name == null || view.Wanted == null || view.Wanted.Any(type => type == null)
                 || view.MethodArguments.Any(type => type == null)) return;
-            var candidates = methods.Select((method, index) => {
-                var parameters = method.Params.OrDefault();
-                return new LocalDelegateCandidate(index, method.Name.OrDefault(), method.DeclarationId.OrDefault(),
-                    method.TypeParams.OrEmpty().Length, parameters?.Select(parameter => parameter.Type.OrDefault()).ToArray(),
-                    parameters?.Select(parameter => parameter.FunctionSignatureType.OrDefault() ?? parameter.Type.OrDefault()).ToArray());
-            }).ToArray();
+            var candidates = SourceLocalDelegateCandidates(methods);
             var ownerArguments = owner.Args ?? Array.Empty<TypeNode>();
             var matches = SelectLocalDelegateTargets(candidates, view.Name, node.DeclarationIdentityFact.OrDefault(),
                 view.Wanted, ownerArguments, view.MethodArguments, view.FunctionSignature, closure: false);
