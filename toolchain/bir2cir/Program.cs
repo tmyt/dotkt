@@ -767,6 +767,7 @@ sealed class Pipeline
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(captured, isValueFqn, refs,
             inventory.EmittedTypeFqns, referenceBuild, genericRepresentations,
             sourceCovariantSlots, pendingOverrideParameters.ReadSourceParameters(),
+            valuePolicy.HasClassifier,
             (file, owner, method, descriptor) => {
                 if (method != null) AdmitBridgeMethods(owner, new[] { method });
                 if (descriptor != null) currentDeclarations.GetSource(descriptor);

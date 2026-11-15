@@ -338,7 +338,7 @@ static partial class KotlinOverrideSlotBridge
                     if (frame is { RequiresMetadata: true }) header.NullableRepresentationFrame = frame;
                     if (fact.ImplementationBounds is { } bounds)
                     {
-                        var ownerFrame = sourceOwner?.Frame ?? refs?.NullableTypeFrames.GetValueOrDefault(spec.Name);
+                        var ownerFrame = sourceOwner != null ? sourceOwner.Frame : refs?.NullableTypeFrames.GetValueOrDefault(spec.Name);
                         var ownerArgs = ownerFrame?.OrdinaryArguments(args) ?? args;
                         header.MethodTypeParameterBoundsPre = bounds.RewriteTypes(type => SupertypeGraph.SubstOwnerTvs(type, ownerArgs));
                     }
@@ -394,19 +394,12 @@ static partial class KotlinOverrideSlotBridge
         candidate["ret"] = TypeJson.Write(method.Ret.OrDefault());
         candidate["inheritedDeclarationSignature"] = new JsonArray(selection.DeclarationSignature.Select(TypeJson.Write).ToArray());
         if (selection.DeclarationId != null) candidate["inheritedDeclarationId"] = selection.DeclarationId;
-        if (method.SuspendResult.HasValue)
-        {
-            candidate["suspendResult"] = TypeNode.ToJson(method.SuspendResult.Value);
-            candidate["suspendRet"] = TypeJson.Write(method.Ret.Value);
-        }
-        else if (candidate["mods"] is JsonObject mods) mods.Remove("suspend");
+        if (candidate["mods"] is JsonObject mods) mods.Remove("suspend");
         for (var index = 0; index < method.Params.Value.Length; index++)
         {
             var parameter = (JsonObject)candidate["params"][index];
             var value = method.Params.Value[index];
             parameter["type"] = TypeJson.Write(value.Type.OrDefault());
-            if (selection.QueryBounds?[index] is { } bound)
-                parameter[KotlinCollectionSlotSynthesis.QueryBoundKey] = TypeJson.Write(bound);
             if (value.NullableFlags.HasValue)
                 parameter["nullableFlags"] = new JsonArray(value.NullableFlags.Value.Select(flag => (JsonNode)JsonValue.Create(flag)).ToArray());
         }

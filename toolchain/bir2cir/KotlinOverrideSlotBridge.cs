@@ -222,8 +222,7 @@ static partial class KotlinOverrideSlotBridge
             }
             return Prove(source);
         }
-        CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures,
-            suspendValues: false);
+        CollectInheritedClassMethods(cls, defs, refs, isValue, candidates, inheritedOwners, inheritedSignatures);
 
         // EVERY EARLY EXIT BELOW MEANS "THIS SUPERTYPE OR SLOT IS NOT ONE THIS ERASURE DIVERGED", never "give up on a
         // slot that needs filling". A supertype absent from `defs` is declared elsewhere and goes to the referenced
@@ -494,23 +493,18 @@ static partial class KotlinOverrideSlotBridge
     static void CollectInheritedClassMethods(Def cls, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, List<JsonObject> candidates,
         Dictionary<JsonObject, TypeNode.Fqn> inheritedOwners,
-        Dictionary<JsonObject, TypeNode[]> inheritedSignatures, bool suspendValues,
-        Func<JsonObject, bool> includeFact = null, IEnumerable<JsonObject> suppliedFacts = null,
-        bool interfaceImplementations = false, Dictionary<JsonObject, JsonObject> selectedFacts = null,
-        bool collectionQueries = false)
+        Dictionary<JsonObject, TypeNode[]> inheritedSignatures)
     {
-        var facts = suppliedFacts ?? (cls.Node["inheritedClassMethods"] as JsonArray)?.OfType<JsonObject>();
+        var facts = (cls.Node["inheritedClassMethods"] as JsonArray)?.OfType<JsonObject>();
         if (facts == null) return;
         var views = new OverrideViews();
         foreach (var selected in SelectInheritedMethods(views.Owner(cls), defs, views, refs, isValue,
-            facts.Where(fact => includeFact == null || includeFact(fact)).Select(InheritedDomFact),
-            suspendValues, interfaceImplementations, collectionQueries))
+            facts.Select(InheritedDomFact), false, false, false))
         {
             var candidate = RenderInheritedCandidate(selected);
             candidates.Add(candidate);
             inheritedOwners.Add(candidate, selected.Owner);
             inheritedSignatures.Add(candidate, selected.SelectionParameters);
-            selectedFacts?.Add(candidate, selected.DomFact);
         }
     }
 

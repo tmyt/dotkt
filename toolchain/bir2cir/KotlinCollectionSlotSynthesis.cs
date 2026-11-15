@@ -181,10 +181,6 @@ static partial class KotlinCollectionSlotSynthesis
             parameters: new[] { input, input, ParameterCarrier.MapRemapping });
     }
 
-    internal static bool OwnsMapOverride(JsonObject marker) =>
-        OwnsMapOverride(TypeJson.Read(marker["owner"]), Str(marker["member"]), Str(marker["kind"]),
-            marker["arity"] is JsonValue value && value.TryGetValue<int>(out var arity) ? arity : null);
-
     internal static bool OwnsMapOverride(TypeNode type, string member, string kind, int? arity) =>
         type is TypeNode.Fqn owner && IsMapContractOwner(owner.Name)
         && Slots.Any(slot => IsMapContractOwner(slot.DeclaringInterface)
@@ -205,20 +201,11 @@ static partial class KotlinCollectionSlotSynthesis
             && MatchesOverride(marker.Owner.OrDefault(), marker.Member.OrDefault(), marker.Kind.OrDefault(),
                 marker.Arity.HasValue ? marker.Arity.Value : null, slot)));
 
-    internal static bool IsErasedQueryParameter(JsonObject operation, int index) =>
-        ErasedQueryOverride(operation) is { } marker && Slots.Any(slot => MatchesOverride(marker, slot)
-            && index < slot.Parameters.Length && slot.Parameters[index] == ParameterCarrier.ErasedValue);
-
     internal static bool UsesErasedQueryCarrier(TypeNode type) => type switch {
         TypeNode.Nullable nullable => UsesErasedQueryCarrier(nullable.Of),
         TypeNode.Oblivious oblivious => UsesErasedQueryCarrier(oblivious.Of),
         _ => SignatureValueTypes.Of(type) is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null },
     };
-
-    internal static bool OwnsSupplementalOverride(JsonObject marker) =>
-        OwnsMapOverride(marker) || Slots.Any(slot => MatchesOverride(marker, slot)
-            && (slot.DeclaringInterface == MutableList && slot.EraseReturn
-                || slot.DeclaringInterface == MutableCollection && slot.Member == "add"));
 
     internal static bool OwnsSupplementalOverride(BirOverride marker) =>
         OwnsMapOverride(marker.Owner.OrDefault(), marker.Member.OrDefault(), marker.Kind.OrDefault(),
@@ -248,10 +235,6 @@ static partial class KotlinCollectionSlotSynthesis
     static bool MatchesOverride(TypeNode type, string member, string kind, int? arity, Slot slot) =>
         type is TypeNode.Fqn owner && owner.Name == slot.DeclaringInterface
         && member == slot.Member && kind == slot.Kind && arity == slot.Arity;
-
-    // The selected declaration's erased source bound is distinct from both its physical argument slot and closed K.
-    // This fact belongs only to the transient inherited candidate, not to an emitted MethodDef signature.
-    internal const string QueryBoundKey = "_collectionQueryBound";
 
     internal static TypeNode GenericQueryBound(TypeNode source, JsonObject method, JsonObject owner,
         Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
