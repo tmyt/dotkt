@@ -79,8 +79,11 @@ static partial class KotlinPropertyAccessors
     }
 
     internal static bool IsCall(JsonObject call, string sourceName, string kind) =>
-        Str(call[SourceNameKey]) == sourceName && Str(call[KindKey]) == kind
-        || Str(call["method"]) == sourceName && Str(call["prop"]) == kind;
+        IsCall(Str(call[SourceNameKey]), Str(call[KindKey]), Str(call["method"]), Str(call["prop"]), sourceName, kind);
+
+    internal static bool IsCall(string preservedName, string preservedKind, string method, string prop,
+        string sourceName, string kind) => preservedName == sourceName && preservedKind == kind
+        || method == sourceName && prop == kind;
 
     internal static bool TryCallIdentity(JsonObject call, out string sourceName, out string kind)
         => TryCallIdentity(Str(call[SourceNameKey]), Str(call[KindKey]), Str(call["method"]), Str(call["prop"]),

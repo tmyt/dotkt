@@ -53,6 +53,10 @@ static partial class KotlinPropertyAccessors
         call.PropertyAccessor = kind;
     }
 
+    internal static bool IsCall(BirCallStatic call, string sourceName, string kind) =>
+        IsCall(call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Method.OrDefault(),
+            call.Prop.OrDefault(), sourceName, kind);
+
     internal static void PreserveCallIdentity(BirCallInstance call, string sourceName, string kind)
     {
         ValidateCallIdentity(sourceName, kind);
