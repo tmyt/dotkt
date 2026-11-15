@@ -1,4 +1,5 @@
 using DotKt.Bir;
+using DotKt.Cir;
 using DotKt.Bir.Lowering;
 
 static partial class ConstrainedTypeParameterReceiverBinding

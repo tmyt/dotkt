@@ -266,7 +266,6 @@ static partial class SuspendColdLowering
                 foreach (var clause in statement.Catches.OrEmpty()) Add(clause.Var.OrDefault(), clause.ExcType.OrDefault());
                 break;
             case BirForArray loop: Add(loop.Var.OrDefault(), loop.Elem.OrDefault()); break;
-            case BirForRange loop: Add(loop.Var.OrDefault(), loop.Elem.OrDefault()); break;
             case BirForEach loop: Add(loop.Var.OrDefault(), loop.Elem.OrDefault()); break;
             case BirForIn loop: Add(loop.Var.OrDefault(), loop.Elem.OrDefault()); break;
         }
