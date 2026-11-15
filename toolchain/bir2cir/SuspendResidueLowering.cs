@@ -1,4 +1,5 @@
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // bir2cir — the PHYSICAL BODY of a suspend declaration the cold-core lowering deliberately does not lower, and the
 // disposal of the Kotlin `suspend` modifier at the CIR boundary.

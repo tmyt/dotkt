@@ -105,8 +105,6 @@ static partial class RoundtripMetadata
             case BirEnumDefinition value:
                 value.RoundtripTypeHeaderPending = true;
                 if (runtimeMode) value.KotlinSupertypesPre = default;
-                else if (type.Kind.OrDefault() != "enum" && value.KotlinSupertypesPre.IsPresent)
-                { value.RoundtripSupertypesPre = value.KotlinSupertypesPre; value.KotlinSupertypesPre = default; }
                 break;
         }
     }
