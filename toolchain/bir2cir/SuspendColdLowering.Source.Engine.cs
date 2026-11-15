@@ -50,7 +50,7 @@ static partial class SuspendColdLowering
             {
                 _label = MaxLabelId(body) + 1000;
                 body = FlattenSuspendingLoops(body);
-                TypedEscapingFinally.Apply(TypedProtectedRegions.Statements(body), IsUnitTn(_resultType) ? AnyTn : _resultType,
+                TypedEscapingFinally.ApplyOwned(TypedProtectedRegions.Statements(body), IsUnitTn(_resultType) ? AnyTn : _resultType,
                     _refs, physicalMembers: false);
                 _label = Math.Max(_label, MaxLabelId(body) + 1000);
                 body = HoistSuspendingCatches(body);

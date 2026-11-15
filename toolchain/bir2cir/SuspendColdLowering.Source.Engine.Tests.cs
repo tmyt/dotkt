@@ -4,7 +4,11 @@ using DotKt.Cir;
 
 static partial class SuspendColdLowering
 {
-    internal static void EngineSourceSelfTest() => SourceFunGen.EngineSelfTest();
+    internal static void EngineSourceSelfTest()
+    {
+        SourceFunGen.EngineSelfTest();
+        TypedEscapingFinally.OwnedSelfTest();
+    }
 
     internal sealed partial class SourceFunGen
     {
