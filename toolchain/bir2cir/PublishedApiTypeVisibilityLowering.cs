@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -9,47 +5,18 @@ using DotKt.Cir;
 // Kotlin keeps @PublishedApi declarations source-internal while making them part of the cross-module inline ABI.
 // BIR retains both facts. This CLR-representation boundary consumes the explicit annotation into public TypeDef
 // accessibility; ilemit then maps the resulting CIR visibility one-to-one.
-static class PublishedApiTypeVisibilityLowering
+static partial class PublishedApiTypeVisibilityLowering
 {
     const string Marker = "kotlin.PublishedApi";
-
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
-    {
-        foreach (var root in roots.OfType<JsonObject>())
-            if (root["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>())
-                    Apply(type);
-    }
-
-    static void Apply(JsonObject type)
-    {
-        if (ResolveVisibility(type) is { } visibility)
-        {
-            if (visibility != type["vis"]?.GetValue<string>())
-                RoundtripMetadata.PreserveTypeVisibility(type);
-            type["vis"] = visibility;
-        }
-        if (type["types"] is JsonArray nested)
-            foreach (var child in nested.OfType<JsonObject>()) Apply(child);
-    }
 
     // Synthesized representations must use the same effective accessibility as their source declaration,
     // even when they are allocated before the final TypeDef visibility pass. Do not copy semantic annotations
     // onto a representation solely to make that later pass recognize it.
-    internal static string ResolveVisibility(JsonObject type)
-    {
-        var visibility = type["vis"]?.GetValue<string>();
-        return ResolveVisibility(visibility, HasMarker(type));
-    }
-
     internal static string ResolveVisibility(IBirTypeDeclaration type) =>
         ResolveVisibility(type.Vis.OrDefault(), type.Attrs.OrEmpty().Any(attribute =>
             attribute.Attr.OrDefault() is TypeNode.Fqn { Name: Marker }));
 
-    static string ResolveVisibility(string visibility, bool published) =>
+    internal static string ResolveVisibility(string visibility, bool published) =>
         visibility == "internal" && published ? "public" : visibility;
 
-    static bool HasMarker(JsonObject type) =>
-        type["attrs"] is JsonArray attrs
-        && attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == Marker);
 }

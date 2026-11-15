@@ -104,6 +104,43 @@ static partial class SuspendColdLowering
             }
         }
 
+        internal void MoveMethods(BirFileDeclaration file, IReadOnlyList<TypeOwnershipLowering.SourceMethodMove> moves)
+        {
+            if (moves.Count == 0 || !methodVectors.TryGetValue(file, out var source)
+                || source.Owner != null || !ReferenceEquals(source.File, file)) throw Mismatch();
+            var removed = new HashSet<BirFunctionDeclaration>(ReferenceEqualityComparer.Instance);
+            var ordinal = source.Continuing.Length;
+            foreach (var move in moves)
+            {
+                if (move.SourceOrdinal < 0 || move.SourceOrdinal >= ordinal
+                    || !ReferenceEquals(source.Continuing[move.SourceOrdinal], move.Method)
+                    || !removed.Add(move.Method)) throw Mismatch();
+                bindings.GetCapturedSource(move.Method);
+                ordinal = move.SourceOrdinal;
+            }
+            var remaining = source.Continuing.Where(method => !removed.Contains(method)).ToArray();
+            if (!CurrentMethods(file, null).SequenceEqual(remaining, ReferenceEqualityComparer.Instance)) throw Mismatch();
+            var destinations = new List<(BirGraphValue Key, MethodVector Before, BirFunctionDeclaration[] After)>();
+            foreach (var group in moves.GroupBy<TypeOwnershipLowering.SourceMethodMove, IBirTypeDeclaration>(
+                move => move.Destination, ReferenceEqualityComparer.Instance))
+            {
+                var owner = group.Key;
+                if (owner == null || !methodVectors.TryGetValue((BirGraphValue)owner, out var target)
+                    || !ReferenceEquals(target.Owner, owner)
+                    || target.File.Types.OrEmpty().Count(actual => ReferenceEquals(actual, owner)) != 1) throw Mismatch();
+                bindings.GetCapturedSource((BirGraphValue)owner);
+                var appended = group.ToArray();
+                for (var index = 0; index < appended.Length; index++)
+                    if (appended[index].DestinationOrdinal != target.Continuing.Length + index) throw Mismatch();
+                var next = target.Continuing.Concat(appended.Select(move => move.Method)).ToArray();
+                if (!CurrentMethods(target.File, owner).SequenceEqual(next, ReferenceEqualityComparer.Instance)) throw Mismatch();
+                destinations.Add(((BirGraphValue)owner, target, next));
+            }
+            Projection.MoveMethods(file, source.Continuing, remaining, moves);
+            methodVectors[file] = source with { Continuing = remaining };
+            foreach (var (key, before, after) in destinations) methodVectors[key] = before with { Continuing = after };
+        }
+
         internal override void RetireTypes(BirFileDeclaration file, IReadOnlyList<IBirTypeDeclaration> removed)
         {
             Projection.RetireTypes(file, removed);

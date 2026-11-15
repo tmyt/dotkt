@@ -181,13 +181,11 @@ static class InnerRepresentationFrameTests
         var source = new TypeNode.Fqn("Sample.Outer.Inner", new TypeNode[] {
             new TypeNode.Tv("method", 1), new TypeNode.Tv("method", 0),
         });
-        var root = JsonNode.Parse("""
-        {"fileClass":"Sample.File","types":[
-          {"name":"Sample.Outer","typeParams":[{"name":"O"}]},
-          {"name":"Sample.Outer.Inner","nestedIn":"Sample.Outer","typeParams":[{"name":"I"},{"name":"N"}]}],
-          "fields":[{"name":"slot"}]}
-        """)!;
-        root["fields"]![0]!["nullableGeneric"] = TypeNode.ToJson(source);
+        var root = new BirFileDeclaration { FileClass = "Sample.File", Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Name = "Sample.Outer", TypeParams = new[] { new BirTypeParameter { Name = "O" } } },
+            new BirClassDefinition { Name = "Sample.Outer.Inner", NestedIn = "Sample.Outer",
+                TypeParams = new[] { new BirTypeParameter { Name = "I" }, new BirTypeParameter { Name = "N" } } },
+        }, Fields = new[] { new BirFieldDeclaration { Name = "slot", NullableGeneric = source } } };
         var outer = new TypeNode.Fqn("Sample.Outer", new TypeNode[] { new TypeNode.Tv("method", 0) });
         var signatures = new SourceDeclarationSignatures();
         signatures.Capture(new[] { new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
@@ -202,32 +200,33 @@ static class InnerRepresentationFrameTests
             Body = new IBirStatement[] { new BirVariable { Name = "inner", Type = source }, new BirVariable { Name = "outer", Type = outer } },
             Lifted = Array.Empty<BirFunctionDeclaration>(),
         };
-        root["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, inlineBody));
-        root["suspendResult"] = TypeNode.ToJson(suspendShape);
+        var carrierMethod = new BirFunctionDeclaration { Name = "inline",
+            InlineBir = ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, inlineBody), SuspendResult = suspendShape };
+        root.Methods = new[] { carrierMethod };
         var defaultBody = new BirValueBlock {
             Type = source,
             Stmts = new IBirStatement[] { new BirVariable { Name = "outer", Type = outer } },
             Result = new BirClassReference { Type = source },
         };
-        var defaultAttribute = DefaultBirCarrier.Create(0, defaultBody).ToDom();
-        root["attrs"] = new JsonArray(defaultAttribute);
+        var defaultAttribute = DefaultBirCarrier.Create(0, defaultBody);
+        carrierMethod.Attrs = new[] { defaultAttribute };
         OpaqueCarrierTypeBinding.ApplyAll(new[] { root }, ReferenceMetadataIndex.Build(Array.Empty<string>()),
             signatures);
+        var projected = root.ToDom();
         signatures.TryGetValue("declaration", out var signature);
         var expected = new TypeNode.Fqn("Sample.Outer`1+Inner`2", source.Args);
-        var slot = TypeJson.Read(JsonNode.Parse(root["fields"]![0]!["nullableGeneric"]!.GetValue<string>()));
+        var slot = TypeJson.Read(JsonNode.Parse(projected["fields"]![0]!["nullableGeneric"]!.GetValue<string>()));
         if (slot != expected || signature.Parameters[0] != expected)
             throw new InvalidOperationException("Source carriers lost nested identity or changed source argument order");
         if (signature.Parameters[1] != outer)
             throw new InvalidOperationException("Source carriers unnecessarily changed a top-level classifier");
-        var inline = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec,
-            Convert.FromBase64String(root["inlineBir"]!.GetValue<string>()));
-        var suspendPayload = (TypeNode.Fn)TypeJson.Read(JsonNode.Parse(root["suspendResult"]!.GetValue<string>()));
+        var inline = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec, carrierMethod.InlineBir.Value);
+        var suspendPayload = (TypeNode.Fn)carrierMethod.SuspendResult.Value;
         if (((BirVariable)inline.Body.Value[0]).Type.Value != expected || ((BirVariable)inline.Body.Value[1]).Type.Value != outer
             || suspendPayload.Ret != expected || suspendPayload.Params[0] != expected || suspendPayload.Params[1] != outer
             || !suspendPayload.Suspend)
             throw new InvalidOperationException("Executable carriers must bind nested identities without retargeting their top-level owners");
-        var defaultPayload = (BirValueBlock)DefaultBirCarrier.DecodeTyped(defaultAttribute);
+        var defaultPayload = (BirValueBlock)DefaultBirCarrier.Decode(defaultAttribute);
         if (defaultPayload.Type.Value != expected || ((BirClassReference)defaultPayload.Result.Value).Type.Value != expected
             || ((BirVariable)defaultPayload.Stmts.Value[0]).Type.Value != outer)
             throw new InvalidOperationException("Typed default carriers must bind nested identities without retargeting top-level owners");

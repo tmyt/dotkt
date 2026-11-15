@@ -247,23 +247,6 @@ static partial class ClosureSynthesis
         }
     }
 
-    /// <summary>
-    /// Report a recorded capture refusal for every synthesized class that SURVIVED to the emitted assembly.
-    /// Run after the passes that can delete one (the cold suspend lowering's intrinsic-block pruning); a class no
-    /// longer in any file's `types` was reconstructed inline and never becomes a CLR type, so its "capture" is an
-    /// ordinary local of the enclosing frame and the suspend storage gate is what judges it.
-    /// </summary>
-    public static void AssertSurvivingCapturesLegal(IEnumerable<JsonNode> roots)
-    {
-        if (_pendingCaptureRefusals.Count == 0) return;
-        foreach (var root in roots)
-            if (root is JsonObject file && file["types"] is JsonArray types)
-                foreach (var t in types)
-                    if (t is JsonObject to && Str(to["name"]) is string n
-                        && _pendingCaptureRefusals.TryGetValue(n, out var message))
-                        throw new System.NotSupportedException(message);
-    }
-
     // A synthClass is born inside a generic METHOD, so kotc faithfully describes its ingredients using that lexical
     // method's `{tv,scope:"method",i}` tokens. Once bir2cir lifts those ingredients into a CLR CLASS, the captured
     // generic variables belong to the class generic-parameter space instead. `new(Sam|Closure).typeArgs[j]` is the

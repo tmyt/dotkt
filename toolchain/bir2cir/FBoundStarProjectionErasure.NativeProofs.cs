@@ -18,9 +18,12 @@ static partial class FBoundStarProjectionErasure
         public bool IsPhysicalConstraint(JsonArray constraints, TypeNode bound)
         {
             if (constraints.Parent is not JsonObject parameter || !ReferenceEquals(parameter["constraints"], constraints)
-                || parameter.Parent is not JsonArray parameters || parameters.Parent is not JsonObject declaration
-                || !ReferenceEquals(declaration["typeParams"], parameters)) return false;
+                || parameter.Parent is not JsonArray parameters || parameters.Parent is not JsonObject declaration) return false;
+            var typeDeclaration = IsTypeDefinition(declaration);
             var index = parameters.IndexOf(parameter);
+            if (ReferenceEquals(declaration["typeParams"], parameters))
+                index += typeDeclaration ? (declaration["capturedTypeParams"] as JsonArray)?.Count ?? 0 : 0;
+            else if (!typeDeclaration || !ReferenceEquals(declaration["capturedTypeParams"], parameters)) return false;
             IReadOnlyDictionary<int, List<TypeNode>> required;
             if (bindings.TryGetPhysical(declaration, out var binding) && rows.TryGetValue(binding, out var current))
                 required = current;

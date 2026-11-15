@@ -284,16 +284,17 @@ sealed partial class ValueRepresentationLowering
                 Expr.Value: BirCast { E.Value: BirCast { E.Value: BirValueBlock } } })
             throw new InvalidOperationException("Source and materialized value operations diverged on their shared saved-bound decision");
         policy.BindOperations(source);
-        var retiredSlots = new Dictionary<BirFunctionDeclaration, JsonObject>(ReferenceEqualityComparer.Instance);
+        var declarations = FixtureProjection(source);
         policy.SynthesizeSlots(new[] { source }, _ => false, (_, removed, _) => {
             foreach (var declaration in removed)
             {
                 policy.RetireSourceDeclaration(declaration);
-                retiredSlots.Add(declaration, declaration.ToDom());
+                declarations.RetireForest(declaration);
             }
         }, null);
-        root = source.ToDom();
-        policy.BindDomDeclarations(new[] { root }, retiredSlots);
+        root = source.ToDom(declarations.ObserveProjection);
+        declarations.ProjectRetiredForests();
+        policy.BindDomDeclarations(new[] { root }, declarations.RetiredMethods, declarations);
         var method = root["methods"].AsArray().OfType<JsonObject>().Single(method => Text(method["name"]) == "use");
         foreach (var key in new[] { "clrInterfaceImpls", "clrBaseImpls" })
             method[key] = JsonNode.Parse("""
@@ -407,9 +408,15 @@ sealed partial class ValueRepresentationLowering
         var source = ReadFixture(root);
         var result = CreateSource(new[] { source }, null, referenceBuild,
             new ValueRepresentationSourcePolicy(new[] { source }, null, referenceBuild), CaptureSource(new[] { source }), null);
-        result.BindDomDeclarations(new[] { root });
+        var declarations = FixtureProjection(source);
+        var physical = source.ToDom(declarations.ObserveProjection);
+        declarations.ProjectRetiredForests();
+        result.BindDomDeclarations(new[] { physical }, null, declarations);
         return result;
     }
+
+    static SourceDeclarationProjection FixtureProjection(params BirFileDeclaration[] roots)
+        => new(roots, new CurrentDeclarationBindings(roots));
 
     static JsonNode BindFixtureOperation(ValueRepresentationLowering policy, JsonNode expression)
     {
@@ -430,12 +437,16 @@ sealed partial class ValueRepresentationLowering
         var policy = new ValueRepresentationSourcePolicy(new[] { source }, null, false);
         var index = CaptureSource(new[] { source }, membership);
         var indexed = CreateSource(new[] { source }, null, false, policy, index, null);
-        var root = source.ToDom();
-        root["methods"].AsArray().Add(new BirFunctionDeclaration {
+        var declarations = FixtureProjection(source);
+        var forwarder = new BirFunctionDeclaration {
             Name = "forwarder", DeclarationId = "new-physical-only", Generated = true,
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String"),
-        }.ToDom());
-        indexed.BindDomDeclarations(new[] { root });
+        };
+        source.Methods = source.Methods.Value.Append(forwarder).ToArray();
+        declarations.PublishMethods(new[] { forwarder });
+        var root = source.ToDom(declarations.ObserveProjection);
+        declarations.ProjectRetiredForests();
+        indexed.BindDomDeclarations(new[] { root }, null, declarations);
         var method = root["methods"][0].AsObject();
         method["ret"] = TypeJson.Fqn("kotlin.Int");
         if (!indexed.locals.ContainsKey("existing-generated") || indexed.locals.ContainsKey("new-physical-only")

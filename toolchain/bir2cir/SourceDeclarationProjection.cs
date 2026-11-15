@@ -10,6 +10,22 @@ sealed class SourceDeclarationProjection
 {
     sealed record TypeVector(BirFileDeclaration File, IBirTypeDeclaration[] Original,
         IBirTypeDeclaration[] Continuing, HashSet<IBirTypeDeclaration> Retired);
+    internal sealed class MethodPlacement
+    {
+        internal BirFunctionDeclaration[] Before { get; }
+        internal BirFunctionDeclaration[] After { get; }
+        internal IReadOnlyList<TypeOwnershipLowering.SourceMethodMove> Moves { get; }
+        readonly Dictionary<BirFunctionDeclaration, TypeOwnershipLowering.SourceMethodMove> moved;
+        internal MethodPlacement(BirFunctionDeclaration[] before, BirFunctionDeclaration[] after,
+            IReadOnlyList<TypeOwnershipLowering.SourceMethodMove> moves)
+        {
+            Before = before; After = after; Moves = moves.ToArray();
+            moved = new(ReferenceEqualityComparer.Instance);
+            foreach (var move in Moves) if (!moved.TryAdd(move.Method, move)) throw Mismatch();
+        }
+        internal bool TryMove(BirFunctionDeclaration method, out TypeOwnershipLowering.SourceMethodMove move)
+            => moved.TryGetValue(method, out move);
+    }
     readonly CurrentDeclarationBindings bindings;
     readonly BirFileDeclaration[] roots;
     readonly Dictionary<BirFileDeclaration, TypeVector> types = new(ReferenceEqualityComparer.Instance);
@@ -19,6 +35,8 @@ sealed class SourceDeclarationProjection
     readonly Dictionary<BirFunctionDeclaration, JsonObject> methods = new(ReferenceEqualityComparer.Instance);
     readonly List<JsonObject> forestRoots = new();
     readonly HashSet<JsonObject> materializedMethods = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<BirFileDeclaration, MethodPlacement> placements = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<IBirTypeDeclaration, BirFunctionDeclaration[]> placementTargets = new(ReferenceEqualityComparer.Instance);
     bool projected;
     bool released;
 
@@ -66,6 +84,23 @@ sealed class SourceDeclarationProjection
         if (projected || appended.Any(method => !published.Add(method))) throw Mismatch();
     }
 
+    // These are owning-edge edits, not declaration births or retirements. The
+    // producer's transition already checked both complete vectors at mutation.
+    internal void MoveMethods(BirFileDeclaration file, BirFunctionDeclaration[] before,
+        BirFunctionDeclaration[] after, IReadOnlyList<TypeOwnershipLowering.SourceMethodMove> moves)
+    {
+        if (projected || released || !types.ContainsKey(file) || moves.Count == 0
+            || !placements.TryAdd(file, new(before, after, moves.ToArray()))) throw Mismatch();
+        foreach (var owner in moves.Select(move => move.Destination).Distinct<IBirTypeDeclaration>(ReferenceEqualityComparer.Instance))
+            placementTargets[owner] = owner.Methods.OrEmpty().ToArray();
+    }
+
+    internal bool TryMethodPlacement(BirFileDeclaration file, out MethodPlacement placement)
+    {
+        if (!projected || released) throw Mismatch();
+        return placements.TryGetValue(file, out placement);
+    }
+
     // This observer is composed with the sole continuing ToDom and reused for
     // every retired forest root. Known bindings enforce their own uniqueness.
     internal void ObserveProjection(BirGraphValue actual, JsonObject target)
@@ -81,6 +116,10 @@ sealed class SourceDeclarationProjection
         if (projected) throw Mismatch();
         foreach (var row in types.Values)
             if (!row.File.Types.OrEmpty().SequenceEqual(row.Continuing, ReferenceEqualityComparer.Instance)) throw Mismatch();
+        foreach (var (file, placement) in placements)
+            if (!file.Methods.OrEmpty().SequenceEqual(placement.After, ReferenceEqualityComparer.Instance)) throw Mismatch();
+        foreach (var (owner, methods) in placementTargets)
+            if (!owner.Methods.OrEmpty().SequenceEqual(methods, ReferenceEqualityComparer.Instance)) throw Mismatch();
         var live = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         foreach (var root in roots) Walk(root, value => live.Add(value));
         if (retired.Any(live.Contains)) throw Mismatch();
@@ -156,6 +195,7 @@ sealed class SourceDeclarationProjection
         released = true;
         Array.Clear(roots); types.Clear(); retired.Clear(); published.Clear(); projections.Clear(); methods.Clear();
         forestRoots.Clear(); materializedMethods.Clear();
+        placements.Clear(); placementTargets.Clear();
     }
 
     static void Walk(BirGraphValue node, Action<BirGraphValue> visit)

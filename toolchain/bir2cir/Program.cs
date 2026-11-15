@@ -45,6 +45,7 @@ static class Bir2Cir
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
                 CurrentDeclarationBindingsTests.SelfTest();
+                ValueRepresentationLowering.PlacementSourceSelfTest();
                 FBoundStarProjectionErasure.CurrentDeclarationPreparationSelfTest();
                 FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
                 FBoundStarProjectionErasure.MethodPreparationSourceSelfTest();
@@ -154,6 +155,7 @@ static class Bir2Cir
                 CompanionRepresentationLoweringTests.SelfTest();
                 InnerRepresentationFrameTests.SelfTest();
                 OpaqueCarrierTypeBinding.SelfTest();
+                OpaqueCarrierTypeBinding.SourceSelfTest();
                 GenericRepresentationPolicy.SelfTest();
                 KotlinGenericScalarSlots.SourceScalarSelfTest();
                 BirTypeLowering.SelfTestSlotReturns();
@@ -177,6 +179,9 @@ static class Bir2Cir
                 KotlinCollectionIdentitySynthesis.SourceSelfTest();
                 FBoundStarProjectionErasure.ArraySourceFactsSelfTest();
                 TypeOwnershipLowering.SelfTestSourceApplications();
+                TypeOwnershipLowering.SelfTestLatePlacement();
+                PublishedApiTypeVisibilityLowering.SelfTestSourceVisibility();
+                ComparableBridgeSynthesis.SourceSelfTest();
                 ContinuationErasure.SelfTest();
                 ReferenceNullableStrip.FunctionSelfTest();
                 StarProjectionBoundLowering.FunctionSelfTest();
@@ -820,13 +825,27 @@ sealed class Pipeline
         var finalCarrierTypes = FBoundStarProjectionErasure.RewriteLateTypesSource(
             captured, carrierRealization, aliasTransitions);
 
+        // A bridge is a new declaration. Rehoming a lifted method below is an
+        // owning-edge MOVE of the same declaration, never a birth/retirement.
+        if (!referenceBuild)
+            ComparableBridgeSynthesis.ApplyAll(captured,
+                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
+                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames),
+                (file, owner, method) => suspendTransitions.PublishMethods(file, owner, new[] { method }));
+        PublishedApiTypeVisibilityLowering.ApplyAll(captured);
+        TypeOwnershipLowering.ApplyAll(captured, suspendTransitions.MoveMethods);
+        OpaqueCarrierTypeBinding.ApplyAll(captured, refs, signatures);
+        // Intrinsic reconstruction may have pruned a refused class completely.
+        // Consume its existing synthesis verdict, never classify its fields again.
+        ClosureSynthesis.AssertSurvivingCapturesLegal(captured);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after final slot and suspend state-machine
-            // materialization. Retired source facts use the same observer.
+            // continuing projection, after final slots, nesting and opaque
+            // carrier binding. Retired source facts use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -912,32 +931,8 @@ sealed class Pipeline
         // Suspend residue, logical results and final override slots have already
         // been resolved module-wide on the owning graph before the DOM frontier.
 
-        // Non-generic `System.IComparable` bridge. Synthesize it at this final Kotlin-vocabulary boundary so its
-        // forwarding call carries the target declaration's semantic return stamp. In particular, a legal
-        // `compareTo(...): Nothing` is normalized at that bridge's construction boundary, before the physical Int32
-        // slot could receive Nothing's later CLR object erasure.
-        if (!_options.RefBuild)
-            foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root,
-                type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValueFqn,
-                    refs.PhysicalTypeNames, typeArg: true, nullableFrames: refs.NullableTypeFrames));
-
-        // @PublishedApi is a Kotlin semantic annotation carried alongside the source `internal` visibility in BIR.
-        // Resolve its effective CLR accessibility here, before ownership selects top-level versus Nested* metadata.
-        PublishedApiTypeVisibilityLowering.ApplyAll(staged.Select(s => s.Root));
-
-        // Materialize every remaining Kotlin lexical owner as explicit CLR TypeDef nesting only after all source,
-        // inline, event-adapter, closure, and coroutine synthesis has finished adding declarations. This is the sole
-        // BIR semanticOwner -> CIR nestedIn boundary.
-        TypeOwnershipLowering.ApplyAll(staged.Select(s => s.Root).ToList());
-        // Opaque raw-BIR carriers cross the assembly boundary after the representation decision above. Bind any local
-        // nested type tokens to this producer's exact metadata identity now; readers never reconstruct that relation.
-        OpaqueCarrierTypeBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs, declarationSemanticSignatures);
-        // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
-        // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
-        // cold suspend lowering above reconstructs a `suspendCoroutine { … }` block inline and PRUNES the class it
-        // came from — its captures become ordinary locals of the enclosing frame, judged by the suspend storage
-        // gate instead. Report now, over the classes that actually survived.
-        ClosureSynthesis.AssertSurvivingCapturesLegal(staged.Select(s => s.Root));
+        // Comparable slots, effective visibility, nesting and opaque carriers
+        // were resolved in that order before the owning projection.
 
         // PHASE 1.7 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
         // its self instance accesses with the BARE type name (`dotkt_obj144`, no type args) -> ".NET method/type

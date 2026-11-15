@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
@@ -11,15 +10,6 @@ using DotKt.Bir.Lowering;
 // sweep. Normal source BIR takes the same first step before Program's source helper recognition.
 static partial class MaterializedBirPayload
 {
-    // Defaults nested on inline parameters use the same versioned byte-array carrier.
-    public static void HideDefaultSourceSpans(JsonObject obj)
-    {
-        if (DefaultBirCarrier.IsCarrier(obj)) DefaultBirCarrier.RewriteTyped(obj, expression => {
-            HideSourceSpans((BirGraphValue)expression);
-            return expression;
-        });
-    }
-
     public static void SelfTest()
     {
         BirReturn AnyCall(string name, bool superCall = false) => new() {
