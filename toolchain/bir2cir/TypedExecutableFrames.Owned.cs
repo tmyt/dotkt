@@ -35,11 +35,18 @@ static partial class TypedExecutableFrames
     {
         if (root == null || root is IBirExecutablePayload) return;
         methodArgs ??= Array.Empty<TypeNode>();
-        if (root is BirNewSuspendLambda suspend
-            && (suspend.TypeFrame.OrDefault() != "dense" || suspend._suspendDeclarationTypeArgs.HasValue))
+        if (root is BirNewSuspendLambda suspend)
         {
-            if (!suspend._suspendDeclarationTypeArgs.HasValue && suspend.TypeArgs.HasValue)
+            var dense = suspend.TypeFrame.OrDefault() == "dense" && !suspend._suspendDeclarationTypeArgs.HasValue;
+            if (!dense && !suspend._suspendDeclarationTypeArgs.HasValue && suspend.TypeArgs.HasValue)
                 suspend._suspendDeclarationTypeArgs = suspend.TypeArgs.Value.Select(CopyType).ToArray();
+            // An unspliced dense declaration already owns its body, parameters
+            // and result frame. Its capture descriptors, like its construction
+            // values, still name the enclosing frame being instantiated.
+            if (dense)
+                foreach (var capture in suspend.Captures.OrEmpty())
+                    if (capture.Type.HasValue)
+                        capture.Type = SubstituteType(capture.Type.Value, methodArgs, arity, ownerArgs, typeScope);
             if (suspend.TypeArgs.HasValue)
                 suspend.TypeArgs = suspend.TypeArgs.Value.Select(type => SubstituteType(type, methodArgs, arity, ownerArgs, typeScope)).ToArray();
             if (suspend.CapValues.HasValue)
@@ -51,12 +58,11 @@ static partial class TypedExecutableFrames
                 suspend.Sty = SubstituteType(suspend.Sty.Value, methodArgs, arity, ownerArgs, typeScope);
             return;
         }
-        var childTypeScope = typeScope && root is not BirNewSuspendLambda;
         root.RewriteGenericFrameInPlace(
             (role, type) => Substitutes(role) ? SubstituteType(type, methodArgs, arity, ownerArgs, typeScope) : type,
             (role, child) => {
                 if (Substitutes(role)) SubstituteInPlace(child, methodArgs, arity, ownerArgs,
-                    childTypeScope && role != BirGenericFrameRole.SyntheticDeclaration);
+                    typeScope && role != BirGenericFrameRole.SyntheticDeclaration);
             });
     }
 }
