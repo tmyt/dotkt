@@ -102,7 +102,7 @@ static partial class FBoundStarProjectionErasure
             && ConstructionHasHiddenWitnessSource(requiredConstruction, constructionState),
             "carrier construction discarded its demanded native witness");
         Require(ReferenceEquals(ctorBinding.Source, declaration.Ctors.Value[0])
-            && ReferenceEquals(donorBinding.Source, ((BirExpressionStatement)root.Methods.Value[2].Body.Value[0]).Expr),
+            && ReferenceEquals(donorBinding.Source, ((BirExpressionStatement)root.Methods.Value[2].Body.Value[0]).Expr.Value),
             "ID-less constructor/donor binding used an inferred rather than the actual continuing record");
         var sourceMethod = construct;
         var pureMethod = pure;
