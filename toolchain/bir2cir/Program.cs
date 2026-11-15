@@ -128,6 +128,8 @@ static class Bir2Cir
                 DefaultArgSplice.SourcePreparationSelfTest();
                 FaithfulHintRecognition.TypedSelfTest();
                 KotlinPropertyAccessors.SelfTestAccessorSignatures();
+                BackingFieldRename.SourceSelfTest();
+                LateinitGetLowering.SourceSelfTest();
                 LateinitInitializationLoweringTests.SelfTest();
                 CompanionExtensionBinding.SelfTest();
                 LexicalDeclarationIds.SelfTest();
@@ -161,6 +163,7 @@ static class Bir2Cir
                 OpaqueCarrierTypeBinding.SelfTest();
                 OpaqueCarrierTypeBinding.SourceSelfTest();
                 GenericRepresentationPolicy.SelfTest();
+                GenericRepresentationPolicy.FieldRenameSourceSelfTest();
                 GenericSelfInstantiation.SourceSelfTest();
                 GenericDelegateInstantiation.SourceSelfTest();
                 GenericStaticOwnerBinding.SourceSelfTest();
@@ -172,6 +175,7 @@ static class Bir2Cir
                 UncheckedGenericCastReturnErasure.SelfTest();
                 UnsafeAccessorLowering.SuperForwarderSelfTest();
                 UnsafeAccessorLowering.FamilyAccessSelfTest();
+                UnsafeAccessorLowering.SourceSelfTest();
                 BirTypeLowering.SelfTestMethodImplMetadata();
                 SupertypeGraph.SelfTestDeclarationIdentity();
                 CollectionHelperBinding.SelfTest();
@@ -889,13 +893,37 @@ sealed class Pipeline
             foreach (var source in captured) ReferenceExistentialAbiBinding.Apply(source, refs);
         }
 
+        // Allocate the complete property surface before storage naming and
+        // lexical access select their exact declaration descriptors.
+        KotlinPropertyAccessors.AllocateDeclarationsAndProperties(captured);
+        var backingRenames = BackingFieldRename.ApplyAll(captured);
+        genericRepresentations.ApplyFieldRenames(backingRenames);
+        NullableTvErasureCallRealign.ApplyFieldRenames(nullableDeclarations, backingRenames);
+        if (referenceBuild) UnsafeAccessorLowering.DropFacts(captured);
+        else
+        {
+            UnsafeAccessorLowering.ApplyAll(captured, refs, suspendTransitions);
+            foreach (var source in captured)
+            {
+                NullableTvErasureCallRealign.CollectNewSyntheticTypes(source, nullableDeclarations);
+                NullableTvErasureCallRealign.CollectNewSyntheticMembers(source, nullableDeclarations);
+            }
+            foreach (var source in captured)
+                NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(source, nullableDeclarations, isValueFqn, refs);
+        }
+        foreach (var source in captured) NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(source);
+        finalCarrierTypes = FBoundStarProjectionErasure.RefreshCurrentPhysicalTypesSource(captured, carrierRealization);
+        // UnsafeAccessor can rebuild the private storage read as a byref load.
+        // Only then author its ordinary failure construction, without new types.
+        LateinitGetLowering.ApplyAll(captured);
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
-            // continuing projection, after final slots, nesting, generic uses
-            // and physical field facts. Retired source facts use the same observer.
+            // continuing projection, after slots, placement, exact generic uses,
+            // storage naming and lexical access. Retired facts use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
                 inputsWithSources[index].Path,
@@ -921,7 +949,7 @@ sealed class Pipeline
         suspendModule.ReleaseSourceDeclarations();
         return new LoadedBirModule(files, signatures, sourceIndex,
             genericRepresentations, scalarSlots, valueRepresentations, representationMethodFrames,
-            new ModulePreparation(inventory, nullableDeclarations, enums,
+            new ModulePreparation(inventory, enums,
                 moduleBindings, carrierContinuation));
     }
 
@@ -951,10 +979,6 @@ sealed class Pipeline
         // App-only physical interop stages remain separate from runtime/metadata
         // self-builds; source call attribution already ran in the owning prefix.
         var attributeTopLevelOwner = _options.StdlibMode == BuildStdlibMode.App;
-
-        // Declaration returns were snapshotted before typed erasure. Re-derive
-        // each use from that declaration, not the frontend's substituted return.
-        var nullableTvDeclRets = module.Preparation.NullableDeclarations;
 
         // Rich-enum declarations require their API metadata even in a runtime
         // stdlib build; the typed prefix has already resolved their uses.
@@ -988,51 +1012,10 @@ sealed class Pipeline
         // late foreign adapters and referenced existential ABI were resolved on
         // owning BIR. The remaining structural owners consume those exact facts.
 
-        // Every structural synthesizer has now run. Allocate the complete declaration/property set before any pass
-        // consumes physical Property descriptors: BackingFieldRename distinguishes receiverless storage ownership by
-        // the exact getSig/setSig written here, including on late String/CharSequence adapters. This allocator is the
-        // sole forward Kotlin-property -> CLR-name projection; no consumer reconstructs identity from that name.
-        KotlinPropertyAccessors.AllocateDeclarationsAndProperties(staged.Select(s => s.Root));
-
-        // AUTO-PROPERTY BACKING-FIELD RENAME (#228): kotc names an accessor-routed property's storage with the KOTLIN
-        // identity, so the emitted type carried a property AND a field of the same name (reflection consumers cannot
-        // resolve the pair). Mint the CLR metadata name `<Name>k__BackingField` here — the layer that owns the
-        // Kotlin-to-CLR representation — and rewrite every field read/write that addresses it. GLOBAL (a
-        // `byref(obj.prop)` addresses a sibling file's backing field) and unconditional (ref/rt/app emit one shape);
-        // last in the structural phase, so every synthesized body exists and owner tokens are still Kotlin FQNs.
-        BackingFieldRename.ApplyAll(staged.Select(s => s.Root).ToList());
-
-        // Kotlin lexical visibility remains unchanged even when its declaration and use land in different CLR
-        // TypeDefs. Project each otherwise-illegal physical edge to a private caller-side [UnsafeAccessor] extern;
-        // target members are never widened to internal/protectedInternal.
-        if (_options.RefBuild)
-            UnsafeAccessorLowering.DropFacts(staged.Select(s => s.Root).ToList());
-        else
-        {
-            UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
-            // UnsafeAccessor creates holder TypeDefs and replaces restricted calls with wrapper calls. Index
-            // those exact physical declarations, then flow the new edges through the nullable-generic boundary once.
-            // The exact selected declaration stamps the wrapper with one-shot erasure ownership. Local declarations
-            // contribute their in-memory carrier; referenced declarations contribute the compiler-authored metadata
-            // indexed by declaration identity. Thus a lifted closure can state wrapper object[] -> captured
-            // Array<R?> explicitly without treating every late object return as nullable-generic erasure.
-            foreach (var stagedFile in staged)
-            {
-                NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);
-                NullableTvErasureCallRealign.CollectNewSyntheticMembers(stagedFile.Root, nullableTvDeclRets);
-            }
-            foreach (var stagedFile in staged)
-                NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
-                    stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
-        }
-        foreach (var stagedFile in staged)
-            NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(stagedFile.Root);
+        // Storage and lexical access have completed on owning BIR. These
+        // transport markers stay until LoadBirInputs' strict address handoff has
+        // validated the selected native declarations; they are consumed now.
         FBoundStarProjectionErasure.RemoveTransientFacts(staged.Select(s => s.Root), preserveExactOuter: true);
-
-        // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.
-        // This is deliberately after UnsafeAccessorLowering, which can rebuild a private-field lateinitGet around a
-        // byref load, so every surviving node carries one complete physical exception expression into CIR.
-        LateinitGetLowering.ApplyAll(staged.Select(s => s.Root));
 
         // Normalize every local call/delegate descriptor before the module-wide local member binding below. Generic
         // delegate targets may carry a closed function shape while their declaration remains open; bir2cir owns the
@@ -1684,9 +1667,7 @@ sealed record LoadedBirModule(IReadOnlyList<BirFile> Files, SourceDeclarationSig
     ValueRepresentationLowering ValueRepresentations,
     IReadOnlyDictionary<string, NullableRepresentationFrame> RepresentationMethodFrames,
     ModulePreparation Preparation);
-sealed record ModulePreparation(TypedModuleInventory Inventory,
-    NullableTvErasureCallRealign.DeclIndex NullableDeclarations,
-    EnumPreparation Enums,
+sealed record ModulePreparation(TypedModuleInventory Inventory, EnumPreparation Enums,
     ModuleBindingSnapshots Bindings,
     FBoundStarProjectionErasure.CarrierRealizationContinuation Carriers);
 sealed record ModuleBindingSnapshots(Dictionary<string, GenericDowncastRealignment.Def> GenericDowncastHierarchy);

@@ -4,18 +4,28 @@ using DotKt.Cir;
 
 static partial class NullableTvErasureCallRealign
 {
-    // Selection stays shared with the live DOM consumers. Materialization uses
-    // owning typed values directly, never a JSON projection of the operand.
+    // Template callers explicitly request an independent operand copy.
     internal static IBirExpression CoerceForFixedSlot(
         IBirExpression value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         bool exactPropertyTarget = false)
+        => MaterializeFixedSlot(value, src, target, isValue, refs, exactPropertyTarget, copyOperand: true);
+
+    // Continuing body flow consumes this occurrence. Registered descendants
+    // retain their exact bindings instead of silently becoming cloned anchors.
+    internal static IBirExpression CoerceForOwnedFixedSlot(
+        IBirExpression value, TypeNode src, TypeNode target, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
+        bool exactPropertyTarget = false)
+        => MaterializeFixedSlot(value, src, target, isValue, refs, exactPropertyTarget, copyOperand: false);
+
+    static IBirExpression MaterializeFixedSlot(IBirExpression value, TypeNode src, TypeNode target,
+        ValueTypeOracle isValue, ReferenceMetadataIndex refs, bool exactPropertyTarget, bool copyOperand)
     {
         if (value is not BirGraphNode graph) return null;
         var selection = SelectFixedSlotCoercion(graph.Tag,
             value is BirCast cast ? cast.Type.OrDefault() : null,
             src, target, exactPropertyTarget, isValue, refs);
         if (selection.Kind == SlotCoercionKind.None) return null;
-        var operand = OptionalField<IBirExpression>.Of((IBirExpression)graph.DeepClone());
+        var operand = OptionalField<IBirExpression>.Of(copyOperand ? (IBirExpression)graph.DeepClone() : value);
         var type = BirGraphValue.CopyType(selection.Type);
         return selection.Kind switch {
             SlotCoercionKind.NullableWrap => new BirNullableWrap { Elem = type, E = operand },

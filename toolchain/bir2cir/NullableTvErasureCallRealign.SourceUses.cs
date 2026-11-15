@@ -131,6 +131,8 @@ static partial class NullableTvErasureCallRealign
                 var declared = variable.Type.OrDefault();
                 if (declared != null && initializer != null && !initializer.Equals(declared))
                 {
+                    // Platform nullability is flexible: retain the actual
+                    // initializer representation rather than inserting a seam.
                     if (declared is TypeNode.Oblivious platform && (initializer.Equals(platform.Of)
                         || initializer is TypeNode.Nullable nullable && nullable.Of.Equals(platform.Of)))
                         variable.Type = BirGraphValue.CopyType(initializer);
@@ -282,6 +284,8 @@ static partial class NullableTvErasureCallRealign
             case BirForEach loop:
             {
                 loop.Src = SourceUseEdge(loop.Src, context, out _);
+                // The iteration owner selected erasure and element narrowing
+                // together. Do not rederive elem from the flowed source here.
                 if (loop.Var.HasValue && loop.Elem.HasValue) context.Env[loop.Var.Value] = loop.Elem.Value;
                 SourceUseStatements(loop.Body.OrEmpty(), context); return node;
             }
@@ -318,7 +322,7 @@ static partial class NullableTvErasureCallRealign
     }
 
     static IBirExpression SourceCoerce(IBirExpression value, TypeNode source, TypeNode target, bool exactProperty = false)
-        => CoerceForFixedSlot(value, source, target, _isValue, _refs, exactProperty);
+        => CoerceForOwnedFixedSlot(value, source, target, _isValue, _refs, exactProperty);
 
     static OptionalField<IBirExpression> SourceStore(OptionalField<IBirExpression> value, TypeNode target, Ctx context)
     {
@@ -346,6 +350,6 @@ static partial class NullableTvErasureCallRealign
         var selection = SelectObjectSlotCoercion(graph.Tag, graph is BirCast cast ? cast.Type.OrDefault() : null,
             source, new TypeNode.Nullable(element), false, _isValue);
         return selection.Kind == SlotCoercionKind.Cast ? new BirCast { Type = selection.Type,
-            E = OptionalField<IBirExpression>.Of((IBirExpression)graph.DeepClone()) } : value;
+            E = OptionalField<IBirExpression>.Of(value.Value) } : value;
     }
 }

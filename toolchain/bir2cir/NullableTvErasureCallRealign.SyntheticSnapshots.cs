@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -41,18 +40,6 @@ static partial class NullableTvErasureCallRealign
                 .Where(parameters => parameters != null).ToArray(), slots.ToArray());
     }
 
-    static SyntheticTypeRecipe CaptureRecipe(JsonObject type)
-    {
-        var slots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
-        CollectSlots(type["fields"], slots);
-        CollectSlots(type["properties"], slots);
-        return new(Str(type["name"]),
-            (type["methods"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                .Select(ReadMethodSnapshot).Where(method => method != null).ToArray(),
-            (type["ctors"] as JsonArray ?? new JsonArray()).OfType<JsonObject>()
-                .Select(ctor => ReadParams(ctor["params"])).Where(parameters => parameters != null).ToArray(),
-            slots.ToArray());
-    }
 
     static SyntheticTypeRecipe CloneRecipe(SyntheticTypeRecipe recipe)
     {

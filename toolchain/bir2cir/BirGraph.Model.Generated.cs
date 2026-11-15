@@ -10132,6 +10132,9 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<int> LexicalOwnerTypeParamCount { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
     public OptionalField<string> ExistentialSourceMember { get; set; }
+    public OptionalField<string> UnsafeTargetDeclarationId { get; set; }
+    public OptionalField<string> UnsafeSignatureTargetDeclarationId { get; set; }
+    public OptionalField<bool> NullableErasureOwnershipKnown { get; set; }
     public OptionalField<bool> RoundtripMetadataPending { get; set; }
     public OptionalField<BirRoundtripDeclarationIdentity> RoundtripDeclarationIdentity { get; set; }
     public OptionalField<SourceBoundsSnapshot> RoundtripMethodBounds { get; set; }
@@ -10256,6 +10259,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (PropertyAssociation.HasValue) { visit((string)PropertyAssociation.Value); }
         if (_syntheticTypeArgs.HasValue) { foreach (var item0 in _syntheticTypeArgs.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ExistentialSourceMember.HasValue) { visit((string)ExistentialSourceMember.Value); }
+        if (UnsafeTargetDeclarationId.HasValue) { visit((string)UnsafeTargetDeclarationId.Value); }
+        if (UnsafeSignatureTargetDeclarationId.HasValue) { visit((string)UnsafeSignatureTargetDeclarationId.Value); }
         if (SuspendTaskResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SuspendTaskResult.Value, visit); }
         if (SuspendSourceParams.HasValue) { foreach (var item0 in SuspendSourceParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (SuspendSourceRet.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)SuspendSourceRet.Value, visit); }
@@ -10715,6 +10720,9 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(LexicalOwnerTypeParamCount, value.LexicalOwnerTypeParamCount, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(ExistentialSourceMember, value.ExistentialSourceMember, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(UnsafeTargetDeclarationId, value.UnsafeTargetDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(UnsafeSignatureTargetDeclarationId, value.UnsafeSignatureTargetDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(NullableErasureOwnershipKnown, value.NullableErasureOwnershipKnown, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RoundtripMetadataPending, value.RoundtripMetadataPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RoundtripDeclarationIdentity, value.RoundtripDeclarationIdentity, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(RoundtripMethodBounds, value.RoundtripMethodBounds, (left, right) => left.FrozenText == right.FrozenText)
@@ -10804,6 +10812,9 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "lexicalOwnerTypeParamCount", LexicalOwnerTypeParamCount, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "existentialSourceMember", ExistentialSourceMember, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "unsafeTargetDeclarationId", UnsafeTargetDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "unsafeSignatureTargetDeclarationId", UnsafeSignatureTargetDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "nullableErasureOwnershipKnown", NullableErasureOwnershipKnown, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "roundtripMetadataPending", RoundtripMetadataPending, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "roundtripDeclarationIdentity", RoundtripDeclarationIdentity, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "roundtripMethodBounds", RoundtripMethodBounds, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
@@ -10895,6 +10906,9 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (LexicalOwnerTypeParamCount.IsPresent) result["lexicalOwnerTypeParamCount"] = LexicalOwnerTypeParamCount.IsNull ? null : JsonValue.Create(LexicalOwnerTypeParamCount.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
         if (ExistentialSourceMember.IsPresent) result["existentialSourceMember"] = ExistentialSourceMember.IsNull ? null : JsonValue.Create(ExistentialSourceMember.Value);
+        if (UnsafeTargetDeclarationId.IsPresent) result["unsafeTargetDeclarationId"] = UnsafeTargetDeclarationId.IsNull ? null : JsonValue.Create(UnsafeTargetDeclarationId.Value);
+        if (UnsafeSignatureTargetDeclarationId.IsPresent) result["unsafeSignatureTargetDeclarationId"] = UnsafeSignatureTargetDeclarationId.IsNull ? null : JsonValue.Create(UnsafeSignatureTargetDeclarationId.Value);
+        if (NullableErasureOwnershipKnown.IsPresent) result["nullableErasureOwnershipKnown"] = NullableErasureOwnershipKnown.IsNull ? null : JsonValue.Create(NullableErasureOwnershipKnown.Value);
         if (RoundtripMetadataPending.IsPresent) result["roundtripMetadataPending"] = RoundtripMetadataPending.IsNull ? null : JsonValue.Create(RoundtripMetadataPending.Value);
         if (RoundtripDeclarationIdentity.IsPresent) result["roundtripDeclarationIdentity"] = RoundtripDeclarationIdentity.IsNull ? null : ((BirGraphValue)RoundtripDeclarationIdentity.Value).ToDom(projected);
         if (RoundtripMethodBounds.IsPresent) result["roundtripMethodBounds"] = RoundtripMethodBounds.IsNull ? null : SourceBoundsSnapshot.ToDom(RoundtripMethodBounds.Value);

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // THE WRITE AXIS of the nullable-Tv erasure realignment (#86) — the other half of the formula its sibling file
@@ -25,202 +24,9 @@ using DotKt.Bir;
 // type (the read axis), never by converting the value, so this half leaves them alone.
 static partial class NullableTvErasureCallRealign
 {
-    // Realign every argument position of a call/construction against the slot it fills.
-    //
-    // With the callee's DECLARATION in hand the target is `Subst(Erase(p), ownerArgs, methodArgs)` — never
-    // `Erase(Subst(...))`, which is the distinction the whole family turns on: substituting first destroys the `Tv`
-    // that tells `Erase` this position was erased at all. A method signature DESCRIPTOR remains the callee's OPEN
-    // declaration identity. A `new.argTypes` vector is different: it states the physical coercion target at this use
-    // site, so it follows the derived target while local constructor identity is linked independently.
-    //
-    // With no declaration — a callee whose owner names no indexed declaration, or an ambiguous overload set the
-    // reference index refuses to guess at — the descriptor is the only statement of the slot there is, and it is
-    // authoritative precisely because it is what the member will be resolved by. That fallback is restricted to the
-    // `object` seam: a value flowed out of the erasure as a bare `object` and the descriptor names a slot the CLR
-    // cannot hand an `object` to. Anything wider would be guessing against a descriptor that may itself be the
-    // substituted (pre-erasure) view.
-    // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
-    // construction case below. Reports the flowed argument types (null when the node has no `args`).
-    static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, bool[] declRefused, TypeNode[] ownerArgs,
-        TypeNode[] methodArgs, Ctx ctx, bool exactPropertyTarget = false)
-    {
-        if (call["args"] is not JsonArray args) return null;
-        // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
-        // bound to a .NET member carries the same vector as `resolvedMemberParams` — the name changes, the fact does not, and
-        // reading only two of the three left every .NET-interop argument outside the axis (an `object` from an erased
-        // stdlib return handed to a `Nullable<bool>` parameter, with nothing to narrow it). Any of them may be absent
-        // (resolution then falls back to arity), which is not an error.
-        //
-        // WHETHER the descriptor is a resolved CLR signature or Kotlin vocabulary is remembered, because the fallback
-        // below trusts the two to different depths — and that is decided by the call's KIND, never by which key holds
-        // the vector. A `clr*` node is .NET-bound by construction; its key only records how far resolution has got. A
-        // GENERIC .NET call carries `resolvedMemberParams` from the moment NetInteropBinding reshapes it, while a NON-GENERIC one
-        // carries `argTypes` until ClrMemberResolution stamps `resolvedMemberParams` — which happens long AFTER this pass runs.
-        // Reading .NET-boundness off `resolvedMemberParams`'s presence therefore left every non-generic .NET call on the Kotlin
-        // fallback, where the widening screen below drops every reference slot: an erased `object` reached a `string`
-        // parameter with no `castclass` at all, and the emitter pushed it into a slot the CLR does not accept.
-        var clrBound = IsClrBoundKind(Str(call["k"]));
-        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["resolvedMemberParams"] as JsonArray;
-        if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
-        var haveDecl = declParams != null && declParams.Length == args.Count;
-        var haveRefusals = declRefused != null && declRefused.Length == args.Count;
-        var argTypes = new TypeNode[args.Count];
-        // SETTLE THE METHOD TYPE ARGUMENTS FIRST (#86 D2). What flows into one parameter can force the callee's
-        // instantiation — an `object[]` inhabits `!!i[]` at `T = object` and nowhere else — and that instantiation is
-        // what every OTHER position is then derived against. Doing it inside the main loop made the result depend on
-        // ARGUMENT ORDER: in `fun <T> g(x: T, xs: Array<T>)` called as `g(v, arrayOfNulls<Int>(2))`, `x` was targeted,
-        // converted and descriptor-rewritten at `T = Nullable<int32>` before `xs` moved `T` to `object`, and nothing
-        // revisited it — so the emitted `g<object>` carried a first argument reconciled against an instantiation that
-        // no longer existed. One pass to settle, then one pass that derives everything from a fixed answer.
-        //
-        // An ARRAY construction still naming its OWN element is skipped: it is built here, so it states nothing the
-        // instantiation must match — the main loop types it against the parameter instead, which is the ordering its
-        // `new`/pack retyping depends on. An array construction whose element is already the bare `object` is the
-        // opposite case and is NOT skipped: that is an `arrayOf<Int?>(…)` the factory has already canonicalized, a real
-        // `Array<X?>` value, and it settles the instantiation exactly as a variable holding one would. An OBJECT
-        // construction is skipped outright — see [BuildsItsOwnElement] for why that conservative skip is correct here.
-        // Everything else is evaluated here and again below; every rewrite on that path is guarded by
-        // `IsObjectErasureOf` or an idempotence check, so the second visit finds its own work already done.
-        if (haveDecl && methodArgs != null)
-            for (var i = 0; i < args.Count; i++)
-                if (declParams[i] != null && !(haveRefusals && declRefused[i])
-                    && args[i] is JsonObject pre && !BuildsItsOwnElement(pre)
-                    && Eval(args[i], ctx) is TypeNode flowed)
-                    UnifyMethodArgs(declParams[i], flowed, methodArgs, call);
-        for (var i = 0; i < args.Count; i++)
-        {
-            // A REFUSED slot is not an unknown one. The reader saw this parameter's carrier and decided it must not
-            // be stated, and the call's descriptor is that same erasure written in the call's substituted vocabulary.
-            // Falling back to it applies precisely the derivation the refusal exists to prevent, so this position gets
-            // no target from either source and the argument is left exactly as the frontend typed it. Nothing produces
-            // a refusal today — the `Array<X?>` slot that did is served now that #86 D2 made the erasure uniform there
-            // — so this is the channel standing ready for the next one rather than a live path.
-            var refused = haveRefusals && declRefused[i];
-            // A declared slot may instead be individually unknown (a referenced parameter whose declaration the
-            // producing assembly could not state structurally); THAT position falls back to the descriptor like an
-            // undeclared call.
-            var target = !refused && haveDecl && declParams[i] != null
-                ? Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, methodArgs)
-                : null;
-            // A CONSTRUCTION whose instantiation is the erasure counterpart of the slot is RETYPED rather than
-            // converted, and before it is evaluated so its own constructor arguments are reconciled against the
-            // corrected instantiation. `Box<Nullable<int32>>` and `Box<object>` are unrelated invariant reified
-            // generics that no cast reconciles — but the construction is ours to type, so we build the one the slot
-            // names instead of building the wrong one and failing to convert it.
-            if (target is TypeNode.Fqn tf && args[i] is JsonObject na && Str(na["k"]) == "new"
-                && TypeJson.Read(na["type"]) is TypeNode.Fqn sf
-                && RetypeObject(sf, tf))
-                na["type"] = TypeJson.Write(tf);
-            // The same rule for an ARRAY construction, which is how a `vararg` argument list is packed: build the
-            // element type the slot names. `EvalNewArray` then reconciles the elements against it, so the `newarr`
-            // and every `stelem` filling it agree by construction.
-            //
-            // ONLY when that element is the bare `object` seam AND the construction's own element may be a value —
-            // `vararg xs: T?` at a value/open instantiation, whose pack must be an `object[]` the elements box into.
-            // A concrete REFERENCE construction stays typed (`string[]`): CLR covariance already lets it fill the
-            // open `object[]` slot, and preserving its runtime element type is what makes a later concrete
-            // `Array<String?>` read projection valid. Retyping every construction here used to manufacture a genuine
-            // `object[]` for `Holder<String>(arrayOf<String?>(...))`; the holder's open `Array<T?>` result could then
-            // never honestly project back to `string[]`.
-            //
-            // An element erased INSIDE a constructed generic (`vararg slots: Slot<T?>`, packed as
-            // `Slot<object>[]`) is still not reconcilable: a `Slot<String?>` the caller holds is a `Slot<string>`,
-            // unrelated to `Slot<object>`, so retyping the pack would emit a `stelem Slot<object>` over it and turn a
-            // formal stack-type difference into an ArrayTypeMismatchException. The pack keeps the element it was
-            // built with there; only the DESCRIPTOR follows the callee, because that resolves the member.
-            if (target is TypeNode.Array ta && args[i] is JsonObject ar
-                && Str(ar["k"]) is "newArray" or "newArrayInit" or "newArraySized"
-                && TypeJson.Read(ar["elem"]) is TypeNode se
-                && RetypeArrayElement(se, ta))
-                ar["elem"] = TypeJson.Write(ta.Elem);
-            // And the same rule for a DELEGATE construction. `fun <T> invokeNullable(block: (T?) -> String)` declares
-            // a physical `Func<object, string>` whatever `T` is, while kotc states the construction's `funcType` from
-            // the SUBSTITUTED Kotlin type — `(String?) -> String`, a `Func<string, string>`. Those are two different
-            // delegate types, and the one the call accepts is the callee's. The construction is ours to type, so it
-            // is BUILT at the slot's shape rather than built wrong and cast (no cast joins two delegate
-            // instantiations); DelegateTargetSlotAlignment then makes the lifted target's own slots follow.
-            // Only a construction whose TARGET the compiler synthesized: a lifted `newDelegate` and a `newClosure`'s
-            // synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). Ordinary Kotlin
-            // callable references use those adapter forms too. A remaining direct delegate carrying a `sig` is a
-            // reserved representation whose declaration is not ours to move, so retyping it would state a
-            // shape no target can fill and turn a formal mismatch into an invalid program.
-            if (target is TypeNode.Fn targetFunction && args[i] is JsonObject dl
-                && Str(dl["k"]) is "newDelegate" or "newClosure" && dl["sig"] is not JsonArray
-                && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft
-                // A void target cannot acquire a value return by retyping its delegate. Preserve the
-                // natural construction for the physical adapter, which invokes it and produces Unit.
-                && RetypeDelegate(dft, targetFunction))
-                dl["funcType"] = TypeJson.Write(target);
-            argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
-            // THE DESCRIPTOR IS OPEN; THE TARGET MUST BE CLOSED. A descriptor states the callee's DECLARED parameter
-            // vector, so a generic callee's slot is still `!!0` there — and `.NET`-bound calls (`resolvedMemberParams`) keep it
-            // that way deliberately, because that open form is what the emitter matches the member by. Converting a
-            // value INTO it needs the closed type: substituting the call's own owner/type arguments turns
-            // `Enumerable.Repeat<Int?>`'s `!!0` into `Nullable<int32>`, where using the open node emitted a cast to
-            // whatever `!!0` lowered to in the CALLER (its own type parameter, or `object`) and pushed an `object`
-            // where a `Nullable<int32>` was required. The descriptor itself is left untouched. (Same closed/open
-            // split as the #64 await-plan template and its substitution.)
-            //
-            // The arm is reached only when the value flowed out as a bare `object`, so this is always the NARROWING
-            // direction — and narrowing out of `object` needs a conversion whatever the target is, `unbox.any` for a
-            // value and `castclass` for a reference. Which one, and whether one is needed at all, is CoerceForTarget's
-            // asymmetric rule. Screening it with the WIDENING test (`NeedsObjectSeam`) drops every reference target,
-            // which for the .NET arm left an `object` where a `string` was required — measured at BOTH arities, and
-            // the reason that arm is unscreened whatever key its descriptor arrived under. The KOTLIN arms — a
-            // `callStatic`/`callInstance`'s `sig` and a Kotlin `new`'s `argTypes` — KEEP the screen: their descriptor
-            // is the call's own substituted view rather than a resolved CLR signature, so an unrestricted reference
-            // cast there would be typed by something that may not be the callee's slot at all. Widening those needs
-            // its own evidence, and there is none yet.
-            if (target == null && !refused && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
-                     && IsBareObject(argTypes[i])
-                     && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
-                     && (clrBound || NeedsObjectSeam(closed)))
-                target = closed;
-            // A construction descriptor moves here only for THIS pass's nullable/object-erasure seam.  Ordinary
-            // owner substitution is finalized later, after TypeOwnershipLowering has projected Kotlin inner
-            // applications from [own..., outer...] to CLR [outer..., own...].  Writing every substituted target here
-            // used that not-yet-projected order and swapped generic-inner constructor slots cross-module.
-            if (Str(call["k"]) == "new" && target != null && descriptor != null
-                && TypeJson.Read(descriptor[i]) is TypeNode authored
-                && IsObjectErasureOf(target, authored))
-                descriptor[i] = TypeJson.Write(target);
-            if (target != null && args[i] is JsonObject arg
-                && CoerceForTarget(arg, argTypes[i], target, exactPropertyTarget) is JsonNode wrapped)
-                args[i] = wrapped;
-        }
-        return argTypes;
-    }
 
-    // Settle method type arguments against the type that FLOWED into a parameter (#86 D2). Walks the DECLARED
-    // parameter beside the flowed type; wherever the declaration says `!!i` INSIDE an array or a constructed generic
-    // and what arrives there says a bare `object`, `!!i` must BE `object`. That is forced by what the value IS, not
-    // chosen: `object[]` inhabits `!!i[]` at that instantiation and no other (array compatibility needs
-    // reference-compatible elements, ECMA-335 I.8.7.1), and `X<object>` inhabits `X<!!i>` at that one and no other
-    // (a reified generic is invariant; a covariant one only ever widens TOWARDS `object`). Reports whether anything
-    // moved, and writes the corrected arguments back onto the node so the emitter resolves the same instantiation.
-    //
-    // NOT at the top-level scalar position. A bare `!!i` parameter handed an erased `object` needs no
-    // re-instantiation — the object seam narrows the value into it, keeping the caller's own type argument — so
-    // unifying there would weaken `f<String>(erasedValue)` into `f<object>` for nothing. The walk pairs constructed
-    // types by ARGUMENT POSITION rather than by name, because the two sides are legitimately different types (a
-    // `List<object>` arrives at a `Collection<!!0>` slot) and position is what the CLR's assignability rule aligns.
-    //
-    // And ONLY for this family: either the binding is the nullable-possibly-value type D2 moves, or the position is
-    // an ARRAY ELEMENT, where `object[]` genuinely inhabits one instantiation. Without that
-    // gate the pairing-by-position reaches ordinary generic calls it has no business re-instantiating — a
-    // `Comparator<object>` arriving at a contravariant `Comparator<in T>` would rewrite `T = String` to `object` and
-    // drop it through its own `T : CharSequence` bound, and a `Derived<U> : Base<String>` arriving at a `Base<T>`
-    // would be zipped against the DERIVED arity rather than the base view it is actually seen through.
-    static bool UnifyMethodArgs(TypeNode declared, TypeNode flowed, TypeNode[] methodArgs, JsonObject call)
-    {
-        var moved = UnifyMethodArgs(declared, flowed, methodArgs);
-        if (moved && call["typeArgs"] is JsonArray typeArgs)
-            for (var i = 0; i < methodArgs.Length && i < typeArgs.Count; i++)
-                typeArgs[i] = TypeJson.Write(methodArgs[i]);
-        return moved;
-    }
 
-    // The shape decision is shared by the source owning flow and later DOM capabilities.
+    // Declaration-to-use type argument selection is independent of graph rendering.
     static bool UnifyMethodArgs(TypeNode declared, TypeNode flowed, TypeNode[] methodArgs)
     {
         var moved = false;
@@ -262,88 +68,11 @@ static partial class NullableTvErasureCallRealign
     }
 
     // Being a .NET-bound CALL is what makes the node's argument descriptor a .NET declaration rather than the caller's
-    // own Kotlin view — read both by the walk that routes these nodes to EvalClrCall and by the argument realignment
+    // own Kotlin view — read both by the walk that routes these nodes to SourceUseClrCall and by argument realignment
     // that decides how far to trust their descriptor. The property/field accessors are deliberately NOT here: they
     // carry no argument vector, and this axis is about arguments (ClrBoundNode states the split once).
     static bool IsClrBoundKind(string k) => ClrBoundNode.IsCall(k);
 
-    // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
-    // .NET, so its declared parameter types (`resolvedMemberParams`) ARE the declaration and there is nothing Kotlin to
-    // re-derive — but an argument that flowed out of the erasure as a bare `object` still has to be narrowed into the
-    // slot that member declares, or the emitter pushes an `object` where a `Nullable<bool>` is required and the whole
-    // method fails verification. Its own result is the .NET member's and is never re-derived.
-    //
-    // This is the arm the erasure family reaches once a call crosses into .NET: `assertTrue(map.merge(…))` hands an
-    // erased stdlib return straight to `ClassicAssert.IsTrue(bool?)`.
-    //
-    // The call's own owner and type arguments come along, because `resolvedMemberParams` is the callee's OPEN declaration —
-    // `Enumerable.Repeat<T>`'s first parameter is `!!0` there and stays `!!0` for the emitter to match the member by.
-    // RealignArgs closes it over these before converting anything into it.
-    static TypeNode EvalClrCall(JsonObject obj, Ctx ctx)
-    {
-        var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
-        var owner = ClrOwner(obj);
-        // NetInteropBinding runs before this pass, so an external property/method receiver no longer reaches the
-        // callInstance arm. Its resolved declaration owner is the same fixed bare owner slot: a proven-present
-        // Nullable<V> receiver must yield V before ilemit performs the already-resolved one-to-one member dispatch.
-        // Ordinary calls/constructors carry it in `type`; CLR delegate constructions carry it in `clrType`.
-        // Object transport must wait for bound/variance owner projection; the
-        // final physical coercion pass converts that resolved consuming edge.
-        if (obj["recv"] is JsonObject recv
-            && owner != null
-            && recvType is not TypeNode.Fqn { Name: "object" or "System.Object" }
-            && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
-            obj["recv"] = coercedReceiver;
-        var ownerArgs = OwnerArguments(owner);
-        var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        // No declaration and nothing to refuse: the callee is .NET, so `resolvedMemberParams` IS its declaration.
-        RealignArgs(obj, null, null, ownerArgs, methodArgs, ctx);
-        // Whatever else the node carries (an index expression, a value) still needs walking; the descriptor keys and
-        // the owner `type` are not operands.
-        foreach (var kv in obj)
-            if (kv.Value != null
-                && kv.Key is not ("recv" or "args" or "k" or "sty" or "type" or "ret" or "resolvedMemberParams" or "argTypes" or "sig"))
-                Eval(kv.Value, ctx);
-        return Str(obj["k"]) switch
-        {
-            "newClr" => TypeJson.Read(obj["type"]),
-            "newBoundClrDelegate" or "newClrStaticDelegate" => TypeJson.Read(obj["funcType"]),
-            _ => TypeJson.Read(obj["ret"]),
-        };
-    }
-
-    // A property/event access has no call argument vector, but its instance receiver still enters the member's
-    // resolved bare owner slot. Keep this separate from EvalClrCall so the argument realignment does not pretend an
-    // accessor node carries ordinary call descriptors; ValueSlotNullableWrite owns a property setter's value slot
-    // after its physical signature is available.
-    static TypeNode EvalClrMemberAccess(JsonObject obj, Ctx ctx)
-    {
-        var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
-        var owner = ClrOwner(obj);
-        if (obj["recv"] is JsonObject recv
-            && owner != null
-            && recvType is not TypeNode.Fqn { Name: "object" or "System.Object" }
-            && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
-            obj["recv"] = coercedReceiver;
-        if (obj["value"] != null) Eval(obj["value"], ctx);
-        foreach (var kv in obj)
-            if (kv.Value != null && kv.Key is not ("recv" or "value" or "k" or "type" or "ret" or "sty"))
-                Eval(kv.Value, ctx);
-        return Str(obj["k"]) == "clrPropGet" ? TypeJson.Read(obj["ret"]) : null;
-    }
-
-    // The declaration owner of a CLR-bound node. NetInteropBinding deliberately preserves source nullability and
-    // byref wrappers on the owner slot, while member resolution peels them to address the underlying declaration.
-    // Do the identical structural peel here; a wrapper describes the receiver value, not a different CLR owner.
-    // Bound/static delegate constructions are the one CLR-call family whose owner key is `clrType`.
-    static TypeNode.Fqn ClrOwner(JsonObject obj)
-    {
-        var k = Str(obj["k"]);
-        TypeNode t = TypeJson.Read(k is "newBoundClrDelegate" or "newClrStaticDelegate"
-            ? obj["clrType"]
-            : obj["type"]);
-        return ClrOwner(t);
-    }
 
     static TypeNode.Fqn ClrOwner(TypeNode type)
     {
@@ -359,228 +88,8 @@ static partial class NullableTvErasureCallRealign
             }
     }
 
-    // An array construction, and the ELEMENTS it is built from, are one operation. The `elem` may already have been
-    // corrected by the caller's argument realignment (a `vararg xs: T?` pack fills an `Array<T?>` slot, erased to
-    // `object[]`), and each element must then be reconciled against THAT element type — a pack built as
-    // `Nullable<int32>[]` and handed to an `object[]` slot is not convertible after the fact, while a pack built as
-    // `object[]` with boxed elements is exactly right. Splitting the two is what makes a `stelem` disagree with the
-    // `newarr` that produced the array.
-    static TypeNode EvalNewArray(JsonObject obj, Ctx ctx)
-    {
-        var elem = TypeJson.Read(obj["elem"]);
-        if (obj["size"] != null) Eval(obj["size"], ctx);
-        if (obj["elems"] is JsonArray elems)
-            for (var i = 0; i < elems.Count; i++)
-            {
-                if (elems[i] is not JsonObject e) continue;
-                var t = Eval(e, ctx);
-                if (elem != null && CoerceForTarget(e, t, elem) is JsonNode wrapped) elems[i] = wrapped;
-            }
-        foreach (var kv in obj)
-            if (kv.Value != null && kv.Key is not ("elem" or "elems" or "size" or "k" or "sty"))
-                Eval(kv.Value, ctx);
-        return elem == null ? null : new TypeNode.Array(elem);
-    }
 
-    // A DELEGATE INVOCATION. Its callee is the function type in `funcType`, which the declaration axis has already
-    // erased, so its components ARE the physical slots: each argument is reconciled against the one it fills and the
-    // result is the erased return. A `T.() -> R` states its receiver as the delegate's first parameter, so the
-    // vector is chosen by whichever of the two spellings matches the argument count — never by guessing.
-    //
-    // Nothing is substituted into those components: a `funcType` is already closed at the invocation site (there is
-    // no separate owner/method instantiation for a delegate), and `Subst` with no bindings leaves a concrete slot
-    // alone while declining an open one, which is the right refusal.
-    static TypeNode EvalDelegateInvoke(JsonObject obj, Ctx ctx)
-    {
-        var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
-        var fn = TypeJson.Read(obj["funcType"]) as TypeNode.Fn;
-        // The invoked delegate is whatever actually FLOWS into the receiver. A local holding an object-erased
-        // `Func<object, string>` is dispatched through that type's `Invoke`, not through the `Func<string, string>`
-        // the frontend stamped from the pre-erasure Kotlin type — the two are unrelated constructed delegates and
-        // the emitted `callvirt` would name a method the value does not have.
-        if (recvType is TypeNode.Fn rfn && fn != null && !rfn.Equals(fn) && IsObjectErasureOf(rfn, fn))
-        {
-            obj["funcType"] = TypeJson.Write(rfn);
-            fn = rfn;
-        }
-        TypeNode[] declParams = null;
-        if (fn is { Suspend: false } && obj["args"] is JsonArray args)
-            declParams = fn.DelegateParams.Length == args.Count ? fn.DelegateParams
-                : fn.Params.Length == args.Count ? fn.Params
-                : null;
-        if (declParams == null) { EvalChildrenOf(obj, "args", ctx); return fn?.Ret; }
-        // Delegate slots use the same fixed-slot conversion as calls, locals, returns and receivers. In particular,
-        // a bare V entering Nullable<V> is wrapped by RealignArgs; keeping a delegate-only name comparison here would
-        // both duplicate that rule and incorrectly equate different constructed instantiations.
-        RealignArgs(obj, declParams, null, null, null, ctx);
-        return fn?.Ret;
-    }
-
-    // An inline iteration binds a loop VARIABLE, whose type is the node's `elem`. Registering it makes the body's
-    // reads of that variable flow with a type instead of none, which is what lets a value consumer inside the loop be
-    // reconciled at all.
-    //
-    // The `elem` itself is NOT re-derived from the source here. Erasing a loop element and re-narrowing it at its
-    // value consumers is one atomic decision, and the narrowing target is the element's PRE-erasure type, which no
-    // longer exists at this point in the pipeline — so both halves stay together in the declaration-axis pass that
-    // still has it (NullableGenericErasure's forEach handling). Restamping here without the matching narrow is
-    // precisely the `stelem`-over-a-typed-slot miscompile that pairing exists to prevent.
-    static TypeNode EvalForEach(JsonObject obj, Ctx ctx)
-    {
-        if (obj["src"] != null) Eval(obj["src"], ctx);
-        if (Str(obj["var"]) is string v && TypeJson.Read(obj["elem"]) is TypeNode elem) ctx.Env[v] = elem;
-        if (obj["body"] != null) Eval(obj["body"], ctx);
-        foreach (var kv in obj)
-            if (kv.Value != null && kv.Key is not ("src" or "body" or "elem" or "k" or "var" or "label"))
-                Eval(kv.Value, ctx);
-        return null;
-    }
-
-    // `for (x in arr)` over an object-erased array. The node's `elem` is simultaneously the `ldelem` token and the loop
-    // variable's declared slot, so BOTH follow the array that flows: re-stamp it to the flowed element (the same
-    // object-erasure gate every other rewrite here uses) and register the loop var at that type, so a value consumer
-    // inside the body — `x!!`, `x?.f()`, an argument — narrows out of `object` once, where it is used.
-    static TypeNode EvalForArray(JsonObject obj, Ctx ctx)
-    {
-        var arrType = obj["array"] != null ? Eval(obj["array"], ctx) : null;
-        var elem = TypeJson.Read(obj["elem"]);
-        if (arrType is TypeNode.Array arr && elem != null && !elem.Equals(arr.Elem) && IsObjectErasureOf(arr.Elem, elem))
-        {
-            obj["elem"] = TypeJson.Write(arr.Elem);
-            elem = arr.Elem;
-        }
-        if (Str(obj["var"]) is string v && elem != null) ctx.Env[v] = elem;
-        if (obj["body"] != null) Eval(obj["body"], ctx);
-        foreach (var kv in obj)
-            if (kv.Value != null && kv.Key is not ("array" or "body" or "elem" or "k" or "var" or "label"))
-                Eval(kv.Value, ctx);
-        return null;
-    }
-
-    // `nullableHasValue`/`nullableValue` unwrap a structural `Nullable<V>`; the node's own `elem` names the `V`.
-    // Narrow an erased `object` operand to that `Nullable<V>` first. The result is `bool` for the test and the bare
-    // `V` for the read.
-    static TypeNode EvalNullableUnwrap(JsonObject obj, Ctx ctx)
-    {
-        var srcType = obj["e"] != null ? Eval(obj["e"], ctx) : null;
-        var elem = TypeJson.Read(obj["elem"]);
-        if (elem != null && obj["e"] is JsonObject e
-            // A nullableValue node already declares extraction to V. A redundant frontend unwrap can therefore
-            // receive an already-bare V and is itself the no-op; wrapping V back into Nullable<V> here only to extract
-            // it again defeats that contract. The sole meaningful operand repair is the nullable-generic object seam.
-            && CastForTarget(e, srcType, new TypeNode.Nullable(elem)) is JsonNode wrapped)
-            obj["e"] = wrapped;
-        return Str(obj["k"]) == "nullableValue" ? elem : new TypeNode.Fqn("kotlin.Boolean");
-    }
-
-    // A base/this DELEGATION argument list. Unlike a call it carries no signature descriptor — the delegated
-    // constructor is selected by arity — so there is nothing to correct but the values themselves.
-    static void RealignDelegation(JsonArray args, TypeNode[] declParams, TypeNode[] ownerArgs, TypeNode[] argTypes)
-    {
-        if (declParams == null || declParams.Length != args.Count) return;
-        for (var i = 0; i < args.Count; i++)
-            if (declParams[i] != null
-                && Subst(NullableGenericErasure.EraseNullableTv(declParams[i], _isValue), ownerArgs, null) is TypeNode target
-                && args[i] is JsonObject arg && CoerceForTarget(arg, argTypes[i], target) is JsonNode wrapped)
-                args[i] = wrapped;
-    }
-
-    static void EvalSetLocal(JsonObject obj, Ctx ctx)
-    {
-        var valueType = obj["value"] != null ? Eval(obj["value"], ctx) : null;
-        if (Str(obj["name"]) is not string name || ctx.Env.GetValueOrDefault(name) is not TypeNode target) return;
-        if (obj["value"] is JsonObject v && CoerceForTarget(v, valueType, target) is JsonNode wrapped)
-            obj["value"] = wrapped;
-    }
-
-    static void EvalSetField(JsonObject obj, Ctx ctx)
-    {
-        if (obj["recv"] != null) Eval(obj["recv"], ctx);
-        var valueType = obj["value"] != null ? Eval(obj["value"], ctx) : null;
-        if (SlotType(obj, ctx) is not TypeNode target) return;
-        if (obj["value"] is JsonObject v && CoerceForTarget(v, valueType, target) is JsonNode wrapped)
-            obj["value"] = wrapped;
-    }
-
-    // A `field` read produces `Subst(Erase(field decl), owner args)` — the same derivation the store side uses, so a
-    // read of an object-erased field flows as `object` and its consumer re-narrows once.
-    static TypeNode EvalField(JsonObject obj, Ctx ctx)
-    {
-        if (obj["recv"] != null) Eval(obj["recv"], ctx);
-        if (SlotType(obj, ctx) is not TypeNode derived) return TypeJson.Read(obj["type"]);
-        if (TypeJson.Read(obj["type"]) is TypeNode stamped && !stamped.Equals(derived) && IsObjectErasureOf(derived, stamped))
-        {
-            obj["type"] = TypeJson.Write(derived);
-            RestampSty(obj, derived);
-        }
-        else if (TypeJson.Read(obj["sty"]) is TypeNode sty && !sty.Equals(derived) && IsObjectErasureOf(derived, sty))
-            RestampSty(obj, derived);
-        return derived;
-    }
-
-    // The declared type of the field/property a `field`/`setField` node names, substituted with the owner's args.
-    static TypeNode SlotType(JsonObject obj, Ctx ctx)
-        => SelectFieldSlot(TypeJson.Read(obj["ownerType"]), Str(obj["name"]), ctx.Idx);
-
-    static void EvalArraySet(JsonObject obj, Ctx ctx)
-    {
-        var arrType = obj["array"] != null ? Eval(obj["array"], ctx) : null;
-        if (obj["index"] != null) Eval(obj["index"], ctx);
-        var valueType = obj["value"] != null ? Eval(obj["value"], ctx) : null;
-        if (arrType is not TypeNode.Array arr) return;
-        // The `stelem` token is the array's element type, exactly as `arrayGet`'s `ldelem` token is.
-        if (TypeJson.Read(obj["elem"]) is TypeNode cur && !cur.Equals(arr.Elem) && IsObjectErasureOf(arr.Elem, cur))
-            obj["elem"] = TypeJson.Write(arr.Elem);
-        if (obj["value"] is JsonObject v && CoerceForTarget(v, valueType, arr.Elem) is JsonNode wrapped)
-            obj["value"] = wrapped;
-    }
-
-    static void EvalReturn(JsonObject obj, Ctx ctx)
-    {
-        var valueType = obj["value"] != null ? Eval(obj["value"], ctx) : null;
-        if (ctx.Ret is not TypeNode target) return;
-        if (obj["value"] is JsonObject v && CoerceForTarget(v, valueType, target) is JsonNode wrapped)
-            obj["value"] = wrapped;
-    }
-
-    // An `if/else` in value position is a JOIN: both branches must inhabit the declared join slot. A branch that came
-    // through the erasure boundary carries `object` where the slot is a value/type-variable, and the branch that did
-    // not carries the concrete type — the two only meet at the slot.
-    static TypeNode EvalCond(JsonObject obj, Ctx ctx)
-    {
-        if (obj["cond"] != null) Eval(obj["cond"], ctx);
-        var thenType = obj["then"] != null ? Eval(obj["then"], ctx) : null;
-        var elseType = obj["else"] != null ? Eval(obj["else"], ctx) : null;
-        // Recurse whatever else the node carries (a `cond` with extra operand keys must not lose them).
-        foreach (var kv in obj)
-            if (kv.Value != null && kv.Key is not ("cond" or "then" or "else" or "k" or "type" or "sty"))
-                Eval(kv.Value, ctx);
-        var joinType = TypeJson.Read(obj["type"]);
-        if (joinType == null) return thenType ?? elseType;
-        if (obj["then"] is JsonObject t && CoerceForTarget(t, thenType, joinType) is JsonNode wt) obj["then"] = wt;
-        if (obj["else"] is JsonObject e && CoerceForTarget(e, elseType, joinType) is JsonNode we) obj["else"] = we;
-        return joinType;
-    }
-
-    // Reconcile one value with the fixed CLR slot it enters. In addition to the nullable-generic `object` seam
-    // below, a CLR value type V and its structural Nullable<V> are distinct stack types and require explicit
-    // construction/extraction in either direction. The complete Fqn (including generic arguments) must agree, and
-    // the value-type oracle must classify it as a struct; reference nullability remains annotation-only.
-    static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget = false) =>
-        CoerceForTarget(value, src, target, exactPropertyTarget, _isValue, _refs);
-
-    static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-    {
-        if (value is not JsonObject vo) return null;
-        return BuildSlotCoercion(vo, SelectFixedSlotCoercion(
-            Str(vo["k"]), Str(vo["k"]) == "cast" ? TypeJson.Read(vo["type"]) : null,
-            src, target, exactPropertyTarget, isValue, refs));
-    }
-
-    // The graph representation only builds the selected conversion. Both the
-    // owning typed producer and remaining DOM consumers use this same policy.
+    // Template-copy and consumed-owning materializers share one conversion policy.
     static SlotCoercion SelectFixedSlotCoercion(string kind, TypeNode existingCast,
         TypeNode src, TypeNode target, bool exactPropertyTarget, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
@@ -588,7 +97,7 @@ static partial class NullableTvErasureCallRealign
         // Oblivious is an NRT/platform annotation, not a CLR container. BirTypeLowering erases the OUTER wrapper to
         // its inner physical slot, so compare that physical spelling here as well: V! -> Nullable<V> still needs a
         // constructor, and Nullable<V> -> V! still needs extraction. A platform local that must retain the reflected
-        // initializer representation is retyped by EvalVar before it reaches this fixed-slot rule.
+        // initializer representation is retyped by body flow before it reaches this fixed-slot rule.
         src = PhysicalTopLevel(src);
         target = PhysicalTopLevel(target);
         if (src.Equals(target)) return default;
@@ -604,7 +113,7 @@ static partial class NullableTvErasureCallRealign
         // The nullable-generic declaration `Array<T?>` is physically `object[]`. At a concrete REFERENCE
         // instantiation, compiler-produced values retain their reified runtime array (`String[]`, `Slot[]`) and CLR
         // covariance lets that value inhabit the open object[] declaration slot. Reading it into a concrete Kotlin
-        // use requires the inverse checked projection. ApplyDerivedRet handles the call boundary when its semantic
+        // use requires the inverse checked projection. SourceDerivedCall handles the boundary when its semantic
         // result stamp is still present; this fixed-slot twin handles a value first flowed through an object[] local,
         // Ref field, return, or other consumer before the concrete target is encountered.
         if (CanNarrowReferenceArrayProjection(src, target, isValue))
@@ -615,20 +124,6 @@ static partial class NullableTvErasureCallRealign
     enum SlotCoercionKind { None, NullableWrap, NullableValue, Cast }
     readonly record struct SlotCoercion(SlotCoercionKind Kind, TypeNode Type);
 
-    static JsonNode BuildSlotCoercion(JsonObject value, SlotCoercion coercion)
-    {
-        if (coercion.Kind == SlotCoercionKind.None) return null;
-        var cast = coercion.Kind == SlotCoercionKind.Cast;
-        return new JsonObject {
-            ["k"] = coercion.Kind switch {
-                SlotCoercionKind.NullableWrap => "nullableWrap",
-                SlotCoercionKind.NullableValue => "nullableValue",
-                _ => "cast",
-            },
-            [cast ? "type" : "elem"] = TypeJson.Write(coercion.Type),
-            ["e"] = value.DeepClone(),
-        };
-    }
 
     static TypeNode PhysicalTopLevel(TypeNode type) => type is TypeNode.Oblivious o ? o.Of : type;
 
@@ -643,36 +138,6 @@ static partial class NullableTvErasureCallRealign
         return la.Length == ra.Length && la.Zip(ra, (a, b) => SameNominalSlot(a, b, refs)).All(equal => equal);
     }
 
-    // The object-erasure conversion a value needs to inhabit `target`, or null when it needs none / none is
-    // expressible.
-    //
-    // Exactly one side must be a bare `object` — the erased form — and which side it is decides the rule, because
-    // the CLR's own assignment rule is not symmetric:
-    //   * `object` -> X is a NARROWING and always needs the conversion, whatever X is: `unbox.any` for a value or a
-    //     type variable, `castclass` for a reference. This is the position an erased slot is READ at.
-    //   * X -> `object` is a WIDENING and needs one only when X is not already a reference: `box` for a value, a
-    //     structural `Nullable<V>` (whose empty case boxes to a genuine null), or a type variable.
-    // A difference nested inside a constructed generic is NOT castable in either direction — `Ref<object>` and
-    // `Ref<Nullable<int32>>` are unrelated invariant reified generics — and is left to the read-side derivation.
-    static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget = false)
-        => CastForTarget(value, src, target, exactPropertyTarget, _isValue);
-
-    // A late pass that first acquires its physical slot after the main nullable-generic walk may still use the exact
-    // same object-erasure seam. The caller supplies the pipeline's value-type oracle explicitly so this helper carries
-    // no ordering dependency on Apply's per-run state.
-    internal static JsonNode CastForErasedObjectSlot(
-        JsonNode value, TypeNode src, TypeNode target, ValueTypeOracle isValue)
-        => CastForTarget(value, src, target, exactPropertyTarget: false, isValue);
-
-    static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget, ValueTypeOracle isValue)
-    {
-        if (value is not JsonObject vo) return null;
-        return BuildSlotCoercion(vo, SelectObjectSlotCoercion(
-            Str(vo["k"]), Str(vo["k"]) == "cast" ? TypeJson.Read(vo["type"]) : null,
-            src, target, exactPropertyTarget, isValue));
-    }
 
     static SlotCoercion SelectObjectSlotCoercion(string kind, TypeNode existingCast,
         TypeNode src, TypeNode target, bool exactPropertyTarget, ValueTypeOracle isValue)
@@ -703,25 +168,6 @@ static partial class NullableTvErasureCallRealign
     static bool IsSemanticObject(TypeNode t) =>
         t is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object", Args: null };
 
-    // The arguments the type-argument settle takes NO evidence from — each because the MAIN loop still has to retype
-    // it, and would be reconciling a construction against a stale instantiation had this pass evaluated it first.
-    // Two node families match:
-    //   * an ARRAY construction (`newArray`/`newArrayInit`/`newArraySized`) that does not already state the bare
-    //     `object` element. It is built at this call site, so its element is its OWN choice rather than a fact about
-    //     the callee: `f<Int?>(1, null)` packs a `Nullable<int32>[]` that agrees with whatever `!!0[]` is instantiated
-    //     at. Once the element IS the bare `object` that freedom is gone — the array factory canonicalized it
-    //     (#86 D2) and it is a real `Array<X?>` value like any other — so that one form is deliberately not matched.
-    //     (An array node with no `elem` slot at all reads as "not the bare object" and matches, like the rest.)
-    //   * a `new` — the Kotlin OBJECT-construction kind, and only that kind. A `.NET` `newClr`, a `newList`,
-    //     `newClosure`, `newDelegate` and the rest are separate kinds and never match here. A `new` carries no `elem`
-    //     slot, so the element test cannot narrow it and every `new` matches; that is the RIGHT answer rather than
-    //     merely the safe one, because the main loop retypes a `new`'s own instantiation to the slot's BEFORE
-    //     evaluating it, which is the ordering its constructor arguments depend on. Nothing in this pass reads an
-    //     instantiation off a constructed object, so skipping one here loses no evidence.
-    // Both cases are provisional in the way the whole pre-pass is: the general type-argument rule replaces this
-    // predicate outright rather than growing another arm on it.
-    static bool BuildsItsOwnElement(JsonObject arg)
-        => BuildsItsOwnElement(Str(arg["k"]), TypeJson.Read(arg["elem"]));
 
     static bool BuildsItsOwnElement(string kind, TypeNode element)
         => kind is "new" or "newArray" or "newArrayInit" or "newArraySized" && !IsBareObject(element);

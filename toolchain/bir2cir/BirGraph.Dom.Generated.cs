@@ -1681,6 +1681,9 @@ internal static class BirGraphDom
                 case "lexicalOwnerTypeParamCount": break;
                 case "retSuspendFnTypePre": break;
                 case "existentialSourceMember": break;
+                case "unsafeTargetDeclarationId": break;
+                case "unsafeSignatureTargetDeclarationId": break;
+                case "nullableErasureOwnershipKnown": break;
                 case "roundtripMetadataPending": break;
                 case "roundtripDeclarationIdentity": break;
                 case "roundtripMethodBounds": break;
@@ -1771,6 +1774,9 @@ internal static class BirGraphDom
             LexicalOwnerTypeParamCount = Field<int>(fields, "lexicalOwnerTypeParamCount", value => value!.GetValue<int>()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             ExistentialSourceMember = Field<string>(fields, "existentialSourceMember", value => value!.GetValue<string>()),
+            UnsafeTargetDeclarationId = Field<string>(fields, "unsafeTargetDeclarationId", value => value!.GetValue<string>()),
+            UnsafeSignatureTargetDeclarationId = Field<string>(fields, "unsafeSignatureTargetDeclarationId", value => value!.GetValue<string>()),
+            NullableErasureOwnershipKnown = Field<bool>(fields, "nullableErasureOwnershipKnown", value => value!.GetValue<bool>()),
             RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
             RoundtripDeclarationIdentity = Field<BirRoundtripDeclarationIdentity>(fields, "roundtripDeclarationIdentity", value => ReadBirRoundtripDeclarationIdentity(value!)),
             RoundtripMethodBounds = Field<SourceBoundsSnapshot>(fields, "roundtripMethodBounds", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),

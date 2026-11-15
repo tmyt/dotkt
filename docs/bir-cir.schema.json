@@ -554,6 +554,9 @@
     "birFunctionDeclaration": {
       "type": "object", "x-dotkt-model": { "name": "BirFunctionDeclaration", "domain": "birCoreValues", "executionFrame": [], "loweringProperties": { "lexicalOwnerTypeParamCount": { "type": "integer" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "existentialSourceMember": { "type": "string", "x-dotkt-frame-role": "FrozenSourceFact" },
+        "unsafeTargetDeclarationId": { "type": "string" },
+        "unsafeSignatureTargetDeclarationId": { "type": "string" },
+        "nullableErasureOwnershipKnown": { "type": "boolean" },
         "roundtripMetadataPending": { "type": "boolean" },
         "roundtripDeclarationIdentity": { "$ref": "#/$defs/birRoundtripDeclarationIdentity", "x-dotkt-frame-role": "FrozenSourceFact" },
         "roundtripMethodBounds": { "$ref": "#/$defs/sourceMethodBoundsText", "x-dotkt-frame-role": "FrozenSourceFact" },

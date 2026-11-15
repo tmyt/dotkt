@@ -443,7 +443,7 @@ sealed partial class ValueRepresentationLowering
             Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("kotlin.String"),
         };
         source.Methods = source.Methods.Value.Append(forwarder).ToArray();
-        declarations.PublishMethods(new[] { forwarder });
+        declarations.PublishMethods(source, null, new[] { forwarder });
         var root = source.ToDom(declarations.ObserveProjection);
         declarations.ProjectRetiredForests();
         indexed.BindDomDeclarations(new[] { root }, null, declarations);
