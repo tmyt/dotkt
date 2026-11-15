@@ -270,8 +270,8 @@ internal static class BirGraphMutationTests
         Require(births.Count == 5 && ReferenceEquals(births[^1].Source, source)
             && ReferenceEquals(births[^1].Copy, copy)
             && births.All(pair => pair.Source.GetType() == pair.Copy.GetType() && !ReferenceEquals(pair.Source, pair.Copy))
-            && births.Single(pair => ReferenceEquals(pair.Source, parameterLambda)).Copy == copy.Params.Value[0].Default.Value
-            && births.Single(pair => ReferenceEquals(pair.Source, bodyLambda)).Copy == ((BirExpressionStatement)copy.Body.Value[0]).Expr.Value,
+            && ReferenceEquals(births.Single(pair => ReferenceEquals(pair.Source, parameterLambda)).Copy, copy.Params.Value[0].Default.Value)
+            && ReferenceEquals(births.Single(pair => ReferenceEquals(pair.Source, bodyLambda)).Copy, ((BirExpressionStatement)copy.Body.Value[0]).Expr.Value),
             "clone birth reports each actual descendant and completed parent exactly once");
         copy.Params.Value[0].Default = new BirConstant();
         ((BirNewSuspendLambda)((BirExpressionStatement)copy.Body.Value[0]).Expr.Value).Body = new IBirStatement[] { new BirReturn() };
