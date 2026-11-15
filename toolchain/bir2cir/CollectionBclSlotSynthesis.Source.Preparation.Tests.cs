@@ -44,19 +44,20 @@ static partial class CollectionBclSlotSynthesis
             && ReferenceEquals(child.DotktKotlinMutableCollectionContract.Value, childContract) && childContract.FrozenText == frozen
             && ((TypeNode.Fqn)((TypeNode.Fqn)childContract.Types[0]).Args[0]).Args[0] is TypeNode.Tv { I: 0 },
             "Continuation changed an immutable operational source contract");
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal) { [mutable] = ICollection };
+        var localNames = new HashSet<string>(StringComparer.Ordinal) { "Snapshot.CollectionBase", "Snapshot.CollectionChild" };
+        // Continue the actual late owners with their explicit alias facts. No
+        // test-local type projector or duplicate native-slot renderer is used.
+        var physicalContext = new BirTypeLowering.PhysicalTypeContext(false, aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, localNames);
+        BirTypeLowering.Apply(first, physicalContext);
+        BirTypeLowering.Apply(second, physicalContext);
         var projections = 0;
         var projectedChild = first.ToDom((actual, _) => { if (ReferenceEquals(actual, child)) projections++; });
         var projectedBase = second.ToDom();
         Check(projections == 1 && projectedChild["types"][0][ContractKey].GetValue<string>() == frozen,
             "the one owning projection changed contract text");
-        var aliases = new Dictionary<string, string>(StringComparer.Ordinal) { [mutable] = ICollection };
-        var localNames = new HashSet<string>(StringComparer.Ordinal) { "Snapshot.CollectionBase", "Snapshot.CollectionChild" };
-        // Continue the actual late owners with their explicit alias facts. No
-        // test-local type projector or duplicate native-slot renderer is used.
-        var lowered = new[] { BirTypeLowering.Lower(projectedChild, false, aliases, refs.IsValueType,
-                physicalTypeNames: refs.PhysicalTypeNames, localTypeNames: localNames),
-            BirTypeLowering.Lower(projectedBase, false, aliases, refs.IsValueType,
-                physicalTypeNames: refs.PhysicalTypeNames, localTypeNames: localNames) };
+        var lowered = new JsonNode[] { projectedChild, projectedBase };
         ApplyAll(lowered, refs, type => BirTypeLowering.LowerPhysicalType(type, aliases, refs.IsValueType,
             refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames));
         var physicalChild = lowered[0]["types"][0].AsObject();

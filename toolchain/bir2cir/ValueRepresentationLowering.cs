@@ -313,8 +313,10 @@ sealed partial class ValueRepresentationLowering
                 "fields":[{"name":"value","type":{"t":"fqn","name":"Tag"}}]}]}
             """);
         var markers = FixturePolicy(markerRoot, false).InterfaceMarkers;
-        var projectedMarker = BirTypeLowering.Lower(markerRoot, false,
-            new Dictionary<string, string> { ["Tag"] = "System.Object" }, interfaceMarkers: markers);
+        var markerSource = BirGraphDom.ReadBirFileDeclaration(markerRoot);
+        BirTypeLowering.Apply(markerSource, new BirTypeLowering.PhysicalTypeContext(false,
+            new Dictionary<string, string> { ["Tag"] = "System.Object" }, interfaceMarkers: markers));
+        var projectedMarker = markerSource.ToDom();
         if (TypeJson.OwnerName(projectedMarker["types"][1]["interfaces"][0]) != "Slots.Tag"
             || projectedMarker["types"][1]["interfaces"].AsArray().Count != 1
             || TypeJson.OwnerName(projectedMarker["types"][1]["fields"][0]["type"]) != "System.Object"

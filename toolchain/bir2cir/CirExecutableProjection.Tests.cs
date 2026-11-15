@@ -146,8 +146,15 @@ static partial class CirDeclarationProjection
             if (stashed)
                 expression[expression.ContainsKey("type") ? NullableGenericErasure.SuspendFnPre
                     : NullableGenericErasure.RetSuspendFnPre] = suspendType.ToJsonString();
-            var lowered = BirTypeLowering.Lower(expression, refBuild: false,
-                aliases: new Dictionary<string, string> { ["kotlin.Nothing"] = "object" });
+            var owning = BirGraphDom.ReadNode(expression);
+            var statement = owning is IBirStatement actualStatement ? actualStatement
+                : (IBirStatement)new BirExpressionStatement { Expr = (IBirExpression)owning };
+            var source = new BirFileDeclaration { Methods = new[] {
+                new BirFunctionDeclaration { Name = "probe", Body = new[] { statement } },
+            } };
+            BirTypeLowering.Apply(source, new BirTypeLowering.PhysicalTypeContext(false,
+                new Dictionary<string, string> { ["kotlin.Nothing"] = "object" }));
+            var lowered = owning.ToDom();
             var node = ReadCirNode(lowered);
             if (node.Tag != expression["k"]!.GetValue<string>()
                 || lowered.AsObject().ContainsKey("suspendFnType")

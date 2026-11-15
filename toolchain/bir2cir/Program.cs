@@ -45,6 +45,11 @@ static class Bir2Cir
                 InheritedDefaultFakeOverrideElision.SelfTestSource();
                 DeclarationIdentityBinding.SelfTest();
                 CurrentDeclarationBindingsTests.SelfTest();
+                BirTypeLowering.PhysicalContextSelfTest();
+                BirTypeLowering.SourceSelfTest();
+                SourceStampSanity.SourceSelfTest();
+                KotlinHashStorageLowering.CompleteSourceSelfTest();
+                KotlinPropertyAccessors.AllocationSourceSelfTest();
                 ValueRepresentationLowering.PlacementSourceSelfTest();
                 FBoundStarProjectionErasure.CurrentDeclarationPreparationSelfTest();
                 FBoundStarProjectionErasure.FieldAccessorsSourceSelfTest();
@@ -942,6 +947,7 @@ sealed class Pipeline
         ClrMemberResolution.ResolveLocalDelegateTargetsSource(captured, refs,
             localCarriers: localExistentialOwners);
         var starProjectionBounds = StarProjectionBoundLowering.CollectTypeParamBounds(captured);
+        var declarationCollisionProjection = new List<JsonNode>();
         var physicalPreparation = new PhysicalAbiPreparation(
             AnySlotRebind.CollectLocalTypes(captured).Keys.ToHashSet(StringComparer.Ordinal),
             (appBuild ? captured.SelectMany(file => file.Types.OrEmpty())
@@ -952,7 +958,7 @@ sealed class Pipeline
                 .ToHashSet(StringComparer.Ordinal),
             ExternalGenericConstraintValidation.Prepare(captured, refs, isValueFqn, enums.Basic),
             MemberCallSubstitution.CollectLocalPropertyAccessors(captured),
-            new SourceModuleIndex(captured, refs.Aliases));
+            new SourceModuleIndex(captured, refs.Aliases), declarationCollisionProjection);
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(captured,
             carrierRealization.Declarations.PhysicalDeclarationSources);
         if (!referenceBuild) CollectionBclSlotSynthesis.RecordContracts(captured, refs);
@@ -998,13 +1004,46 @@ sealed class Pipeline
             if (appBuild) CollectionIdentityRecord.RecordMemberSlots(source);
         }
 
+        // Finish every file's semantic signatures before physically rewriting
+        // any declaration: the shared selectors retain module-wide records.
+        for (var sourcePosition = 0; sourcePosition < captured.Length; sourcePosition++)
+        {
+            var source = captured[sourcePosition];
+            var outputName = OutputNameFor(inputsWithSources[sourcePosition].Path);
+            try { SourceStampSanity.Check(source); }
+            catch (IrSanityException ex)
+            { throw new InvalidOperationException($"{outputName}: {ex.Decl}: sanity: {ex.Message}"); }
+            KotlinHashStorageLowering.Complete(source);
+            KotlinPropertyAccessors.AllocateAll(source, refs, physicalPreparation.PropertyAccessors,
+                (owner, removed) => {
+                    currentDeclarations.RetireSourceProperties(owner, removed);
+                    foreach (var property in removed) suspendTransitions.RetireDiscardedSubtree(property);
+                });
+
+            // This private terminal projection is a runtime collision witness,
+            // never another admitted source occurrence. Clone before either
+            // physical rewrite; only the actual graph enters the strict observer.
+            var collisionSource = (BirFileDeclaration)source.DeepClone();
+            BirTypeLowering.Apply(collisionSource, new BirTypeLowering.PhysicalTypeContext(false,
+                physicalPreparation.Declarations.CollisionAliases, isValueFqn, refs.PhysicalTypeNames,
+                physicalPreparation.EmittedLocalTypes, refs.NullableTypeFrames,
+                valueRepresentations.InterfaceMarkers, outputName));
+            FunctionSignatureIdentity.Complete(collisionSource);
+            var collisionRoot = collisionSource.ToDom();
+            FBoundStarProjectionErasure.RemoveTransientFacts(new[] { collisionRoot });
+            declarationCollisionProjection.Add(collisionRoot);
+            BirTypeLowering.Apply(source, new BirTypeLowering.PhysicalTypeContext(referenceBuild,
+                refs.Aliases, isValueFqn, refs.PhysicalTypeNames, physicalPreparation.EmittedLocalTypes,
+                refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers, outputName));
+        }
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
             captured[index] = null;
             // The remaining middle owners still use DOM. This is the single
             // continuing projection, after slots, placement, exact generic uses,
-            // storage, lexical access, exact signatures and constraints. Retired facts
+            // storage, lexical access, signatures, constraints and physical types. Retired facts
             // use the same observer.
             var root = source.ToDom(suspendTransitions.Projection.ObserveProjection);
             files.Add(new BirFile(
@@ -1099,7 +1138,6 @@ sealed class Pipeline
         var emittedLocalTypes = physicalPreparation.EmittedLocalTypes;
         var externalCanonicalTypes = physicalPreparation.ExternalCanonicalTypes;
         var externalGenericConstraintValidation = physicalPreparation.GenericConstraints;
-        var localPropertyAccessors = physicalPreparation.PropertyAccessors;
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         var pendingOutput = new List<(BirFileDeclaration Root, string OutputName)>();
@@ -1109,33 +1147,13 @@ sealed class Pipeline
         var loweredRoots = new List<(JsonNode Root, string File)>();
         // Reference assemblies retain Kotlin type vocabulary, but their MethodDef names must match the runtime twin.
         // Derive the collision set from an isolated runtime-physical projection in every build mode.
-        var declarationCollisionProjection = new List<JsonNode>();
+        var declarationCollisionProjection = physicalPreparation.CollisionProjection;
         var finalLocalDeclarationIds = physicalPreparation.Declarations.DeclarationIds;
-        var declarationCollisionAliases = physicalPreparation.Declarations.CollisionAliases;
         foreach (var (substituted, outputName) in staged)
         {
-            // Exact call signatures, source metadata, reference nullability,
-            // generic constraints and member collection identity are finished
-            // on owning BIR. Physical property/type allocation continues here.
-            // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
-            // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
-            // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the
-            // hardcoded primitives) wherever it appears as a type token. The struct-ness oracle drives the reference
-            // `{t:nullable}` strip (a value `T?` stays `Nullable<T>`; a reference `T?` -> bare + the NRT byte above).
-            // #305 §2.7 CHOKEPOINT — every pass that can retype a node has now run, and BirTypeLowering below STRIPS
-            // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
-            // is a pass that changed a node's result type without carrying `sty` with it.
-            CheckStySanity(outputName, substituted);
-            KotlinHashStorageLowering.Complete(substituted);
-            KotlinPropertyAccessors.AllocateAll(substituted, refs, localPropertyAccessors);
-            var collisionProjection = substituted.DeepClone();
-            var physicalProjection = BirTypeLowering.Lower(
-                collisionProjection, refBuild: false, declarationCollisionAliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers);
-            FunctionSignatureIdentity.Complete(physicalProjection);
-            declarationCollisionProjection.Add(physicalProjection);
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
-                refs.PhysicalTypeNames, emittedLocalTypes, refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers);
+            // Stamp validation, comparer/property allocation and physical types
+            // finished on owning BIR. Collision allocation remains module-wide.
+            var lowered = substituted;
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
@@ -1465,13 +1483,15 @@ sealed class Pipeline
         var emitted = pendingOutput.SelectMany(file => file.Root.Types.OrEmpty()).Select(TypedCirProjection.TypeName)
             .Concat(physicalDefinitions.SelectMany(file => file.Model.Types).Select(type => type.Name))
             .Where(name => name != null).ToHashSet(StringComparer.Ordinal);
-        var projection = new TypedCirProjection(emitted);
-        var declarations = ClrTypeVariance.ApplyAll(pendingOutput.Select(file =>
-            projection.ProjectCirFileDeclaration(file.Root)).ToArray(), refs);
+        var projectionContexts = pendingOutput.Select(file => new BirTypeLowering.PhysicalTypeContext(
+            _options.RefBuild, refs.Aliases, isValueFqn, refs.PhysicalTypeNames, emittedLocalTypes,
+            refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers, file.OutputName)).ToArray();
+        var declarations = ClrTypeVariance.ApplyAll(pendingOutput.Select((file, index) =>
+            new TypedCirProjection(emitted, projectionContexts[index]).ProjectCirFileDeclaration(file.Root)).ToArray(), refs);
         for (var index = 0; index < pendingOutput.Count; index++)
         {
             var declaration = declarations[index];
-            if (_options.RefBuild) declaration = RefBodySquash.LowerLiteralPlaceholders(declaration);
+            if (_options.RefBuild) declaration = RefBodySquash.LowerLiteralPlaceholders(declaration, projectionContexts[index]);
             files.Add(new CirFile(pendingOutput[index].OutputName, declaration));
         }
         return files;
@@ -1483,22 +1503,6 @@ sealed class Pipeline
     {
         return root.Types.OrEmpty().Length == 0 && root.Methods.OrEmpty().Length == 0
             && root.Fields.OrEmpty().Length == 0 && root.AssemblyAttrs.OrEmpty().Length == 0;
-    }
-
-    // #305: the spec §2.7 `sty` chokepoint, run on the FULLY-PASSED BIR of one file. `sty` is bir2cir-internal and
-    // BirTypeLowering strips it, so the CIR gate below can never see one — the stamp has to be checked here, while it
-    // still exists, or the invariant has no mechanical witness at all. Same bir-common checker, restricted to the one
-    // check that is meaningful pre-lowering; the JsonDocument round-trip is what gives
-    // the shared JsonElement-based checker a view of the JsonNode tree the passes work on.
-    static void CheckStySanity(string outputName, JsonNode root)
-    {
-        // BOTH ends of the round trip carry the #147 depth bound: `BirJson.Writer` to write and `BirJson.DocOptions`
-        // to read back. System.Text.Json defaults MaxDepth to 64 on each independently, and one Kotlin function with
-        // deeply-nested inlined lambdas nests a method body past that — so a plain `ToJsonString()` here would crash
-        // the sanity CHECKPOINT on exactly the input a checkpoint exists to survive.
-        using var doc = JsonDocument.Parse(root.ToJsonString(BirJson.Writer), BirJson.DocOptions);
-        try { IrSanity.CheckSourceStamps(new[] { doc.RootElement }); }
-        catch (IrSanityException ex) { throw new InvalidOperationException($"{outputName}: {ex.Decl}: sanity: {ex.Message}"); }
     }
 
     // Validate the actual typed output graph, before its one boundary serialization.
@@ -1621,7 +1625,7 @@ sealed record PhysicalAbiPreparation(HashSet<string> EmittedLocalTypes,
     ExternalGenericConstraintValidation.Prepared GenericConstraints,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
         IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> PropertyAccessors,
-    SourceModuleIndex Declarations);
+    SourceModuleIndex Declarations, IReadOnlyList<JsonNode> CollisionProjection);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 

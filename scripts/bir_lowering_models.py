@@ -892,13 +892,5 @@ def outputs(root, definitions):
         prop = member(field)
         model += [f"        {prop} = source.{prop},"]
     model += ["    };", "}", ""]
-    model += ["// Exact shared domain of the physical projection, generated from the maintained profile.",
-              "internal static class BirPhysicalTypeProfile", "{"]
-    for prop, fields in [("ValueFields", physical_profile["valueFields"]), ("ReturnFields", physical_profile["returnFields"]),
-                         ("ConsumedFields", physical_profile["consumedFields"])]:
-        model += [f"    internal static IReadOnlySet<string> {prop} {{ get; }} = new HashSet<string>(StringComparer.Ordinal)", "    {"]
-        model += [f"        {json.dumps(field)}," for field in fields]
-        model += ["    };"]
-    model += ["}", ""]
     return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
             root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}

@@ -25,7 +25,7 @@ sealed class CurrentDeclarationBindings
     readonly Dictionary<JsonObject, DeclarationBinding> physical = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirGraphValue, JsonObject> projected = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<BirFunctionDeclaration, IBirTypeDeclaration> retiredMethods = new(ReferenceEqualityComparer.Instance);
-    readonly List<(IBirTypeDeclaration Owner, BirPropertyDeclaration Property)> retiredProperties = new();
+    readonly List<(BirGraphValue Owner, BirPropertyDeclaration Property)> retiredProperties = new();
     readonly HashSet<BirGraphValue> retiredForests = new(ReferenceEqualityComparer.Instance);
     readonly BirFileDeclaration[] sourceFiles;
     bool bound;
@@ -104,8 +104,29 @@ sealed class CurrentDeclarationBindings
                 || owner.Properties.OrEmpty().Count(actual => ReferenceEquals(actual, property)) != 1))
             throw new InvalidOperationException("Retirement does not name unique captured and currently owned declarations");
         foreach (var method in methods) retiredMethods.Add(method, owner);
+        foreach (var property in properties) retiredProperties.Add(((BirGraphValue)owner, property));
+    }
+
+    // Late property allocation may retire an unrepresentable PropertyDef on a
+    // file facade as well as on an ordinary type. The producer reports the
+    // actual owner and still-attached rows; names are not an ownership witness.
+    internal void RetireSourceProperties(BirGraphValue owner, IReadOnlyList<BirPropertyDeclaration> properties)
+    {
+        if (bound) throw new InvalidOperationException("Source declaration retired after its owning frontier");
+        var current = CurrentProperties(owner);
+        if (properties.Distinct(ReferenceEqualityComparer.Instance).Count() != properties.Count
+            || properties.Any(property => retiredProperties.Any(row => ReferenceEquals(row.Property, property))
+                || current.Count(actual => ReferenceEquals(actual, property)) != 1))
+            throw new InvalidOperationException("Retirement does not name unique currently owned properties");
         foreach (var property in properties) retiredProperties.Add((owner, property));
     }
+
+    static BirPropertyDeclaration[] CurrentProperties(BirGraphValue owner) => owner switch
+    {
+        BirFileDeclaration file => file.Properties.OrEmpty(),
+        IBirTypeDeclaration type => type.Properties.OrEmpty(),
+        _ => throw new InvalidOperationException("Property retirement requires its actual file or type owner"),
+    };
 
     internal bool IsRetiredSource(BirFunctionDeclaration method)
     {
@@ -159,8 +180,8 @@ sealed class CurrentDeclarationBindings
         if (retired.Any(live.Contains)
             || retiredMethods.Any(row => !retired.Contains((BirGraphValue)row.Value)
                 && row.Value.Methods.OrEmpty().Any(method => ReferenceEquals(method, row.Key)))
-            || retiredProperties.Any(row => !retired.Contains((BirGraphValue)row.Owner)
-                && row.Owner.Properties.OrEmpty().Any(property => ReferenceEquals(property, row.Property))))
+            || retiredProperties.Any(row => !retired.Contains(row.Owner)
+                && CurrentProperties(row.Owner).Any(property => ReferenceEquals(property, row.Property))))
             throw new InvalidOperationException("A retired declaration is still owned by its producer");
         var targets = new HashSet<JsonObject>(ReferenceEqualityComparer.Instance);
         foreach (var declaration in source.Keys)
