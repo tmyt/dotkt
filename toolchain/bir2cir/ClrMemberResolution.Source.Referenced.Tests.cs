@@ -13,12 +13,13 @@ static partial class ClrMemberResolution
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         var text = new TypeNode.Fqn("System.String"); var obj = new TypeNode.Fqn("System.Object");
         var integer = new TypeNode.Fqn("System.Int32"); var unit = new TypeNode.Fqn("void");
-        // The selected comparison signature uses RMI's primitive vocabulary;
-        // its exact MemberRef separately keeps the defining CLR type names.
+        // Incoming descriptors can use primitive tokens. The selected metadata
+        // declaration read through MetadataLoadContext retains its CLR names.
         var declarationText = new TypeNode.Fqn("string"); var declarationObject = new TypeNode.Fqn("object");
         var declarationInteger = new TypeNode.Fqn("int");
         var listType = new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { text });
         var interfaceType = new TypeNode.Fqn("System.Collections.Generic.IList`1", new TypeNode[] { text });
+        var tokenType = new TypeNode.Fqn("System.Threading.CancellationToken");
         var locals = new HashSet<string>(StringComparer.Ordinal) { "Consumer", "System.String" };
         var canonical = new HashSet<string>(StringComparer.Ordinal) { "System.String" };
         var ids = new HashSet<string>(StringComparer.Ordinal) { "local-method" };
@@ -26,7 +27,8 @@ static partial class ClrMemberResolution
             new BirFunctionDeclaration { Name = "use", Ret = unit,
                 TypeParams = new[] { new BirTypeParameter { Name = "Receiver", Constraints = new TypeNode[] { interfaceType } } },
                 Params = new[] { new BirParameter { Name = "list", Type = listType },
-                    new BirParameter { Name = "text", Type = text }, new BirParameter { Name = "subject", Type = new TypeNode.Tv("method", 0) } },
+                    new BirParameter { Name = "text", Type = text }, new BirParameter { Name = "subject", Type = new TypeNode.Tv("method", 0) },
+                    new BirParameter { Name = "token", Type = tokenType } },
                 Body = expressions.Select(expression => (IBirStatement)new BirExpressionStatement {
                     Expr = OptionalField<IBirExpression>.Of(expression) }).ToArray() },
             new BirFunctionDeclaration { Name = "local", DeclarationId = "local-method", Static = true,
@@ -63,7 +65,8 @@ static partial class ClrMemberResolution
                 FuncType = new TypeNode.Fn(false, new TypeNode.Fqn("System.Boolean"), new TypeNode[] { text }) };
             var argument = new BirNewDelegate { CalleeOwner = new TypeNode.Fqn("Consumer"), Method = "local",
                 DeclarationId = "local-method", Sig = Array.Empty<TypeNode>(), FuncType = new TypeNode.Fn(false, unit, Array.Empty<TypeNode>()) };
-            var task = new BirCallStatic { Owner = new TypeNode.Fqn("System.Threading.Tasks.Task"), Method = "Run",
+            var registration = new BirCallInstance { OwnerType = tokenType, Method = "Register",
+                Recv = OptionalField<IBirExpression>.Of(new BirLocal { Name = "token", Sty = tokenType }),
                 Sig = new TypeNode[] { new TypeNode.Fn(false, unit, Array.Empty<TypeNode>(), Clr: "System.Action") },
                 Args = new IBirExpression[] { argument } };
             var stale = new BirCallStatic { Owner = new TypeNode.Fqn("Consumer"), Method = "local", DeclarationId = "referenced-wrapper",
@@ -79,16 +82,20 @@ static partial class ClrMemberResolution
                 Recv = OptionalField<IBirExpression>.Of(new BirLocal { Name = "subject", Sty = new TypeNode.Tv("method", 0) }),
                 Method = "get_Item", Sig = new TypeNode[] { integer }, Args = new IBirExpression[] {
                     new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) } } };
-            var root = File(call, item, generic, direct, bound, task, stale, selectedLocal, exact, unselected);
+            var root = File(call, item, generic, direct, bound, registration, stale, selectedLocal, exact, unselected);
             var methods = root.Methods.Value; var body = methods[0].Body.Value; var callArguments = call.Args.Value;
             var saved = new byte[] { 1, 2, 4 }; methods[0].InlineBir = saved;
             ResolveReferencedStaticCalls(root, refs, locals, canonical, ids, "Consumer.kt");
-            Require(call.MemberRef.Value.Name.Value == "Concat"
-                && call.MemberRef.Value.ParameterTypes.Value.SequenceEqual(new TypeNode[] { text, text })
-                && call.Sig.Value.SequenceEqual(new TypeNode[] { declarationText, declarationText }) && !call.ArgTypes.IsPresent
-                && !call.DotktKotlinSigId.IsPresent && !KotlinSigSnapshots.ContainsKey(snapshotIds[0])
-                && sibling.DotktKotlinSigId.Value == siblingId && KotlinSigSnapshots.ContainsKey(siblingId),
-                "source signature priority, canonical runtime owner or per-file snapshot consumption changed");
+            Require(call.MemberRef.Value.Name.Value == "Concat", "canonical runtime owner did not bind Concat");
+            Require(call.MemberRef.Value.ParameterTypes.Value.SequenceEqual(new TypeNode[] { text, text }),
+                "source snapshot selected unexpected MemberRef parameters: " + string.Join(", ", call.MemberRef.Value.ParameterTypes.Value.AsEnumerable()));
+            Require(call.Sig.Value.SequenceEqual(new TypeNode[] { text, text }),
+                "selected comparison signature changed: " + string.Join(", ", call.Sig.Value.AsEnumerable()));
+            Require(!call.ArgTypes.IsPresent, "selected call retained its old argument descriptor");
+            Require(!call.DotktKotlinSigId.IsPresent && !KotlinSigSnapshots.ContainsKey(snapshotIds[0]),
+                "current file retained its source snapshot");
+            Require(sibling.DotktKotlinSigId.Value == siblingId && KotlinSigSnapshots.ContainsKey(siblingId),
+                "current file consumed a sibling's snapshot");
             Require(item.MemberRef.Value.DeclaringType.Value == receiver.Sty.Value
                 && item.MemberRef.Value.ReturnType.Value == new TypeNode.Tv("type", 0)
                 && item.Ret.Value == text && item.Sty.Value == text && !item.Super.IsPresent && !item.Virtual.Value
@@ -102,11 +109,15 @@ static partial class ClrMemberResolution
                 && generic.TypeArgs.Value.Single() == text,
                 "selected physical generic flags/frame were replaced by source parameter facts");
             Require(direct.MemberRef.Value.Name.Value == "Concat" && direct.DotktDeclarationIdentityBound.HasValue
-                && !direct.DotktDeclarationIdentityBound.Value && !direct._resolvedMethodTypeParams.IsPresent
-                && bound.MemberRef.Value.Name.Value == "StartsWith" && !bound.ArgTypes.IsPresent
-                && ReferenceEquals(bound.Recv.Value, boundReceiver) && argument.DeclarationId.Value == "local-method"
-                && ReferenceEquals(task.Args.Value[0], argument) && argument.DotktDelegateSlot.Value == new TypeNode.Fqn("System.Action"),
-                "delegate declaration/slot binding, optional false presence or operand ownership changed");
+                && !direct.DotktDeclarationIdentityBound.Value && !direct._resolvedMethodTypeParams.IsPresent,
+                "static delegate declaration or optional false presence changed");
+            Require(bound.MemberRef.Value.Name.Value == "StartsWith" && !bound.ArgTypes.IsPresent
+                && ReferenceEquals(bound.Recv.Value, boundReceiver), "bound delegate declaration or receiver ownership changed");
+            Require(argument.DeclarationId.Value == "local-method" && ReferenceEquals(registration.Args.Value[0], argument),
+                "local delegate identity or argument ownership changed");
+            Require(registration.MemberRef.HasValue && argument.DotktDelegateSlot.HasValue
+                && argument.DotktDelegateSlot.Value == new TypeNode.Fqn("System.Action"),
+                "selected delegate slot changed: " + argument.DotktDelegateSlot.OrDefault());
             Require(!stale.DeclarationId.IsPresent && !stale.MemberRef.IsPresent
                 && selectedLocal.DeclarationId.Value == "local-method" && !selectedLocal.MemberRef.IsPresent
                 && ReferenceEquals(exact.MemberRef.Value, exactMember) && ReferenceEquals(exact.Sig.Value, exactSignature)

@@ -95,8 +95,8 @@ static partial class ClrMemberResolution
         var signature = plan.Signature.Select(BirGraphValue.CopyType).ToArray();
         var reference = BirMemberReference.FromPhysical(plan.Reference);
         var declared = ResolvedMethodTypeParameters(plan.Declaration, node.ApplicationTypeArguments.OrEmpty().Length);
-        OptionalField<BirTypeParameter[]> parameters = declared == null ? default
-            : declared.Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+        var parameters = declared == null ? default(OptionalField<BirTypeParameter[]>)
+            : OptionalField<BirTypeParameter[]>.Of(declared.Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray());
         switch (node)
         {
             case BirCallStatic call:
