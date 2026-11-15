@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // Validate the CLR-only half of referenced generic type and method declarations.
 //

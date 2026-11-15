@@ -365,7 +365,7 @@ static partial class KotlinOverrideSlotBridge
                     slotParams0 = propertyDeclaration.PhysicalParameters;
                     selectedPhysicalMember = propertyDeclaration.PhysicalMember;
                     signatureParameters = propertyDeclaration.SignatureParameters;
-                    selectedSlotTypeParams = propertyDeclaration.TypeParams is { Count: > 0 }
+                    selectedSlotTypeParams = propertyDeclaration.TypeParams is { Length: > 0 }
                         ? propertyDeclaration.TypeParams : null;
                     refused = null;
                 }
