@@ -1,13 +1,19 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class TypeOwnershipLowering
 {
+    internal sealed record SourceMethodMove(BirFunctionDeclaration Method, int SourceOrdinal,
+        IBirTypeDeclaration Destination, int DestinationOrdinal);
+
     // Run at the final ownership boundary, after every coroutine and bridge has
     // appended declarations. Earlier source-frame consumers still need the
     // unsplit physical parameter vector and semantic owner facts.
-    internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)
+    internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
+        Action<BirFileDeclaration, IReadOnlyList<SourceMethodMove>> onMoves)
     {
+        ArgumentNullException.ThrowIfNull(onMoves);
         var declaredTypes = new HashSet<string>(StringComparer.Ordinal);
         var fileClasses = new HashSet<string>(StringComparer.Ordinal);
         var declarations = new List<IBirTypeDeclaration>();
@@ -30,6 +36,7 @@ static partial class TypeOwnershipLowering
         {
             if (!root.Methods.HasValue) continue;
             List<BirFunctionDeclaration> remaining = null;
+            List<SourceMethodMove> moves = null;
             var methods = root.Methods.Value;
             for (var index = methods.Length - 1; index >= 0; index--)
             {
@@ -40,9 +47,18 @@ static partial class TypeOwnershipLowering
                 if (!typesByName.TryGetValue(owner, out var ownerType))
                     throw MissingMethodOwner(method.Name.OrDefault(), owner);
                 (remaining ??= methods.ToList()).RemoveAt(index);
-                ownerType.Methods = ownerType.Methods.OrEmpty().Append(method).ToArray();
+                var ownerMethods = ownerType.Methods.OrEmpty();
+                ownerType.Methods = ownerMethods.Append(method).ToArray();
+                (moves ??= new()).Add(new(method, index, ownerType, ownerMethods.Length));
             }
-            if (remaining != null) root.Methods = remaining.ToArray();
+            if (remaining != null)
+            {
+                root.Methods = remaining.ToArray();
+                // These are continuing occurrences, not newly generated declarations.
+                // Report the complete actual mutation order after detachment and before
+                // the captured-prefix layout or lexical-frame facts are consumed below.
+                onMoves(root, moves.ToArray());
+            }
         }
 
         foreach (var type in declarations)

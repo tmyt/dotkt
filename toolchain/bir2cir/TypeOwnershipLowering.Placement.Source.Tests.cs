@@ -1,5 +1,6 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class TypeOwnershipLowering
 {
@@ -47,7 +48,7 @@ static partial class TypeOwnershipLowering
             Types = new IBirTypeDeclaration[] { inner, previousNestedOwner, alreadyPlaced, noOwn, zero, nullCount } };
         var firstTypes = first.Types.Value;
         var secondTypes = second.Types.Value;
-        ApplyAll(new[] { first, second });
+        ApplyAll(new[] { first, second }, (_, _) => { });
         Require(ReferenceEquals(first.Types.Value, firstTypes) && ReferenceEquals(second.Types.Value, secondTypes), "type occurrence vectors changed");
         Require(first.Methods.Value is [var remainingFile, var remainingPlain]
             && ReferenceEquals(remainingFile, fileMethod) && ReferenceEquals(remainingPlain, plain)
@@ -76,6 +77,73 @@ static partial class TypeOwnershipLowering
             && nullCount.OuterTypeParamCount.IsNull && nullCount.OuterTypeParamOffset.Value == 0
             && nullCount.SemanticOwner.IsNull && nullCount.TypeParams.IsNull && second.Methods.IsNull,
             "captured-only, zero, absent or null field presence changed");
-        Console.WriteLine("[late type placement] self-test OK (live occurrences, order, captured descriptors, presence)");
+        SelfTestPlacementMoves();
+        Console.WriteLine("[late type placement] self-test OK (live occurrences, ordered move batches, captured descriptors, presence)");
+    }
+
+    static void SelfTestPlacementMoves()
+    {
+        static void Require(bool condition, string message)
+        { if (!condition) throw new InvalidOperationException("Late placement move notification: " + message); }
+        static BirFunctionDeclaration Method(string name, string owner = null) => new() {
+            Name = name, SemanticOwner = owner == null ? default : OptionalField<string>.Of(owner),
+            Params = Array.Empty<BirParameter>(), Body = Array.Empty<IBirStatement>(),
+        };
+        var first = Method("first", "Destination");
+        var second = Method("second", "Destination");
+        var third = Method("third", "OtherDestination");
+        var tail = Method("tail", "Destination");
+        var staying = Method("staying", "SourceFile");
+        var plain = Method("plain"); plain.SemanticOwner = OptionalField<string>.Null;
+        var prefix = Method("prefix");
+        var shadowMethods = new[] { Method("shadow-prefix") };
+        var shadow = new BirClassDefinition { Name = "Destination", Methods = shadowMethods };
+        var outer = new BirClassDefinition { Name = "Outer", TypeParams = new[] { new BirTypeParameter { Name = "T" } } };
+        var frame = new[] { new BirTypeParameter { Name = "T" }, new BirTypeParameter { Name = "U" } };
+        var destination = new BirClassDefinition { Name = "Destination", NestedIn = "Outer",
+            OuterTypeParamCount = 1, TypeParams = frame, Methods = new[] { prefix } };
+        var other = new BirClassDefinition { Name = "OtherDestination", Methods = OptionalField<BirFunctionDeclaration[]>.Null };
+        var source = new BirFileDeclaration { FileClass = "SourceFile",
+            Methods = new[] { first, staying, second, plain, third }, Types = new IBirTypeDeclaration[] { shadow } };
+        var host = new BirFileDeclaration { FileClass = "Host", Methods = OptionalField<BirFunctionDeclaration[]>.Null,
+            Types = new IBirTypeDeclaration[] { outer, destination, other } };
+        var later = new BirFileDeclaration { FileClass = "Later", Methods = new[] { tail } };
+        var emptyMethods = Array.Empty<BirFunctionDeclaration>();
+        var empty = new BirFileDeclaration { FileClass = "Empty", Methods = emptyMethods };
+        var firstParameters = first.Params.Value;
+        var notifications = 0;
+        ApplyAll(new[] { source, host, later, empty }, (actualSource, moves) => {
+            Require(ReferenceEquals(destination.TypeParams.Value, frame) && destination.OuterTypeParamCount.Value == 1
+                && !destination.CapturedTypeParams.IsPresent,
+                "move notification ran after the semantic/captured parameter layout split");
+            Require(moves.All(move => !move.Method.SemanticOwner.IsPresent
+                && ReferenceEquals(move.Destination.Methods.Value[move.DestinationOrdinal], move.Method)
+                && !actualSource.Methods.Value.Any(method => ReferenceEquals(method, move.Method))),
+                "reported occurrence was cloned, not yet appended, or still attached to its source vector");
+            if (notifications == 0)
+                Require(ReferenceEquals(actualSource, source) && moves.Count == 3
+                    && ReferenceEquals(moves[0].Method, third) && moves[0].SourceOrdinal == 4
+                    && ReferenceEquals(moves[0].Destination, other) && moves[0].DestinationOrdinal == 0
+                    && ReferenceEquals(moves[1].Method, second) && moves[1].SourceOrdinal == 2
+                    && ReferenceEquals(moves[1].Destination, destination) && moves[1].DestinationOrdinal == 1
+                    && ReferenceEquals(moves[2].Method, first) && moves[2].SourceOrdinal == 0
+                    && ReferenceEquals(moves[2].Destination, destination) && moves[2].DestinationOrdinal == 2
+                    && actualSource.Methods.Value.SequenceEqual(new[] { staying, plain }),
+                    "batch lost original source ordinals, reverse mutation order, destination prefix or remaining order");
+            else
+                Require(notifications == 1 && ReferenceEquals(actualSource, later) && moves.Count == 1
+                    && ReferenceEquals(moves[0].Method, tail) && moves[0].SourceOrdinal == 0
+                    && ReferenceEquals(moves[0].Destination, destination) && moves[0].DestinationOrdinal == 3
+                    && actualSource.Methods.Value.Length == 0,
+                    "later-file batch lost the current append ordinal or was emitted for a no-move file");
+            notifications++;
+        });
+        Require(notifications == 2 && ReferenceEquals(shadow.Methods.Value, shadowMethods)
+            && ReferenceEquals(destination.Methods.Value[0], prefix)
+            && destination.Methods.Value.SequenceEqual(new[] { prefix, second, first, tail })
+            && other.Methods.Value.Single() == third && ReferenceEquals(first.Params.Value, firstParameters)
+            && !staying.SemanticOwner.IsPresent && plain.SemanticOwner.IsNull && host.Methods.IsNull
+            && ReferenceEquals(empty.Methods.Value, emptyMethods),
+            "last-wins cross-file selection, actual continuing identity, or null/empty/no-move presence changed");
     }
 }

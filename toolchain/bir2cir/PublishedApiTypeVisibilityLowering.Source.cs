@@ -1,5 +1,6 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 static partial class PublishedApiTypeVisibilityLowering
 {
@@ -10,9 +11,7 @@ static partial class PublishedApiTypeVisibilityLowering
         foreach (var root in roots)
             foreach (var type in root.Types.OrEmpty())
             {
-                var current = type.Vis.OrDefault();
-                var visibility = ResolveVisibility(current, current == "internal" && type.Attrs.OrEmpty()
-                    .Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: Marker }));
+                var visibility = ResolveVisibility(type);
                 if (visibility == null) continue;
                 if (visibility != type.Vis.OrDefault()) RoundtripMetadata.PreserveTypeVisibility(type);
                 type.Vis = visibility;
