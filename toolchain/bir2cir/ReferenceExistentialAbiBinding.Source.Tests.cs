@@ -14,6 +14,9 @@ static partial class ReferenceExistentialAbiBinding
         var ownerVariable = new TypeNode.Tv("type", 0);
         var methodVariable = new TypeNode.Tv("method", 1);
         var physicalResult = new TypeNode.Fn(false, carrier, new TypeNode[] { methodVariable }, ownerVariable);
+        // The frontend restores the nested existential, not the enclosing
+        // function shape. Keep the caller's frame in its semantic result too.
+        var semanticFunctionResult = new TypeNode.Fn(false, semantic, new TypeNode[] { ownerVariable }, methodVariable);
         var rows = new[] {
             new MemberBinding("abi.Owner", "bind", 2, null, false, false, MethodArity: 2,
                 ParamTypeNodes: new TypeNode[] { new TypeNode.Array(carrier), ownerVariable }, ReturnTypeNode: physicalResult),
@@ -29,7 +32,8 @@ static partial class ReferenceExistentialAbiBinding
         var suppliedSignature = new TypeNode[] { new TypeNode.Array(semantic), text };
         var bind = new BirCallInstance { OwnerType = new TypeNode.Fqn("abi.Owner", new TypeNode[] { methodVariable }),
             Method = "bind", Recv = E(receiver), Args = new IBirExpression[] { first, second },
-            Sig = suppliedSignature, TypeArgs = new TypeNode[] { text, ownerVariable }, Ret = semantic, Sty = semantic };
+            Sig = suppliedSignature, TypeArgs = new TypeNode[] { text, ownerVariable },
+            Ret = semanticFunctionResult, Sty = semanticFunctionResult };
         var read = new BirCallStatic { Owner = new TypeNode.Fqn("abi.Owner"), Method = "read",
             Args = Array.Empty<IBirExpression>(), Ret = semantic, Sty = semantic };
         var block = new BirValueBlock { Type = semantic, Result = E(read) };
