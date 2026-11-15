@@ -65,14 +65,13 @@ static class InnerRepresentationFrameTests
             || types[5].SemanticOwner.OrDefault() != "Plain"
             || TypeParameterFrame.Count(carrier) != 0)
             throw new InvalidOperationException("Static nesting changed Kotlin frames or captured implementation ownership");
-        var constructedOwner = TypeJson.Write(new TypeNode.Fqn("Owner", new TypeNode[] { new TypeNode.Tv("type", 0) }));
-        var projected = root.ToDom();
-        var helperCall = new JsonObject { ["k"] = "callStatic", ["owner"] = constructedOwner.DeepClone() };
-        projected["methods"] = new JsonArray(new JsonObject { ["name"] = "probe", ["body"] = new JsonArray(
-            new JsonObject { ["k"] = "exprStmt", ["expr"] = helperCall }) });
-        // One terminal projection exercises the still-live downstream physical binder.
-        GenericStaticOwnerBinding.ApplyAll(new[] { projected }, null);
-        if (!JsonNode.DeepEquals(helperCall["owner"], constructedOwner))
+        var constructedOwner = new TypeNode.Fqn("Owner", new TypeNode[] { new TypeNode.Tv("type", 0) });
+        var helperCall = new BirCallStatic { Owner = constructedOwner };
+        root.Methods = new[] { new BirFunctionDeclaration { Name = "probe", Body = new IBirStatement[] {
+            new BirExpressionStatement { Expr = helperCall } } } };
+        GenericStaticOwnerBinding.ApplyAll(new[] { root }, null);
+        if (helperCall.Owner.OrDefault() != constructedOwner || helperCall.OwnerType.IsPresent
+            || !ReferenceEquals(((BirExpressionStatement)root.Methods.Value[0].Body.Value[0]).Expr.Value, helperCall))
             throw new InvalidOperationException("Static nesting retargeted a constructed generic method owner");
         GenericStaticOwnerBinding.SelfTestPlacement();
     }
