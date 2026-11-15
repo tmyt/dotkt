@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -33,12 +32,12 @@ sealed partial class ReferenceMetadataIndex
         // not select only the logical source parameter or its metadata names.
         const string logicalOwner = "Source.Pair";
         var frame = new NullableRepresentationFrame(1, new[] { 0 });
-        var sourceRows = new JsonArray(new BirTypeParameter { Name = "Source", Variance = "out" }.ToDom(),
-            new BirTypeParameter { Name = "Nullable" }.ToDom());
+        var sourceRows = new[] { new BirTypeParameter { Name = "Source", Variance = "out" },
+            new BirTypeParameter { Name = "Nullable" } };
         index._dotKtOwners.Add(logicalOwner);
         index._physicalTypeBySemanticName[logicalOwner] = "System.Collections.Generic.Dictionary`2";
         index._ownerArity[logicalOwner] = frame.PhysicalArity;
-        index._ownerTypeParamDeclarations[logicalOwner] = sourceRows.ToJsonString();
+        index._ownerTypeParamDeclarations[logicalOwner] = Array.AsReadOnly(sourceRows);
         index._ownerNullableFrames[logicalOwner] = frame;
         var source = index.OwnerTypeParametersInPhysicalFrame(logicalOwner);
         var physical = index.PhysicalOwnerTypeParametersInPhysicalFrame(logicalOwner);

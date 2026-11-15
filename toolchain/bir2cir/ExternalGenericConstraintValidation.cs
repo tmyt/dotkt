@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
 
 // Validate the CLR-only half of referenced generic type and method declarations.
 //
@@ -191,12 +192,9 @@ static partial class ExternalGenericConstraintValidation
         }
     }
 
-    static ConstraintFacts ReadConstraintDeclaration(JsonObject declaration) => new(
-        (declaration["specialConstraints"] as JsonArray)?.Select(Str).Where(value => value != null).ToArray() ?? [],
-        (declaration["constraints"] as JsonArray)?.Select(TypeJson.Read).ToArray() ?? []);
-
-    static ConstraintFacts[] ReadConstraintDeclarations(JsonArray parameters) => parameters?.Select(parameter =>
-        parameter is JsonObject declaration ? ReadConstraintDeclaration(declaration) : null).ToArray();
+    static ConstraintFacts[] ReadConstraintDeclarations(IReadOnlyList<BirTypeParameter> parameters) => parameters?.Select(parameter =>
+        parameter == null ? null : new ConstraintFacts(parameter.SpecialConstraints.OrEmpty().Where(value => value != null).ToArray(),
+            parameter.Constraints.OrEmpty())).ToArray();
 
     static ParameterFacts[] ReadParameterFacts(IReadOnlyList<ConstraintFacts> parameters, ReferenceMetadataIndex refs,
         ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,

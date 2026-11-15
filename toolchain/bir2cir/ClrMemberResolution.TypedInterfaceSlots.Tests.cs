@@ -86,9 +86,8 @@ static partial class ClrMemberResolution
         descriptor.SpecialConstraints = new[] { "class" };
         if (reflectedShape == KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(new[] { descriptor }, Array.Empty<TypeNode>()))
             throw new InvalidOperationException("Interface constraint selection ignored a reflected new() obligation");
-        // Existing DOM consumers project exactly these same facts with their historical key order and presence.
-        var metadata = ReferenceMetadataIndex.GenericParamDeclaration(generic).AsObject();
-        if (!metadata.Select(pair => pair.Key).SequenceEqual(new[] { "name", "constraints", "specialConstraints" }))
-            throw new InvalidOperationException("Reflected constraint metadata changed its existing order or optional-field presence");
+        if (!reflected.Name.HasValue || !reflected.Constraints.HasValue || !reflected.SpecialConstraints.HasValue
+            || reflected.Constraints.Value.Single() != descriptor.Constraints.Value.Single())
+            throw new InvalidOperationException("Reflected constraint metadata changed its bound or optional-field presence");
     }
 }

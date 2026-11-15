@@ -82,14 +82,14 @@ static partial class KotlinOverrideSlotBridge
                 var physicalParameters = selected.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type,selectedArguments)).ToArray();
                 var physicalReturn = SupertypeGraph.SubstOwnerTvs(selected.PhysicalReturn,selectedArguments);
                 var owner = new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name,spec.Args?.Length ?? 0),spec.Args);
-                var selectedParameters = ReferenceMetadataIndex.ReadReferencedTypeParameters(selected.TypeParams);
+                var selectedParameters = selected.TypeParams;
                 var header = FinalMethodHeader(selected.PhysicalMember,physicalParameters,physicalReturn,arity,selectedParameters);
                 Add(fact.Member.Value,null,owner,header,null,new[] { SourceImplDescriptor(owner,selected.PhysicalMember,arity,
                     physicalParameters,physicalReturn,selectedParameters,false) },[],[],false);
                 foreach (var slot in refs.ReferencedMethodImpls(spec.Name,selected.DeclarationId))
                     Add(fact.Member.Value,null,owner,header,null,new[] { SourceImplDescriptor(slot.DeclarationOwner,
                         slot.DeclarationMember,slot.MethodArity,slot.Parameters,slot.Return,
-                        ReferenceMetadataIndex.ReadReferencedTypeParameters(slot.TypeParams),false) },[],selectedArguments,true);
+                        slot.TypeParams,false) },[],selectedArguments,true);
             }
         }
 
@@ -142,7 +142,7 @@ static partial class KotlinOverrideSlotBridge
                             FinalMethodHeader(selected.SourceMember,fact.Params.Value,fact.Ret.Value,arity,parameters),
                             "inherited-default:"+fact.PropertyName.Value+":"+fact.PropertyAccessor.Value,
                             new[] { SourceImplDescriptor(descriptorOwner,selected.DeclarationMember,selected.MethodArity,
-                                slotParameters,slotReturn,ReferenceMetadataIndex.ReadReferencedTypeParameters(selected.TypeParams),false) },[],[],true);
+                                slotParameters,slotReturn,selected.TypeParams,false) },[],[],true);
                     }
                     continue;
                 }

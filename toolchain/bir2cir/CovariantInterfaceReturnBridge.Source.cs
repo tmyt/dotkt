@@ -167,7 +167,7 @@ static partial class CovariantInterfaceReturnBridge
                         parameters, ownerArguments, KotlinOverrideSlotBridge.SourceMethodTypeParameterShapeKey(
                             implementation.TypeParams.OrDefault(), ownArguments, refs.PhysicalConstraintType),
                         suspend, out var declaration, semanticConstraints: false, selectedDeclarationId: null)) continue;
-                var declarationParameters = ReferenceMetadataIndex.ReadReferencedTypeParameters(declaration.TypeParams);
+                var declarationParameters = declaration.TypeParams;
                 var slotParameters = declaration.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, physicalArguments)).ToArray();
                 var declarationMapping = new NullableRepresentationTypes(refs.NullableTypeFrames.GetValueOrDefault(semanticOwner.Name),
                     declaration.NullableFrame, refs.NullableTypeFrames, isValue, policy: representations);

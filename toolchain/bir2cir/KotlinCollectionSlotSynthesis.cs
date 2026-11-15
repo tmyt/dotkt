@@ -236,12 +236,6 @@ static partial class KotlinCollectionSlotSynthesis
         type is TypeNode.Fqn owner && owner.Name == slot.DeclaringInterface
         && member == slot.Member && kind == slot.Kind && arity == slot.Arity;
 
-    internal static TypeNode GenericQueryBound(TypeNode source, JsonObject method, JsonObject owner,
-        Func<TypeNode, bool> isInterface, IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null,
-        ValueTypeOracle isValue = null)
-        => GenericQueryBound(source, ErasedElementValues.MethodBounds(method), ErasedElementValues.OwnerBounds(owner),
-            isInterface, frames, isValue);
-
     internal static TypeNode GenericQueryBound(TypeNode source, ErasedElementValues.BoundDeclaration method,
         ErasedElementValues.BoundDeclaration owner, Func<TypeNode, bool> isInterface,
         IReadOnlyDictionary<string, NullableRepresentationFrame> frames = null, ValueTypeOracle isValue = null)

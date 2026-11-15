@@ -12,8 +12,6 @@
 // land without waiting on the intrinsic-binding programme.
 
 using System.Reflection;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Toolchain;
@@ -120,7 +118,7 @@ static partial class ClrMemberResolution
 {
     internal static bool TryResolveAliasedInterfaceSlot(ReferenceMetadataIndex refs,
         TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
-        JsonArray wantedTypeParams, TypeNode[] wantedOwnerArgs,
+        BirTypeParameter[] wantedTypeParams, TypeNode[] wantedOwnerArgs,
         out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn,
         TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null)
@@ -157,9 +155,7 @@ static partial class ClrMemberResolution
             if (!IsPublicOrProtected(method) || method.Name != member
                 || method.GetGenericArguments().Length != methodArity
                 || method.GetParameters().Length != wantedParams.Length) continue;
-            var referenceJson = MemberRefJson(method, MemberRefNode.Kinds.Method, open, ownerArgs);
-            using var referenceDocument = JsonDocument.Parse(referenceJson.ToJsonString());
-            var reference = MemberRefNode.Read(referenceDocument.RootElement);
+            var reference = MemberRefOf(refs, method, MemberRefNode.Kinds.Method, open, ownerArgs);
             var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
@@ -179,8 +175,8 @@ static partial class ClrMemberResolution
             if (!selectionParameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)) continue;
             if (wantedShape != null)
             {
-                var declaredTypeParams = new JsonArray(method.GetGenericArguments()
-                    .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+                var declaredTypeParams = method.GetGenericArguments()
+                    .Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
                 if (KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declaredTypeParams, selectionArgs)
                     != wantedShape)
                     continue;

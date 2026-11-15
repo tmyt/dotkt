@@ -347,7 +347,7 @@ static partial class KotlinOverrideSlotBridge
                     signatureParameters = suspendDeclaration.SignatureParameters;
                     refused = null;
                     selectedPhysicalMember = suspendDeclaration.PhysicalMember;
-                    selectedSlotTypeParams = ReferenceMetadataIndex.ReadReferencedTypeParameters(suspendDeclaration.TypeParams);
+                    selectedSlotTypeParams = suspendDeclaration.TypeParams;
                     slotReturnsValue = !IsVoid(slotRet0);
                 }
                 else if (accessorKind != null && phase == Phase.PhysicalBridges)
@@ -366,7 +366,7 @@ static partial class KotlinOverrideSlotBridge
                     selectedPhysicalMember = propertyDeclaration.PhysicalMember;
                     signatureParameters = propertyDeclaration.SignatureParameters;
                     selectedSlotTypeParams = propertyDeclaration.TypeParams is { Count: > 0 }
-                        ? ReferenceMetadataIndex.ReadReferencedTypeParameters(propertyDeclaration.TypeParams) : null;
+                        ? propertyDeclaration.TypeParams : null;
                     refused = null;
                 }
                 else

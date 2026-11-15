@@ -121,23 +121,6 @@ static partial class KotlinOverrideSlotBridge
 
 
 
-    // Re-anchor only OWNER-scoped references inside a method type-parameter declaration. Method-scoped references
-    // remain in the bridge's own !!i frame. This is declaration transport, not constraint inference: the frontend's
-    // exact selected declaration is copied into the constructed owner frame used by the MethodImpl descriptor/body.
-    internal static JsonArray SubstituteOwnerTypeParameterConstraints(JsonArray typeParams, TypeNode[] ownerArgs)
-    {
-        if (typeParams == null) return null;
-        var result = typeParams.DeepClone() as JsonArray;
-        if (result == null || ownerArgs is not { Length: > 0 }) return result;
-        foreach (var parameter in result.OfType<JsonObject>())
-            if (parameter["constraints"] is JsonArray constraints)
-                for (var i = 0; i < constraints.Count; i++)
-                    if (TypeJson.Read(constraints[i]) is TypeNode constraint)
-                        constraints[i] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(constraint, ownerArgs));
-        return result;
-    }
-
-
     static bool SamePhysicalSignature(TypeNode[] candidateParams, TypeNode candidateRet,
         TypeNode[] slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         Func<TypeNode, bool> hasClassifier = null)
@@ -333,7 +316,7 @@ static partial class KotlinOverrideSlotBridge
     // a synthesized existential view of `Sink`), so an ANCESTOR of an overridden owner counts too. An
 
 
-    internal static bool SameMethodTypeParameterShape(JsonArray slotTypeParams, JsonArray implementationTypeParams,
+    internal static bool SameMethodTypeParameterShape(IReadOnlyList<BirTypeParameter> slotTypeParams, IReadOnlyList<BirTypeParameter> implementationTypeParams,
         TypeNode[] slotOwnerArgs, TypeNode[] implementationOwnerArgs, Func<TypeNode, TypeNode> constraintType = null)
         => MethodTypeParameterShapeKey(slotTypeParams, slotOwnerArgs, constraintType)
             == MethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs, constraintType);
@@ -344,13 +327,11 @@ static partial class KotlinOverrideSlotBridge
             == SourceMethodTypeParameterShapeKey(implementationTypeParams, implementationOwnerArgs);
 
 
-    internal static string MethodTypeParameterShapeKey(JsonArray typeParams, TypeNode[] ownerArgs,
+    internal static string MethodTypeParameterShapeKey(IReadOnlyList<BirTypeParameter> typeParams, TypeNode[] ownerArgs,
         Func<TypeNode, TypeNode> constraintType = null)
         => ConstraintShapeKey(typeParams?.Select(parameter => (
-            Constraints: ((parameter as JsonObject)?["constraints"] as JsonArray)?.Select(TypeJson.Read)
-                .Where(constraint => constraint != null) ?? Enumerable.Empty<TypeNode>(),
-            Specials: ((parameter as JsonObject)?["specialConstraints"] as JsonArray)?.Select(Str)
-                .Where(value => value != null) ?? Enumerable.Empty<string>())), ownerArgs, constraintType);
+            Constraints: parameter.Constraints.OrEmpty().Where(constraint => constraint != null),
+            Specials: parameter.SpecialConstraints.OrEmpty().Where(value => value != null))), ownerArgs, constraintType);
 
     internal static string SourceMethodTypeParameterShapeKey(BirTypeParameter[] typeParams, TypeNode[] ownerArgs,
         Func<TypeNode, TypeNode> constraintType = null)
