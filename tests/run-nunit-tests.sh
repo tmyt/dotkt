@@ -276,7 +276,7 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.inherited-default-vararg.log"; rc=1
 		fi
 		projected_array_cir="$dir/obj/$CONFIGURATION/net10.0/cir/GenericsTests.cir.json"
-		if python3 "$ROOT/tests/basic/assert-projected-covariant-array-cir.py" "$projected_array_cir" \
+		if python3 "$ROOT/tests/basic/assert-projected-covariant-array-cir.py" "$projected_array_cir" "$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.projected-covariant-array.log" 2>&1; then
 			echo "  projected covariant arrays use exact CLR carriers"
 		else
@@ -293,7 +293,7 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.constrained-carrier.log"; rc=1
 		fi
 		star_copy_cir="$dir/obj/$CONFIGURATION/net10.0/cir/DefaultArgumentTests.cir.json"
-		if python3 "$ROOT/tests/basic/assert-star-copy-default-fields-cir.py" "$star_copy_cir" \
+		if python3 "$ROOT/tests/basic/assert-star-copy-default-fields-cir.py" "$star_copy_cir" "$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.star-copy-default-fields.log" 2>&1; then
 			echo "  star-projected copy defaults use existential getter slots"
 		else
@@ -310,7 +310,7 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  ABSTRACT/SUPER BINDING FAIL — see build/nunit-$name.abstract-super-binding.log"
 			tail -25 "$ROOT/build/nunit-$name.abstract-super-binding.log"; rc=1
 		fi
-		if python3 "$ROOT/tests/basic/assert-existential-return-cir.py" "$abstract_super_cir" \
+		if python3 "$ROOT/tests/basic/assert-existential-return-cir.py" "$abstract_super_cir" "$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
 			echo "  existential calls state physical returns + semantic projections"
 		else
@@ -326,7 +326,7 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.nullable-array-unsafe-accessor.log"; rc=1
 		fi
 		unchecked_cir="$dir/obj/$CONFIGURATION/net10.0/cir/UncheckedGenericCastReturnTests.cir.json"
-		if python3 "$ROOT/tests/basic/assert-unchecked-generic-unsafe-accessor-cir.py" "$unchecked_cir" \
+		if python3 "$ROOT/tests/basic/assert-unchecked-generic-unsafe-accessor-cir.py" "$unchecked_cir" "$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.unchecked-generic-unsafe-accessor.log" 2>&1; then
 			echo "  unchecked generic object ABI keeps concrete UnsafeAccessor use projections"
 		else
@@ -416,6 +416,7 @@ for proj in "${PROJECTS[@]}"; do
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocation.cir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CapturedGenericInvocationTests.bir.json" \
 			"$dir/obj/$CONFIGURATION/net10.0/cir/CapturedGenericInvocationTests.cir.json" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.associated-generic-carrier.log" 2>&1; then
 			echo "  generic carrier calls retain exact source association and independent method frames"
 		else
@@ -498,7 +499,7 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  PROJECTED ARRAY ATTRIBUTE FAIL"
 			tail -25 "$ROOT/build/nunit-$name.projected-array-attributes.log"; rc=1
 		fi
-		if dotnet "$METADATA_INSPECTOR_DLL" --projected-collection-returns "$producer_dll" "$producer_klib" \
+		if dotnet "$METADATA_INSPECTOR_DLL" --projected-collection-returns "$producer_dll" "$producer_klib" --with-joined-return \
 			>"$ROOT/build/nunit-$name.projected-collection-returns.log" 2>&1; then
 			echo "  projected collection values preserve source signatures and exact native CLR declarations"
 		else
@@ -629,6 +630,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" \
 			"$dir/obj/$CONFIGURATION/net10.0/bir/CrossModuleMetadataTests.bir.json" "$consumer_cir" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
 			echo "  referenced existential calls state physical returns + semantic projections"
 		else
@@ -647,6 +649,7 @@ for proj in "${PROJECTS[@]}"; do
 		if python3 "$ROOT/tests/roundtrip/assert-referenced-generic-owner-unsafe-accessor-cir.py" \
 			"$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedGenericOwner.cir.json" \
 			"$referenced_generic_owner_cir" \
+			"$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log" 2>&1; then
 			echo "  referenced generic-owner UnsafeAccessor physical frame + use projection OK"
 		else
@@ -792,7 +795,7 @@ for proj in "${PROJECTS[@]}"; do
 	fi
 	if [[ "$proj" == "tests/coroutines" ]]; then
 		owner_suspend_cir="$dir/obj/$CONFIGURATION/net10.0/cir/OwnerConstrainedSuspendTests.cir.json"
-		if python3 "$ROOT/tests/coroutines/assert-owner-constrained-suspend-cir.py" "$owner_suspend_cir" \
+		if python3 "$ROOT/tests/coroutines/assert-owner-constrained-suspend-cir.py" "$owner_suspend_cir" "$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.owner-constrained-suspend-cir.log" 2>&1; then
 			echo "  owner-constrained suspend metadata and generic frames OK"
 		else
@@ -816,7 +819,7 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.generic-suspend-super-cir.log"; rc=1
 		fi
 		inline_frame_cir="$dir/obj/$CONFIGURATION/net10.0/cir/CrossinlineSuspendObjectTests.cir.json"
-		if python3 "$ROOT/tests/coroutines/assert-inline-suspend-frame-cir.py" "$inline_frame_cir" \
+		if python3 "$ROOT/tests/coroutines/assert-inline-suspend-frame-cir.py" "$inline_frame_cir" "$METADATA_INSPECTOR_DLL" \
 			>"$ROOT/build/nunit-$name.inline-suspend-frame-cir.log" 2>&1; then
 			echo "  inline suspend carrier generic frame OK"
 		else

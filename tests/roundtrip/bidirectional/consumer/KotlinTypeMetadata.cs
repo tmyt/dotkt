@@ -3,6 +3,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using NUnit.Framework;
+using DotKt.Bir;
 
 internal static class KotlinTypeMetadata
 {
@@ -11,10 +12,11 @@ internal static class KotlinTypeMetadata
     {
         var attribute = attributes.Single(value => value.AttributeType.FullName ==
             "DotKt.Runtime.CompilerServices." + carrier);
-        Assert.That(attribute.ConstructorArguments[0].Value, Is.EqualTo("bir-json/1"));
+        var codec = (string)attribute.ConstructorArguments[0].Value!;
+        Assert.That(codec, Is.EqualTo(TypeNodeCarrier.Codec));
         var bytes = ((IEnumerable<CustomAttributeTypedArgument>)attribute.ConstructorArguments[1].Value!)
             .Select(value => (byte)value.Value!).ToArray();
-        using var document = JsonDocument.Parse(bytes);
+        using var document = JsonDocument.Parse(TypeNode.ToJson(TypeNodeCarrier.Decode(codec, bytes)));
         return document.RootElement.Clone();
     }
 

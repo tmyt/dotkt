@@ -147,6 +147,16 @@ static partial class RoundtripMetadata
     static void ExpectPayload(IBirTypeDeclaration type, string carrier, string expected)
     {
         var attribute = type.Attrs.Value.Single(value => value.Attr.Value == new TypeNode.Fqn(carrier));
+        if (carrier == AKType)
+        {
+            var expectedType = TypeNode.Parse(expected);
+            if (attribute.Args.Value[0] is not BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: TypeNodeCarrier.Codec } }
+                || attribute.Args.Value[1] is not BirOpaqueBytes typeBytes
+                || TypeNodeCarrier.Decode(TypeNodeCarrier.Codec, typeBytes.Bytes.Value) != expectedType
+                || !typeBytes.Bytes.Value.SequenceEqual(TypeNodeCarrier.Encode(TypeNodeCarrier.Codec, expectedType)))
+                throw new InvalidOperationException("Typed representation header changed its binary TypeNode payload");
+            return;
+        }
         if (attribute.Args.Value[0] is not BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.JsonV1 } }
             || attribute.Args.Value[1] is not BirOpaqueBytes bytes || !bytes.Bytes.Value.SequenceEqual(Encoding.UTF8.GetBytes(expected)))
             throw new InvalidOperationException("Typed type header changed a metadata carrier's payload bytes");

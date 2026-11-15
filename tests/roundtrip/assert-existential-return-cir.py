@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Assert exact referenced existential result projection, including star-dependent nested carriers."""
 
-import base64
 import json
 import sys
+from carrier_inspection import type_payloads
 
 
 def objects(node):
@@ -16,17 +16,20 @@ def objects(node):
             yield from objects(value)
 
 
-if len(sys.argv) != 3:
-    raise SystemExit("usage: assert-existential-return-cir.py <CrossModuleMetadataTests.bir.json> <CrossModuleMetadataTests.cir.json>")
+if len(sys.argv) != 4:
+    raise SystemExit("usage: assert-existential-return-cir.py <CrossModuleMetadataTests.bir.json> <CrossModuleMetadataTests.cir.json> <metadata-inspector.dll>")
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     source = json.load(stream)
 with open(sys.argv[2], encoding="utf-8") as stream:
     root = json.load(stream)
 
+decoded_types = type_payloads([node for node in objects(root) if node.get("attr", {}).get("name")
+                             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"], sys.argv[3])
+
 
 def return_types(method):
-    return [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+    return [decoded_types[id(attribute)]
             for attribute in method.get("retAttrs", [])
             if attribute.get("attr", {}).get("name")
             == "DotKt.Runtime.CompilerServices.KotlinTypeAttribute"]

@@ -186,9 +186,7 @@ internal sealed class MetadataAttributes
         if (attr?.StringValue is not { } version || attr.BytesValue is not { } bytes) return null;
         try
         {
-            var body = BirCarrier.DecodeBody(version, bytes);
-            using var doc = System.Text.Json.JsonDocument.Parse(body.ToJsonString(), DotKt.Bir.BirJson.DocOptions);
-            return TypeNode.Read(doc.RootElement);
+            return TypeNodeCarrier.Decode(version, bytes);
         }
         catch (Exception ex)
         {

@@ -3,8 +3,19 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
+    <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../../../toolchain/bir-common/TypeNode.cs" Link="TypeNode.cs" />
+    <Compile Include="../../../../toolchain/bir-common/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />
+    <Compile Include="../../../../toolchain/bir-common/TypeNode.Json.Generated.cs" Link="TypeNode.Json.Generated.cs" />
+    <Compile Include="../../../../toolchain/bir-common/TypeNode.MessagePack.Generated.cs" Link="TypeNode.MessagePack.Generated.cs" />
+    <Compile Include="../../../../toolchain/bir-common/TypeNodeCarrier.cs" Link="TypeNodeCarrier.cs" />
+    <Compile Include="../../../../toolchain/bir-common/BirCarrier.MessagePack.cs" Link="BirCarrier.MessagePack.cs" />
+    <Compile Include="../../../../toolchain/bir-common/IrMessagePack.cs" Link="IrMessagePack.cs" />
+    <Compile Include="../../../../toolchain/bir-common/LiteralText.cs" Link="LiteralText.cs" />
+    <Compile Include="../../../../toolchain/bir-common/BirJson.cs" Link="BirJson.cs" />
+    <PackageReference Include="MessagePack" Version="[3.1.12]" />
     <ProjectReference Include="../kotlin-producer/BidirectionalKotlin.ktproj" />
     <ProjectReference Include="../../producer/RoundtripProducer.ktproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />

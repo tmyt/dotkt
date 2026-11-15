@@ -1,7 +1,4 @@
-using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using System.Text.Json.Nodes;
 
 namespace GenericValueInterop;
 
@@ -39,28 +36,11 @@ public static class UpstreamMapCopies
         var declaration = value.GetType().Assembly
             .GetType("roundtrip.upstreamerasedstdlib.UpstreamErasedStdlibKt")!.GetMethod(method)!;
         var carrier = declaration.ReturnType;
-        var source = JsonNode.Parse("""
-            {"t":"fqn","name":"roundtrip.upstreamerasedstdlib.JoinedValue","args":[{"t":"tv","scope":"method","i":0}]}
-            """);
-        var projection = JsonNode.Parse("""
-            {"t":"fqn","name":"roundtrip.upstreamerasedstdlib.JoinedValue","args":[{"t":"star"}]}
-            """);
+        // Exact source/projection metadata is checked by the existing PE metadata inspector,
+        // keeping compiler codec APIs out of this Kotlin-consumed reference assembly.
         return carrier.IsInterface && !carrier.IsGenericType && carrier.IsAssignableFrom(value.GetType())
             && carrier.GetCustomAttributesData().Any(attribute => attribute.AttributeType.FullName ==
-                "System.Runtime.CompilerServices.CompilerGeneratedAttribute")
-            && JsonNode.DeepEquals(KotlinType(declaration.ReturnParameter.GetCustomAttributesData()), source)
-            && JsonNode.DeepEquals(KotlinType(carrier.GetCustomAttributesData()), projection);
-    }
-
-    static JsonNode KotlinType(IEnumerable<CustomAttributeData> attributes)
-    {
-        var attribute = attributes.Single(value => value.AttributeType.FullName ==
-            "DotKt.Runtime.CompilerServices.KotlinTypeAttribute");
-        if ((string)attribute.ConstructorArguments[0].Value! != "bir-json/1")
-            throw new System.InvalidOperationException("Unexpected Kotlin type metadata codec");
-        var bytes = ((IEnumerable<CustomAttributeTypedArgument>)attribute.ConstructorArguments[1].Value!)
-            .Select(value => (byte)value.Value!).ToArray();
-        return JsonNode.Parse(bytes)!;
+                "System.Runtime.CompilerServices.CompilerGeneratedAttribute");
     }
 
     public static bool OverrideReturnMatches(object value, string method) =>

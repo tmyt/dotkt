@@ -284,7 +284,8 @@ static partial class RoundtripMetadata
 
     static BirAttribute PayloadCarrier<T>(string name, T value, Action<Utf8JsonWriter, T> write)
         => PlacementCarrier(name, BirCarrier.EncodeBody(BirCarrier.JsonV1, value, write));
-    static BirAttribute TypeCarrier(string name, TypeNode type) => PayloadCarrier(name, type, TypeNode.WriteJson);
+    static BirAttribute TypeCarrier(string name, TypeNode type) => PlacementCarrier(name,
+        TypeNodeCarrier.Encode(TypeNodeCarrier.Codec, type), TypeNodeCarrier.Codec);
     // Carrier payload order belongs to this metadata encoding, not to the
     // generated transport record's property order. Allocation has already
     // selected every semantic field; this writer makes no new association.

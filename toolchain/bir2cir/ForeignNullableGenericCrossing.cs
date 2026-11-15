@@ -370,7 +370,7 @@ static partial class ForeignNullableGenericCrossing
             if (attribute.Attr.OrDefault() is TypeNode.Fqn { Args: null, Name: RoundtripMetadata.AKNullableGen }
                 && attribute.Args.OrDefault() is { Length: >= 2 } args
                 && AttributeText(args[0]) is string codec && args[1] is BirOpaqueBytes { Bytes.HasValue: true } payload)
-                return BirCarrier.DecodeBody<TypeNode>(codec, payload.Bytes.Value, TypeNode.ReadJson);
+                return TypeNodeCarrier.Decode(codec, payload.Bytes.Value);
         return null;
     }
 

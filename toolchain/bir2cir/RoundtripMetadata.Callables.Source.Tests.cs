@@ -119,6 +119,13 @@ static partial class RoundtripMetadata
         ExpectNames(property.Attrs.Value, ANullable, AKSuspendFn, AKType, AKNullableGen, "Probe.User");
         ExpectNames(field.Attrs.Value, ANullable, AKReadOnly, AKType, AKSuspendFn, AKNullableGen, "Probe.User");
         ExpectNames(method.RetAttrs.Value, AKType, ANullable, AKSuspendFn, AKCtxFnType, AKNothing, AKNullableGen, AKCollIdentity);
+        foreach (var attribute in parameter.Attrs.Value.Concat(property.Attrs.Value).Concat(field.Attrs.Value).Concat(method.RetAttrs.Value))
+            if (AttributeName(attribute) is var name && (name == AKType || name == AKNullableGen || name == AKSuspendFn || name == AKCollIdentity))
+                ExpectBinaryTypePayload(attribute, sourceType);
+        var suspend = new BirFunctionDeclaration { Name = "suspend", RoundtripMetadataPending = true, SuspendResult = sourceType };
+        CompleteMetadata(new BirFileDeclaration { Methods = new[] { suspend } }, runtimeMode: false);
+        ExpectBinaryTypePayload(suspend.Attrs.Value.Single(), sourceType);
+        if (suspend.SuspendResult.IsPresent) throw new InvalidOperationException("Logical suspend payload was not consumed by its metadata writer");
         var identity = AttributePayload(method.Attrs.Value[4]);
         if (identity["signatureAllocation"] != null || identity["reified"].AsArray().Count != 0
             || identity["nullableFrame"] == null || TypeNode.Read(identity["signature"]["ret"]) != sourceType
@@ -164,6 +171,14 @@ static partial class RoundtripMetadata
     }
 
     static string AttributeName(BirAttribute attribute) => ((TypeNode.Fqn)attribute.Attr.Value).Name;
+    static void ExpectBinaryTypePayload(BirAttribute attribute, TypeNode expected)
+    {
+        if (attribute.Args.Value[0] is not BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: TypeNodeCarrier.Codec } }
+            || attribute.Args.Value[1] is not BirOpaqueBytes bytes
+            || TypeNodeCarrier.Decode(TypeNodeCarrier.Codec, bytes.Bytes.Value) != expected
+            || !bytes.Bytes.Value.SequenceEqual(TypeNodeCarrier.Encode(TypeNodeCarrier.Codec, expected)))
+            throw new InvalidOperationException("Callable type metadata did not use the exact owning MessagePack carrier");
+    }
     static JsonNode AttributePayload(BirAttribute attribute)
         => BirCarrier.DecodeBody(((BirLiteral.TextLiteral)((BirAttributeLiteral)attribute.Args.Value[0]).Value.Value).Value,
             ((BirOpaqueBytes)attribute.Args.Value[1]).Bytes.Value);
