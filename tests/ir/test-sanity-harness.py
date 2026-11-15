@@ -44,9 +44,18 @@ class SanityHarnessTests(unittest.TestCase):
         self.assertIn("controlled unrelated crash", result.stdout)
 
     def test_host_that_skips_validation_is_not_acceptance(self):
-        result = self.invoke('case "$1" in */SanityCheck.dll) exit 0 ;; esac\n')
+        result = self.invoke('case "$1" in */DotKt.Tests.SanityCheck.dll) exit 0 ;; esac\n')
         self.assert_red(result)
         self.assertIn("sanity-check host did not refuse the negative control", result.stdout)
+
+    def test_host_that_skips_source_checkpoint_is_not_acceptance(self):
+        result = self.invoke(
+            'case "$1" in */DotKt.Tests.SanityCheck.dll)\n'
+            '  if [[ "${2:-}" == --source-stamps ]]; then exit 0; fi ;;\n'
+            'esac\n')
+        self.assert_red(result)
+        self.assertIn("(normative source stamps)", result.stdout)
+        self.assertIn("SELFTEST FAIL  reject-stale-sty", result.stdout)
 
 
 if __name__ == "__main__":

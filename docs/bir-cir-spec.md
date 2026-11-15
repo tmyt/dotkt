@@ -261,8 +261,8 @@ Notes:
   **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
   `newClosure`/`newDelegate`/`newSam`/`newSuspendLambda`/`newBoundDelegate`/`delegateInvoke` was the LAST
   string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured
-  `fn` node (0 `func:`/`sfunc:` strings in the emitted BIR), bir2cir's `LowerFuncTypeValued` lowers the `fn`
-  node via `LowerFnDelegate` (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
+  `fn` node (0 `func:`/`sfunc:` strings in the emitted BIR), bir2cir's physical `Delegate` slot role lowers the `fn`
+  node through the shared `LowerFnDelegate` core (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
   `fn` in a plain type slot still erases to `object`), and ilemit realizes the CIR-selected delegate from the `fn` node
   (`MapType(Fn)`→`FuncType(Fn)`, `FuncArityOf`/`FuncRetType`/`FuncArgTypes` read the node). The dead
   `func:`/`sfunc:` STRING-parsing scanners are deleted from the serialized-type paths.
@@ -703,12 +703,13 @@ node-format stability is achieved DECLARATIVELY, in three parts:
    use `e` accordingly; `conv` carries its target type as `to`, the `nullable*` element as `elem`). Keep genuinely
    role-distinct fields distinct (a call's `args` ≠ a decl's `params` ≠ an array's `elems`; `ret`≠`elem`≠`keyType`
    when the roles differ). Every type-valued field holds a `Type` node (§1).
-   - **Return-position type keys** (the `ReturnKeys` set — a return-slot type where `kotlin.Unit` lowers to `void`)
+   - **Return-position type keys** (schema `physicalProjection.returnFields` — a return-slot type where `kotlin.Unit` lowers to `void`)
      = **`{ret, dynRet, suspendRet}`**, a consistent `<context>Ret` family: `ret` (plain return), `dynRet`
      (`@Clr` dynamic-dispatch return), `suspendRet` (a suspend fn/lambda's `T` of `Continuation<T>` — renamed from
      the odd-one-out `resultType` in m5). These are DISTINCT ROLES that can COEXIST on one node (a `callInstance`
      carries `ret`+`dynRet`; a `newSuspendLambda` carries `ret`+`suspendRet`) — grouped by shared position, NOT
-     synonyms; the return-position parallel to the value-position `TypeKeys`. Dead keys `selRet`/`returnType`
+     synonyms; the return-position parallel to `physicalProjection.valueFields`. Generated owning visitors carry
+     those roles to the shared physical type core. Dead keys `selRet`/`returnType`
      (0 emit, never read) were deleted in m5.
 2. **Per-kind schema** — the spec pins each `k`'s exact field set (name, required/optional, value shape),
    generated from the audit. This is the normative node shape.
@@ -1375,10 +1376,10 @@ four variants that preceded this paragraph came to disagree.
 > reshapes) must carry `sty` with the change or drop it, alongside the `ret`/`dynRet` it already updates. A stale
 > `sty` surviving on a retyped node is a bug in THAT pass — never a reason to demote the stamp below `ret`.
 
-That invariant is MECHANICALLY CHECKED, not merely stated (#305). bir2cir runs the shared `bir-common/IrSanity`
-check 7 over each file's fully-passed BIR immediately before `BirTypeLowering` — the last point at which the stamp
-still exists — and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it. `IrSanity`'s
-`CheckStampAgreement` documents the accepted-equivalence set and the corpus it is calibrated on; the short version
+That invariant is MECHANICALLY CHECKED, not merely stated (#305). bir2cir runs `SourceStampSanity` over each
+owning file's fully-passed BIR immediately before `BirTypeLowering` — the last point at which the stamp
+still exists — and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it. The shared
+`IrSanity.StampAgrees` documents the accepted-equivalence set and the corpus it is calibrated on; the short version
 is that the relation is a REFUTATION test (a type VARIABLE, a `*`, `kotlin.Nothing`, a nullability wrapper, a
 spelling difference between the kotlin.*/shorthand/System.* vocabularies, and any
 pair of unlike or different-arity shapes all AGREE), so it names only the class that motivated it: a same-shape

@@ -451,7 +451,7 @@ static partial class BirTypeLowering
                 // This erasure is also why LowerFnDelegate's arity ceiling does not reach a suspend function type,
                 // and why it must NOT be hoisted in front of this branch: a suspend type never becomes a delegate,
                 // so its arity costs nothing. MEASURED, not assumed — across the whole stdlib build every suspend fn
-                // that does reach the delegate path (LowerFuncTypeValued) has arity 1, the sequence/iterator receiver
+                // that does reach the Delegate slot role has arity 1, the sequence/iterator receiver
                 // lambda whose arity the stdlib's own signature fixes; an app's suspend lambda is replaced by its
                 // state machine before this pass runs. Coverage: roundtrip's cross-module invokeWideSuspend23.
                 return fn.Suspend ? ObjectType : LowerFnDelegate(fn, context, force);

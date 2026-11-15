@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // W1-S2 (#46) — RESOLVED-CLR-IR carry for PLAIN calls (clrStatic/clrInstance) + CONSTRUCTORS (newClr). Runs AFTER
-// BirTypeLowering.Lower (Program.cs), so every clr*/newClr node's `type` (owner) + `argTypes` are already in the
+// BirTypeLowering.Apply (Program.cs), so every clr*/newClr node's `type` (owner) + `argTypes` are already in the
 // CLR-lowered vocabulary. bir2cir HOLDS the winning member (its MetadataLoadContext) but until now serialized only the
 // lossy `argTypes` (declared param types WITHOUT member identity), forcing ilemit to re-run overload resolution
 // (arity probes, name+arity first-picks, assignability scoring, ctor-by-arg-count, the interface-owner dynamic-dispatch
