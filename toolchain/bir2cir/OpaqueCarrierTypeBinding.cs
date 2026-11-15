@@ -1,80 +1,10 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Raw inline/default bodies and early KotlinSupertypes snapshots are deliberately opaque while ordinary lowering
-// runs, but they still cross an assembly boundary. Once TypeOwnershipLowering has selected every local TypeDef's
-// nestedIn representation, bind type identities inside those carriers to that exact producer metadata identity. This
-// is authored from current declarations/reference facts; a consumer never guesses an owner from a generated name and
-// there is intentionally no legacy-DLL fallback.
+// Raw inline/default bodies and source snapshots cross an assembly boundary.
+// After placement, bind their classifiers to the producer's exact selected
+// metadata identity; arguments retain their source order and representation.
 static partial class OpaqueCarrierTypeBinding
 {
-
-    static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
-
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
-        SourceDeclarationSignatures semanticSignatures = null)
-    {
-        var declarations = new List<PhysicalDeclaration>();
-        var fileClasses = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var root in roots.OfType<JsonObject>())
-        {
-            if (Str(root["fileClass"]) is string fileClass) fileClasses.Add(fileClass);
-            if (root["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>())
-                    if (Str(type["name"]) is string name)
-                        declarations.Add(new(name, Str(type["nestedIn"]),
-                            type["typeParams"] is JsonArray typeParams ? typeParams.Count : 0));
-        }
-
-        var nestedPhysical = PlanPhysicalNames(declarations, fileClasses);
-
-        foreach (var root in roots)
-        {
-            if (nestedPhysical.Count > 0) RewriteCarrierSlots(root, nestedPhysical);
-            BindSourceRecords(root, nestedPhysical, refs);
-        }
-        semanticSignatures?.RewriteClassifiers(type => BindSourceClassifier(type, nestedPhysical, refs));
-    }
-
-    // Source carriers are captured before ownership lowering so they retain source nullability, stars, Kotlin inner
-    // argument order, and the flattened Kotlin type-parameter frame. Once ownership has selected exact local and
-    // referenced TypeDefs, bind only classifier names inside that opaque snapshot. Arguments deliberately remain in
-    // Kotlin metadata order; dll2klib consumes the exact '+' path as a nested classifier without rotating them again.
-    static void BindSourceRecords(JsonNode node, IReadOnlyDictionary<string, string> localPhysical,
-        ReferenceMetadataIndex refs)
-    {
-        if (node is JsonObject obj)
-        {
-            // Defaults still used by the source compilation keep their original positions until the
-            // outgoing carrier is finalized. Do not change the frontend's executable declaration graph.
-            MaterializedBirPayload.HideDefaultSourceSpans(obj);
-            foreach (var key in new[] {
-                KotlinSupertypesRecord.PreKey,
-                NullableGenericErasure.MethodTypeParameterBoundsPre,
-                "nullableGeneric", "nullableGenericRet",
-            })
-            {
-                if ((obj[key] as JsonValue)?.TryGetValue<string>(out var encoded) != true) continue;
-                TypeNode Rewrite(TypeNode type) => SourceDeclarationSignature.RewriteType(type,
-                    classifier => BindSourceClassifier(classifier, localPhysical, refs));
-                obj[key] = key switch {
-                    KotlinSupertypesRecord.PreKey => SourceTypeFacts.ReadFrozenText(encoded).RewriteTypes(Rewrite).FrozenText,
-                    NullableGenericErasure.MethodTypeParameterBoundsPre =>
-                        SourceBoundsSnapshot.ReadFrozenText(encoded).RewriteTypes(Rewrite).FrozenText,
-                    _ => TypeNode.ToJson(Rewrite(TypeNode.Parse(encoded))),
-                };
-            }
-            foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
-                BindSourceRecords(child, localPhysical, refs);
-        }
-        else if (node is JsonArray array)
-            foreach (var child in array.Where(value => value != null).ToList())
-                BindSourceRecords(child, localPhysical, refs);
-    }
-
     static TypeNode.Fqn BindSourceClassifier(TypeNode.Fqn type, IReadOnlyDictionary<string, string> localPhysical,
         ReferenceMetadataIndex refs)
     {
@@ -82,43 +12,4 @@ static partial class OpaqueCarrierTypeBinding
         return refs.TryExactPhysicalTypeName(type.Name, type.Args?.Length ?? 0, out var exact)
             && exact != null && exact.Contains('+') ? type with { Name = exact } : type;
     }
-
-    static void RewriteCarrierSlots(JsonNode node, IReadOnlyDictionary<string, string> physicalBySemantic)
-    {
-        if (node is JsonObject obj)
-        {
-            if ((obj["inlineBir"] as JsonValue)?.TryGetValue<string>(out var encoded) == true
-                && !string.IsNullOrEmpty(encoded))
-            {
-                var payload = ExecutableBirCodec.ReadInline(ExecutableBirCodec.Codec, Convert.FromBase64String(encoded));
-                BindExecutablePayload(payload, physicalBySemantic);
-                obj["inlineBir"] = Convert.ToBase64String(ExecutableBirCodec.EncodeInline(ExecutableBirCodec.Codec, payload));
-            }
-
-            if ((obj["suspendResult"] as JsonValue)?.TryGetValue<string>(out var suspendResult) == true
-                && !string.IsNullOrEmpty(suspendResult))
-            {
-                // This is a TypeNode JSON leaf, not an executable byte carrier.
-                // Unlike source records, it binds only this producer's local
-                // nested identities, without reference lookup.
-                var payload = SourceDeclarationSignature.RewriteType(TypeNode.Parse(suspendResult),
-                    type => physicalBySemantic.TryGetValue(type.Name, out var physical)
-                        ? type with { Name = physical } : type);
-                obj["suspendResult"] = TypeNode.ToJson(payload);
-            }
-
-            if (DefaultBirCarrier.IsCarrier(obj))
-                DefaultBirCarrier.RewriteTyped(obj, payload => {
-                    BindExecutablePayload((DotKt.Bir.Lowering.BirGraphValue)payload, physicalBySemantic);
-                    return payload;
-                });
-
-            foreach (var value in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
-                RewriteCarrierSlots(value, physicalBySemantic);
-        }
-        else if (node is JsonArray array)
-            foreach (var value in array.Where(value => value != null).ToList())
-                RewriteCarrierSlots(value, physicalBySemantic);
-    }
-
 }
