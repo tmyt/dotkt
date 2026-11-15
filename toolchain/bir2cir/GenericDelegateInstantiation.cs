@@ -1,7 +1,7 @@
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
+using System.Collections.Immutable;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // bir2cir — GenericDelegateInstantiation (#191): a delegated property backed by a GENERIC user delegate
 // (`var x by D<T>(…)`, whose `operator fun getValue(…): T` / `setValue(…, nv: T)` are generic over T)
@@ -25,139 +25,116 @@ using DotKt.Bir;
 //
 // Two receiver shapes recover the instantiation differently under #122's sty/lexical-scope model:
 //   • a `local` `$delegate` (a `val x by D(…)` LOCAL property) carries its declared `D<…>` via the lexical
-//     BirScope, so StaticType.Surface resolves it directly.
+//     environment, so BirGraphStaticType.Surface resolves it directly.
 //   • a `field`/`staticField` `$delegate` (a MEMBER / TOP-LEVEL property) is a bare read carrying no `sty`/`ret`
 //     stamp (#122 dropped the global field-type collect that used to answer it). Its constructed type is the
 //     DECLARED field type from the BIR type table (`types[].fields[]` / top-level `fields[]`), a carried
 //     frontend fact — NOT a ref.dll re-resolution. When the enclosing class is generic (`class C<T>{var x by D(…)}`),
 //     that declared type is `D<!type#0>`; we substitute the enclosing type-vars with the receiver-owner's own
 //     actual args (`C<String>` -> `D<String>`).
-static class GenericDelegateInstantiation
+static partial class GenericDelegateInstantiation
 {
     static readonly HashSet<string> Accessors = new(System.StringComparer.Ordinal)
         { "getValue", "setValue", "provideDelegate" };
-
-    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
     // (ownerClass, fieldName) -> the DECLARED field type, read from the BIR type table (a carried frontend fact).
     // The `$delegate` field read itself carries no type stamp, so this is the only source for its `D<…>` type.
     sealed class FieldTypes
     {
         readonly Dictionary<(string, string), TypeNode> _map = new();
-        public void Add(string owner, string field, JsonNode type)
+        public void Add(string owner, string field, TypeNode type)
         {
-            if (owner != null && field != null && TypeJson.Read(type) is TypeNode t)
-                _map[(owner, field)] = t;
+            if (owner != null && field != null && type != null) _map[(owner, field)] = type;
         }
         public TypeNode Lookup(string owner, string field) =>
             owner != null && field != null && _map.TryGetValue((owner, field), out var t) ? t : null;
     }
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
+    internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)
     {
         var fields = CollectFieldTypes(roots);
         foreach (var root in roots)
         {
-            // #122: StaticType.Surface reads the frontend `sty` stamp via lexical scope — no global
+            // BirGraphStaticType.Surface reads the frontend `sty` stamp via lexical scope — no global
             // Refs/LocalTypes collect setup is needed (that re-inference machinery was removed). A bare
             // `field`/`staticField` `$delegate` read carries no stamp, so its declared type comes from `fields`.
-            switch (root)
-            {
-                case JsonObject o: WalkObject(o, BirScope.Empty, fields); break;
-                case JsonArray a: WalkArray(a, BirScope.Empty, fields); break;
-            }
+            Walk(root, ImmutableDictionary.Create<string,TypeNode>(System.StringComparer.Ordinal), fields);
         }
     }
 
     // Index every declared field type: a type's members (`types[].fields[]`, keyed by the type's own name — matching
     // the field-read `ownerType`) and the file's top-level statics (`fields[]`, keyed by the `fileClass` — matching a
     // top-level `staticField` read's `AppKt` owner).
-    static FieldTypes CollectFieldTypes(IReadOnlyList<JsonNode> roots)
+    static FieldTypes CollectFieldTypes(IReadOnlyList<BirFileDeclaration> roots)
     {
         var ft = new FieldTypes();
         foreach (var root in roots)
         {
-            if (root is not JsonObject ro) continue;
-            if (ro["types"] is JsonArray types)
-                foreach (var t in types)
-                    if (t is JsonObject to && Str(to["name"]) is string tn && to["fields"] is JsonArray tfs)
-                        foreach (var f in tfs)
-                            if (f is JsonObject fo) ft.Add(tn, Str(fo["name"]), fo["type"]);
-            if (Str(ro["fileClass"]) is string fc && ro["fields"] is JsonArray topFields)
-                foreach (var f in topFields)
-                    if (f is JsonObject fo) ft.Add(fc, Str(fo["name"]), fo["type"]);
+            foreach (var type in root.Types.OrEmpty())
+                foreach (var field in type.Fields.OrEmpty())
+                    ft.Add(type.Name.OrDefault(), field.Name.OrDefault(), field.Type.OrDefault());
+            foreach (var field in root.Fields.OrEmpty())
+                ft.Add(root.FileClass.OrDefault(), field.Name.OrDefault(), field.Type.OrDefault());
         }
         return ft;
     }
 
-    static void WalkArray(JsonArray arr, BirScope scope, FieldTypes fields)
+    static void Walk(BirGraphValue node, ImmutableDictionary<string,TypeNode> scope, FieldTypes fields)
     {
-        var cur = scope;
-        foreach (var it in arr)
-        {
-            switch (it)
+        if (node == null || node is IBirExecutablePayload) return;
+        var child = scope;
+        node.VisitSourceParameters((name, type) => child = child.SetItem(name, type));
+        // Preserve preorder: this accessor first closes its direct field receiver, then its own owner.
+        if (node is BirCallInstance call) Rewrite(call, child, fields);
+        node.VisitSourceChildren(slot => Walk(slot.Value, child, fields), region => {
+            var current = child;
+            foreach (var statement in region.Statements)
             {
-                case JsonObject co: WalkObject(co, cur, fields); break;
-                case JsonArray ca: WalkArray(ca, cur, fields); break;
+                Walk((BirGraphValue)statement, current, fields);
+                // A declaration enters only its subsequent siblings, never its own initializer or another vector.
+                if (statement is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
+                    current = current.SetItem(variable.Name.Value, variable.Type.Value);
             }
-            // A `var` is in scope for its SUBSEQUENT siblings only (lexical block scoping) — so a `local`
-            // receiver (a `val x by D(…)` LOCAL delegated property's `x$delegate` local) resolves.
-            if (it is JsonObject vo && Str(vo["k"]) == "var")
-            {
-                if (ReferenceEquals(cur, scope)) cur = scope.Child();
-                cur.Declare(vo);
-            }
-        }
+            // The old walk gave sibling result fields the incoming scope, not the completed statement-vector scope.
+            if (region.Result is { } result) Walk(result.Value, child, fields);
+        });
     }
 
-    static void WalkObject(JsonObject obj, BirScope scope, FieldTypes fields)
+    static void Rewrite(BirCallInstance call, IReadOnlyDictionary<string,TypeNode> scope, FieldTypes fields)
     {
-        var child = scope.Extend(obj);   // bind params (a method/ctor decl) for the body's scope
-        Rewrite(obj, child, fields);
-        foreach (var key in obj.Select(kv => kv.Key).ToList())
-            switch (obj[key])
-            {
-                case JsonObject co: WalkObject(co, child, fields); break;
-                case JsonArray ca: WalkArray(ca, child, fields); break;
-            }
-    }
-
-    static void Rewrite(JsonObject o, BirScope scope, FieldTypes fields)
-    {
-        if (Str(o["k"]) != "callInstance") return;
-        if (Str(o["method"]) is not string m || !Accessors.Contains(m)) return;
-        if (o["recv"] is not JsonNode recv) return;
+        if (!call.Method.HasValue || !Accessors.Contains(call.Method.Value) || !call.Recv.HasValue) return;
+        var recv = call.Recv.Value;
         // (a) The `$delegate` field itself, when the ENCLOSING class is generic (`class C<T> { var x by D(…) }`
         //     accessed as `c.x` from outside): kotc emits the field read with a BARE owner (`C`, no args) while the
         //     receiver is the constructed `C<String>`. A bare field owner loads the OPEN field type (`D<!0>`),
         //     mismatching the constructed-`D<String>` getValue call below. Instantiate the field owner from its own
         //     receiver so the load yields `D<String>`.
-        if (recv is JsonObject recvObj) InstantiateOwnerFromRecv(recvObj, scope);
-        // (b) The delegate accessor call: kotc names the user delegate class with the BARE FQN string owner (`"D"`,
-        //     its purity contract). Read the name via OwnerName (accepts the string OR a structured Fqn), then bail
-        //     if ALREADY instantiated — the stdlib ReadWriteProperty path kotc emits as a structured generic Fqn.
-        if (TypeJson.OwnerName(o["ownerType"]) is not string owner) return;
-        if (TypeJson.Read(o["ownerType"]) is TypeNode.Fqn { Args: { Length: > 0 } }) return;
+        if (recv is BirFieldGet field) InstantiateOwnerFromRecv(field, scope);
+        // (b) The delegate accessor names the bare classifier. An already constructed owner, such as the
+        //     stdlib ReadWriteProperty application, states its own frame and must stay untouched.
+        if (call.OwnerType.OrDefault() is not TypeNode.Fqn owner) return;
+        if (owner.Args is { Length: > 0 }) return;
         // The receiver IS the delegate instance; its static type is the constructed `D<…>`. Rewrite only when it
         // instantiates this very owner (name match), so a subtype/unrelated recovery never rewrites the owner.
         if (RecoverDelegateType(recv, scope, fields) is not TypeNode.Fqn { Args: { Length: > 0 } } inst) return;
-        if (inst.Name != owner) return;
-        o["ownerType"] = TypeJson.Write(inst);
+        if (inst.Name != owner.Name) return;
+        call.OwnerType = BirGraphValue.CopyType(inst);
     }
 
     // The delegate instance receiver's constructed static type. A `field`/`staticField` read has no `sty`/`ret` stamp,
     // so its type is the DECLARED field type (with the enclosing type's type-vars substituted by the receiver-owner's
     // actual args — the field owner was just instantiated by InstantiateOwnerFromRecv). Every other receiver shape
     // (a `local` `$delegate`, a `provideDelegate` temp) resolves through the sty/lexical-scope Surface as before.
-    static TypeNode RecoverDelegateType(JsonNode recv, BirScope scope, FieldTypes fields)
+    static TypeNode RecoverDelegateType(IBirExpression recv, IReadOnlyDictionary<string,TypeNode> scope, FieldTypes fields)
     {
-        if (recv is JsonObject ro && Str(ro["k"]) is "field" or "staticField"
-            && fields.Lookup(TypeJson.OwnerName(ro["ownerType"]), Str(ro["name"])) is TypeNode decl)
-        {
-            var ownerArgs = (TypeJson.Read(ro["ownerType"]) as TypeNode.Fqn)?.Args;
-            return SubstTypeVars(decl, ownerArgs);
-        }
-        return StaticType.Surface(recv, scope);
+        var (owner, name) = recv switch {
+            BirFieldGet field => (field.OwnerType.OrDefault(), field.Name.OrDefault()),
+            BirStaticFieldGet field => (field.OwnerType.OrDefault(), field.Name.OrDefault()),
+            _ => (null, null),
+        };
+        if (owner is TypeNode.Fqn fqn && fields.Lookup(fqn.Name, name) is TypeNode declared)
+            return SubstTypeVars(declared, fqn.Args);
+        return BirGraphStaticType.Surface(recv, scope);
     }
 
     // Substitute an enclosing TYPE's type-vars (`tv scope=type i`) with the receiver-owner's actual generic args.
@@ -191,14 +168,12 @@ static class GenericDelegateInstantiation
     // Instantiate a BARE generic owner on a `field` read from its OWN receiver's static type (`x$delegate` on a bare
     // `C` -> `C<String>` when the receiver `c` is `C<String>`). Scoped to a delegate accessor's receiver; the same
     // name-match fail-safe as the call rewrite (only the receiver's own instantiation, never a foreign one).
-    static void InstantiateOwnerFromRecv(JsonObject fld, BirScope scope)
+    static void InstantiateOwnerFromRecv(BirFieldGet field, IReadOnlyDictionary<string,TypeNode> scope)
     {
-        if (Str(fld["k"]) != "field") return;
-        if (TypeJson.OwnerName(fld["ownerType"]) is not string owner) return;
-        if (TypeJson.Read(fld["ownerType"]) is TypeNode.Fqn { Args: { Length: > 0 } }) return;
-        if (fld["recv"] is not JsonNode frecv) return;
-        if (StaticType.Surface(frecv, scope) is not TypeNode.Fqn { Args: { Length: > 0 } } inst) return;
-        if (inst.Name != owner) return;
-        fld["ownerType"] = TypeJson.Write(inst);
+        if (field.OwnerType.OrDefault() is not TypeNode.Fqn owner || owner.Args is { Length: > 0 }
+            || !field.Recv.HasValue) return;
+        if (BirGraphStaticType.Surface(field.Recv.Value, scope) is not TypeNode.Fqn { Args: { Length: > 0 } } inst) return;
+        if (inst.Name != owner.Name) return;
+        field.OwnerType = BirGraphValue.CopyType(inst);
     }
 }

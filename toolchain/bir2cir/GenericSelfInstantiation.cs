@@ -1,8 +1,6 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // bir2cir — GenericSelfInstantiation (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object / closure class
 // (`dotkt_obj*<T>`) emits its SELF instance accesses with the BARE type name as `ownerType`
@@ -21,59 +19,37 @@ using DotKt.Bir;
 // never a static `owner`/base/interface token. BIR types are top-level (lifted classes are extracted flat), so
 // a per-type walk is lexically sound. Runs BEFORE BirTypeLowering (which then lowers `T[gp:...]` to the CLR
 // constructed generic).
-static class GenericSelfInstantiation
+static partial class GenericSelfInstantiation
 {
-    static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
-
-    static List<string> TypeParamNames(JsonNode tps)
+    internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots)
     {
-        var names = new List<string>();
-        if (tps is JsonArray a)
-            foreach (var t in a)
-                names.Add(t["name"].GetValue<string>());
-        return names;
-    }
-
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots)
-    {
-        foreach (var r in roots)
-            if (r is JsonObject f && f["types"] is JsonArray ts)
-                foreach (var t in ts)
-                    if (t is JsonObject to && Str(to["name"]) is string self)
-                    {
-                        // CLR nested types flatten captured outer slots before their own declared slots. Both lists
-                        // participate in the constructed self identity; omitting the capture prefix produces a
-                        // partially-open owner such as Inner<!0> for the actual Inner<!0,!1>.
-                        var tps = TypeParamNames(to["capturedTypeParams"])
-                            .Concat(TypeParamNames(to["typeParams"]))
-                            .ToList();
-                        if (tps.Count == 0) continue;
-                        // The constructed self: `Self<!0,…,!n-1>` — the type-scope generic params by FLATTENED position
-                        // (a lifted anon-object is extracted flat, so its own params are indices 0..n-1). bir2cir derives
-                        // this CLR instantiation from the FQN identity kotc emitted.
-                        var inst = new TypeNode.Fqn(self,
-                            Enumerable.Range(0, tps.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
-                        Walk(to, self, inst);
-                    }
-    }
-
-    static void Walk(JsonNode n, string self, TypeNode.Fqn inst)
-    {
-        if (n is JsonObject o)
+        foreach (var root in roots)
+        foreach (var declaration in root.Types.OrEmpty())
         {
-            switch (Str(o["k"]))
-            {
-                case "callInstance":
-                case "field":
-                case "setField":
-                    // Only the BARE open self owner (`Self`, no args) — a call already carrying args stays put.
-                    if (TypeJson.Read(o["ownerType"]) is TypeNode.Fqn { Args: null } f && f.Name == self)
-                        o["ownerType"] = TypeJson.Write(inst);
-                    break;
-            }
-            foreach (var kv in o) if (kv.Value != null) Walk(kv.Value, self, inst);
+            if (!declaration.Name.HasValue) continue;
+            // Placement has split the captured prefix from declared parameters. Both still participate in !N.
+            var count = TypeParameterFrame.Count(declaration);
+            if (count == 0) continue;
+            var name = declaration.Name.Value;
+            var inst = new TypeNode.Fqn(name,
+                Enumerable.Range(0, count).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
+            Walk((BirGraphValue)declaration, name, inst);
         }
-        else if (n is JsonArray a)
-            foreach (var it in a) if (it != null) Walk(it, self, inst);
+    }
+
+    static void Walk(BirGraphValue node, string self, TypeNode.Fqn inst)
+    {
+        if (node == null || node is IBirExecutablePayload) return;
+        bool Bare(TypeNode type) => type is TypeNode.Fqn { Args: null } owner && owner.Name == self;
+        // Only the three original instance access shapes; never static, base/interface, or an existing application.
+        switch (node) {
+            case BirCallInstance call when Bare(call.OwnerType.OrDefault()):
+                call.OwnerType = BirGraphValue.CopyType(inst); break;
+            case BirFieldGet field when Bare(field.OwnerType.OrDefault()):
+                field.OwnerType = BirGraphValue.CopyType(inst); break;
+            case BirSetField field when Bare(field.OwnerType.OrDefault()):
+                field.OwnerType = BirGraphValue.CopyType(inst); break;
+        }
+        node.VisitChildren(child => Walk(child, self, inst));
     }
 }
