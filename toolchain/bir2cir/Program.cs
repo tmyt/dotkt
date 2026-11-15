@@ -104,6 +104,9 @@ static class Bir2Cir
                 ClrMemberResolution.DeclarationBindingsSelfTest();
                 ClrMemberResolution.SourceDescriptorSelfTest();
                 ClrMemberResolution.SourceLocalDelegateTargetsSelfTest();
+                ClrMemberResolution.SourceLocalConstructorsSelfTest();
+                ClrMemberResolution.PhysicalLocalDelegateTargetsSourceSelfTest();
+                ClrMemberResolution.SourceInheritedExternalCallsSelfTest();
                 ClrMemberResolution.TypedGenericParameterFactsSelfTest();
                 BirGraphNameFieldsTests.SelfTest();
                 StringCharSequenceBridge.SelfTest();
@@ -1056,6 +1059,17 @@ sealed class Pipeline
         KotlinPropertyAccessors.FinalizePhysicalProperties(captured);
         finalCarrierTypes = FBoundStarProjectionErasure.RefreshCurrentPhysicalTypesSource(captured, carrierRealization);
 
+        // These selections consume the complete physical declarations, after
+        // collision allocation, without creating another source inventory.
+        ClrMemberResolution.ResolveLocalConstructors(captured);
+        ClrMemberResolution.ResolvePhysicalLocalDelegateTargets(captured, refs,
+            localCarriers: localExistentialOwners);
+        ClrMemberResolution.ResolveInheritedExternalCalls(captured, refs);
+        for (var index = 0; index < captured.Length; index++)
+            ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
+                physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
+                physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[index].Path));
+
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -1168,28 +1182,6 @@ sealed class Pipeline
             // complete before the strict owning projection.
             loweredRoots.Add((substituted, outputName));
         }
-
-        // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
-        // while every source file is visible together. This deliberately follows physical type lowering and its
-        // collision refusal: an invalid pair of Kotlin constructors that erases to one CLR signature must receive the
-        // existing actionable collision diagnostic, rather than being intercepted as an ambiguous local lookup.
-        // ilemit receives only the winning declaration index and never selects by name/arity/assignability.
-        ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(s => s.Root));
-        // Compare fully physical method returns: closing a generic R with Unit still returns a value,
-        // whereas a declared Kotlin Unit return has lowered to void. Adapt the delegate, not the method.
-        ClrMemberResolution.ResolveLocalDelegateTargets(loweredRoots.Select(s => s.Root), refs,
-            localCarriers: localExistentialOwners);
-        // A call may retain a local receiver owner while its declaration lives on an inherited referenced
-        // interface.  Resolve that local/external boundary only after every physically-lowered local declaration
-        // is visible, so a stale shipped copy of a local owner can never win.
-        ClrMemberResolution.ResolveInheritedExternalCalls(loweredRoots.Select(s => s.Root), refs);
-        // Some lowering stages synthesize or physically reshape calls after the early semantic-signature pass.
-        // Re-run the same exact external binding on the final physical descriptors; the explicit local-type set
-        // keeps every declaration emitted by this compilation on the local axis.
-        foreach (var (lowered, outputName) in loweredRoots)
-            ClrMemberResolution.ResolveReferencedStaticCalls(
-                lowered, refs, emittedLocalTypes, externalCanonicalTypes,
-                finalLocalDeclarationIds, outputName);
 
         // PHASE 3A — complete every representation synthesis module-wide before any pass snapshots the final type
         // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
