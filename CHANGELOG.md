@@ -8,6 +8,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Compress beneficial MessagePack compiler metadata attributes with raw DEFLATE
   when producing Release libraries. Debug consumers read the declared codec;
   Debug/default builds and small payloads retain uncompressed MessagePack.
+- Preserve managed-reference arguments when omitted defaults read through them,
+  including generic and nullable callers.
 - Forward and fingerprint the produced library configuration independently of
   the compiler tools' build mode. Repository stdlib helpers support
   `DOTKT_BUILD_CONFIGURATION`; packaging and verification default it to Release.

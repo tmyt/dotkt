@@ -85,6 +85,9 @@ private fun byRefBumpDefault(value: ClrRef<Int>, previous: Int = value.value++):
 private fun byRefReplaceBeforeDefault(value: ClrRef<Int>): Int { value.value = 17; return 3 }
 private fun byRefReadAfterProvided(value: ClrRef<Int>, extra: Int = value.value, later: Int): Int = value.value + extra + later
 private fun <T> byRefGenericDefault(value: ClrRef<T>, extra: T = value.value): T = extra
+private fun byRefForwardDefault(value: ClrRef<Int>): Int = byRefReadDefault(value)
+private fun byRefNestedDefault(value: ClrRef<Int>, extra: Int = byRefReadDefault(value)): Int = extra
+private fun <T> byRefGenericForward(value: ClrRef<T>): T = byRefGenericDefault(value)
 
 private fun byRefOrderedValues(first: Int, second: Int): Int = first + second
 private fun byRefReturnBeforeTransfer(c: Calc, stop: Boolean): Int {
@@ -138,6 +141,8 @@ class ByRefParameterTests {
         var value = 6
         assertEquals(12, byRefReadDefault(byref(value), 6))
         assertEquals(12, byRefReadDefault(byref(value)))
+        assertEquals(12, byRefForwardDefault(byref(value)))
+        assertEquals(12, byRefNestedDefault(byref(value)))
         assertEquals(76, byRefBumpDefault(byref(value)))
         assertEquals(7, value)
         assertEquals(37, byRefReadAfterProvided(byref(value), later = byRefReplaceBeforeDefault(byref(value))))
@@ -162,8 +167,10 @@ class ByRefParameterTests {
         assertEquals(11, native.Slot(0))
         var text = "reference"
         assertEquals("reference", byRefGenericDefault(byref(text)))
+        assertEquals("reference", byRefGenericForward(byref(text)))
         var nullable: Int? = null
         assertEquals(null, byRefGenericDefault(byref(nullable)))
+        assertEquals(null, byRefGenericForward(byref(nullable)))
     }
 
     // A `var x by byref(...)` delegate read passed ON to a `ref` parameter. The read is a `byrefLoad` — the pointee —

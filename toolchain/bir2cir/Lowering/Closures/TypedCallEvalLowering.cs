@@ -164,8 +164,8 @@ static class TypedCallEvalLowering
 
     static void PreservePointerReads(BirGraphValue node, IReadOnlyDictionary<string, IBirExpression> replacements)
     {
-        // An address binding names a location in a ref argument slot. A pointer
-        // operand reads its address instead, never the value stored there.
+        // A reference-typed binding can name a location or already hold its pointer.
+        // Pointer operands need its address value; existing references keep theirs.
         IBirExpression Pointer(IBirExpression value) => value is BirBindingReference reference
             && SignatureValueTypes.Of(reference.Sty.OrDefault()) is TypeNode.ByRef
             && replacements.TryGetValue(reference.Id.Value, out var location)
