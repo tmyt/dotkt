@@ -56,6 +56,10 @@ else:
     kind = "rt" if "clr-stdlib-rt" in output.parts else "ref"
     output = output / (args[2] + ".dll" if stage == "ilemit" else "partial.cir.json")
 name = kind + ":" + stage
+if stage == "bir2cir":
+    configuration = args[args.index("--configuration") + 1]
+    with open(os.environ["TRACE"] + ".configuration", "a") as config_trace:
+        config_trace.write(kind + ":" + configuration + "\n")
 with open(os.environ["TRACE"], "a") as trace:
     trace.write(name + "\n")
 output.parent.mkdir(parents=True, exist_ok=True)
@@ -107,6 +111,7 @@ class StdlibBuildTests(unittest.TestCase):
                         TRACE=str(self.trace), DOTNET_REFPACK_DIR=str(self.root / "refs"),
                         FRAMEWORK_COMPILE_REFS=str(self.root / "refs/Framework.dll"))
         self.env.pop("DOTKT_BUILD_KLIB", None)
+        self.env.pop("DOTKT_BUILD_CONFIGURATION", None)
         self.env.pop("FAIL_STAGE", None)
 
     def copy(self, name):
@@ -143,6 +148,28 @@ class StdlibBuildTests(unittest.TestCase):
         output = self.root / "build" / BUILDS.get(kind, BUILDS["ref"])[2]
         if stage.endswith("ilemit") or kind == "klib":
             self.assertTrue(output.is_file(), "the failing process must have left a partial artifact")
+
+    def test_produced_configuration_is_forwarded_and_invalidates_only_backend_artifacts(self):
+        command = "source scripts/lib.sh; need_fe_klib; need_stdlib_ref; need_stdlib_rt"
+        configuration_log = Path(str(self.trace) + ".configuration")
+        for configuration, expected in ((None, "Debug"), ("Release", "Release"), ("release", None),
+                                        ("Release", None), ("Debug", "Debug"), ("Profile", None)):
+            with self.subTest(configuration=configuration, expected=expected):
+                if configuration is not None:
+                    self.env["DOTKT_BUILD_CONFIGURATION"] = configuration
+                if self.trace.exists():
+                    self.trace.unlink()
+                if configuration_log.exists():
+                    configuration_log.unlink()
+                result = self.run_bash(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if expected is None:
+                    self.assertFalse(configuration_log.exists(), "unchanged configuration rebuilt stdlib")
+                    self.assertFalse(self.calls())
+                else:
+                    self.assertEqual(configuration_log.read_text().splitlines(), ["ref:" + expected, "rt:" + expected])
+                    if configuration is not None:
+                        self.assertNotIn("klib:kotc", self.calls(), "physical carrier transport invalidated frontend KLIB")
 
     def test_partial_failures_stop_direct_builds(self):
         for stage in STAGES:

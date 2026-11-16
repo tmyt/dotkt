@@ -235,7 +235,7 @@ sealed partial class AliasConstructorDelegationExpansion
         }, new IBirExpression[] { new BirConstant {
             Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral("a\ud800b\udfff"),
         } }, new TypeNode[] { new TypeNode.Fqn("System.String") });
-        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1, BirCarrier.MessagePackDeflateV1 })
         {
             var restored = ConstructorAdapterCarrier.Decode(codec, ConstructorAdapterCarrier.Encode(codec, source));
             if (!ConstructorAdapterCarrier.Same(source, restored) || restored.Signature.Value[0] != frame)

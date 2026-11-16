@@ -137,9 +137,17 @@ _stdlib_reference_stamp() {
 _toolstamp_with_stdlib_references() {
 	{ _stdlib_reference_stamp; _toolstamp "$@"; } | sha256sum | awk '{print $1}'
 }
+stdlib_build_configuration() {
+	local configuration="${DOTKT_BUILD_CONFIGURATION:-Debug}"
+	if [[ "${configuration,,}" == release ]]; then printf 'Release\n'; else printf 'Debug\n'; fi
+}
+_toolstamp_with_configuration() {
+	{ stdlib_build_configuration; _toolstamp_with_stdlib_references "$@"; } \
+		| sha256sum | awk '{print $1}'
+}
 _toolstamp_klib() { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-klib.sh"; }
-_toolstamp_ref()  { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
-_toolstamp_rt()   { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
+_toolstamp_ref()  { _toolstamp_with_configuration "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
+_toolstamp_rt()   { _toolstamp_with_configuration "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
 # _stamp_fresh <artifact> <fingerprint>: true iff the artifact exists AND its sidecar records this fingerprint.
 _stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev/null)" == "$2" ]]; }
 

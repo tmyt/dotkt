@@ -59,7 +59,7 @@ static class ExecutableBirCodec
                     Ret = suspendShape, RetSuspendFnTypePre = suspendShape,
                     Body = new IBirStatement[] { new BirReturn { Value = new BirLocal { Name = "action", Sty = suspendShape } } } } },
         };
-        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1, BirCarrier.MessagePackDeflateV1 })
         {
             var restored = ReadInline(codec, EncodeInline(codec, source));
             if (!JsonNode.DeepEquals(restored.ToDom(), source.ToDom()) || !SameInline(restored, source)
@@ -96,7 +96,7 @@ static class ExecutableBirCodec
                     Type = text, Value = new BirLiteral.TextLiteral("captured") } } },
             },
         };
-        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1, BirCarrier.MessagePackDeflateV1 })
         {
             var prepared = (BirCallInline)ReadExpression(codec,
                 EncodeExpression(codec, preparedCall));
@@ -118,12 +118,13 @@ static class ExecutableBirCodec
             || sourceDefault.Stmts.Value[0] is not BirSourcePoint { Span.HasValue: true }
             || defaultAttribute.Args.Value[1] is not BirConstant { Value.Value: BirLiteral.TextLiteral { Value: Codec } })
             throw new InvalidOperationException("Executable carrier rewrote source ownership or lost nested codec identity");
+        foreach (var codec in new[] { BirCarrier.MessagePackV1, BirCarrier.MessagePackDeflateV1 })
         foreach (var literal in new BirLiteral[] { new Float32Literal(unchecked((int)0x80000000)),
                      new Float64Literal(unchecked((long)0x7ff8000000000042UL)),
                      new BirLiteral.IntegerLiteral(long.MinValue), new BirLiteral.UnsignedIntegerLiteral(ulong.MaxValue) })
         {
             var expression = new BirConstant { Type = new TypeNode.Fqn("kotlin.Any"), Value = literal };
-            var restored = (BirConstant)ReadExpression(Codec, EncodeExpression(Codec, expression));
+            var restored = (BirConstant)ReadExpression(codec, EncodeExpression(codec, expression));
             if (restored.Value.Value != literal)
                 throw new InvalidOperationException("Executable binary carrier changed scalar bits");
         }
