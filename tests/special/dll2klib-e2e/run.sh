@@ -73,6 +73,16 @@ dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/tr
 	-classpath "$FE_KLIB$KLIB_CP_SEP$OUT/transitive-klib/TransitiveSlotProbe.klib" \
 	-d "$OUT/transitive-bir"
 
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-mixed-event.kt" -no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$OUT/transitive-klib/TransitiveSlotProbe.klib" \
+	-d "$OUT/missing-event-bir" > "$OUT/missing-event.log" 2>&1; then
+	die "native abstract event accessors did not require a Kotlin implementation"
+fi
+for missing in MissingAdd MissingRemove MissingBoth; do
+	grep -q "class '$missing' is not abstract and does not implement abstract member" "$OUT/missing-event.log" \
+		|| die "missing abstract event obligation for $missing"
+done
+
 # A standalone two-path projection lacks the complete resolved catalog. It cannot identify external delegate or
 # Kotlin companion TypeRefs and must fail rather than silently project their physical CLR carriers as ordinary nominal
 # classes.
