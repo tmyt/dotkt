@@ -186,3 +186,9 @@ make pack                      # produce the NuGet packages into a local feed
 
 (`./scripts/dotkt.sh --run path/to/Foo.kt` is the underlying one-shot wrapper. Omit `RUN=1` from
 `make dev` to compile without running.)
+
+Release libraries may compress sufficiently large compiler metadata attributes with raw DEFLATE;
+Debug builds retain uncompressed metadata, and both can consume either form. Repository stdlib
+helpers default to Debug; set `DOTKT_BUILD_CONFIGURATION=Release` to select Release metadata emission.
+`make pack` and the standalone packing script default their produced stdlib to Release and include
+that setting in artifact fingerprints. This setting is independent of the compiler tools' build mode.

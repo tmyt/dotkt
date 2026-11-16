@@ -1401,6 +1401,15 @@ case_incremental_emission() {
 	fi
 }
 
+case_carrier_compression() {
+	if bash "$ROOT/tests/msbuild/carrier-compression.sh" "$WS/carrier-compression" "DotKt.Sdk/$VER" "$NUGET_CONFIG" \
+			>"$WS/carrier-compression.log" 2>&1; then
+		pass carrier-compression
+	else
+		fail carrier-compression "Release carrier transport regression" "$(tail -40 "$WS/carrier-compression.log")"
+	fi
+}
+
 case_application_manifest() {
 	if bash "$ROOT/tests/packaged-sdk/application-manifest/run.sh" "$FEED" "$VER" "$WS/application-manifest" \
 			>"$WS/application-manifest.log" 2>&1; then
@@ -1449,6 +1458,7 @@ case_portable_pdb() {
 case_toolchain_assembly_identity
 case_exe
 case_incremental_emission
+case_carrier_compression
 case_application_manifest
 case_managed_versions
 case_jit_debugging

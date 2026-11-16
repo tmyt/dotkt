@@ -16,6 +16,7 @@ pins in a given build.
 | JetBrains Java annotations (`org.jetbrains:annotations`, bundled with the Kotlin compiler) | `kotc` | Apache-2.0 | https://github.com/JetBrains/java-annotations |
 | MessagePack for Java (`org.msgpack:msgpack-core`) | `kotc` IR boundary codec | Apache-2.0 | https://github.com/msgpack/msgpack-java |
 | MessagePack for C# and its annotations | `bir2cir`, `dll2klib` IR boundary codecs | MIT | https://github.com/MessagePack-CSharp/MessagePack-CSharp |
+| SharpZipLib | `bir2cir`, `dll2klib` strict raw DEFLATE carrier decoding | MIT | https://github.com/icsharpcode/SharpZipLib |
 | Microsoft.NET.StringTools (MessagePack dependency) | `bir2cir`, `dll2klib` | MIT (.NET Foundation) | https://github.com/dotnet/msbuild |
 | System.Reflection.MetadataLoadContext | `bir2cir`, `ilemit` | MIT (.NET Foundation) | https://github.com/dotnet/runtime |
 | AsmResolver, AsmResolver.PE.File and AsmResolver.PE | `ilemit` native resource directory serialization | MIT | https://github.com/Washi1337/AsmResolver |

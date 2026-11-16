@@ -134,6 +134,7 @@ rm -rf "$incr"
 
 # Metadata-only invalidation must preserve Kotlin output, no-op behavior and compilation-hook recovery.
 bash "$ROOT/tests/msbuild/incremental-emission.sh" "$WORK/incremental-emission" || fail=1
+bash "$ROOT/tests/msbuild/carrier-compression.sh" "$WORK/carrier-compression" || fail=1
 
 # #467 + #592: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
 # $(BaseIntermediateOutputPath). Build one project as Debug and Release CONCURRENTLY while each configuration selects

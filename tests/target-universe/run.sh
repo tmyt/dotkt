@@ -95,12 +95,12 @@ for format in MsgPack json; do
     cmp "$raw" "$probe_dir/TargetUniverseProbe.dll" || die "BIR codecs changed deterministic CIL/metadata"
     if [[ "${format,,}" == msgpack ]]; then
         stable_bir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")"
-        stable_cir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/cir/.stamp.msgpack")"
+        stable_cir_stamp="$(stat -c '%y' "$OUT/obj/Release/net10.0/cir/.stamp.msgpack.Release")"
         dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
             -c Release --no-restore -v:q --nologo -p:Deterministic=true -p:DotKtBirFormat=msgpack -p:DotKtCirFormat=msgpack \
             -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" >/dev/null
         [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" == "$stable_bir_stamp" ]] || die "Unchanged binary BIR recompiled Kotlin"
-        [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/cir/.stamp.msgpack")" == "$stable_cir_stamp" ]] || die "Unchanged binary CIR reran lowering"
+        [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/cir/.stamp.msgpack.Release")" == "$stable_cir_stamp" ]] || die "Unchanged binary CIR reran lowering"
     fi
 done
 

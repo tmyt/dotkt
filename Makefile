@@ -105,6 +105,9 @@ $(STDLIB_RT): force-stdlib-check $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdli
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }
 
 # ---- packaging -----------------------------------------------------------------------------------
+# Apply the same produced-library configuration to prerequisite builds and the
+# standalone pack. Compiler executable build configuration is independent.
+pack: export DOTKT_BUILD_CONFIGURATION ?= Release
 pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Templates) -> build/nuget-feed
 	bash scripts/pack-nuget.sh
 

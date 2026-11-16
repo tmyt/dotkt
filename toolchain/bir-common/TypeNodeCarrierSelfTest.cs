@@ -22,7 +22,7 @@ public static class TypeNodeCarrierSelfTest
             new TypeNode.ByRef(integer), new TypeNode.Ptr(integer),
             new TypeNode.FnPtr(5, 1, 1, integer, [integer, integer]), new TypeNode.Mod(true, integer, integer),
         };
-        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1 })
+        foreach (var codec in new[] { BirCarrier.JsonV1, BirCarrier.MessagePackV1, BirCarrier.MessagePackDeflateV1 })
         foreach (var shape in shapes)
         {
             var bytes = TypeNodeCarrier.Encode(codec, shape);

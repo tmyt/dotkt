@@ -10,6 +10,10 @@
 # packaging/DotKt.Versions.props (imported by every pack .csproj). Orchestrated by `make pack` (which
 # builds the prerequisites first); standalone it builds what is missing OR stale (fingerprint-aware need_*,
 # so a klib/stdlib baked by an older toolchain is never shipped, #106). Output: build/nuget-feed (wiped).
+# This is the produced stdlib's configuration, independent of the tools' own
+# Release builds. Development helpers default to Debug; package production is
+# explicitly Release and fingerprints the selected configuration.
+export DOTKT_BUILD_CONFIGURATION="${DOTKT_BUILD_CONFIGURATION:-Release}"
 source "$(dirname "$0")/lib.sh"
 
 usage() {
