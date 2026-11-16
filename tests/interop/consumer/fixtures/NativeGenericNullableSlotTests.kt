@@ -11,16 +11,19 @@ private class NativeGenericMidBaseSource(override val Item: Int?) : MidSource<St
 private class NativeGenericMutableMidBaseSource(override var Item: Long?) : MutableMidSource<Long?, String>()
 private fun <T> readNativeGenericSource(value: Source<T>): T = value.Item
 
-private class NativeCollectionReimplementation : System.Collections.Generic.List<Int>(), MutableCollection<Int> {
+private open class NativeCollectionReimplementation : System.Collections.Generic.List<Int>(), MutableCollection<Int> {
     var sizeReads = 0
     var containsCalls = 0
     var clearCalls = 0
+    var iteratorCalls = 0
     override val size: Int get() { sizeReads++; return Count }
     override fun isEmpty() = Count == 0
     override fun contains(element: Int): Boolean { containsCalls++; return false }
     override fun containsAll(elements: Collection<Int>) = elements.all { contains(it) }
-    override fun iterator(): MutableIterator<Int> =
-        (0 until Count).map { this[it] }.toMutableList().iterator()
+    override fun iterator(): MutableIterator<Int> {
+        iteratorCalls++
+        return (0 until Count).map { this[it] }.toMutableList().iterator()
+    }
     override fun add(element: Int): Boolean { Add(element); return true }
     override fun addAll(elements: Collection<Int>): Boolean {
         var changed = false
@@ -44,6 +47,10 @@ private class NativeCollectionReimplementation : System.Collections.Generic.List
 }
 
 private class InheritedNativeCollection : System.Collections.Generic.List<Int>()
+private class PartialNativeCollection : NativeCollectionReimplementation(), MutableCollection<Int> {
+    var ownClears = 0
+    override fun clear() { ownClears++; super.clear() }
+}
 
 class NativeGenericNullableSlotTests {
     @TestAttribute fun interfaceGetterClosesInItsErasedApplicationFrame() {
@@ -125,6 +132,11 @@ class NativeGenericNullableSlotTests {
         val base: System.Collections.Generic.List<Int> = collection
         check(base.Count == 1 && collection.sizeReads == 4)
         check(base.Contains(7) && collection.containsCalls == 1)
+        val enumerable: System.Collections.Generic.IEnumerable<Int> = collection
+        val iterator = enumerable.GetEnumerator()
+        try { check((iterator as System.Collections.IEnumerator).MoveNext() && iterator.Current == 7) }
+        finally { iterator.Dispose() }
+        check(collection.iteratorCalls == 1)
         kotlin.clear()
         check(collection.clearCalls == 1 && base.Count == 0)
 
@@ -132,5 +144,12 @@ class NativeGenericNullableSlotTests {
         inheritedCollection.Add(9)
         val inheritedValue: Any = inheritedCollection
         check((inheritedValue as MutableCollection<Int>).size == 1)
+
+        val partial = PartialNativeCollection()
+        partial.Add(11)
+        val partialSlot: MutableCollection<Int> = partial
+        check(partialSlot.size == 1 && partial.sizeReads == 1)
+        partialSlot.clear()
+        check(partial.ownClears == 1 && partial.clearCalls == 1 && partial.Count == 0)
     }
 }

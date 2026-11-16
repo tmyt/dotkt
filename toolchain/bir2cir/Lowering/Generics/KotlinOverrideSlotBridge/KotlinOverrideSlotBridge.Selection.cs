@@ -10,6 +10,15 @@ static partial class KotlinOverrideSlotBridge
         bool UnitValueReturn = false, TypeNode[] Signature = null, string ReferenceMember = null,
         TypeNode SemanticReturn = null, OverrideMethod SelectedLocal = null, string SelectedReferencedDeclarationId = null);
 
+    static string SelectedSlotKey(SelectedSlot slot)
+    {
+        static string Key(TypeNode type) => SupertypeGraph.TypeKey(BirTypeLowering.CanonicalPhysicalSlotType(type));
+        return Key(slot.DescriptorSpec) + "::" + slot.DescriptorMember
+            + "`" + slot.Implementation.Arity + "(" + string.Join(",", (slot.Signature ?? slot.Parameters).Select(Key))
+            + ")->" + Key(slot.Return)
+            + MethodTypeParameterShapeKey(slot.TypeParameters, slot.SemanticSpec.Args ?? [], BirTypeLowering.CanonicalPhysicalSlotType);
+    }
+
     static void SelectSlots(OverrideOwner owner, IReadOnlyDictionary<string, Def> defs, OverrideViews views,
         IEnumerable<OverrideMethod> candidates, TypeNode[] ownArgs, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         Phase phase, bool refBuild, IReadOnlySet<string> localTypeNames, NullableRepresentationTypes sourceMapping,
@@ -20,16 +29,11 @@ static partial class KotlinOverrideSlotBridge
         var cls = owner.Definition;
         var inheritedSlots = new List<(SelectedSlot Slot, string Key)>();
         var ownedSlots = new HashSet<string>(StringComparer.Ordinal);
-        static string Key(TypeNode type) => SupertypeGraph.TypeKey(ClrMemberResolution.MethodImplComparisonType(type));
-        static string SlotKey(SelectedSlot slot) => Key(slot.DescriptorSpec) + "::" + slot.DescriptorMember
-            + "`" + slot.Implementation.Arity + "(" + string.Join(",", (slot.Signature ?? slot.Parameters).Select(Key))
-            + ")->" + Key(slot.Return)
-            + MethodTypeParameterShapeKey(slot.TypeParameters, slot.SemanticSpec.Args ?? [], ClrMemberResolution.MethodImplComparisonType);
         void Select(SelectedSlot slot)
         {
             if (inheritedSignatures is { Count: > 0 })
             {
-                var key = SlotKey(slot);
+                var key = SelectedSlotKey(slot);
                 if (inheritedSignatures.ContainsKey(slot.Implementation))
                 {
                     inheritedSlots.Add((slot, key));
