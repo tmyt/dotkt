@@ -47,7 +47,6 @@ fun localCompanionSuspendReference(): suspend (Int) -> Int = Counter::suspendedT
 suspend fun suspendedTwice(x: Int): Int = x * 100
 
 class NativeStaticValue<T>(val value: T)
-private fun nativeStaticValue(value: String): NativeStaticValue<String> = NativeStaticValue(value)
 
 class Box<T>(val v: T) {
     val collidingAccessor: Int get() = 7
@@ -71,9 +70,9 @@ class Box<T>(val v: T) {
         fun withDefault(value: String = "box-default"): String = value
         var count: Int = 0
         @Volatile @ClrField private var volatileSecret: Int = 7
-        @ClrField private var nativeValue: NativeStaticValue<String> = nativeStaticValue("native")
+        @ClrField private var nativeValue: NativeStaticValue<String> = NativeStaticValue("native")
         fun readNativeValue(): String = nativeValue.value
-        fun writeNativeValue(value: String) { nativeValue = nativeStaticValue(value) }
+        fun writeNativeValue(value: String) { nativeValue = NativeStaticValue(value) }
         const val CODE: String = "generic-box"
         const val NAN: Double = Double.NaN
         const val NEGATIVE_ZERO: Float = -0.0f

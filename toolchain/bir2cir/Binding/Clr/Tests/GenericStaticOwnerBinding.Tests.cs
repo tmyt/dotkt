@@ -22,8 +22,37 @@ static partial class GenericStaticOwnerBinding
         if (ContainsOwnerTypeVariable(access) || !ContainsOwnerTypeVariable(new BirFunctionDeclaration {
             TypeParams = new[] { new BirTypeParameter { Name = "M", Constraints = new TypeNode[] { new TypeNode.Tv("type", 0) } } },
         })) throw new InvalidOperationException("Generic static capture check confused a declaration descriptor with lexical bounds");
+        var outerVariable = new TypeNode.Tv("type", 0);
+        var text = new TypeNode.Fqn("kotlin.String");
+        var construction = new BirNew {
+            Type = new TypeNode.Fqn("Target", new TypeNode[] { text }), ArgTypes = new TypeNode[] { text },
+            Args = new IBirExpression[] { new BirConstant { Type = text, Value = new BirLiteral.TextLiteral("closed") } },
+            MemberOwnerTypeParams = access.MemberOwnerTypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray(),
+            MemberMethodTypeParams = new[] { new BirTypeParameter { Name = "M", Constraints = new TypeNode[] { outerVariable } } },
+            MemberSignature = new TypeNode[] { outerVariable },
+            MemberReturnType = new TypeNode.Fqn("Target", new TypeNode[] { outerVariable }),
+        };
+        var constructionSnapshot = construction.DeepClone();
+        if (ContainsOwnerTypeVariable(construction) || !construction.StructurallyEquals(constructionSnapshot))
+            throw new InvalidOperationException("Generic static capture check read target constructor descriptors in the enclosing frame");
+        var targetCall = new BirCallStatic { OwnerType = new TypeNode.Fqn("Target", new TypeNode[] { text }),
+            Method = "read", TypeArgs = new TypeNode[] { text }, ArgTypes = new TypeNode[] { outerVariable },
+            Sig = new TypeNode[] { outerVariable }, Args = Array.Empty<IBirExpression>() };
+        if (ContainsOwnerTypeVariable(targetCall))
+            throw new InvalidOperationException("Generic static capture check read target call signatures in the enclosing frame");
+        foreach (var lexicalUse in new BirGraphValue[] {
+            construction with { Type = new TypeNode.Fqn("Target", new TypeNode[] { outerVariable }) },
+            construction with { ArgTypes = new TypeNode[] { outerVariable } },
+            construction with { Args = new IBirExpression[] { new BirLocal { Name = "outer", Sty = outerVariable } } },
+            targetCall with { OwnerType = new TypeNode.Fqn("Target", new TypeNode[] { outerVariable }) },
+            targetCall with { TypeArgs = new TypeNode[] { outerVariable } },
+            new BirInlineCapture { SharedCellTypeParams = new[] {
+                new BirTypeParameter { Name = "Captured", Constraints = new TypeNode[] { outerVariable } } } },
+        })
+            if (!ContainsOwnerTypeVariable(lexicalUse))
+                throw new InvalidOperationException("Generic static capture check ignored a live owner-frame use or capture bound");
         var source = new BirFunctionDeclaration { Name = "source", Static = true, KotlinStatic = true, DeclarationId = "source-id",
-            Body = new IBirStatement[] { Expr(read), Expr(raise), Expr(access) } };
+            Body = new IBirStatement[] { Expr(read), Expr(raise), Expr(access), Expr(construction) } };
         var helper = new BirFunctionDeclaration { Name = "lifted", Generated = true, SemanticOwner = "Generic", DeclarationId = "helper-id",
             TypeParams = new[] { new BirTypeParameter { Name = "M" } }, Ret = new TypeNode.Tv("method", 0) };
         var property = new BirPropertyDeclaration { Name = "Property", KotlinStatic = true };

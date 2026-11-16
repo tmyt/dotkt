@@ -187,16 +187,14 @@ static partial class GenericStaticOwnerBinding
     static bool ContainsOwnerTypeVariable(BirGraphValue node)
     {
         var found = false;
-        // Only target-owner descriptors are exempt. A method's own parameter bounds,
-        // shared-cell bounds, and every other structured child remain real uses.
-        var ownerDescriptors = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
-        node.RewriteRepresentationParametersInPlace((role, parameters) => {
-            if (role == BirRepresentationParameterRole.Owner)
-                foreach (var parameter in parameters) ownerDescriptors.Add(parameter);
-            return parameters;
+        // Target signatures and parameter bounds have their own declaration frame.
+        // Lexical member bounds, operand types and shared-cell bounds remain live uses.
+        node.RewriteRepresentationInPlace((frame, _, type) => {
+            if (frame != BirGenericFrameRole.ReferencedDeclaration) found |= ContainsOwnerVariable(type);
+            return type;
+        }, (frame, _, child) => {
+            if (frame != BirGenericFrameRole.ReferencedDeclaration) found |= ContainsOwnerTypeVariable(child);
         });
-        node.RewriteRepresentationInPlace((_, _, type) => { found |= ContainsOwnerVariable(type); return type; },
-            (_, _, child) => { if (!ownerDescriptors.Contains(child)) found |= ContainsOwnerTypeVariable(child); });
         return found;
     }
 
