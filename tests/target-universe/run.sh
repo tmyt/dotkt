@@ -50,7 +50,7 @@ actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 
 # Reuse this real Kotlin compilation: only lower once more for the alternate codec.
 # Both emitters receive the same physical graph, assembly identity and target universe.
-dotnet "$BIR2CIR_DLL" "$OUT/msgpack-cir" --cir-format=msgpack \
+dotnet "$BIR2CIR_DLL" "$OUT/msgpack-cir" --cir-format=msgpack --configuration Release \
     --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL")" \
     "$OUT"/obj/Release/net10.0/bir/*.bir.json
 for format in json msgpack; do
@@ -75,7 +75,7 @@ for format in MsgPack json; do
     dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
         -c Release --no-restore -v:q --nologo -p:Deterministic=true -p:DotKtCirFormat="$format" \
         -p:BaseIntermediateOutputPath="$OUT/obj/" -p:BaseOutputPath="$OUT/bin/" >/dev/null
-    [[ -f "$OUT/obj/Release/net10.0/cir/.stamp.${format,,}" ]] || die "CIR format stamp was not refreshed"
+    [[ -f "$OUT/obj/Release/net10.0/cir/.stamp.${format,,}.Release" ]] || die "CIR format stamp was not refreshed"
     [[ "$(stat -c '%y' "$OUT/obj/Release/net10.0/bir/.stamp")" == "$bir_stamp" ]] || die "CIR codec change recompiled Kotlin"
     [[ "$(dotnet "$probe_dir/TargetUniverseProbe.dll")" == target-universe ]] || die "SDK CIR $format runtime differs"
 done
