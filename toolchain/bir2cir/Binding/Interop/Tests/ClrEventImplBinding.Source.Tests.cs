@@ -22,6 +22,19 @@ static partial class ClrEventImplBinding
             var text = new TypeNode.Fqn("kotlin.String");
             var variable = new TypeNode.Tv("type", 0);
             var handler = new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"), new TypeNode[] { variable });
+            foreach (var ordinary in new[] { Array.Empty<TypeNode>(), new TypeNode[] { text } })
+            {
+                var extension = new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.Unit"), ordinary, variable);
+                var (delegateType, invokeParameters) = FnToDelegate(extension);
+                var expected = new TypeNode[] { variable }.Concat(ordinary).ToArray();
+                if (delegateType is not TypeNode.Fqn { Name: "System.Action" } action
+                    || !action.Args.SequenceEqual(expected) || !invokeParameters.SequenceEqual(expected))
+                    throw new InvalidOperationException("Event delegate shape omitted or reordered the extension receiver");
+                var (resultDelegate, resultParameters) = FnToDelegate(extension with { Ret = text });
+                if (resultDelegate is not TypeNode.Fqn { Name: "System.Func" } function
+                    || !function.Args.SequenceEqual(expected.Append(text)) || !resultParameters.SequenceEqual(expected))
+                    throw new InvalidOperationException("Value-returning event delegate shape lost receiver or result type");
+            }
             BirFunctionDeclaration Accessor(string kind, TypeNode sourceHandler) => new() {
                 Name = kind + "_Changed", Params = kind == "raise" ? Array.Empty<BirParameter>()
                     : new[] { new BirParameter { Name = "value", Type = sourceHandler, KotlinType = sourceHandler } },

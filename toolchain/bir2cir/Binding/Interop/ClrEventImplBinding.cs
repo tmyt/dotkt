@@ -358,7 +358,7 @@ static partial class ClrEventImplBinding
     // Invoke param nodes (= the handler's params). The natural CLR lowering of a Kotlin fn type for a brand-new event.
     static (TypeNode, TypeNode[]) FnToDelegate(TypeNode.Fn fn)
     {
-        var parameters = fn.Params.Select(BirGraphValue.CopyType).ToArray();
+        var parameters = fn.DelegateParams.Select(BirGraphValue.CopyType).ToArray();
         var voidReturn = fn.Ret == null || fn.Ret is TypeNode.Fqn { Name: "kotlin.Unit" or "void" };
         var arguments = voidReturn ? parameters.Select(BirGraphValue.CopyType).ToArray()
             : parameters.Select(BirGraphValue.CopyType).Append(BirGraphValue.CopyType(fn.Ret)).ToArray();
