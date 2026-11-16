@@ -270,6 +270,7 @@ static class Bir2Cir
                 ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
                 KotlinRuntimeTypeWitness.SourceSelfTest();
+                NonReifiedCastErasure.SourceSelfTest();
                 StarProjectionLowering.SourceSelfTest();
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();
@@ -511,6 +512,7 @@ sealed class Pipeline
             CompanionRepresentationLowering.BindUses(source, companionRepresentations, refs, bindExternal: appBuild);
             ClrFlagsOperationLowering.Apply(source, refs);
             TypedCallEvalLowering.Apply(source, isValueFqn);
+            NonReifiedCastErasure.Apply(source);
             NothingValueTermination.Apply(source);
         }
         ownership.ReleaseSourceDeclarations();

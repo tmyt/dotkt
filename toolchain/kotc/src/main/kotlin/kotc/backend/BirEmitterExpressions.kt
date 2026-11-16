@@ -68,6 +68,7 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
+import org.jetbrains.kotlin.ir.util.eraseTypeParameters
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -91,6 +92,13 @@ private fun IrType.hasReifiedRuntimeOperand(): Boolean {
     if (classFqName?.asString() != "kotlin.Array") return false
     val element = ((this as? IrSimpleType)?.arguments?.singleOrNull() as? IrTypeProjection)?.type
     return element?.hasReifiedRuntimeOperand() == true
+}
+
+// Keep Kotlin's erased bound before inlining substitutes the source variable.
+// Its classifier and stars are Kotlin facts, not a CLR storage selection.
+private fun BirEmitter.erasedTypeOperand(type: IrType): TypeNode? {
+    val parameter = (type.classifierOrNull as? IrTypeParameterSymbol)?.owner ?: return null
+    return if (parameter.isReified) null else birType(type.eraseTypeParameters())
 }
 //
 // #122: stamp the FRONTEND-RESOLVED static type `sty` (the instantiated `node.type`, incl. smart-cast refinement,
@@ -349,7 +357,7 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 	else original
 	return nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
 		kotc.bir.BirNullableValue(elem = elem, e = operand)
-	} ?: kotc.bir.BirCast(type = birType(node.typeOperand), reifiedTypeOperand = node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand(), e = operand)
+	} ?: kotc.bir.BirCast(type = birType(node.typeOperand), reifiedTypeOperand = node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand(), erasedTypeOperand = erasedTypeOperand(node.typeOperand), e = operand)
 }
 
 internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (node) {
@@ -572,7 +580,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 			// `Nullable<uint>`, not a boxed reference via `isInstRef` (same #118 class as `!!`/smart-cast).
 			val velem = node.typeOperand.takeIf { it.isPrimitiveOrUnsigned() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
 			if (velem != null) kotc.bir.BirSafeValueCast(elem = velem, e = expr(node.argument))
-			else kotc.bir.BirInstanceOrNull(type = birType(node.typeOperand), reifiedTypeOperand = node.typeOperand.hasReifiedRuntimeOperand(), e = expr(node.argument))
+			else kotc.bir.BirInstanceOrNull(type = birType(node.typeOperand), reifiedTypeOperand = node.typeOperand.hasReifiedRuntimeOperand(), erasedTypeOperand = erasedTypeOperand(node.typeOperand), e = expr(node.argument))
 		}
 		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that

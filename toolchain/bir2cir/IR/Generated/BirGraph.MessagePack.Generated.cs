@@ -1020,22 +1020,23 @@ internal static class BirGraphMessagePack
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
         OptionalField<bool> field1 = default;
-        OptionalField<IBirExpression> field2 = default;
-        OptionalField<bool> field3 = default;
-        OptionalField<TypeNode> field4 = default;
+        OptionalField<TypeNode> field2 = default;
+        OptionalField<IBirExpression> field3 = default;
+        OptionalField<bool> field4 = default;
         OptionalField<TypeNode> field5 = default;
-        OptionalField<bool> field6 = default;
+        OptionalField<TypeNode> field6 = default;
         OptionalField<bool> field7 = default;
         OptionalField<bool> field8 = default;
-        OptionalField<IBirExpression> field9 = default;
+        OptionalField<bool> field9 = default;
         OptionalField<IBirExpression> field10 = default;
         OptionalField<IBirExpression> field11 = default;
-        OptionalField<TypeNode> field12 = default;
+        OptionalField<IBirExpression> field12 = default;
+        OptionalField<TypeNode> field13 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 13); if (IrMessagePack.ReadString(ref reader) != "cast") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 14); if (IrMessagePack.ReadString(ref reader) != "cast") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -1044,49 +1045,53 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "e":
+                case "erasedTypeOperand":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "e":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 case "dotktProjectedCollection":
-                    Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 case "_erasedValueVariable":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "_physicalDeclarationSignature":
-                    Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "_exactBridgeCast":
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "functionValueRestoration":
+                case "_exactBridgeCast":
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "kotlinTypeWitness":
+                case "functionValueRestoration":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field9 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "kotlinRuntimeTypeWitness":
+                case "kotlinTypeWitness":
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "kotlinClassifierPredicate":
+                case "kotlinRuntimeTypeWitness":
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "sty":
+                case "kotlinClassifierPredicate":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field12 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "sty":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -1096,24 +1101,25 @@ internal static class BirGraphMessagePack
         {
             Type = field0,
             ReifiedTypeOperand = field1,
-            E = field2,
-            DotktProjectedCollection = field3,
-            _erasedValueVariable = field4,
-            SuspendFnTypePre = field5,
-            _physicalDeclarationSignature = field6,
-            _exactBridgeCast = field7,
-            FunctionValueRestoration = field8,
-            KotlinTypeWitness = field9,
-            KotlinRuntimeTypeWitness = field10,
-            KotlinClassifierPredicate = field11,
-            Sty = field12,
+            ErasedTypeOperand = field2,
+            E = field3,
+            DotktProjectedCollection = field4,
+            _erasedValueVariable = field5,
+            SuspendFnTypePre = field6,
+            _physicalDeclarationSignature = field7,
+            _exactBridgeCast = field8,
+            FunctionValueRestoration = field9,
+            KotlinTypeWitness = field10,
+            KotlinRuntimeTypeWitness = field11,
+            KotlinClassifierPredicate = field12,
+            Sty = field13,
         };
     }
 
     internal static void WriteBirCast(ref MessagePackWriter writer, BirCast value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ReifiedTypeOperand.IsPresent ? 1 : 0) + (value.E.IsPresent ? 1 : 0) + (value.DotktProjectedCollection.IsPresent ? 1 : 0) + (value._erasedValueVariable.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value._physicalDeclarationSignature.IsPresent ? 1 : 0) + (value._exactBridgeCast.IsPresent ? 1 : 0) + (value.FunctionValueRestoration.IsPresent ? 1 : 0) + (value.KotlinTypeWitness.IsPresent ? 1 : 0) + (value.KotlinRuntimeTypeWitness.IsPresent ? 1 : 0) + (value.KotlinClassifierPredicate.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ReifiedTypeOperand.IsPresent ? 1 : 0) + (value.ErasedTypeOperand.IsPresent ? 1 : 0) + (value.E.IsPresent ? 1 : 0) + (value.DotktProjectedCollection.IsPresent ? 1 : 0) + (value._erasedValueVariable.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value._physicalDeclarationSignature.IsPresent ? 1 : 0) + (value._exactBridgeCast.IsPresent ? 1 : 0) + (value.FunctionValueRestoration.IsPresent ? 1 : 0) + (value.KotlinTypeWitness.IsPresent ? 1 : 0) + (value.KotlinRuntimeTypeWitness.IsPresent ? 1 : 0) + (value.KotlinClassifierPredicate.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("cast");
         if (value.Type.IsPresent)
@@ -1132,6 +1138,15 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.ReifiedTypeOperand.Value);
+            }
+        }
+        if (value.ErasedTypeOperand.IsPresent)
+        {
+            writer.Write("erasedTypeOperand");
+            if (value.ErasedTypeOperand.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ErasedTypeOperand.Value, depth + 1);
             }
         }
         if (value.E.IsPresent)
@@ -1387,16 +1402,17 @@ internal static class BirGraphMessagePack
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
         OptionalField<bool> field1 = default;
-        OptionalField<IBirExpression> field2 = default;
-        OptionalField<TypeNode> field3 = default;
-        OptionalField<IBirExpression> field4 = default;
+        OptionalField<TypeNode> field2 = default;
+        OptionalField<IBirExpression> field3 = default;
+        OptionalField<TypeNode> field4 = default;
         OptionalField<IBirExpression> field5 = default;
         OptionalField<IBirExpression> field6 = default;
+        OptionalField<IBirExpression> field7 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 7); if (IrMessagePack.ReadString(ref reader) != "isInstRef") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 8); if (IrMessagePack.ReadString(ref reader) != "isInstRef") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -1405,25 +1421,29 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "e":
+                case "erasedTypeOperand":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "e":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "kotlinTypeWitness":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
-                    break;
-                case "kotlinRuntimeTypeWitness":
                     Seen(ref seen, 1UL << 5);
                     field5 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "kotlinClassifierPredicate":
+                case "kotlinRuntimeTypeWitness":
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "kotlinClassifierPredicate":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -1433,18 +1453,19 @@ internal static class BirGraphMessagePack
         {
             Type = field0,
             ReifiedTypeOperand = field1,
-            E = field2,
-            SuspendFnTypePre = field3,
-            KotlinTypeWitness = field4,
-            KotlinRuntimeTypeWitness = field5,
-            KotlinClassifierPredicate = field6,
+            ErasedTypeOperand = field2,
+            E = field3,
+            SuspendFnTypePre = field4,
+            KotlinTypeWitness = field5,
+            KotlinRuntimeTypeWitness = field6,
+            KotlinClassifierPredicate = field7,
         };
     }
 
     internal static void WriteBirInstanceOrNull(ref MessagePackWriter writer, BirInstanceOrNull value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ReifiedTypeOperand.IsPresent ? 1 : 0) + (value.E.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.KotlinTypeWitness.IsPresent ? 1 : 0) + (value.KotlinRuntimeTypeWitness.IsPresent ? 1 : 0) + (value.KotlinClassifierPredicate.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ReifiedTypeOperand.IsPresent ? 1 : 0) + (value.ErasedTypeOperand.IsPresent ? 1 : 0) + (value.E.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.KotlinTypeWitness.IsPresent ? 1 : 0) + (value.KotlinRuntimeTypeWitness.IsPresent ? 1 : 0) + (value.KotlinClassifierPredicate.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("isInstRef");
         if (value.Type.IsPresent)
@@ -1463,6 +1484,15 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.ReifiedTypeOperand.Value);
+            }
+        }
+        if (value.ErasedTypeOperand.IsPresent)
+        {
+            writer.Write("erasedTypeOperand");
+            if (value.ErasedTypeOperand.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.ErasedTypeOperand.Value, depth + 1);
             }
         }
         if (value.E.IsPresent)
