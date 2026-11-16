@@ -241,6 +241,7 @@ class StdlibBuildTests(unittest.TestCase):
         self.assertEqual(self.calls().count("pack"), 5)
 
     def test_template_install_example_tracks_release_version(self):
+        self.write("gradlew", '#!/bin/sh\nprintf "gradle\\n" >> "$TRACE"\n', executable=True)
         guide = self.root / "docs/user/getting-started.md"
         original = guide.read_text()
         command = next(line for line in original.splitlines()
@@ -256,7 +257,8 @@ class StdlibBuildTests(unittest.TestCase):
                 guide.write_text(content)
                 result = self.run_bash("bash scripts/pack-nuget.sh")
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("Templates", result.stderr)
+                message = "stale Templates install version" if name == "mixed" else "no 'dotnet new install DotKt.Templates@"
+                self.assertIn(message, result.stderr)
                 self.assertEqual(self.calls(), [], "version drift must fail before compiler builds")
         guide.write_text(original)
         self.write("CHANGELOG.md", stale_command + "\n")
