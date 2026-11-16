@@ -162,6 +162,19 @@ static class TypedCallEvalLowering
         return (statements.ToArray(), replacements);
     }
 
+    static void PreservePointerReads(BirGraphValue node, IReadOnlyDictionary<string, IBirExpression> replacements)
+    {
+        // An address binding names a location in a ref argument slot. A pointer
+        // operand reads its address instead, never the value stored there.
+        IBirExpression Pointer(IBirExpression value) => value is BirBindingReference reference
+            && SignatureValueTypes.Of(reference.Sty.OrDefault()) is TypeNode.ByRef
+            && replacements.TryGetValue(reference.Id.Value, out var location)
+            && location != null && location is not BirByRefOf
+                ? new BirByRefOf { Inner = Field(value) } : value;
+        if (node is BirByRefLoad { Ptr.HasValue: true } load) load.Ptr = Field(Pointer(load.Ptr.Value));
+        if (node is BirByRefStore { Ptr.HasValue: true } store) store.Ptr = Field(Pointer(store.Ptr.Value));
+    }
+
     // One independent materialization per occurrence, including repeated stable
     // reads. No ownership is transferred out of the immutable reference cache.
     internal static BirGraphValue Substitute(BirGraphValue node, IReadOnlyDictionary<string, IBirExpression> replacements)
@@ -171,6 +184,7 @@ static class TypedCallEvalLowering
         {
             if (current is BirBindingReference reference && replacements.TryGetValue(reference.Id.Value, out var value))
                 return value == null ? null : Graph(value).DeepClone();
+            PreservePointerReads(current, replacements);
             current.VisitChildSlots(slot => slot.Replace(Replace(slot.Value)));
             return current;
         }
@@ -195,6 +209,7 @@ static class TypedCallEvalLowering
             if (current is IBirExecutablePayload) return current;
             if (current is BirBindingReference reference && replacements.TryGetValue(reference.Id.Value, out var value))
                 return value == null ? null : moved.Add(reference.Id.Value) ? Graph(value) : Graph(value).DeepClone();
+            PreservePointerReads(current, replacements);
             foreach (var slot in OrderedChildren(current, owned: true)) slot.Replace(Replace(slot.Value));
             return current;
         }
@@ -372,6 +387,30 @@ static class TypedCallEvalLowering
         var cloned = (BirCallStatic)Substitute(twice, replacements);
         if (statements.Length != 0 || ReferenceEquals(cloned.Args.Value[0], cloned.Args.Value[1]))
             throw new InvalidOperationException("Owning call-plan stable readers share mutable nodes");
+
+        var referenceType = new TypeNode.ByRef(integer);
+        BirBindingReference ReferenceRead() => new() { Id = "address", Sty = referenceType };
+        var addressBinding = Binding("address", new BirLocal { Name = "slot", Sty = integer }, "address");
+        addressBinding.Type = referenceType;
+        addressBinding.Stable = true;
+        var defaultRead = new BirByRefLoad { Ptr = ReferenceRead(), Elem = integer };
+        var refCall = new BirCallStatic { Method = "readDefault", Sig = new TypeNode[] { referenceType, integer },
+            Args = new IBirExpression[] { ReferenceRead(), Read("default") } };
+        (statements, replacements) = Materialise(new[] { addressBinding, Binding("default", defaultRead) },
+            new BirGraphValue[] { refCall }, "default managed-reference read");
+        var referenceCall = (BirCallStatic)Substitute(refCall, replacements);
+        if (referenceCall.Args.Value[0] is not BirLocal { Name.Value: "slot" }
+            || referenceCall.Args.Value[1] is not BirByRefLoad { Ptr.Value: BirByRefOf { Inner.Value: BirLocal { Name.Value: "slot" } } })
+            throw new InvalidOperationException("Default reference read consumed a pointee value instead of its address");
+        var store = new BirByRefStore { Ptr = ReferenceRead(), Elem = integer, Value = literal };
+        var stored = (BirByRefStore)SubstituteOwned(store,
+            new Dictionary<string, IBirExpression> { ["address"] = new BirLocal { Name = "slot", Sty = integer } });
+        if (stored.Ptr.Value is not BirByRefOf { Inner.Value: BirLocal { Name.Value: "slot" } })
+            throw new InvalidOperationException("Owning pointer substitution consumed a pointee instead of its address");
+        var alreadyAddressed = (BirByRefLoad)Substitute(defaultRead,
+            new Dictionary<string, IBirExpression> { ["address"] = new BirByRefOf { Inner = new BirLocal { Name = "slot", Sty = integer } } });
+        if (alreadyAddressed.Ptr.Value is not BirByRefOf { Inner.Value: BirLocal { Name.Value: "slot" } })
+            throw new InvalidOperationException("Pointer substitution addressed an already explicit pointer twice");
 
         var original = new BirCallEvaluation { Type = integer, Bindings = new[] { Binding("producer", Effect("once")) },
             Expr = new BirCallStatic { Method = "invoke", Ret = integer, Args = new IBirExpression[] { Read("producer") } } };
