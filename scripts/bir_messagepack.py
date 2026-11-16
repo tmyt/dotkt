@@ -148,4 +148,4 @@ def outputs(root, definitions):
               "        for (var index = 0; index < count; index++)", "        {",
               "            if (IrMessagePack.ReadString(ref reader) == key) return true;", "            reader.Skip();",
               "        }", "        return false;", "    }", "}", ""]
-    return {root / "toolchain/bir2cir/BirGraph.MessagePack.Generated.cs": "\n".join(lines)}
+    return {root / "toolchain/bir2cir/IR/Generated/BirGraph.MessagePack.Generated.cs": "\n".join(lines)}

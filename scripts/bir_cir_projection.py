@@ -121,4 +121,4 @@ def outputs(root, definitions, model_type, non_null_field, allows_null):
                     expression = f"ProjectOptional({source_field}, item => {expression}, allowNull: {null})"
                 lines += [f"            {member} = {expression},"]
             lines += ["        };", "    }", ""]
-    return {root / "toolchain/bir2cir/TypedCirProjection.Generated.cs": "\n".join([*lines, "}", ""])}
+    return {root / "toolchain/bir2cir/IR/Generated/TypedCirProjection.Generated.cs": "\n".join([*lines, "}", ""])}

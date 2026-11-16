@@ -767,7 +767,7 @@ def outputs(schema):
         **bir_dom_frontier_outputs(ROOT, definitions),
         **bir_cir_projection_outputs(ROOT, definitions, model_type, non_null_field, allows_null),
         ROOT / "toolchain/cir-common/Executable.Model.Generated.cs": executable_model,
-        ROOT / "toolchain/bir2cir/CirBodyRewrite.Generated.cs": declaration_body_rewrite(definitions),
+        ROOT / "toolchain/bir2cir/IR/Generated/CirBodyRewrite.Generated.cs": declaration_body_rewrite(definitions),
         ROOT / "toolchain/cir-common/Declaration.Model.Generated.cs": declaration_model,
         ROOT / "toolchain/cir-common/Attribute.Model.Generated.cs": metadata_models(definitions),
         ROOT / "toolchain/bir-common/TypeNode.Model.Generated.cs": "\n".join(csharp),

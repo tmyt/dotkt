@@ -80,4 +80,4 @@ def outputs(root, definitions):
               "        if (!source.TryGetPropertyValue(name, out var value)) return default;",
               "        return value is null && !semanticNull ? OptionalField<T>.Null : OptionalField<T>.Of(read(value));",
               "    }", "}", ""]
-    return {root / "toolchain/bir2cir/BirGraph.Dom.Generated.cs": "\n".join(lines)}
+    return {root / "toolchain/bir2cir/IR/Generated/BirGraph.Dom.Generated.cs": "\n".join(lines)}

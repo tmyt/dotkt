@@ -609,7 +609,7 @@ assembly, or `kotlin.clr.Span` from `stackBuffer { … }.asSpan()`).
 The rule, in three parts:
 
 - **Locals: allowed unless they live across a suspension.** bir2cir computes real backward LIVENESS over the
-  state-machine body (`toolchain/bir2cir/SuspendLiveness.cs`). A local that is dead at every suspension point
+  state-machine body (`toolchain/bir2cir/Lowering/Coroutines/SuspendLiveness.cs`). A local that is dead at every suspension point
   stays an ordinary `MoveNext` local and may be byref-like. Only a local that is still needed after a resume is
   spilled to a state-machine field, and a byref-like one there is a **compile-time error mirroring C# CS4007**
   ("instance of type cannot be preserved across await"). Liveness, not a lexical interval: a value created and

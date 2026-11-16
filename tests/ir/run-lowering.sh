@@ -17,7 +17,7 @@
 #   side of that line — a `staticField` read (its declaring type's initializer can print, throw, mutate) and a `const`
 #   — and they must lower differently.
 #
-#   bir2cir/NullableFlags.cs — the NRT byte walk carries a NULLABLE and an OBLIVIOUS marker, and states once that
+#   bir2cir/Lowering/Generics/NullableFlags.cs — the NRT byte walk carries a NULLABLE and an OBLIVIOUS marker, and states once that
 #   oblivious wins. A position reached through both is `Oblivious(Nullable(T))`, which the FRONTEND cannot emit (its
 #   oblivious wrapper always wraps a made-not-null type) and which no input in the corpus has yet produced through a
 #   pass. `oblivious-over-nullable-byte` pins the bytes so the precedence cannot be re-decided arm by arm.
