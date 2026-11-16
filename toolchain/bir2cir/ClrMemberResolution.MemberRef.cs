@@ -29,7 +29,6 @@
 // is why the reference needs no base walk, interface fan-out or most-derived rule downstream.
 
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Toolchain;
@@ -96,14 +95,6 @@ static partial class ClrMemberResolution
         return new(method.Name, reference, parameters, result, visibility, visibility == null ? null
             : refs.OwnerTypeParametersInPhysicalFrame(((TypeNode.Fqn)reference.DeclaringType).Name));
     }
-
-    /// <summary>The scalar reference for a resolved field.</summary>
-    internal static JsonNode FieldRefJson(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
-        => FieldRefOf(field, openOwner, ownerArgs).Write();
-
-    internal static JsonNode ArrayStorageMethodRef(ReferenceMetadataIndex refs, string name, string[] parameters,
-        string ownerName = "System.Array", bool isStatic = false)
-        => ArrayStorageMethodOf(refs, name, parameters, ownerName, isStatic).Write();
 
     internal static MemberRefNode ArrayStorageMethodOf(ReferenceMetadataIndex refs, string name, string[] parameters,
         string ownerName = "System.Array", bool isStatic = false)
