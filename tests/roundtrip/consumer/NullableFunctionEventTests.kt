@@ -45,11 +45,15 @@ class NullableFunctionEventTests {
         val receiverHandler: String.(Int) -> Unit = { value -> combined += this + value.toString() }
         val first = receiverHandle.subscribe(receiverHandler)
         val second = receiverHandle.subscribe(receiverHandler)
+        var inferred = ""
+        val inferredToken = receivers.Changed.subscribe { value -> inferred += this + value.toString() }
         receivers.fire("a", 2)
         first.close()
         receivers.fire("b", 3)
         second.close()
+        inferredToken.close()
         receivers.fire("ignored", 100)
         assertEquals("a2a2b3", combined)
+        assertEquals("a2b3", inferred)
     }
 }
