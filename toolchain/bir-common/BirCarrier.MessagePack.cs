@@ -4,8 +4,6 @@ using System.Buffers;
 using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
-using ICSharpCode.SharpZipLib;
-using ICSharpCode.SharpZipLib.Zip.Compression;
 using MessagePack;
 
 namespace DotKt.Bir;
@@ -68,28 +66,56 @@ public static partial class BirCarrier
 
     static byte[] Inflate(byte[] content)
     {
-        // The explicit raw inflater exposes completion and remaining input.
-        // DeflateStream's default reader can accept an unfinished stream and
-        // read ahead past its end; neither is valid for a self-contained carrier.
-        var inflater = new Inflater(noHeader: true);
-        inflater.SetInput(content);
+        using var input = new DeflateCarrierInput(content);
+        using var inflater = new DeflateStream(input, CompressionMode.Decompress);
         using var output = new MemoryStream();
         var buffer = ArrayPool<byte>.Shared.Rent(8192);
         try
         {
-            while (!inflater.IsFinished)
-            {
-                var count = inflater.Inflate(buffer);
-                if (count != 0) output.Write(buffer, 0, count);
-                else if (!inflater.IsFinished) throw new FormatException("Incomplete DEFLATE carrier");
-            }
-            if (inflater.RemainingInput != 0) throw new FormatException("Trailing DEFLATE carrier data");
+            int count;
+            // Do not use DeflateStream.CopyTo: its optimized implementation
+            // pushes the entire source through the inflater, including unused
+            // input. Read returns zero only after the stream's actual end.
+            while ((count = inflater.Read(buffer, 0, buffer.Length)) != 0)
+                output.Write(buffer, 0, count);
+            if (input.Position != content.Length) throw new FormatException("Trailing DEFLATE carrier data");
             return output.ToArray();
         }
-        catch (SharpZipBaseException error)
+        catch (InvalidDataException error)
         {
             throw new FormatException("Malformed DEFLATE carrier", error);
         }
         finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
+
+    // Reserve the final byte for a separate read. The inflater cannot consume
+    // it by reading ahead past an earlier end-of-stream; any trailing bytes
+    // therefore leave Position short of Length. A request beyond the input
+    // throws instead of returning zero, so truncated streams cannot appear
+    // complete even on runtimes with permissive DeflateStream EOF handling.
+    // All preceding input is still supplied in bulk.
+    sealed class DeflateCarrierInput(byte[] content) : Stream
+    {
+        int position;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => content.Length;
+        public override long Position { get => position; set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override int Read(Span<byte> buffer)
+        {
+            if (buffer.IsEmpty) return 0;
+            var remaining = content.Length - position;
+            if (remaining == 0) throw new FormatException("Incomplete DEFLATE carrier");
+            var count = Math.Min(buffer.Length, remaining == 1 ? 1 : remaining - 1);
+            content.AsSpan(position, count).CopyTo(buffer);
+            position += count;
+            return count;
+        }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

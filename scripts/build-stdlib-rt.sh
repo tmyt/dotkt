@@ -53,7 +53,7 @@ if (( do_emit )); then
 	# (member calls on CLR-bound owners -> plain BCL calls). Must exist — build the ref first.
 	[[ -f "$STDLIB_REF_DLL" ]] || die "reference stdlib dll not found at $STDLIB_REF_DLL — run 'build-stdlib-ref.sh --emit' first (the runtime build reads it for the @ClrTypeAlias/@ClrIntrinsic labels)"
 	compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
-	run_stdlib_stage "$OUT/bir2cir.err" dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime --configuration "${DOTKT_BUILD_CONFIGURATION:-Debug}" \
+	run_stdlib_stage "$OUT/bir2cir.err" dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime --configuration "$(stdlib_build_configuration)" \
 		"$BIR"/*.bir.json | tail -1
 	info "ilemit (substitute) -> DotKt.Stdlib.dll"
 	run_stdlib_stage "$OUT/ilemit.err" dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=runtime "$CIR"/*.cir.json | tail -2

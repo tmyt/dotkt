@@ -114,6 +114,10 @@ pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Tem
 # ==================================================================================================
 # Verification gates (test suite entry points live beside their tests under tests/)
 # ==================================================================================================
+# Canonical verification consumes the same Release stdlib as packaging. Keep
+# its prerequisite cache coherent across shards and recursive make invocations.
+verify: export DOTKT_BUILD_CONFIGURATION ?= Release
+verify-%: export DOTKT_BUILD_CONFIGURATION ?= Release
 verify: ## run ALL gates (the canonical set + the packaged-SDK release gate)
 	+$(MAKE) verify-core
 	+$(MAKE) verify-packaged-sdk

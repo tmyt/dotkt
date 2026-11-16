@@ -14,7 +14,8 @@ foreach (var handle in metadata.CustomAttributes)
     var owner = metadata.GetTypeDefinition(metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType());
     if (metadata.GetString(owner.Namespace) != "DotKt.Runtime.CompilerServices") continue;
     var name = metadata.GetString(owner.Name);
-    if (name is not ("KotlinInlineAttribute" or "KotlinDefaultAttribute" or "KotlinTypeAliasAttribute")) continue;
+    if (name is not ("KotlinInlineAttribute" or "KotlinDefaultAttribute" or "KotlinTypeAliasAttribute"
+        or "KotlinTypeAttribute")) continue;
     var blob = metadata.GetBlobReader(attribute.Value);
     if (blob.ReadUInt16() != 1) throw new Exception("Invalid attribute prolog");
     int? index = name == "KotlinDefaultAttribute" ? blob.ReadInt32() : null;

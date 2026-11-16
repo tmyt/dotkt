@@ -137,8 +137,12 @@ _stdlib_reference_stamp() {
 _toolstamp_with_stdlib_references() {
 	{ _stdlib_reference_stamp; _toolstamp "$@"; } | sha256sum | awk '{print $1}'
 }
+stdlib_build_configuration() {
+	local configuration="${DOTKT_BUILD_CONFIGURATION:-Debug}"
+	if [[ "${configuration,,}" == release ]]; then printf 'Release\n'; else printf 'Debug\n'; fi
+}
 _toolstamp_with_configuration() {
-	{ printf '%s\n' "${DOTKT_BUILD_CONFIGURATION:-Debug}"; _toolstamp_with_stdlib_references "$@"; } \
+	{ stdlib_build_configuration; _toolstamp_with_stdlib_references "$@"; } \
 		| sha256sum | awk '{print $1}'
 }
 _toolstamp_klib() { _toolstamp_with_stdlib_references "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-klib.sh"; }

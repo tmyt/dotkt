@@ -152,7 +152,8 @@ class StdlibBuildTests(unittest.TestCase):
     def test_produced_configuration_is_forwarded_and_invalidates_only_backend_artifacts(self):
         command = "source scripts/lib.sh; need_fe_klib; need_stdlib_ref; need_stdlib_rt"
         configuration_log = Path(str(self.trace) + ".configuration")
-        for configuration, expected in ((None, "Debug"), ("Release", "Release"), ("Release", None), ("Debug", "Debug")):
+        for configuration, expected in ((None, "Debug"), ("Release", "Release"), ("release", None),
+                                        ("Release", None), ("Debug", "Debug"), ("Profile", None)):
             with self.subTest(configuration=configuration, expected=expected):
                 if configuration is not None:
                     self.env["DOTKT_BUILD_CONFIGURATION"] = configuration

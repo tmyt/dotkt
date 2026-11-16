@@ -10,7 +10,7 @@ static partial class RoundtripMetadata
     // invokes this boundary. Nested opaque bytes remain byte-for-byte intact.
     internal static AttributeApplication SelectCarrierTransport(AttributeApplication attribute, bool release)
     {
-        if (!release) return attribute;
+        if (!release || attribute.AttrExternal == true) return attribute;
         var slot = (attribute.Attr as TypeNode.Fqn)?.Name switch {
             AKInline or AKType or AKNullableGen or AKCollIdentity or AKSuspendFn or AKSuspendResult
                 or AKTypeAlias or AKConstructorAdapter => 0,

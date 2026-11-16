@@ -183,6 +183,9 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   Size-only DLL rewrites measured a 50.68% reference-DLL reduction but a 2.67% Toolchain nupkg increase
   relative to the equally rewritten uncompressed control: outer ZIP compression can exploit repetition
   between uncompressed attributes. This policy favors DLL/expanded size rather than download size.
+  With the selected fallback policy, the strict runtime reader decoded the same corpus in about 26 ms
+  with about 22 MiB of managed allocation for transport buffers/output, excluding BIR parsing and the
+  already-materialized input corpus. These are reference measurements, not performance guarantees.
 - `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
   callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
   until they migrate. Unsupported identifiers fail with `NotSupportedException`, never silent mis-decoding.

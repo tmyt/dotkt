@@ -3,6 +3,15 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
+## Unreleased
+
+- Compress beneficial MessagePack compiler metadata attributes with raw DEFLATE
+  when producing Release libraries. Debug consumers read the declared codec;
+  Debug/default builds and small payloads retain uncompressed MessagePack.
+- Forward and fingerprint the produced library configuration independently of
+  the compiler tools' build mode. Repository stdlib helpers support
+  `DOTKT_BUILD_CONFIGURATION`; packaging and verification default it to Release.
+
 ## 0.9.25 (2026-11-16)
 
 ### Release highlights

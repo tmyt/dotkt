@@ -23,6 +23,11 @@
 # to match exactly; new failures and stale entries are red. Every packaged-SDK scenario must pass.
 name: verify
 
+env:
+  # Match the produced stdlib configuration used by packaging and all verify
+  # goals, so consumers reuse the same-SHA prerequisite artifacts.
+  DOTKT_BUILD_CONFIGURATION: Release
+
 on:
   push:
     branches: [ main ]
