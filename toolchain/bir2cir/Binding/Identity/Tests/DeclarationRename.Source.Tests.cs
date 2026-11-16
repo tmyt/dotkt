@@ -70,7 +70,7 @@ static partial class DeclarationRename
             && ReferenceEquals(owner.Methods.Value[0], ordinary) && ReferenceEquals(ordinary.Params.Value, parameters)
             && ReferenceEquals(ordinary.Overrides.Value[0], marker) && ReferenceEquals(call.Args.Value, arguments)
             && ordinary.Name.Value == "Physical" && ordinary.DeclarationId.Value == "source-id"
-            && ordinary.KotlinSourceMember.Value == "original-source" && ordinary.Override.Value && ordinary.Vis.Value == "public",
+            && ordinary.KotlinSourceMember.Value == "original-source" && !ordinary.Override.Value && ordinary.Vis.Value == "public",
             "physical allocation must continue actual declarations and keep exact source identity/overrides");
         var carrier = ordinary.Attrs.Value.Single();
         var bytes = ((BirOpaqueBytes)carrier.Args.Value[1]).Bytes.Value;

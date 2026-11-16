@@ -18,6 +18,27 @@ static partial class KotlinOverrideSlotBridge
         IReadOnlyDictionary<OverrideMethod,TypeNode[]> sourceParameters = null)
     {
         var cls = owner.Definition;
+        var inheritedSlots = new List<(SelectedSlot Slot, string Key)>();
+        var ownedSlots = new HashSet<string>(StringComparer.Ordinal);
+        static string Key(TypeNode type) => SupertypeGraph.TypeKey(ClrMemberResolution.MethodImplComparisonType(type));
+        static string SlotKey(SelectedSlot slot) => Key(slot.DescriptorSpec) + "::" + slot.DescriptorMember
+            + "`" + slot.Implementation.Arity + "(" + string.Join(",", (slot.Signature ?? slot.Parameters).Select(Key))
+            + ")->" + Key(slot.Return)
+            + MethodTypeParameterShapeKey(slot.TypeParameters, slot.SemanticSpec.Args ?? [], ClrMemberResolution.MethodImplComparisonType);
+        void Select(SelectedSlot slot)
+        {
+            if (inheritedSignatures is { Count: > 0 })
+            {
+                var key = SlotKey(slot);
+                if (inheritedSignatures.ContainsKey(slot.Implementation))
+                {
+                    inheritedSlots.Add((slot, key));
+                    return;
+                }
+                ownedSlots.Add(key);
+            }
+            fill(slot);
+        }
         foreach (var (spec, supIsInterface) in SupertypeGraph.Reachable(cls, defs, refs))
         {
             // These declarations own Kotlin dispatch, not matching IDictionary MethodDefs.
@@ -28,7 +49,7 @@ static partial class KotlinOverrideSlotBridge
                 // A referenced BASE CLASS reaches the same arm; only its wiring differs (a MethodImpl against the
                 // constructed base rather than the interface), and the emitter resolves that base externally.
                 SelectReferenceSlots(owner, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, phase, sourceMapping, representations,
-                    fill, suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures,
+                    Select, suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures,
                     sourceParameters: sourceParameters, nativeAliases: !refBuild);
                 continue;
             }
@@ -177,7 +198,7 @@ static partial class KotlinOverrideSlotBridge
                 }
                 var slotHasDefault = supIsInterface && !slot.Abstract
                     && slot.BodyPresent;
-                fill(new SelectedSlot(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
+                Select(new SelectedSlot(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
                     semanticName, descriptorMember, accessorKind,
                     slotParams, slotRet, impl, slot.TypeParameters,
                     slotReturnsValue && IsUnitValueSlot(slotRet),
@@ -192,7 +213,10 @@ static partial class KotlinOverrideSlotBridge
                     SelectedLocal: descriptorOwner.Name == spec.Name ? slot : null));
             }
         }
-
+        // Resolve owned claims across the complete supertype closure before admitting inherited
+        // bodies. Different semantic paths may state the same physical CLR declaration.
+        foreach (var (slot, key) in inheritedSlots)
+            if (!ownedSlots.Contains(key)) fill(slot);
     }
 
     static void SelectReferenceSlots(OverrideOwner implementingTypeView, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
@@ -205,7 +229,6 @@ static partial class KotlinOverrideSlotBridge
         var cls = implementingTypeView.Definition;
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
-        var ownedSlots = new HashSet<string>(StringComparer.Ordinal);
         foreach (var impl in methods.ToList())
         {
             if (suspendValues && !impl.Suspend) continue;
@@ -534,18 +557,6 @@ static partial class KotlinOverrideSlotBridge
                     WithModifiers(signature, slotParams[index])).ToArray();
                 var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
-                // Own declarations precede inherited candidates. A materialized final-method forwarder
-                // owns its selected slot, just as in the local-declaration arm; the inherited fact is
-                // not a second implementation. Compare the complete resolved slot, not its name alone.
-                var slotKey = SupertypeGraph.TypeKey(descriptorOwner) + "::" + descriptorMember
-                    + "`" + methodArity + "(" + string.Join(",", (slotSignature ?? slotParams).Select(SupertypeGraph.TypeKey))
-                    + ")->" + SupertypeGraph.TypeKey(slotRet)
-                    + MethodTypeParameterShapeKey(selectedSlotTypeParams, supArgs);
-                if (inheritedSignatures?.ContainsKey(impl) == true)
-                {
-                    if (ownedSlots.Contains(slotKey)) continue;
-                }
-                else ownedSlots.Add(slotKey);
                 fill(new SelectedSlot(selectedSpec, descriptorOwner, descriptorIsInterface, true, slotHasDefault,
                     accessorKind != null ? member : sourceIdentity, descriptorMember, accessorKind, slotParams, slotRet,
                     impl, selectedSlotTypeParams, slotReturnsValue && IsUnitValueSlot(slotRet), slotSignature,

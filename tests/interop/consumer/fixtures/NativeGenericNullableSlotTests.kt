@@ -11,6 +11,40 @@ private class NativeGenericMidBaseSource(override val Item: Int?) : MidSource<St
 private class NativeGenericMutableMidBaseSource(override var Item: Long?) : MutableMidSource<Long?, String>()
 private fun <T> readNativeGenericSource(value: Source<T>): T = value.Item
 
+private class NativeCollectionReimplementation : System.Collections.Generic.List<Int>(), MutableCollection<Int> {
+    var sizeReads = 0
+    var containsCalls = 0
+    var clearCalls = 0
+    override val size: Int get() { sizeReads++; return Count }
+    override fun isEmpty() = Count == 0
+    override fun contains(element: Int): Boolean { containsCalls++; return false }
+    override fun containsAll(elements: Collection<Int>) = elements.all { contains(it) }
+    override fun iterator(): MutableIterator<Int> =
+        (0 until Count).map { this[it] }.toMutableList().iterator()
+    override fun add(element: Int): Boolean { Add(element); return true }
+    override fun addAll(elements: Collection<Int>): Boolean {
+        var changed = false
+        for (element in elements) { add(element); changed = true }
+        return changed
+    }
+    override fun remove(element: Int): Boolean = Remove(element)
+    override fun removeAll(elements: Collection<Int>): Boolean {
+        var changed = false
+        for (element in elements) changed = remove(element) || changed
+        return changed
+    }
+    override fun retainAll(elements: Collection<Int>): Boolean {
+        var changed = false
+        for (index in Count - 1 downTo 0) {
+            if (!elements.contains(this[index])) { RemoveAt(index); changed = true }
+        }
+        return changed
+    }
+    override fun clear() { clearCalls++; Clear() }
+}
+
+private class InheritedNativeCollection : System.Collections.Generic.List<Int>()
+
 class NativeGenericNullableSlotTests {
     @TestAttribute fun interfaceGetterClosesInItsErasedApplicationFrame() {
         val present = NativeGenericIntSource(42)
@@ -77,5 +111,26 @@ class NativeGenericNullableSlotTests {
         check(mutable.Item == 6_000_000_000L && mutableBase.Item == 6_000_000_000L)
         Api.WriteMutableBase(mutable, null)
         check(mutable.Item == null && mutableBase.Item == null)
+
+        val collection = NativeCollectionReimplementation()
+        collection.Add(7)
+        val native: System.Collections.Generic.ICollection<Int> = collection
+        val readOnly: System.Collections.Generic.IReadOnlyCollection<Int> = collection
+        check(native.Count == 1 && collection.sizeReads == 1)
+        check(readOnly.Count == 1 && collection.sizeReads == 2)
+        check(collection.size == 1 && collection.sizeReads == 3)
+        val kotlin: MutableCollection<Int> = collection
+        check(kotlin.size == 1 && collection.sizeReads == 4)
+        check(!kotlin.contains(7) && collection.containsCalls == 1)
+        val base: System.Collections.Generic.List<Int> = collection
+        check(base.Count == 1 && collection.sizeReads == 4)
+        check(base.Contains(7) && collection.containsCalls == 1)
+        kotlin.clear()
+        check(collection.clearCalls == 1 && base.Count == 0)
+
+        val inheritedCollection = InheritedNativeCollection()
+        inheritedCollection.Add(9)
+        val inheritedValue: Any = inheritedCollection
+        check((inheritedValue as MutableCollection<Int>).size == 1)
     }
 }

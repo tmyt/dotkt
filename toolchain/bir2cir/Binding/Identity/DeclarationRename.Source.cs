@@ -48,13 +48,13 @@ static partial class DeclarationRename
                     // class slot. Only classes need the physical adjustment.
                     if (!inInterface)
                     {
-                        if (method.Override.IsPresent) method.Override = true;
                         var clrBase = ResolveNetClassOwner(Overrides(method.Overrides.Value), Callable(method, ownerFrame), refs, out var baseReturn);
                         if (clrBase == null && method.Vis.IsPresent) method.Vis = "public";
                         // A virtual class accessor needs the exact base operand
                         // for MethodImpl binding, not implicit interface naming.
                         if (clrBase != null)
                         {
+                            if (method.Override.IsPresent) method.Override = true;
                             if (!method.PendingOverrideOwner.HasValue) method.PendingOverrideOwner = clrBase;
                             if (!method.PendingOverrideReturn.HasValue) method.PendingOverrideReturn = baseReturn;
                             if (property)
