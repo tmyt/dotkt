@@ -6882,10 +6882,12 @@ sealed partial class ReferenceMetadataIndex
 
     static DeclarationIdentityPayloadInfo ParseDeclarationIdentityPayload(JsonObject payload, int methodGenericArity)
     {
-        if (payload.Count is < 2 or > 7 ||
+        if (payload.Count is < 2 or > 8 ||
             payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
-            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or DeclarationSignatureIdentity.AllocationMetadataKey))
+            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or DeclarationSignatureIdentity.AllocationMetadataKey or "constructorPrimary"))
+            || payload.ContainsKey("constructorPrimary") &&
+                (payload["constructorPrimary"] is not JsonValue primary || !primary.TryGetValue<bool>(out _))
             || payload[DeclarationSignatureIdentity.AllocationMetadataKey] is JsonNode allocation
                 && (allocation is not JsonValue allocationValue || !allocationValue.TryGetValue<bool>(out var allocated) || !allocated)
             || payload["signature"] is JsonNode signature && signature is not JsonObject

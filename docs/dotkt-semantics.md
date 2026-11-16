@@ -2556,6 +2556,11 @@ Consequences:
   `UByte`/`UByteArray` round-trip faithfully through a DotKt emit → re-consume cycle.
 - `UByteArray` is represented at runtime as a native `System.Byte[]` (like `ByteArray` is `System.SByte[]`); its
   `ubyteArrayOf`/indexing/`size`/iteration are native array operations, not calls on a wrapper object.
+- CLR compilation implicitly opts in to `kotlin.ExperimentalUnsignedTypes`, including the `UByteArray`,
+  `UShortArray`, `UIntArray` and `ULongArray` APIs routinely exposed by native interop. Direct CLI and SDK
+  compilation share this platform policy; a source or compiler opt-in remains valid but is not required.
+  Upstream annotations are unchanged, and unrelated experimental APIs still require their own opt-in.
+  This does not change other Kotlin targets or unsigned values' representation and semantics.
 - Native arrays cannot host Kotlin instance method bodies. `bir2cir` places those bodies in static helpers with an
   explicit native-array receiver, for generic, primitive, and unsigned arrays alike. `iterator()` keeps its Kotlin
   implementation and live array storage; unsigned iterators produce unsigned elements rather than borrowing the

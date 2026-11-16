@@ -131,10 +131,11 @@ internal static class BirGraphMessagePack
         OptionalField<string> field0 = default;
         OptionalField<string> field1 = default;
         OptionalField<bool> field2 = default;
-        OptionalField<SourceDeclarationSignature> field3 = default;
-        OptionalField<int[]> field4 = default;
+        OptionalField<bool> field3 = default;
+        OptionalField<SourceDeclarationSignature> field4 = default;
         OptionalField<int[]> field5 = default;
-        OptionalField<NullableRepresentationFrame> field6 = default;
+        OptionalField<int[]> field6 = default;
+        OptionalField<NullableRepresentationFrame> field7 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -151,21 +152,25 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 2);
                     field2 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "declarationSemanticSignature":
+                case "constructorPrimary":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<SourceDeclarationSignature>.Null : OptionalField<SourceDeclarationSignature>.Of(SourceDeclarationSignature.ReadMessagePack(ref reader));
+                    field3 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "declarationSemanticSignature":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<SourceDeclarationSignature>.Null : OptionalField<SourceDeclarationSignature>.Of(SourceDeclarationSignature.ReadMessagePack(ref reader));
                     break;
                 case "semanticReifiedIndices":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
-                    break;
-                case "nullableWitnessIndices":
                     Seen(ref seen, 1UL << 5);
                     field5 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
-                case "nullableRepresentationFrame":
+                case "nullableWitnessIndices":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
+                    break;
+                case "nullableRepresentationFrame":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -176,17 +181,18 @@ internal static class BirGraphMessagePack
             DeclarationId = field0,
             DeclarationSourceName = field1,
             DeclarationSignatureAllocation = field2,
-            DeclarationSemanticSignature = field3,
-            SemanticReifiedIndices = field4,
-            NullableWitnessIndices = field5,
-            NullableRepresentationFrame = field6,
+            ConstructorPrimary = field3,
+            DeclarationSemanticSignature = field4,
+            SemanticReifiedIndices = field5,
+            NullableWitnessIndices = field6,
+            NullableRepresentationFrame = field7,
         };
     }
 
     internal static void WriteBirRoundtripDeclarationIdentity(ref MessagePackWriter writer, BirRoundtripDeclarationIdentity value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.DeclarationSignatureAllocation.IsPresent ? 1 : 0) + (value.DeclarationSemanticSignature.IsPresent ? 1 : 0) + (value.SemanticReifiedIndices.IsPresent ? 1 : 0) + (value.NullableWitnessIndices.IsPresent ? 1 : 0) + (value.NullableRepresentationFrame.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.DeclarationSignatureAllocation.IsPresent ? 1 : 0) + (value.ConstructorPrimary.IsPresent ? 1 : 0) + (value.DeclarationSemanticSignature.IsPresent ? 1 : 0) + (value.SemanticReifiedIndices.IsPresent ? 1 : 0) + (value.NullableWitnessIndices.IsPresent ? 1 : 0) + (value.NullableRepresentationFrame.IsPresent ? 1 : 0));
         if (value.DeclarationId.IsPresent)
         {
             writer.Write("declarationId");
@@ -212,6 +218,15 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.DeclarationSignatureAllocation.Value);
+            }
+        }
+        if (value.ConstructorPrimary.IsPresent)
+        {
+            writer.Write("constructorPrimary");
+            if (value.ConstructorPrimary.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.ConstructorPrimary.Value);
             }
         }
         if (value.DeclarationSemanticSignature.IsPresent)
@@ -10011,11 +10026,12 @@ internal static class BirGraphMessagePack
         OptionalField<IBirStatement[]> field11 = default;
         OptionalField<bool> field12 = default;
         OptionalField<bool> field13 = default;
-        OptionalField<BirRoundtripDeclarationIdentity> field14 = default;
-        OptionalField<BirMemberReference> field15 = default;
-        OptionalField<int> field16 = default;
-        OptionalField<IBirStatement[]> field17 = default;
-        OptionalField<BirDeclarationPosition> field18 = default;
+        OptionalField<bool> field14 = default;
+        OptionalField<BirRoundtripDeclarationIdentity> field15 = default;
+        OptionalField<BirMemberReference> field16 = default;
+        OptionalField<int> field17 = default;
+        OptionalField<IBirStatement[]> field18 = default;
+        OptionalField<BirDeclarationPosition> field19 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -10068,33 +10084,37 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
                     break;
-                case "declarationSignatureAllocation":
+                case "primary":
                     Seen(ref seen, 1UL << 12);
                     field12 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "roundtripMetadataPending":
+                case "declarationSignatureAllocation":
                     Seen(ref seen, 1UL << 13);
                     field13 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "roundtripDeclarationIdentity":
+                case "roundtripMetadataPending":
                     Seen(ref seen, 1UL << 14);
-                    field14 = reader.TryReadNil() ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
+                    field14 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "roundtripDeclarationIdentity":
+                    Seen(ref seen, 1UL << 15);
+                    field15 = reader.TryReadNil() ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
                     break;
                 case "baseCtorRef":
-                    Seen(ref seen, 1UL << 15);
-                    field15 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "localCtorIndex":
-                    Seen(ref seen, 1UL << 16);
-                    field16 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
                     break;
                 case "preStmts":
-                    Seen(ref seen, 1UL << 17);
-                    field17 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "pos":
-                    Seen(ref seen, 1UL << 18);
-                    field18 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
+                    Seen(ref seen, 1UL << 19);
+                    field19 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -10114,20 +10134,21 @@ internal static class BirGraphMessagePack
             Vis = field9,
             Attrs = field10,
             Body = field11,
-            DeclarationSignatureAllocation = field12,
-            RoundtripMetadataPending = field13,
-            RoundtripDeclarationIdentity = field14,
-            BaseCtorRef = field15,
-            LocalCtorIndex = field16,
-            PreStmts = field17,
-            Pos = field18,
+            Primary = field12,
+            DeclarationSignatureAllocation = field13,
+            RoundtripMetadataPending = field14,
+            RoundtripDeclarationIdentity = field15,
+            BaseCtorRef = field16,
+            LocalCtorIndex = field17,
+            PreStmts = field18,
+            Pos = field19,
         };
     }
 
     internal static void WriteBirConstructor(ref MessagePackWriter writer, BirConstructor value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Params.IsPresent ? 1 : 0) + (value.BaseArgs.IsPresent ? 1 : 0) + (value.DelegationSig.IsPresent ? 1 : 0) + (value.ThisArgs.IsPresent ? 1 : 0) + (value.DelegationBindings.IsPresent ? 1 : 0) + (value.DelegationOuterSlot.IsPresent ? 1 : 0) + (value.DelegationDeclarationId.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.DeclarationSignatureAllocation.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.RoundtripDeclarationIdentity.IsPresent ? 1 : 0) + (value.BaseCtorRef.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.PreStmts.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Params.IsPresent ? 1 : 0) + (value.BaseArgs.IsPresent ? 1 : 0) + (value.DelegationSig.IsPresent ? 1 : 0) + (value.ThisArgs.IsPresent ? 1 : 0) + (value.DelegationBindings.IsPresent ? 1 : 0) + (value.DelegationOuterSlot.IsPresent ? 1 : 0) + (value.DelegationDeclarationId.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.Primary.IsPresent ? 1 : 0) + (value.DeclarationSignatureAllocation.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.RoundtripDeclarationIdentity.IsPresent ? 1 : 0) + (value.BaseCtorRef.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.PreStmts.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0));
         if (value.Params.IsPresent)
         {
             writer.Write("params");
@@ -10269,6 +10290,15 @@ internal static class BirGraphMessagePack
                 {
                     WriteBirStatement(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.Primary.IsPresent)
+        {
+            writer.Write("primary");
+            if (value.Primary.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.Primary.Value);
             }
         }
         if (value.DeclarationSignatureAllocation.IsPresent)

@@ -808,7 +808,7 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 	val baseAbstract = absMethods.isNotEmpty() || hasAbstractAccessor
 	// base ctor must be callable from the entry subclasses -> protected (was private for the flat form).
 	val ctor = BirConstructor(ctorParams, null, ctorBody, declarationId = declarationIdForPhysicalAllocation(primaryCtor),
-		declarationSourceName = ".ctor", thisArgs = BirField.Null, vis = if (hasPerEntry) "protected" else "private")
+		declarationSourceName = ".ctor", thisArgs = BirField.Null, vis = if (hasPerEntry) "protected" else "private", primary = primaryCtor.isPrimary)
 	// Every secondary enum constructor remains a real constructor on the rich class. Prefix the same synthesized
 	// metadata parameters, then preserve the frontend-selected `this(...)` target and its complete argument plan.
 	// This is declaration projection only: bir2cir resolves the exact physical constructor from delegationSig.
@@ -849,7 +849,7 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 		val targetIdentity = declarationIdForPhysicalAllocation(delegating.symbol.owner)
 		return BirConstructor(params, null, emittedBody, declarationId = declarationIdForPhysicalAllocation(c),
 			declarationSourceName = ".ctor", thisArgs = BirField.Value(thisArgs), delegationSig = delegationSig,
-			delegationDeclarationId = targetIdentity, delegationBindings = bindings, vis = if (hasPerEntry) "protected" else "private")
+			delegationDeclarationId = targetIdentity, delegationBindings = bindings, vis = if (hasPerEntry) "protected" else "private", primary = c.isPrimary)
 	}
 	val ctors = listOf(ctor) + enumCtors.filter { !it.isPrimary }.map(::secondaryCtor)
 	// instance fields: metadata + user props.
@@ -2164,7 +2164,7 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 	return BirConstructor(params = params, declarationId = declarationIdForPhysicalAllocation(ctor), declarationSourceName = ".ctor",
 		baseArgs = baseArgs, thisArgs = thisArgs?.let { BirField.Value(it) } ?: BirField.Null,
 		delegationSig = delegationSig, delegationDeclarationId = delegationIdentity, delegationOuterSlot = delegationOuterSlot,
-		delegationBindings = delegationBindings, vis = visOf(ctor), body = ctorBody, attrs = sourceAttributes(ctor.annotations))
+		delegationBindings = delegationBindings, vis = visOf(ctor), body = ctorBody, attrs = sourceAttributes(ctor.annotations), primary = ctor.isPrimary)
 }
 
 internal fun BirEmitter.sourceMethod(fn: IrSimpleFunction, static: Boolean, semanticOwnerOverride: String? = null): BirFunctionDeclaration {

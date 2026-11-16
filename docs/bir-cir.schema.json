@@ -86,6 +86,7 @@
       "properties": {
         "declarationId": { "type": "string" }, "declarationSourceName": { "type": "string" },
         "declarationSignatureAllocation": { "type": "boolean" },
+        "constructorPrimary": { "type": "boolean" },
         "declarationSemanticSignature": { "$ref": "#/$defs/sourceDeclarationSignature" },
         "semanticReifiedIndices": { "type": "array", "items": { "type": "integer" } },
         "nullableWitnessIndices": { "type": "array", "items": { "type": "integer" } },
@@ -638,7 +639,8 @@
         "delegationOuterSlot": { "type": "integer" }, "delegationDeclarationId": { "type": "string" },
         "declarationId": { "type": "string" }, "declarationSourceName": { "type": "string" }, "vis": { "type": "string" },
         "attrs": { "x-dotkt-representation-role": "Attributes", "type": "array", "items": { "$ref": "#/$defs/birAttribute" } },
-        "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } }
+        "body": { "type": "array", "items": { "$ref": "#/$defs/birStatementNode" } },
+        "primary": { "type": "boolean", "$comment": "Exact IrConstructor.isPrimary source fact, including false. Absent on a purely physical synthesized constructor; bir2cir transports the source fact into trusted constructor identity metadata before CIR." }
       },
       "required": ["params", "baseArgs", "body"], "additionalProperties": false
     },

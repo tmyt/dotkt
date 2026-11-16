@@ -25,6 +25,8 @@ import org.jetbrains.kotlin.cli.pipeline.PipelinePhase
 import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
+import org.jetbrains.kotlin.config.AnalysisFlag
+import org.jetbrains.kotlin.config.AnalysisFlags
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.LanguageFeature
 import org.jetbrains.kotlin.config.LanguageVersionSettings
@@ -107,6 +109,17 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 private class ClrPlatformLanguageVersionSettings(
 	private val delegate: LanguageVersionSettings,
 ) : LanguageVersionSettings by delegate {
+	// Unsigned arrays are ordinary CLR interop types. Keep upstream annotations
+	// and every explicit user opt-in; only this platform-owned opt-in is added.
+	private val optIns = delegate.getFlag(AnalysisFlags.optIn).let { explicit ->
+		if ("kotlin.ExperimentalUnsignedTypes" in explicit) explicit
+		else explicit + "kotlin.ExperimentalUnsignedTypes"
+	}
+
+	@Suppress("UNCHECKED_CAST")
+	override fun <T> getFlag(flag: AnalysisFlag<out T>): T =
+		if (flag == AnalysisFlags.optIn) optIns as T else delegate.getFlag(flag)
+
 	override fun getFeatureSupport(feature: LanguageFeature): LanguageFeature.State =
 		if (feature == LanguageFeature.CompanionBlocksAndExtensions) LanguageFeature.State.ENABLED
 		else delegate.getFeatureSupport(feature)
