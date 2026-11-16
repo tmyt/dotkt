@@ -125,7 +125,7 @@ internal fun BirEmitter.fieldDeclarationOwner(callee: IrSimpleFunction, receiver
  *  vector; ilemit never reconstructs default semantics.
  *
  *  EVALUATION (docs/bir-cir-spec.md §2.7): a fill can give one of this call's values a SECOND reader — a same-module
- *  default splices it, a reconstructed data-class `copy` field reads the receiver, a cross-module `@KotlinDefault`
+ *  default splices it, a cross-module `@KotlinDefault`
  *  carrier binds it. Where that is possible this pass builds the call's EVALUATION PLAN: every value the call supplies
  *  becomes an ordered BINDING (receivers, then the supplied arguments, then the filled defaults in declaration order —
  *  Kotlin's order), and every reader is a `bindRef` READ of it. Where it is not possible no plan is emitted and the
@@ -176,10 +176,9 @@ internal fun BirEmitter.filledArgs(
 	// evaluation plan — i.e. where a value can acquire a SECOND reader, or where the array's ORDER is not Kotlin's:
 	//  (a) a same-module default this call fills READS one of the call's values (an earlier parameter, a receiver, an
 	//      enclosing instance): the captureSubst channel below splices the value into the default;
-	//  (b) a CROSS-MODULE omission: either a `defaultArg` placeholder, whose @KotlinDefault carrier binds
-	//      `{defaultArgReceiver kind}` / `{defaultArgParam n}` to THIS call's own values in bir2cir, or a data-class
-	//      `copy` field reconstructed as a
-	//      read of the receiver. Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
+	//  (b) a CROSS-MODULE omission: a `defaultArg` placeholder, whose @KotlinDefault carrier binds
+	//      `{defaultArgReceiver kind}` / `{defaultArgParam n}` to THIS call's own values in bir2cir.
+	//      Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
 	//      never disagree with what the loop below actually emits — a placeholder outside a plan is a loud bir2cir
 	//      failure — and a plan whose values all turn out to have one reader costs nothing: CallEvalLowering inlines
 	//      every single-reader binding straight back into its slot.
@@ -342,25 +341,10 @@ private fun BirEmitter.fillOmitted(
 		var stableFill = false
 		val emitted: BirExpression? = when {
 			def is org.jetbrains.kotlin.ir.expressions.IrErrorExpression -> {
-				// CROSS-MODULE: the frontend artifact dropped the default VALUE, so a fill can only be RECONSTRUCTED from
-				// a Kotlin fact about the callee. [reconstructedDefaultReceiver] owns that decision and names the receiver
-				// the reconstruction reads — the receiver this call already bound, so what is read here is that ONE
-				// binding and the receiver is evaluated once however many fields are omitted.
-				val reconstructed = reconstructedDefaultReceiver(callee, p)?.let { rp ->
-					val ext = rp.kind == IrParameterKind.ExtensionReceiver
-					val r = if (ext) extensionReceiver(call) else dispatchReceiver(call)
-					val recvJson = if (ext) extRecv.value else dispatchRecv.value
-					if (r == null || recvJson == null) null
-					// Owner via ownerSpec off the RECEIVER EXPRESSION's type (the SAME token the plain `pair.first`
-					// property read uses — the referenced, instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly
-					// prefix, no open `gp:` param; the @KotlinDefault splice cannot carry that instantiation). The `sty`
-					// stamp is instantiated the same way — see [callSiteType].
-					else kotc.bir.BirFieldGet(sty = birType(p.type), ownerType = ownerSpec(callee.parent as? IrClass, r.type), recv = recvJson, name = p.name.asString(), dataClassCopyDefault = true)
-				}
 				// The frontend has already selected a reference-KLIB declaration and admitted the omission. Preserve
 				// only that positional fact; bir2cir reads the authoritative KotlinDefault or ECMA-335 constant from
-				// the selected reference DLL after overload resolution.
-				reconstructed ?: defaultArgPlaceholder
+				// the selected reference DLL after overload resolution, including generated data-class copy defaults.
+				defaultArgPlaceholder
 			}
 			refsAny(def, valueSyms) || refsAny(def, receiverSyms) || refsAny(def, enclosingSyms) -> {
 				// SAME-MODULE default reading the CALLEE'S OWN SCOPE — an earlier VALUE parameter (a CONTEXT
@@ -543,25 +527,6 @@ internal fun BirEmitter.callSiteSubstitutor(
 	}
 	if (params.isEmpty()) return null
 	return org.jetbrains.kotlin.ir.types.IrTypeSubstitutor(params, args, true)
-}
-
-/** The callee-scope RECEIVER parameter whose value [filledArgs] splices when it RECONSTRUCTS the fill for the omitted
- *  parameter `p` — null when no reconstruction applies.
- *
- *  A CROSS-MODULE default reaches this build as an `IrErrorExpression`: the frontend artifact preserves no default
- *  VALUE, so a fill cannot come from the callee's own IR and must come from a Kotlin FACT about the callee. The one
- *  such fact is a data class's SYNTHETIC `copy`, whose omitted field default is `this.<field>` by construction — and the
- *  value that reconstruction reads is the call's receiver. A data class may also declare a differently-signed `copy`
- *  OVERLOAD of its own, whose defaults are ordinary expressions; [isDataClassCopy] tells the two apart by the generated
- *  signature rather than by the name. */
-internal fun BirEmitter.reconstructedDefaultReceiver(
-	callee: org.jetbrains.kotlin.ir.declarations.IrFunction,
-	p: IrValueParameter,
-): IrValueParameter? {
-	if (p.defaultValue?.expression !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) return null
-	if ((callee as? IrSimpleFunction)?.let { isDataClassCopy(it) } != true) return null
-	return callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
-		?: extensionReceiverParam(callee)
 }
 
 /** Is this argument's ADDRESS free to be taken twice, and free to move past another value? True for a plain

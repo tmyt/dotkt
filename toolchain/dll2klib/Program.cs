@@ -2248,6 +2248,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 modality,
                 kind,
                 isValue: isKotlinValue,
+                isData: _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinDataAttribute"),
                 isFun: isClrDelegate || _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFunInterfaceAttribute"),
                 hasEnumEntries: isEnum || isKotlinRichEnum,
                 isInner: isKotlinInner),
@@ -7481,10 +7482,10 @@ internal static class Flags
 
     // metadata.proto: hasAnnotations(1), visibility(3), modality(2), then class kind/member kind.
     public static int Declaration(int modality, int kind, bool isValue = false, bool isFun = false,
-        bool hasEnumEntries = false, bool isInner = false) =>
+        bool hasEnumEntries = false, bool isInner = false, bool isData = false) =>
         6 | (modality << 4) | (kind << 6)
         | (isInner ? 1 << 9 : 0) | (isValue ? 1 << 13 : 0) | (isFun ? 1 << 14 : 0)
-        | (hasEnumEntries ? 1 << 15 : 0);
+        | (hasEnumEntries ? 1 << 15 : 0) | (isData ? 1 << 10 : 0);
     public static int Callable(MethodAttributes attrs, int modality, int kotlinFlags = 0, bool isInline = false,
         int memberKind = DeclarationMember) =>
         Visibility(attrs) | (modality << 4)

@@ -37,12 +37,12 @@ internal inline fun <T> BirEmitter.withDefaultTypeFrame(frame: DefaultTypeFrame,
 //
 // A Kotlin call evaluates its receiver, then each supplied argument, then the callee's omitted defaults — each
 // EXACTLY ONCE, whatever number of emitted positions ends up reading it. On the CLR those readers are not one
-// position: a filled default splices an earlier value, a reconstructed data-class `copy` field reads the receiver,
+// position: a filled default splices an earlier value,
 // a cross-module `@KotlinDefault` carrier binds `{this}`/`{defaultArgParam n}` to the call's own values. Rendering
 // the expression again per reader evaluates it again; hoisting some readers into temps and not others reorders it.
 //
 // The plan removes the choice. kotc emits ONE ordered list of BINDINGS — the semantic values this call supplies, in
-// Kotlin evaluation order — and every reader (the call's own slot, a spliced default, a reconstruction) is a
+// Kotlin evaluation order — and every reader (the call's own slot or a spliced default) is a
 // `bindRef`, a pure READ that may be cloned freely because cloning a read is not cloning an evaluation. bir2cir's
 // CallEvalLowering then decides the physical form ONCE, after every splice has run, and SuspendColdLowering decides
 // the storage ONCE, from liveness. No layer may "decline to bind" and fall back to duplicating an expression.

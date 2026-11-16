@@ -19,6 +19,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `infix fun` | ordinary method | no (pure call-syntax modifier) | `[KotlinFunction(Infix)]` |
 | `operator fun` | CLR `op_*` when the operator has a CLR ABI equivalent; otherwise ordinary method | no for ordinary methods; CLR `op_*` names are recoverable but still need Kotlin operator status for Kotlin re-consumption | `[KotlinFunction(Operator)]` |
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
+| `data class` / `data object` | ordinary CLR class with generated members | no; member names and shapes do not establish source data identity | `[KotlinData]`, retaining the source `isData` fact in reference and runtime DLLs; `dll2klib` restores `IS_DATA` |
 | source `@LowPriorityInOverloadResolution` on a function | ordinary source-function MethodDef, including a public suspend Task bridge | no | `[KotlinFunction(LowPriority)]`, restored as the standard Kotlin function annotation |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | extension receiver (`fun T.f()`) | ordinary leading positional parameter | no | `[KotlinExtensionReceiver]` on that parameter; restores a receiver for top-level/member functions and property accessors |

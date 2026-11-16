@@ -26,6 +26,31 @@ static partial class KotlinOverrideSlotBridge
             => ApplyAll(files,_=>false,references,files.SelectMany(file=>file.Types.OrEmpty()).Select(type=>type.Name.Value).ToHashSet(),
                 false,new GenericRepresentationPolicy(new Dictionary<string,string>()),covariant,null,_=>true,callback);
 
+        {
+            string Key(TypeNode.Fqn owner, TypeNode parameter, TypeNode result, BirTypeParameter[] generics = null)
+            {
+                var body = Method("body", "selected-body", result, parameter);
+                body.TypeParams = generics ?? [];
+                return SelectedSlotKey(new(owner, owner, true, true, false, "Read", "Read", null,
+                    [parameter], result, new OverrideMethod(body), generics));
+            }
+            var integer = new TypeNode.Fqn("System.Int32");
+            var outerGeneric = new TypeNode.Fqn("NestedArityInterop.SegmentCollisionOuter`1+Contract`1", [integer, text]);
+            var innerGeneric = new TypeNode.Fqn("NestedArityInterop.SegmentCollisionOuter+Contract`2", [integer, text]);
+            var owned = new HashSet<string> { Key(outerGeneric, obj, integer) };
+            Require(!owned.Contains(Key(innerGeneric, obj, integer)), "slot priority collapsed nested TypeDef segment arity");
+            Require(Key(outerGeneric, new TypeNode.Fqn("int"), new TypeNode.Fqn("int"))
+                == Key(outerGeneric, integer, integer), "slot priority did not normalize physical primitive spelling");
+            Require(Key(new TypeNode.Fqn("Face`1", [integer]), obj, integer)
+                != Key(new TypeNode.Fqn("Face`1", [text]), obj, integer), "slot priority collapsed constructed owner arguments");
+            var marker = new TypeNode.Fqn("SignatureMarker");
+            Require(Key(outerGeneric, new TypeNode.Mod(false, marker, obj), integer)
+                != Key(outerGeneric, obj, integer), "slot priority lost optional signature modifiers");
+            Require(Key(outerGeneric, obj, integer, [new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { new TypeNode.Fqn("System.IComparable") } }])
+                != Key(outerGeneric, obj, integer, [new BirTypeParameter { Name = "T", Constraints = new TypeNode[] { new TypeNode.Fqn("System.IDisposable") } }]),
+                "slot priority collapsed method generic constraints");
+        }
+
         foreach (var isInterface in new[] { false,true })
         {
             var source=Method("NativeAccept","selected-base",boolean,obj);
