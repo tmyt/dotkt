@@ -3,13 +3,43 @@
 All notable changes to DotKt (Kotlin → .NET/CLR). Package versions carry the embedded
 Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
-## Unreleased
+## 0.9.25 (2026-11-16)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.25`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Use a typed BIR/CIR pipeline with selectable MessagePack transport; JSON remains
+  the default inspection format.
+- Use ordinary Kotlin comparison syntax with native CLR `IComparable<T>` contracts.
+- Preserve constructor identity across DLL boundaries and remove unsigned-array
+  opt-in friction for normal CLR interop.
+- Continue to require the .NET 10 SDK and a .NET runtime of **10.0.12 or later**.
+
+### Added
+
+- Expose Kotlin `operator compareTo` views of native CLR `IComparable<T>.CompareTo`
+  contracts, preserving native member names, exact constructed targets, inherited
+  and explicit implementations, virtual dispatch, and mutable value receivers.
 
 ### Changed
 
+- Move BIR/CIR semantic processing to typed representations and remove obsolete
+  JSON-DOM bridge helpers; keep codecs at explicit serialization boundaries.
 - Add direct typed BIR MessagePack files, selectable with `-P plugin:dotkt:bir-format=msgpack` or SDK `DotKtBirFormat`; JSON remains the default inspection format.
 - Add direct typed CIR MessagePack files, selectable with `--cir-format=msgpack` or SDK `DotKtCirFormat`; JSON remains the default inspection format.
 - Carry cross-module default expressions in compiler-generated metadata with an explicit codec and byte-array payload, sharing the inline carrier codec and preserving nested defaults and source ownership.
+- Implicitly opt CLR compilation in to `kotlin.ExperimentalUnsignedTypes` for
+  ordinary unsigned-array interop, consistently in CLI and SDK builds. Preserve
+  upstream library annotations and unrelated opt-in diagnostics.
+- Organize bir2cir sources by existing families and roles without changing pass
+  responsibilities, namespaces, pipeline order, or shared-source ownership.
+
+### Fixed
+
+- Preserve Kotlin primary/secondary constructor identity through DLL roundtrips.
+  Project ordinary native CLR constructors as secondary instead of fabricating
+  multiple Kotlin primary constructors; retain annotation-constructor behavior.
 
 ## 0.9.24 (2026-11-11)
 
