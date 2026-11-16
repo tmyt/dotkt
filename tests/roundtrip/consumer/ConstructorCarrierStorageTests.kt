@@ -83,6 +83,7 @@ class ConstructorCarrierStorageTests {
     @TestAttribute
     fun storageUpperBoundDispatchPreservesNativeStructMutation() {
         check(boundCounterCount(incrementBoundValue(NativeBoundCounter(0))) == 1)
+        check(NativeBoundCounter(1) < NativeBoundCounter(2))
     }
 
     @TestAttribute

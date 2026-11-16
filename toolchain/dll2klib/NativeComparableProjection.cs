@@ -33,10 +33,13 @@ internal sealed partial class AssemblyScanner
             if (!currentDefinition.BaseType.IsNil) edges = edges.Append((currentDefinition.BaseType, (EntityHandle)current.Handle));
             foreach (var (edge, slot) in edges)
             {
+                // Operational carriers are not Kotlin inheritance paths.
+                if (IsCurrentExistentialCarrier(reader, edge)) continue;
                 if (!_publicTypeCatalog.TryResolveDefinition(reader, edge, out var target, current.DefinitionPath)) continue;
                 // NRT describes this declaration-shaped edge. Read it before
                 // inserting the inherited owner's argument trees.
                 var decodedEdge = decoder.DecodeEntity(edge, frame, platform: false);
+                if (decoder.IsCompilerOwnedSlotCarrier(decodedEdge)) continue;
                 var nativeEdge = !decoder.Attributes.IsDotKtAssembly;
                 var declaredEdge = ProjectInheritedType(reader, slot, decodedEdge, current.Handle, decoder,
                     preserveDecodedNullable: nativeEdge);

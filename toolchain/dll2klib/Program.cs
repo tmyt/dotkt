@@ -3345,18 +3345,27 @@ internal sealed partial class AssemblyScanner : IDisposable
                     resolved.DefinitionPath);
             }
         }
+    }
 
-        bool IsCurrentExistentialCarrier(MetadataReader reader, EntityHandle entity)
-        {
-            if (IsCurrentAssembly(reader) && entity.Kind == HandleKind.TypeDefinition &&
-                _existentialCarriers.Contains((TypeDefinitionHandle)entity)) return true;
-            if (!_publicTypeCatalog.TryResolveDefinition(reader, entity, out var resolved)) return false;
-            var attributes = IsCurrentAssembly(resolved.Reader)
-                ? _attrs : SignatureDecoderSeeds.Attributes(resolved.Reader);
-            using var contract = attributes.CarrierDocument(resolved.Handle,
-                MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
-            return contract is not null;
-        }
+    private bool IsCurrentExistentialCarrier(MetadataReader reader, EntityHandle entity)
+    {
+        if (IsCurrentAssembly(reader) && entity.Kind == HandleKind.TypeDefinition &&
+            _existentialCarriers.Contains((TypeDefinitionHandle)entity)) return true;
+        if (!_publicTypeCatalog.TryResolveDefinition(reader, entity, out var resolved)) return false;
+        var attributes = IsCurrentAssembly(resolved.Reader)
+            ? _attrs : SignatureDecoderSeeds.Attributes(resolved.Reader);
+        using var contract = attributes.CarrierDocument(resolved.Handle,
+            MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
+        if (contract is not null) return true;
+        // Referenced existential views carry the same explicit source-type
+        // metadata as local views; their physical parents are not source edges.
+        var definition = resolved.Reader.GetTypeDefinition(resolved.Handle);
+        return (definition.Attributes & TypeAttributes.Interface) != 0
+            && definition.GetGenericParameters().Count == 0
+            && attributes.Has(resolved.Handle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false)
+            && attributes.CarrierType(resolved.Handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute")
+                is TypeNode.Fqn { Args: { Length: > 0 } args }
+            && args.All(argument => argument is TypeNode.Star);
     }
 
     // A CLR class can inherit the implementation of a public interface slot from a
