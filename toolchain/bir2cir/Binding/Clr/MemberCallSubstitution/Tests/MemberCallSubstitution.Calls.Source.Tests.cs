@@ -39,6 +39,33 @@ static partial class MemberCallSubstitution
                 && selected.Sig.Value[1] == integer && ReferenceEquals(selected.Args.Value, parseArguments),
                 "the selected declaration must own its intrinsic/byref vector without replacing source operands");
 
+            var localOwner = new TypeNode.Fqn("Local.Host");
+            foreach (var method in new[] { "plainCollision", "sameName" })
+            {
+                var local = new BirCallStatic { OwnerType = localOwner, Method = method,
+                    Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(), Ret = boolean };
+                Require(ReferenceEquals(TransformCall(local, refs, context), local)
+                    && local.Owner.Value == localOwner && local.Method.Value == method,
+                    "an explicit static owner must precede unrelated facade and intrinsic name attribution");
+            }
+            var ownerless = new BirCallStatic { Method = "plainCollision", Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() };
+            Require(ReferenceEquals(TransformCall(ownerless, refs, context), ownerless)
+                && ownerless.Owner.Value is TypeNode.Fqn { Name: "Referenced.Facade" },
+                "a genuinely ownerless call must still resolve the referenced facade");
+            var explicitIntrinsic = selected with { OwnerType = new TypeNode.Fqn("Probe.Functions") };
+            Require(TransformCall(explicitIntrinsic, refs, context) is BirNativeStatic { Method.Value: "TryParse" },
+                "an exact declaration intrinsic must remain authoritative with an explicit semantic owner");
+            var open = new TypeNode.Tv("method", 0);
+            var closedOwner = new TypeNode.Fqn("Local.Generic", new TypeNode[] { text });
+            var shaped = new BirCallStatic { OwnerType = closedOwner, Method = "plainCollision",
+                ShapeTypes = new TypeNode[] { open }, TypeArgs = new TypeNode[] { integer },
+                Args = new IBirExpression[] { Effect("ArgumentOnce", integer) } };
+            Require(ReferenceEquals(TransformCall(shaped, refs, context), shaped)
+                && shaped.Owner.Value == closedOwner && shaped.Sig.Value.Single() == open
+                && shaped.ArgTypes.Value.Single() == integer && !shaped.ShapeTypes.HasValue
+                && shaped.Args.Value.Single() is BirCallStatic { Method.Value: "ArgumentOnce" },
+                "explicit owners must keep their construction frame and promote generic shape without re-evaluating arguments");
+
             var receiver = Effect("CompanionOnce", new TypeNode.Fqn("Probe.Companion"));
             var property = new BirCallInstance { OwnerType = new TypeNode.Fqn("Probe.Companion"), Recv = receiver,
                 Method = "pi", DeclarationId = "selected-pi", Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(), Ret = real };
@@ -143,6 +170,7 @@ sealed partial class ReferenceMetadataIndex
             ByrefPositions: Array.Empty<int>(), ParamTypeNodes: new TypeNode[] { integer, integer }, ReturnTypeNode: text, CountStart: 0, CountEnd: 1);
         // A same-name, different binding must not override the already selected declaration.
         index._topLevelIntrinsics["sameName"] = "System.Double.Parse";
+        index._topLevelStatics["plainCollision"] = new() { ("Referenced.Facade", "", null) };
         return index;
     }
 }
