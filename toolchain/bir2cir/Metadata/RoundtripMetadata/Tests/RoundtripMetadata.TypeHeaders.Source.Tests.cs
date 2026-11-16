@@ -101,6 +101,7 @@ static partial class RoundtripMetadata
         if (!ReferenceEquals(owner.Attrs.Value, attrs)) throw new InvalidOperationException("Type header capability was consumed twice");
 
         RuntimeTypeHeaderSelfTest(user, richFact);
+        DataIdentitySelfTest();
         Console.WriteLine("[typed type headers] self-test OK (phase eligibility, exact carrier bytes/order, frames/variance, enum entries, runtime and continuing owners)");
     }
 

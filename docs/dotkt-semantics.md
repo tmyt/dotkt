@@ -1721,10 +1721,10 @@ C#'s CS4007; never a silent duplication or reorder.
 
 The generated `copy` of a data class defaults each omitted parameter to the corresponding value on
 the receiver. A differently signed authored `copy` overload uses its own ordinary defaults.
-For declarations such as `Pair` from the stdlib frontend KLIB, kotc can express a generated
-`copy` default as a receiver read even when the KLIB has no default body. DotKt DLLs can also
-carry generated `copy` defaults through `@KotlinDefault`. The consumer binds the read to the
-selected declaration and the instantiated receiver's type frame. For example,
+For imported declarations, including `Pair` from the stdlib frontend KLIB, kotc preserves
+the omitted argument position; bir2cir reads the selected DLL declaration's `@KotlinDefault`
+carrier just as it does for other imported defaults. The carrier retains the source member
+identity and binds the read to the instantiated receiver's type frame. For example,
 `nextPair().copy(second = 9)` evaluates `nextPair()` once, before the supplied argument.
 
 A GENERIC callee's non-constant default closes its type frame at the call site too, like every other default. A

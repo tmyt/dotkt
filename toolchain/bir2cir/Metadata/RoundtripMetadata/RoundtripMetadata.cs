@@ -39,6 +39,7 @@ static partial class RoundtripMetadata
     const string AKFunInterface = Ns + "KotlinFunInterfaceAttribute";
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
+    const string AKData         = Ns + "KotlinDataAttribute";
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
@@ -229,6 +230,7 @@ static partial class RoundtripMetadata
             AttrClass(AKFunInterface, Ctor()),
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
+            AttrClass(AKData, Ctor()),
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
@@ -261,6 +263,7 @@ static partial class RoundtripMetadata
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
         if (runtimeOnly) types = new[] { TypeAliasAttributeDefinition(refs, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKData, Ctor()),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),

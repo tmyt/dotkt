@@ -19,6 +19,12 @@ static partial class RoundtripMetadata
             ClearHeaderPending(type);
             if (runtimeMode) StripRuntimeTypeHeader(type);
             else StampTypeHeader(type);
+            // Source data identity survives both DLL views; physical members do
+            // not establish that a declaration was authored as data.
+            var modifiers = type.Mods.OrDefault();
+            if (modifiers?.Data.OrDefault() == true)
+                AppendHeader(type, HeaderMarker(AKData));
+            if (modifiers != null) modifiers.Data = default;
         }
     }
 

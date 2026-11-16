@@ -46,6 +46,7 @@ static partial class DefaultArgSplice
                 if (binding?.Expr.OrDefault() is not BirDefaultArgument || !defaults.TryGetValue(index, out var expression)) continue;
                 var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners, label, index);
                 if (fill == null) continue;
+                fill = KotlinPropertyAccessors.BindImportedCopyDefault(fill, refs);
                 binding.Expr = OptionalField<IBirExpression>.Of(fill);
                 binding.Stable = ValueStability.IsReReadable(((BirGraphNode)fill).Tag,
                     fill is BirEnumValue { PhysicalValue.HasValue: true, Underlying.HasValue: true });
@@ -55,6 +56,7 @@ static partial class DefaultArgSplice
                 if (!defaults.TryGetValue(index, out var expression)) break;
                 var fill = SpliceOne(expression, dispatch, extension, enclosing, arguments, hoist, owner, semantic, methods, owners, label, index);
                 if (fill == null) break;
+                fill = KotlinPropertyAccessors.BindImportedCopyDefault(fill, refs);
                 arguments.Add(fill);
             }
         }
