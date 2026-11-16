@@ -24,17 +24,19 @@ static partial class RoundtripMetadata
             foreach (var constructor in type.Ctors.OrEmpty())
             {
                 constructor.RoundtripMetadataPending = true;
-                // Constructor declarations own these three identity fields, not
+                // Constructor declarations own source kind and identity, not
                 // a method-generic frame or reified-method parameter vectors.
                 var identity = new BirRoundtripDeclarationIdentity {
                     DeclarationId = constructor.DeclarationId,
                     DeclarationSourceName = constructor.DeclarationSourceName,
                     DeclarationSignatureAllocation = constructor.DeclarationSignatureAllocation,
+                    ConstructorPrimary = constructor.Primary,
                 };
                 if (IdentityPresent(identity)) constructor.RoundtripDeclarationIdentity = identity;
                 constructor.DeclarationId = default;
                 constructor.DeclarationSourceName = default;
                 constructor.DeclarationSignatureAllocation = default;
+                constructor.Primary = default;
                 Parameters(constructor.Params.OrEmpty());
             }
         }
@@ -84,7 +86,8 @@ static partial class RoundtripMetadata
     static bool IdentityPresent(BirRoundtripDeclarationIdentity identity) => identity.DeclarationId.IsPresent
         || identity.DeclarationSourceName.IsPresent || identity.DeclarationSignatureAllocation.IsPresent
         || identity.DeclarationSemanticSignature.IsPresent || identity.SemanticReifiedIndices.IsPresent
-        || identity.NullableWitnessIndices.IsPresent || identity.NullableRepresentationFrame.IsPresent;
+        || identity.NullableWitnessIndices.IsPresent || identity.NullableRepresentationFrame.IsPresent
+        || identity.ConstructorPrimary.IsPresent;
 
     static void PrepareHeader(IBirTypeDeclaration type, bool runtimeMode)
     {

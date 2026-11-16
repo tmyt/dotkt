@@ -23,6 +23,13 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 2 && args[0] is "--constructor-kinds" or "--native-constructor-kinds")
+{
+    VerifyConstructorKinds(args[1], native: args[0] == "--native-constructor-kinds");
+    Console.WriteLine("exact source/native constructor kinds and annotation exception: OK");
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--decode-type-carriers")
 {
     using var input = JsonDocument.Parse(Console.In.ReadToEnd());
@@ -2477,6 +2484,41 @@ static void VerifyCompanion(
             $"{ownerName}.{sourceName}.{function} lost Kotlin visibility");
     Require(!companion.Property.Any(p => String(fragment, p.Name) == "$INSTANCE"),
         $"{ownerName}.{sourceName} leaked the physical singleton slot");
+}
+
+static void VerifyConstructorKinds(string path, bool native)
+{
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); }).ToArray();
+    DotKt.Klib.Metadata.Class Find(string name) => fragments.SelectMany(fragment => fragment.Class
+        .Where(type => QualifiedName(fragment, type.FqName) == name)).Single();
+    static bool Secondary(Constructor constructor) => (constructor.Flags & (1 << 4)) != 0;
+    if (native)
+    {
+        var ordinary = Find("ConstructorKindInterop.NativeConstructorKinds").Constructor;
+        Require(ordinary.Count == 2 && ordinary.All(Secondary),
+            "ordinary native overloads acquired a fabricated primary constructor: " + string.Join(",", ordinary.Select(row => row.Flags)));
+        var annotation = Find("ConstructorKindInterop.NativeConstructorKindAttribute").Constructor;
+        Require(annotation.Count == 1 && !Secondary(annotation.Single()), "CLR annotation constructor projection changed");
+        return;
+    }
+    var primary = Find("roundtrip.constructorkinds.PrimaryAndSecondary").Constructor;
+    Require(primary.Count == 2 && primary.Count(row => !Secondary(row)) == 1,
+        "source primary/secondary constructor classification was not retained");
+    var sourceFragment = fragments.Single(fragment => fragment.Class.Any(type =>
+        QualifiedName(fragment, type.FqName) == "roundtrip.constructorkinds.PrimaryAndSecondary"));
+    var sourcePrimary = primary.Single(row => !Secondary(row));
+    Require(sourcePrimary.ValueParameter.Count == 1 &&
+        QualifiedName(sourceFragment, sourcePrimary.ValueParameter[0].Type.ClassName) == "kotlin.Int"
+        && (sourcePrimary.ValueParameter[0].Flags & 2) != 0,
+        "primary classification was reassigned to a sibling overload or lost its default argument");
+    var secondaries = Find("roundtrip.constructorkinds.OnlySecondary").Constructor;
+    Require(secondaries.Count == 2 && secondaries.All(Secondary), "secondary-only source class acquired a primary constructor");
+    var inner = Find("roundtrip.constructorkinds.GenericConstructorOuter.Inner").Constructor;
+    Require(inner.Count == 2 && inner.All(Secondary), "generic inner constructor delegation changed source kind");
+    Require(!Secondary(Find("roundtrip.constructorkinds.ConstructorKindAnnotation").Constructor.Single()),
+        "Kotlin annotation lost its primary constructor model");
 }
 
 static DotKt.Klib.Metadata.Class Class(PackageFragment fragment, string fqName) =>

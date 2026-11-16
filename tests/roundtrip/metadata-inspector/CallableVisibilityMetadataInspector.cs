@@ -59,10 +59,16 @@ internal static class CallableVisibilityMetadataInspector
                 if (property.HasGetterFlags) CheckInternal(property.GetterFlags, "getter");
                 if (property.HasSetterFlags) CheckInternal(property.SetterFlags, "setter");
             }
-            if (name == "Holder") CheckInternal(type.Constructor.Single().Flags, "primary constructor");
+            if (name == "Holder")
+            {
+                CheckInternal(type.Constructor.Single().Flags, "primary constructor");
+                Require((type.Constructor.Single().Flags & (1 << 4)) == 0, "PublishedApi primary constructor became secondary");
+            }
         }
         var secondary = fragment.Class.Single(type => QualifiedName(fragment, type.FqName) == Package + ".SecondaryHolder");
         CheckInternal(secondary.Constructor.Single(ctor => ctor.ValueParameter.Count == 1).Flags, "secondary constructor");
+        Require((secondary.Constructor.Single(ctor => ctor.ValueParameter.Count == 1).Flags & (1 << 4)) != 0,
+            "PublishedApi secondary constructor became primary");
         Require((secondary.Constructor.Single(ctor => ctor.ValueParameter.Count == 0).Flags & 14) == 6,
             "public constructor control changed");
         Require((fragment.Package.Function.Single(function => Name(fragment, function.Name) == "publicEntry").Flags & 14) == 6,

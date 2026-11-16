@@ -2490,7 +2490,8 @@ internal sealed class AssemblyScanner : IDisposable
                         names);
                 var constructor = new Constructor
                 {
-                    Flags = CallableVisibility(methodHandle, Flags.Visibility(method.Attributes)),
+                    Flags = CallableVisibility(methodHandle, Flags.Constructor(method.Attributes,
+                        primary: isAnnotation || declarationIdentity?.ConstructorPrimary == true)),
                     ValueParameter = { parameters },
                 };
                 if (declarationIdentity is { } constructorIdentity)
@@ -6059,7 +6060,8 @@ internal sealed class AssemblyScanner : IDisposable
         TypeNode? ReturnType,
         IReadOnlySet<int> SemanticReifiedTypeParameterIndices,
         IReadOnlySet<int> NullableWitnessTypeParameterIndices,
-        NullableRepresentationFrame? NullableFrame);
+        NullableRepresentationFrame? NullableFrame,
+        bool? ConstructorPrimary);
 
     private IEnumerable<GenericParameterHandle> SourceMethodParameters(MethodDefinitionHandle methodHandle)
     {
@@ -6076,11 +6078,13 @@ internal sealed class AssemblyScanner : IDisposable
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is < 2 or > 7 ||
+        if (propertyCount is < 2 or > 8 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             root.EnumerateObject().Any(property => property.Name is not (
-                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or "signatureAllocation")) ||
+                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or "signatureAllocation" or "constructorPrimary")) ||
+            root.TryGetProperty("constructorPrimary", out var primaryNode)
+                && primaryNode.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
             root.TryGetProperty("signatureAllocation", out var allocationNode)
                 && allocationNode.ValueKind != JsonValueKind.True ||
             root.TryGetProperty("signature", out var signatureNode) && signatureNode.ValueKind != JsonValueKind.Object ||
@@ -6090,6 +6094,7 @@ internal sealed class AssemblyScanner : IDisposable
             throw new InvalidDataException("malformed [KotlinDeclarationIdentity] payload");
         var id = idNode.GetString();
         var name = nameNode.GetString();
+        bool? constructorPrimary = root.TryGetProperty("constructorPrimary", out primaryNode) ? primaryNode.GetBoolean() : null;
         if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException("empty [KotlinDeclarationIdentity] payload");
         NullableRepresentationFrame? nullableFrame = null;
@@ -6126,7 +6131,7 @@ internal sealed class AssemblyScanner : IDisposable
             if (nullableWitness.Count != 0 || nullableFrame is not null)
                 throw new InvalidDataException(
                     "[KotlinDeclarationIdentity] nullable-witness indices require a semantic signature");
-            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness, nullableFrame);
+            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness, nullableFrame, constructorPrimary);
         }
         if (signatureNode.EnumerateObject().Count() != 2 ||
             !signatureNode.TryGetProperty("params", out var paramsNode) || paramsNode.ValueKind != JsonValueKind.Array ||
@@ -6135,7 +6140,7 @@ internal sealed class AssemblyScanner : IDisposable
         var parameters = paramsNode.EnumerateArray().Select(parameter =>
             TypeNode.Read(parameter) ?? throw new InvalidDataException(
                 "malformed [KotlinDeclarationIdentity] semantic parameter type")).ToArray();
-        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness, nullableFrame);
+        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness, nullableFrame, constructorPrimary);
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
@@ -7455,6 +7460,9 @@ internal static class Flags
         | ((attrs & MethodAttributes.Static) != 0 ? 1 << 18 : 0);
     public static int Visibility(MethodAttributes attrs) =>
         (attrs & MethodAttributes.MemberAccessMask) == MethodAttributes.Public ? 6 : 4; // PUBLIC=3, PROTECTED=2
+    // Ordinary CLR constructors have no Kotlin primary-constructor semantics.
+    // Only an explicit source fact (or the annotation constructor model) is primary.
+    public static int Constructor(MethodAttributes attrs, bool primary) => Visibility(attrs) | (primary ? 0 : 1 << 4);
     public static int AsProtected(int flags) => (flags & ~0xE) | 4;
     public static int AsOpen(int flags) => (flags & ~(3 << 4)) | (1 << 4);
 
