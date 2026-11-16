@@ -4,29 +4,23 @@ using DotKt.Cir;
 
 static class NonReifiedCastErasure
 {
-    internal static void Apply(BirFileDeclaration root)
+    internal static void RewriteOperation(BirGraphValue node)
     {
         // Bare unchecked type-parameter casts keep their documented null
         // admission; a later concrete/native consumer owns its own narrowing.
         static TypeNode Target(TypeNode source) => source is TypeNode.Nullable
             ? BirGraphValue.CopyType(source) : new TypeNode.Nullable(BirGraphValue.CopyType(source));
-        void Walk(BirGraphValue node)
+        switch (node)
         {
-            if (node is IBirExecutablePayload) return;
-            node.VisitChildren(Walk);
-            switch (node)
-            {
-                case BirCast { ErasedTypeOperand.HasValue: true } cast:
-                    cast.Type = Target(cast.ErasedTypeOperand.Value);
-                    cast.ErasedTypeOperand = default;
-                    break;
-                case BirInstanceOrNull { ErasedTypeOperand.HasValue: true } safe:
-                    safe.Type = Target(safe.ErasedTypeOperand.Value);
-                    safe.ErasedTypeOperand = default;
-                    break;
-            }
+            case BirCast { ErasedTypeOperand.HasValue: true } cast:
+                cast.Type = Target(cast.ErasedTypeOperand.Value);
+                cast.ErasedTypeOperand = default;
+                break;
+            case BirInstanceOrNull { ErasedTypeOperand.HasValue: true } safe:
+                safe.Type = Target(safe.ErasedTypeOperand.Value);
+                safe.ErasedTypeOperand = default;
+                break;
         }
-        Walk(root);
     }
 
     internal static void SourceSelfTest()
@@ -48,14 +42,20 @@ static class NonReifiedCastErasure
             new BirExpressionStatement { Expr = physical } };
         var root = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration { Name = "probe",
             Params = Array.Empty<BirParameter>(), TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Ret = any, Body = body } } };
-        Apply(root);
+        void Walk(BirGraphValue node)
+        {
+            if (node is IBirExecutablePayload) return;
+            node.VisitChildren(Walk);
+            RewriteOperation(node);
+        }
+        Walk(root);
         if (cast.Type.Value != any || !ReferenceEquals(cast.E.Value, effect) || cast.ErasedTypeOperand.IsPresent
             || safe.Type.Value is not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "Bound", Args: [TypeNode.Star] } }
             || safe.ErasedTypeOperand.IsPresent || concrete.Type.Value != text || reified.Type.Value != variable
             || physical.Type.Value != variable || !ReferenceEquals(root.Methods.Value[0].Body.Value, body))
             throw new InvalidOperationException("Non-reified cast erasure did not consume the source bound without changing other checks");
         var once = cast.Type.Value;
-        Apply(root);
+        Walk(root);
         var effects = 0;
         root.Visit(node => { if (ReferenceEquals(node, effect)) effects++; });
         if (!ReferenceEquals(cast.Type.Value, once) || effects != 1)

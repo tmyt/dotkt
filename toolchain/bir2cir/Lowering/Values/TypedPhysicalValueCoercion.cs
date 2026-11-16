@@ -982,6 +982,23 @@ static class TypedPhysicalValueCoercion
                 || conversion.Type.Value != declaringType || !ReferenceEquals(conversion.E.Value, receiver))
                 throw new InvalidOperationException("Owning bound delegate lost its exact declaring receiver conversion: "
                     + bound.GetType().Name + " -> " + declaringType);
+        var genericSlot = new TypeNode.Tv("method", 0);
+        foreach (var erased in new TypeNode[] { Object, source, text, new TypeNode.Array(text) })
+        {
+            var input = new BirLocal { Name = "input" };
+            var storage = new BirVariable { Name = "stored", Type = genericSlot, Init = input };
+            var returnedBound = new BirReturn { Value = new BirLocal { Name = "input" } };
+            var method = new BirFunctionDeclaration { Name = "storeBound", Ret = genericSlot,
+                Params = new[] { new BirParameter { Name = "input", Type = erased } },
+                Body = new IBirStatement[] { storage, returnedBound } };
+            ApplyAll(new[] { new BirFileDeclaration { Methods = new[] { method } } },
+                () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+            if (storage.Init.Value is not BirCast { Type.HasValue: true, E.HasValue: true } stored
+                || stored.Type.Value != genericSlot || !ReferenceEquals(stored.E.Value, input)
+                || returnedBound.Value.Value is not BirCast { Type.HasValue: true } result
+                || result.Type.Value != genericSlot)
+                throw new InvalidOperationException("An erased bound was not narrowed at its actual generic storage/return edge");
+        }
         Console.WriteLine("[typed physical values] self-test OK (conditional views, exact results, native storage, closed ref results, bound receivers)");
     }
 }

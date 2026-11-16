@@ -16,6 +16,12 @@ class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($
 fun readReference(value: kotlin.clr.ClrRef<Int>, extra: Int = value.value): Int = value.value + extra
 fun <T> referenceDefault(value: kotlin.clr.ClrRef<T>, extra: T = value.value): T = extra
 
+@Suppress("UNCHECKED_CAST", "NOTHING_TO_INLINE")
+inline fun <T> erasedInlineObject(value: Any?): Any? = value as T
+
+@Suppress("UNCHECKED_CAST")
+fun <T> erasedDefaultObject(value: Any?, result: Any? = value as T): Any? = result
+
 open class InheritedBase<T>(private val seed: T) {
     fun inheritedValue(): T = seed
     open fun describe(value: T = inheritedValue(), tail: String = "$value!"): String = "base:$value/$tail"

@@ -512,7 +512,6 @@ sealed class Pipeline
             CompanionRepresentationLowering.BindUses(source, companionRepresentations, refs, bindExternal: appBuild);
             ClrFlagsOperationLowering.Apply(source, refs);
             TypedCallEvalLowering.Apply(source, isValueFqn);
-            NonReifiedCastErasure.Apply(source);
             NothingValueTermination.Apply(source);
         }
         ownership.ReleaseSourceDeclarations();
