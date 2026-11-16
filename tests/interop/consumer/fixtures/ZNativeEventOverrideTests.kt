@@ -5,6 +5,9 @@ import EventDelegation.AbstractEventMiddle
 import EventDelegation.AbstractEventBase
 import EventDelegation.IInheritedEventSource
 import EventDelegation.IEventSource
+import EventDelegation.IDefaultEvent
+import EventDelegation.IGenericDefaultEvent
+import EventDelegation.DefaultEventProbe
 import kotlin.clr.ClrEvent
 import kotlin.clr.clrEvent
 
@@ -32,9 +35,12 @@ private class InheritedFinalEvent : FinalEventBase(), IEventSource<Int> {
     override fun Fire(value: Int) { fire(value) }
 }
 
+private class InheritedNativeDefaultEvent : IDefaultEvent
+private class InheritedGenericDefaultEvent : IGenericDefaultEvent<String>
+
 class NativeEventOverrideTests {
     @TestAttribute
-    fun classOverrideUsesNativeDelegateWithoutBaseRaiseSlot() {
+    fun nativeEventsPreserveOverrideAndDefaultDispatch() {
         val native = NativeEventOverride()
         val nativeBase: NativeEventBase<Int> = native
         var value = 0
@@ -66,5 +72,29 @@ class NativeEventOverrideTests {
         finalToken.close()
         finalSource.Fire(100)
         assertEquals(100, value)
+
+        DefaultEventProbe.Added = 0
+        DefaultEventProbe.Removed = 0
+        val defaultSource = InheritedNativeDefaultEvent()
+        val defaultBase: IDefaultEvent = defaultSource
+        var calls = 0
+        val defaultToken = defaultBase.Changed.subscribe { sender, _ ->
+            check(sender === defaultSource)
+            calls++
+        }
+        check(calls == 1 && DefaultEventProbe.Added == 1)
+        defaultToken.close()
+        check(DefaultEventProbe.Removed == 1)
+        check(!DefaultEventProbe.DeclaresOwnEvent(defaultSource))
+
+        DefaultEventProbe.GenericAdded = 0
+        DefaultEventProbe.GenericRemoved = 0
+        val genericSource = InheritedGenericDefaultEvent()
+        val genericBase: IGenericDefaultEvent<String> = genericSource
+        val genericToken = genericBase.Changed.subscribe { _ -> }
+        check(DefaultEventProbe.GenericAdded == 1)
+        genericToken.close()
+        check(DefaultEventProbe.GenericRemoved == 1)
+        check(!DefaultEventProbe.DeclaresOwnEvent(genericSource))
     }
 }
