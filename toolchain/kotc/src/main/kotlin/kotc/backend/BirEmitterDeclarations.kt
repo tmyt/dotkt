@@ -417,6 +417,7 @@ private fun BirEmitter.sourceInterfaceSuperTypes(klass: IrClass): List<TypeNode>
 
 internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceDefinition {
 	rejectClrEnumOnNonEnum(iface)
+	checkUnimplementedClrEvents(iface)
 	// A mixed inherited event already inherits its ordinary getter from the ordinary property interface.
 	// The frontend intersection wrapper is not a new source declaration or another getter obligation.
 	fun inheritedMixedEvent(p: IrProperty) = isClrEventProperty(p) && hasOrdinaryPropertySlot(p) &&
@@ -1341,8 +1342,8 @@ internal fun BirEmitter.isFieldLikeClrEvent(p: IrProperty): Boolean =
  *  property cannot supply add/remove accessors. Abstract containers and abstract fake accessors defer implementation
  *  to concrete classes/enum entries, whose missing abstract members are rejected by the Kotlin frontend. An enum can
  *  retain an abstract fake accessor even when its Kotlin modality is not ABSTRACT; sourceRichEnumDefinitions preserves that obligation.
- *  The remaining concrete fake overrides must come from a declaring base class or an external .NET base. External-base
- *  interface satisfaction is not inferred here: the physical relation belongs to bir2cir's reference metadata. */
+ *  Concrete fake overrides inherit the projected Kotlin declaration, including native default interface events.
+ *  Physical interface satisfaction belongs to bir2cir; the Kotlin frontend checks abstract getter obligations. */
 internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
 	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
 		if (!isClrEventProperty(p) || p.isFakeOverride || p.getter?.modality == Modality.ABSTRACT ||
@@ -1352,22 +1353,6 @@ internal fun BirEmitter.checkUnimplementedClrEvents(klass: IrClass) {
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
 			"event '${p.name.asString()}' requires `by clrEvent()` or `by clrEvent(policy)`; " +
 				"an ordinary handle-valued property does not implement CLR event accessors", locationOf(p))
-	}
-	val hasNetBaseClass = klass.superTypes.any { st ->
-		(st.classifierOrNull?.owner as? IrClass)?.let { it.kind == ClassKind.CLASS && isExternalNetType(it) } == true
-	}
-	// Abstract Kotlin containers may defer a native interface event to their concrete implementations.
-	if (hasNetBaseClass || klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED) return
-	for (p in klass.declarations.filterIsInstance<IrProperty>()) {
-		if (!isClrEventProperty(p) || !p.isFakeOverride || p.getter?.modality == Modality.ABSTRACT) continue
-		// Provided by a base CLASS that DECLARES it (a Kotlin base that synthesized the event) -> inherited, OK.
-		val declaringKind = (p.getter?.resolveFakeOverride()?.parent as? IrClass)?.kind
-		if (declaringKind == ClassKind.CLASS || declaringKind == ClassKind.ENUM_CLASS) continue
-		hadError = true
-		messageCollector?.report(CompilerMessageSeverity.ERROR,
-			"class '${klass.name.asString()}' implements a .NET interface event '${p.name.asString()}' but does not provide it; " +
-				"declare `override val ${p.name.asString()} by clrEvent()` to synthesize the event (add/remove/raise accessors)",
-			locationOf(klass))
 	}
 }
 

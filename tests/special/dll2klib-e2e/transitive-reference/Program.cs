@@ -133,6 +133,27 @@ publicDerivedCarrier.DefineMethodOverride(
     publicDerivedBody,
     publicExplicitType.GetMethod("ReadExplicit")!);
 publicDerivedCarrier.CreateType();
+
+// CLR event accessors may independently supply a default body or require an implementation.
+foreach (var shape in new[] { ("IAllDefaultEvent", false, false), ("IAddAbstractEvent", true, false),
+    ("IRemoveAbstractEvent", false, true), ("IAllAbstractEvent", true, true) })
+{
+    var iface = module.DefineType("TransitiveSlotProbe." + shape.Item1,
+        TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract);
+    MethodBuilder Accessor(string name, bool isAbstract)
+    {
+        var flags = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.NewSlot |
+            MethodAttributes.SpecialName | MethodAttributes.HideBySig;
+        if (isAbstract) flags |= MethodAttributes.Abstract;
+        var method = iface.DefineMethod(name, flags, typeof(void), [typeof(EventHandler)]);
+        if (!isAbstract) method.GetILGenerator().Emit(OpCodes.Ret);
+        return method;
+    }
+    var ev = iface.DefineEvent("Changed", EventAttributes.None, typeof(EventHandler));
+    ev.SetAddOnMethod(Accessor("add_Changed", shape.Item2));
+    ev.SetRemoveOnMethod(Accessor("remove_Changed", shape.Item3));
+    iface.CreateType();
+}
 assembly.Save(output);
 
 var loaded = Assembly.LoadFile(output);
@@ -160,3 +181,33 @@ var publicDerivedInstance = Activator.CreateInstance(loadedPublicDerivedCarrier)
 if (!loadedExplicitInterface.IsAssignableFrom(loadedPublicDerivedCarrier) ||
     !Equals(99, loadedExplicitInterface.GetMethod("ReadExplicit")!.Invoke(publicDerivedInstance, null)))
     throw new InvalidOperationException("generated public-derived metadata does not satisfy its base slot");
+
+var runtime = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("EventSlotControl"), AssemblyBuilderAccess.Run);
+var runtimeModule = runtime.DefineDynamicModule("EventSlotControl");
+foreach (var iface in loaded.GetTypes().Where(type => type.Name.EndsWith("Event")))
+{
+    var methods = iface.GetMethods();
+    Type Make(string suffix, bool implement)
+    {
+        var type = runtimeModule.DefineType(iface.Name + suffix, TypeAttributes.Public | TypeAttributes.Sealed);
+        type.AddInterfaceImplementation(iface);
+        type.DefineDefaultConstructor(MethodAttributes.Public);
+        if (implement)
+            foreach (var declaration in methods.Where(method => method.IsAbstract))
+            {
+                var body = type.DefineMethod(declaration.Name,
+                    MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.NewSlot | MethodAttributes.Final |
+                    MethodAttributes.HideBySig | MethodAttributes.SpecialName, typeof(void), [typeof(EventHandler)]);
+                body.GetILGenerator().Emit(OpCodes.Ret);
+                type.DefineMethodOverride(body, declaration);
+            }
+        return type.CreateType();
+    }
+    var correct = Activator.CreateInstance(Make("Implemented", true));
+    foreach (var method in methods) method.Invoke(correct, [null]);
+    var missingRejected = false;
+    try { Activator.CreateInstance(Make("Missing", false)); }
+    catch (TypeLoadException) { missingRejected = true; }
+    if (missingRejected != methods.Any(method => method.IsAbstract))
+        throw new InvalidOperationException("generated default/abstract event slots disagree with CLR requirements");
+}
