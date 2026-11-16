@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -292,9 +291,6 @@ static partial class KotlinOverrideSlotBridge
     static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object" or "System.Object", Args: null }
         || t is TypeNode.Nullable { Of: TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null } };
 
-    static bool IsSuspendMethod(JsonObject method) =>
-        method["mods"] is JsonObject mods && Bool(mods["suspend"]);
-
     // True iff BirTypeLowering will make this type the bare `object` the erased slot already is. A reference `T?` is
     // stripped to its bare inner, so the question recurses through the wrapper; a VALUE `T?` stays `Nullable<V>`, and
     // a type variable stays `!T`.
@@ -407,162 +403,8 @@ static partial class KotlinOverrideSlotBridge
     }
 
 
-    // The genuine late DSI forwarder keeps the original value ABI beneath its identity modifiers.
-    // It calls this owner's selected body virtually; conversions still belong to representation policy.
-    static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
-        ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-    {
-        var declParams = impl["params"] as JsonArray ?? new JsonArray();
-        var bridgeParams = new JsonArray();
-        var callArgs = new JsonArray();
-        var callSig = new JsonArray();
-        for (var i = 0; i < slotParams.Length; i++)
-        {
-            var p = declParams[i] as JsonObject;
-            var pn = Str(p?["name"]) ?? "p" + i;
-            var bp = new JsonObject { ["name"] = pn, ["type"] = TypeJson.Write(slotParams[i]) };
-            var declT = TypeJson.Read(p?["type"]);
-            if (declT != null && !declT.Equals(slotParams[i]))
-            {
-                CarryKotlinType(bp, "nullableGeneric", "nullableFlags", declT, slotParams[i], isValue);
-                bridgeParams.Add(bp);
-                callArgs.Add(IsNullableValueSlot(slotParams[i], declT, refs, isValue,
-                        returnPosition: false) && declT is TypeNode.Nullable nullable
-                    ? new JsonObject
-                    {
-                        ["k"] = "nullableWrap",
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
-                        ["elem"] = TypeJson.Write(nullable.Of),
-                        ["e"] = new JsonObject { ["k"] = "local", ["name"] = pn },
-                    }
-                    : new JsonObject
-                    {
-                        ["k"] = "cast",
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
-                        ["type"] = TypeJson.Write(declT),
-                        ["e"] = new JsonObject { ["k"] = "local", ["name"] = pn },
-                    });
-            }
-            else
-            {
-                bridgeParams.Add(bp);
-                callArgs.Add(new JsonObject { ["k"] = "local", ["name"] = pn });
-            }
-            callSig.Add(p?["type"]?.DeepClone());
-        }
-
-        var implRet = TypeJson.Read(impl["ret"]);
-        var ownArgs = ClassOwnArgs(cls);
-        var owner = new TypeNode.Fqn(cls.Name, ownArgs.Length == 0 ? null : ownArgs);
-        var call = new JsonObject
-        {
-            ["k"] = "callInstance",
-            ["ownerType"] = TypeJson.Write(owner),
-            ["virtual"] = true,
-            // Synthesized by bir2cir with its exact CLR declaration owner: the later inherited-owner pass must not
-            // reinterpret it as an ordinary Kotlin receiver call and rebind it to the slot this bridge implements.
-            ["clrOwnerResolved"] = true,
-            [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
-            ["recv"] = new JsonObject { ["k"] = "this" },
-            ["method"] = Str(impl["name"]),
-            ["sig"] = callSig,
-            ["calleeParams"] = impl["inheritedDeclarationSignature"]?.DeepClone()
-                ?? FunctionSignatureIdentity.Signature(declParams),
-            // Preserve the selected body's result in this owner's current physical frame.
-            ["sty"] = TypeJson.Write(implRet),
-            ["dynRet"] = TypeJson.Write(implRet),
-            ["ret"] = TypeJson.Write(implRet),
-            ["args"] = callArgs,
-        };
-        if (impl[DeclarationIdentityBinding.Key] is JsonNode implementationId)
-            call[DeclarationIdentityBinding.Key] = implementationId.DeepClone();
-        if (IsSuspendMethod(impl)) call["suspendCall"] = true;
-        if (impl["typeParams"] is JsonArray methodTps && methodTps.Count > 0)
-        {
-            var typeArgs = new JsonArray();
-            for (var i = 0; i < methodTps.Count; i++) typeArgs.Add(TypeJson.Write(new TypeNode.Tv("method", i)));
-            call["typeArgs"] = typeArgs;
-        }
-        var body = new JsonArray();
-        var retCarried = false;
-        if (IsVoid(slotRet))
-            body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = call });
-        else
-        {
-            JsonNode value = call;
-            if (implRet != null && !implRet.Equals(slotRet))
-            {
-                value = IsNullableValueSlot(slotRet, implRet, refs, isValue, returnPosition: true)
-                        && implRet is TypeNode.Nullable nullable
-                    ? new JsonObject
-                    {
-                        ["k"] = "nullableValue",
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false,
-                        ["elem"] = TypeJson.Write(nullable.Of),
-                        ["e"] = value,
-                    }
-                    : new JsonObject { ["k"] = "cast", ["type"] = TypeJson.Write(slotRet), ["e"] = value,
-                        [GenericRepresentationPolicy.PhysicalDeclarationSignatureKey] = false };
-                retCarried = true;
-            }
-            body.Add(new JsonObject { ["k"] = "return", ["value"] = value });
-        }
-
-        var bridge = new JsonObject
-        {
-            ["name"] = bridgeName,
-            ["static"] = false,
-            ["override"] = false,
-            ["virtual"] = true,
-            ["abstract"] = false,
-            ["objectOverride"] = false,
-            // Keep the implementation private; the generated fact below separately excludes this physical adapter
-            // from Kotlin source projection, including when dll2klib processes its MethodImpl rows.
-            ["vis"] = "private",
-            ["params"] = bridgeParams,
-            ["ret"] = TypeJson.Write(slotRet),
-            ["body"] = body,
-            ["attrs"] = new JsonArray(),
-            ["generated"] = true,
-            [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
-            ["clrInterfaceImpls"] = new JsonArray(),
-            ["clrBaseImpls"] = new JsonArray(),
-        };
-        if (cls.Kind == "interface")
-            bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
-        if (IsSuspendMethod(impl))
-        {
-            bridge["mods"] = new JsonObject { ["suspend"] = true };
-            bridge["suspendRet"] = TypeJson.Write(slotRet);
-            bridge["suspendResult"] = impl["suspendResult"]?.DeepClone()
-                ?? throw new InvalidOperationException("suspend slot bridge source has no logical result");
-        }
-        if (retCarried && implRet != null)
-            CarryKotlinType(bridge, "nullableGenericRet", "retNullableFlags", implRet, slotRet, isValue);
-        if (impl["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
-        return MaterializedExecutable.Normalize(bridge);
-    }
-
-
-    // Preserve the Kotlin value type represented by a physical bridge slot through both metadata channels:
-    // `[KotlinNullableGeneric]` carries its type tree and the NRT byte carries its outer nullability. Reference-side
-    // representation consumers need both facts even though the generated MethodDef is not a new Kotlin declaration.
-    static void CarryKotlinType(JsonObject decl, string factKey, string flagsKey, TypeNode kotlin, TypeNode slot,
-        ValueTypeOracle isValue)
-    {
-        decl[factKey] ??= TypeNode.ToJson(kotlin);
-        // The byte walk describes the PHYSICAL slot, which is the bare `object` this bridge states, carrying the
-        // Kotlin type's outer nullability onto it. Walking the Kotlin type instead would stamp nothing for an `Int?`
-        // — a value type's `?` is structural `Nullable<V>` and contributes no NRT byte — losing the nullable value fact.
-        var shape = kotlin is TypeNode.Nullable ? new TypeNode.Nullable(slot) : slot;
-        if (!decl.ContainsKey(flagsKey) && NullableFlags.Compute(shape, isValue) is JsonArray f) decl[flagsKey] = f;
-    }
-
-
     static TypeNode[] ClassOwnArgs(Def def) =>
         Enumerable.Range(0, def.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
 
     static string SafeName(string name) => new(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
-    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
-    static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }
