@@ -240,6 +240,30 @@ class StdlibBuildTests(unittest.TestCase):
         self.assertFalse([c for c in self.calls() if ":" in c], self.calls())
         self.assertEqual(self.calls().count("pack"), 5)
 
+    def test_template_install_example_tracks_release_version(self):
+        guide = self.root / "docs/user/getting-started.md"
+        original = guide.read_text()
+        command = next(line for line in original.splitlines()
+                       if line.startswith("dotnet new install DotKt.Templates@"))
+        package = command.split()[3]
+        stale_command = command.replace(package, package + "-stale")
+        for name, content in (
+            ("stale", original.replace(command, stale_command)),
+            ("mixed", original + "\n" + stale_command + "\n"),
+            ("missing", original.replace(command, "")),
+        ):
+            with self.subTest(example=name):
+                guide.write_text(content)
+                result = self.run_bash("bash scripts/pack-nuget.sh")
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Templates", result.stderr)
+                self.assertEqual(self.calls(), [], "version drift must fail before compiler builds")
+        guide.write_text(original)
+        self.write("CHANGELOG.md", stale_command + "\n")
+        result = self.run_bash("bash scripts/pack-nuget.sh")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls().count("pack"), 5)
+
     def prepare_make(self):
         self.copy("Makefile")
         self.write("toolchain/kotc/build.gradle.kts", "// fixture build\n")
