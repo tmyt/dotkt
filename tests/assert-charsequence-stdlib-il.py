@@ -6,7 +6,7 @@ from pathlib import Path
 
 assembly, log = map(Path, sys.argv[1:])
 verifiers = sorted((Path.home() / ".dotnet").rglob("ILVerify.dll"))
-assert verifiers, "install dotnet-ilverify before running the text-boundary gate"
+assert verifiers, "install before running the text-boundary gate: dotnet tool install -g dotnet-ilverify --version 10.0.15"
 runtimes = [str(path) for path in Path("/usr/share/dotnet/shared/Microsoft.NETCore.App").iterdir()
             if path.is_dir()]
 runtimes = subprocess.run(["sort", "-V"], input="\n".join(runtimes), text=True,
