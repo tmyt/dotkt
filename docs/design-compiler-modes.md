@@ -48,6 +48,32 @@ in the stdlib reference assembly. `bir2cir` consumes them while resolving
 Kotlin identities to CLR types and members. They are not runtime dispatch
 mechanisms and must not reach `ilemit` as unresolved binding instructions.
 
+#### Development wrapper references
+
+`scripts/dotkt.sh --no-stdlib` disables automatic backend stdlib DLL references;
+it is a manual-reference mode, not another representation mode or a promise of
+dependency-free compilation. The frontend still uses the stdlib frontend KLIB.
+Even `fun answer(): Int = 42` needs binding metadata to map `kotlin.Int` to
+`System.Int32`; the frontend KLIB alone does not supply that backend mapping.
+This compile-time requirement does not imply a runtime stdlib assembly reference
+in the resulting primitive-only DLL.
+
+After `make toolchain stdlib`, the same authoritative bindings can be supplied
+explicitly from the repository root, using both twins from one coherent build:
+
+```sh
+bash scripts/dotkt.sh --no-stdlib \
+  --ref build/clr-stdlib/dll/DotKt.Private.Stdlib.dll \
+  --ref build/clr-stdlib-rt/dll/DotKt.Stdlib.dll \
+  -o Bare -d build/bare-example path/to/Bare.kt
+```
+
+Use the default automatic references for ordinary programs. Manual references
+must provide the binding metadata and implementation declarations the program
+needs; the compiler does not invent replacements from Kotlin names. Suspend
+lowering requires continuation ABI facts only when it uses them, not merely
+because a non-suspending module enters the pipeline.
+
 ### Round-trip metadata
 
 User libraries retain the metadata needed to recover their Kotlin declaration
