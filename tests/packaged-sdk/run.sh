@@ -427,6 +427,7 @@ fun nullableFromCall(): CharSequence? = nextBuilder()
 enum class PackagedEntries(val score: Int) { VALUE(7) }
 inline fun <reified E : Enum<E>> packagedEntries(): kotlin.enums.EnumEntries<E> = kotlin.enums.enumEntries<E>()
 fun main() {
+    checkUnsignedPlatformOptIn()
     val entries = packagedEntries<PackagedEntries>()
     check(entries[0].score == 7 && entries === PackagedEntries.entries)
     check(packagedEntries<CharCategory>()[0] == CharCategory.UNASSIGNED)
@@ -441,10 +442,13 @@ fun main() {
     println("packaged exe ok: " + (2 + 3))
 }
 EOF
+	cp "$ROOT/tests/packaged-sdk/fixtures/UnsignedOptIn.kt" "$d/UnsignedOptIn.kt"
 	local expected="packaged exe ok: 5" actual rc=0 manifest_error="" projected_klib=""
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?
 	projected_klib="$(find "$d/obj/Debug/net10.0/klib" -maxdepth 1 -name '*.klib' -print -quit 2>/dev/null)"
 	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
+	elif grep -q 'ExperimentalUnsignedTypes' "$d/run.build.log"; then
+		fail exe "ordinary CLR unsigned arrays still require a source-level opt-in"
 	elif [[ ! -s "$d/obj/Debug/net10.0/bir/App;Response.bir.json" ]]; then
 		fail exe "expected BIR output missing from the debug-dump regression path"
 	elif [[ -e "$d/obj/Debug/net10.0/bir/KIR@Raw.txt" ]]; then
