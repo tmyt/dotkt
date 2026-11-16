@@ -80,6 +80,12 @@ object BrHold { var a = 1; var b = 2 }
 // result's. An untyped pin would abort the build on source the frontend accepted.
 private fun byRefOrderCallSplicedOperand(): Int = byRefOrderTake(byref(run { byRefOrderMk() }.n))
 
+private fun byRefReadDefault(value: ClrRef<Int>, extra: Int = value.value): Int = value.value + extra
+private fun byRefBumpDefault(value: ClrRef<Int>, previous: Int = value.value++): Int = value.value * 10 + previous
+private fun byRefReplaceBeforeDefault(value: ClrRef<Int>): Int { value.value = 17; return 3 }
+private fun byRefReadAfterProvided(value: ClrRef<Int>, extra: Int = value.value, later: Int): Int = value.value + extra + later
+private fun <T> byRefGenericDefault(value: ClrRef<T>, extra: T = value.value): T = extra
+
 private fun byRefOrderedValues(first: Int, second: Int): Int = first + second
 private fun byRefReturnBeforeTransfer(c: Calc, stop: Boolean): Int {
     return byRefOrderedValues(c.Slot(0), if (stop) return 9 else {
@@ -128,6 +134,36 @@ class ByRefParameterTests {
         byRefOrderLog = ""
         assertEquals(33, byRefOrderCallSplicedOperand())
         assertEquals("md", byRefOrderLog)
+
+        var value = 6
+        assertEquals(12, byRefReadDefault(byref(value), 6))
+        assertEquals(12, byRefReadDefault(byref(value)))
+        assertEquals(76, byRefBumpDefault(byref(value)))
+        assertEquals(7, value)
+        assertEquals(37, byRefReadAfterProvided(byref(value), later = byRefReplaceBeforeDefault(byref(value))))
+        assertEquals(17, value)
+
+        byRefOrderLog = ""
+        assertEquals(2, byRefReadDefault(byref(byRefOrderMk().n)))
+        assertEquals("m", byRefOrderLog)
+        byRefOrderLog = ""
+        assertEquals(2, byRefReadDefault(byref(byRefOrderPlain())))
+        assertEquals("m", byRefOrderLog)
+        byRefOrderLog = ""
+        val values = intArrayOf(6)
+        assertEquals(12, byRefReadDefault(byref(values[byRefOrderIdx()])))
+        assertEquals("i", byRefOrderLog)
+        assertEquals(76, byRefBumpDefault(byref(values[0])))
+        assertEquals(7, values[0])
+
+        val native = Calc()
+        var live by byref(native.Slot(0))
+        assertEquals(120, byRefBumpDefault(byref(live)))
+        assertEquals(11, native.Slot(0))
+        var text = "reference"
+        assertEquals("reference", byRefGenericDefault(byref(text)))
+        var nullable: Int? = null
+        assertEquals(null, byRefGenericDefault(byref(nullable)))
     }
 
     // A `var x by byref(...)` delegate read passed ON to a `ref` parameter. The read is a `byrefLoad` — the pointee —

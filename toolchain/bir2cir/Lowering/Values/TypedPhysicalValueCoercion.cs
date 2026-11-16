@@ -972,6 +972,9 @@ static class TypedPhysicalValueCoercion
             MemberRef = new BirMemberReference { DeclaringType = new TypeNode.Fqn("Probe.Owner", new TypeNode[] { text }),
                 ReturnType = new TypeNode.ByRef(open), ParameterTypes = Array.Empty<TypeNode>() } };
         var oracle = ResultTypeOracle(new[] { root });
+        var erasedAddress = new BirByRefOf { Inner = new BirLocal { Name = "erased", Sty = new TypeNode.Nullable(integer) } };
+        if (oracle(erasedAddress, new Dictionary<string, TypeNode> { ["erased"] = Object }) != new TypeNode.ByRef(Object))
+            throw new InvalidOperationException("Pointer type ignored its location's actual physical storage frame");
         if (oracle(call, new Dictionary<string, TypeNode>()) != text)
             throw new InvalidOperationException("Owning physical result oracle did not close and copy the exact ref return");
         foreach (var (bound, receiver, declaringType) in delegateReceivers)
