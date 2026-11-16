@@ -18,6 +18,13 @@ static class Bir2Cir
         try
         {
             args = ResponseFileArguments.Expand(args);
+            if (args.Length == 1 && args[0] == "--selftest-carrier-transport")
+            {
+                CarrierTransportTests.Run();
+                TypeNodeCarrierSelfTest.Run();
+                ExecutableBirCodec.SelfTest();
+                return 0;
+            }
             // The shared BIR/CIR codec (bir-common) is <Compile Link/>-shared, so it has no project of its own
             // and no test host. Running its self-tests HERE exercises the exact compiled copy this tool reads and
             // writes documents with; tests/ir/run-schema.sh drives it beside the document-level freeze checks.
@@ -25,6 +32,7 @@ static class Bir2Cir
             {
                 TypeNodeSelfTest.Run();
                 TypeNodeCarrierSelfTest.Run();
+                CarrierTransportTests.Run();
                 MemberRefNodeSelfTest.Run();
                 DotKt.Cir.AttributeSelfTest.Run(JsonOptions.Indented);
                 AttributeProjection.SelfTest();
@@ -295,7 +303,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] [--cir-format=json|msgpack] <file.bir.json|file.bir.msgpack>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] [--configuration <target-configuration>] [--cir-format=json|msgpack] <file.bir.json|file.bir.msgpack>...");
             return 1;
         }
         catch (Exception ex)
@@ -1412,7 +1420,7 @@ sealed class Pipeline
             _options.RefBuild, refs.Aliases, isValueFqn, refs.PhysicalTypeNames, emittedLocalTypes,
             refs.NullableTypeFrames, valueRepresentations.InterfaceMarkers, file.OutputName)).ToArray();
         var declarations = ClrTypeVariance.ApplyAll(pendingOutput.Select((file, index) =>
-            new TypedCirProjection(emitted, projectionContexts[index]).ProjectCirFileDeclaration(file.Root)).ToArray(), refs);
+            new TypedCirProjection(emitted, projectionContexts[index], _options.Release).ProjectCirFileDeclaration(file.Root)).ToArray(), refs);
         for (var index = 0; index < pendingOutput.Count; index++)
         {
             var declaration = declarations[index];
@@ -1467,7 +1475,8 @@ sealed class Pipeline
 enum BuildStdlibMode { App, Metadata, Runtime }
 
 sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferences, IReadOnlyList<string> Inputs,
-    BuildStdlibMode StdlibMode, bool ReflectionRestricted, DotKt.Cir.CirFileFormat CirFormat = DotKt.Cir.CirFileFormat.Json)
+    BuildStdlibMode StdlibMode, bool ReflectionRestricted, DotKt.Cir.CirFileFormat CirFormat = DotKt.Cir.CirFileFormat.Json,
+    bool Release = false)
 {
     // The pure-Kotlin REFERENCE stdlib surface (`--build-stdlib=metadata` -> DotKt.Private.Stdlib.dll) keeps kotlin.*
     // type tokens verbatim and squashes bodies to a throw; EVERY other invocation — the runtime stdlib build and all
@@ -1491,6 +1500,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
         var inputs = new List<string>();
         var mode = BuildStdlibMode.App;
         var reflectionRestricted = false;
+        var release = false;
         var cirFormat = DotKt.Cir.CirFileFormat.Json;
 
         for (var i = 1; i < args.Length; i++)
@@ -1513,6 +1523,11 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
                 case "--reflection-restricted":
                     reflectionRestricted = true;
                     break;
+                case "--configuration" when i + 1 < args.Length:
+                    release = string.Equals(args[++i], "Release", StringComparison.OrdinalIgnoreCase);
+                    break;
+                case "--configuration":
+                    throw new UsageException("bir2cir: --configuration requires the target project's build configuration");
                 case "--cir-format=json":
                     cirFormat = DotKt.Cir.CirFileFormat.Json;
                     break;
@@ -1531,7 +1546,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
 
         if (inputs.Count == 0)
             throw new UsageException("bir2cir: no BIR input files");
-        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted, cirFormat);
+        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted, cirFormat, release);
     }
 }
 

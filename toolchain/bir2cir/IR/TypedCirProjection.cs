@@ -5,7 +5,8 @@ using A = DotKt.Cir.AttributeArgument;
 
 // The physical projection consumes an owning lowering graph. No JSON objects or
 // text participate here; exact binding facts and opaque carrier bytes pass through.
-sealed partial class TypedCirProjection(IReadOnlySet<string> emitted, BirTypeLowering.PhysicalTypeContext physicalTypes)
+sealed partial class TypedCirProjection(IReadOnlySet<string> emitted, BirTypeLowering.PhysicalTypeContext physicalTypes,
+    bool release = false)
 {
     internal static string TypeName(IBirTypeDeclaration type) => type switch {
         BirClassDefinition value => value.Name.OrDefault(),
@@ -46,13 +47,13 @@ sealed partial class TypedCirProjection(IReadOnlySet<string> emitted, BirTypeLow
     bool AdmitAttribute(BirAttribute attribute) => attribute.AttrExternal.OrDefault()
         || emitted.Contains((attribute.Attr.OrDefault() as TypeNode.Fqn)?.Name ?? "");
 
-    AttributeApplication ProjectAttribute(BirAttribute attribute) => new(
+    AttributeApplication ProjectAttribute(BirAttribute attribute) => RoundtripMetadata.SelectCarrierTransport(new(
         Require(attribute.Attr), Require(attribute.ArgTypes), Require(attribute.Args).Select(ProjectAttributeArgument).ToArray(),
         attribute.AttrExternal.HasValue ? attribute.AttrExternal.Value : null, attribute.AttrAssembly.OrDefault(),
         attribute.MemberRef.HasValue ? ProjectMemberReference(attribute.MemberRef.Value) : null,
         attribute.NamedArgs.HasValue ? attribute.NamedArgs.Value.Select(argument => new NamedAttributeArgument(
             Require(argument.Kind), Require(argument.Name), Require(argument.Type),
-            ProjectAttributeArgument(Require(argument.Value)))).ToArray() : null);
+            ProjectAttributeArgument(Require(argument.Value)))).ToArray() : null), release);
 
     A ProjectAttributeArgument(IBirAttributeValue value) => value switch
     {

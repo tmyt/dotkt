@@ -259,6 +259,8 @@
   <Target Name="DotKtComputeBir2CirModeStamp" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <PropertyGroup>
       <_DotKtCirFormat>$(DotKtCirFormat.ToLowerInvariant())</_DotKtCirFormat>
+      <_DotKtCarrierConfiguration Condition="'$(Configuration)' != 'Release'">Debug</_DotKtCarrierConfiguration>
+      <_DotKtCarrierConfiguration Condition="'$(Configuration)' == 'Release'">Release</_DotKtCarrierConfiguration>
     </PropertyGroup>
     <Error Condition="'$(_DotKtCirFormat)' != 'json' and '$(_DotKtCirFormat)' != 'msgpack'"
            Text="DotKtCirFormat must be json or msgpack." />
@@ -270,6 +272,7 @@
       <_DotKtBir2CirModeStamp>$(DotKtIntermediateCirPath)/.stamp</_DotKtBir2CirModeStamp>
       <_DotKtBir2CirModeStamp Condition="'$(_DotKtReflectionRestrictedArg)' != ''">$(DotKtIntermediateCirPath)/.stamp.reflection-restricted</_DotKtBir2CirModeStamp>
       <_DotKtBir2CirModeStamp>$(_DotKtBir2CirModeStamp).$(_DotKtCirFormat)</_DotKtBir2CirModeStamp>
+      <_DotKtBir2CirModeStamp>$(_DotKtBir2CirModeStamp).$(_DotKtCarrierConfiguration)</_DotKtBir2CirModeStamp>
     </PropertyGroup>
   </Target>
 
@@ -300,6 +303,8 @@
       <_DotKtEscapedBir Include="@(_DotKtBir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
       <_DotKtBir2CirResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedCirOutputPath)&quot;</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_format"><Value>--cir-format=$(_DotKtCirFormat)</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="_configuration_option"><Value>--configuration</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="_configuration"><Value>$(_DotKtCarrierConfiguration)</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtBir2CirResponseArgument>
       <_DotKtBir2CirResponseArgument Include="_reflection_restricted" Condition="'$(_DotKtReflectionRestrictedArg)' != ''"><Value>$(_DotKtReflectionRestrictedArg)</Value></_DotKtBir2CirResponseArgument>

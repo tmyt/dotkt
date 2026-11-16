@@ -105,12 +105,19 @@ $(STDLIB_RT): force-stdlib-check $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdli
 	@test -f "$@" || { echo "make: stdlib-rt did not produce $@ (see build/clr-stdlib-rt/*.err)"; exit 1; }
 
 # ---- packaging -----------------------------------------------------------------------------------
+# Apply the same produced-library configuration to prerequisite builds and the
+# standalone pack. Compiler executable build configuration is independent.
+pack: export DOTKT_BUILD_CONFIGURATION ?= Release
 pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Templates) -> build/nuget-feed
 	bash scripts/pack-nuget.sh
 
 # ==================================================================================================
 # Verification gates (test suite entry points live beside their tests under tests/)
 # ==================================================================================================
+# Canonical verification consumes the same Release stdlib as packaging. Keep
+# its prerequisite cache coherent across shards and recursive make invocations.
+verify: export DOTKT_BUILD_CONFIGURATION ?= Release
+verify-%: export DOTKT_BUILD_CONFIGURATION ?= Release
 verify: ## run ALL gates (the canonical set + the packaged-SDK release gate)
 	+$(MAKE) verify-core
 	+$(MAKE) verify-packaged-sdk

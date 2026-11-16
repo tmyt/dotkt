@@ -102,7 +102,8 @@ file still produces BIR, but owns no executable file facade. Before any physical
 bir2cir consumes the list and encodes each declaration as an ordinary CIR `assemblyAttrs` application of
 `DotKt.Runtime.CompilerServices.KotlinTypeAliasAttribute(string version, byte[] content)`. Its embedded
 definition is internal, sealed, compiler-generated, and has assembly-only `AttributeUsage` with
-`AllowMultiple=true` and `Inherited=false`. The emitted codec is `bir-msgpack/1`; content is a MessagePack
+`AllowMultiple=true` and `Inherited=false`. The logical encoding is MessagePack (`bir-msgpack/1`, or
+`bir-msgpack+deflate/1` when the Release emission policy selects compression); decoded content is a MessagePack
 map of the structured declaration, not protobuf or a serialized KLIB. ilemit applies assembly attributes literally after their constructors
 are defined. Declaration metadata survives reference-body stripping.
 
@@ -161,6 +162,30 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   `KotlinSuspendFunctionType`, `KotlinSuspendResult`) emit MessagePack. Remaining metadata object carriers
   emit JSON until their typed codecs migrate. Neither identifier is a
   compiler-compatibility promise.
+- `bir-msgpack+deflate/1` is one complete raw RFC 1951 DEFLATE stream of the same MessagePack bytes,
+  without a zlib/gzip wrapper, dictionary or shared assembly table. It is an explicitly registered codec;
+  readers require stream completion, no trailing compressed data and no trailing decoded MessagePack value.
+  Compression quality is an encoder policy, not a logical schema or codec version. Compressed JSON codecs
+  are comparison baselines only and are not registered production formats.
+- At final attribute projection, `bir2cir` selects compression for the **produced library's** Release
+  configuration (`--configuration Release`, forwarded from MSBuild). Default/non-Release builds retain
+  uncompressed MessagePack and skip compression attempts. Release skips payloads below 128 bytes and
+  uses DEFLATE Optimal only when it saves at least 32 bytes and 10%, including the extra codec-ID bytes.
+  The actual selected codec ID and bytes are emitted together. Captured bodies and nested opaque bytes
+  remain unchanged; `ilemit` does not interpret or decompress them. Inter-stage BIR/CIR files are unaffected.
+  Reader dispatch depends solely on the declared codec, so Debug consumers can use Release dependencies.
+- The selection experiment on the `b7a405a5` stdlib's 2,404 actual inline/default attributes measured
+  12,226,502 bytes for JSON and 9,040,041 for MessagePack. With the same independent per-attribute
+  compression, JSON+DEFLATE/JSON+Brotli Optimal measured 2,313,365/2,342,955 bytes, and
+  MessagePack+DEFLATE/MessagePack+Brotli Optimal 2,326,265/2,354,402 bytes. MessagePack DEFLATE
+  Optimal encoded that corpus in about 72 ms; Brotli SmallestSize reached 2,077,454 bytes in about
+  7,206 ms. The chosen threshold retained the useful savings while skipping 438 compression attempts.
+  Size-only DLL rewrites measured a 50.68% reference-DLL reduction but a 2.67% Toolchain nupkg increase
+  relative to the equally rewritten uncompressed control: outer ZIP compression can exploit repetition
+  between uncompressed attributes. This policy favors DLL/expanded size rather than download size.
+  With the selected fallback policy, the strict runtime reader decoded the same corpus in about 26 ms
+  with about 22 MiB of managed allocation for transport buffers/output, excluding BIR parsing and the
+  already-materialized input corpus. These are reference measurements, not performance guarantees.
 - `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
   callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
   until they migrate. Unsupported identifiers fail with `NotSupportedException`, never silent mis-decoding.
