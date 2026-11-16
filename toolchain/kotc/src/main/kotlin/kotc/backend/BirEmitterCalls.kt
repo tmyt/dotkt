@@ -930,8 +930,11 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 	val identityTarget = if (selectedTarget.isFakeOverride && selectedId == null)
 		selectedTarget.resolveFakeOverride() else selectedTarget
 	val externalMember = clrExternalMember(selectedTarget) ?: identityTarget?.let { clrExternalMember(it) }
-	if (externalMember != null && rendered is BirCallInstance && rendered.method == selectedTarget.name.asString())
-		rendered = rendered.copy(externalMember = externalMember)
+	if (externalMember != null && rendered is BirCallInstance && rendered.method == selectedTarget.name.asString()) {
+		val receiver = dispatchReceiver(call) ?: error("Selected external instance member has no receiver")
+		rendered = rendered.copy(ownerType = externalMemberDeclarationOwner(
+			identityTarget ?: error("Selected external member has no declaration"), receiver.type), externalMember = externalMember)
+	}
 	// A reference-KLIB override can lack its own physical declaration identity while still selecting a valid method by
 	// name/signature. Its inherited default belongs to a different declaration and must be carried independently of
 	// whether the selected call itself can carry an identity. Attach that fact before the selected-ID early return.

@@ -20,35 +20,58 @@ internal sealed partial class AssemblyScanner
         Visit(new ResolvedTypeDefinition(_md, owner, _definitionPath), signatures, context, [], null);
 
         void Visit(ResolvedTypeDefinition current, SignatureDecoder decoder, GenericContext frame,
-            ImmutableArray<KType> arguments, TypeNode[]? physicalArguments)
+            ImmutableArray<KType> arguments, TypeNode[]? physicalArguments, ImmutableArray<bool> publicArguments = default,
+            ImmutableArray<SignatureDecoder> argumentDecoders = default)
         {
             var reader = current.Reader;
             var currentDefinition = reader.GetTypeDefinition(current.Handle);
             var visitKey = current.DefinitionPath + ":" + MetadataTokens.GetRowNumber(current.Handle) + ":" +
                 string.Join(",", physicalArguments?.Select(TypeNode.ToJson) ?? []);
             if (!visited.Add(visitKey)) return;
-            IEnumerable<EntityHandle> edges = currentDefinition.GetInterfaceImplementations()
-                .Select(handle => reader.GetInterfaceImplementation(handle).Interface);
-            if (!currentDefinition.BaseType.IsNil) edges = edges.Append(currentDefinition.BaseType);
-            foreach (var edge in edges)
+            var edges = currentDefinition.GetInterfaceImplementations()
+                .Select(handle => (Type: reader.GetInterfaceImplementation(handle).Interface, Slot: (EntityHandle)handle));
+            if (!currentDefinition.BaseType.IsNil) edges = edges.Append((currentDefinition.BaseType, (EntityHandle)current.Handle));
+            foreach (var (edge, slot) in edges)
             {
                 if (!_publicTypeCatalog.TryResolveDefinition(reader, edge, out var target, current.DefinitionPath)) continue;
-                var sourceType = SubstituteTypeParameters(decoder.DecodeEntity(edge, frame, platform: false), arguments);
+                // NRT describes this declaration-shaped edge. Read it before
+                // inserting the inherited owner's argument trees.
+                var decodedEdge = decoder.DecodeEntity(edge, frame, platform: false);
+                var nativeEdge = !decoder.Attributes.IsDotKtAssembly;
+                var declaredEdge = ProjectInheritedType(reader, slot, decodedEdge, current.Handle, decoder,
+                    preserveDecodedNullable: nativeEdge);
+                var rawShapes = new Dictionary<KType, KType>(ReferenceEqualityComparer.Instance);
+                if (nativeEdge) RecordShape(decodedEdge, declaredEdge);
+                // Substituted types retain the decoder that read their actual
+                // CLR occurrence, including custom value-type facts abroad.
+                var edgeDecoders = declaredEdge.Argument.Select(argument =>
+                    argument.Type.HasTypeParameter && argument.Type.TypeParameter >= 0 &&
+                        !argumentDecoders.IsDefault && argument.Type.TypeParameter < argumentDecoders.Length
+                        ? argumentDecoders[argument.Type.TypeParameter] : decoder).ToImmutableArray();
+                // Native annotation T? instantiated at a value argument does
+                // not construct Nullable<V>. A decoded structural T? does.
+                var sourceType = SubstituteTypeParameters(declaredEdge, arguments,
+                    nativeEdge ? (source, index) => argumentDecoders[index].IsValueType(arguments[index]) &&
+                        !rawShapes[source].Nullable : null);
                 var physicalType = (TypeNode.Fqn)NativeSignatureReader.Type(reader, edge, physicalArguments);
                 var targetDefinition = target.Reader.GetTypeDefinition(target.Handle);
                 var targetDecoder = DecoderFor(target.Reader, names, signatures, target.DefinitionPath);
                 var targetFrame = new GenericContext(target.Handle, default, targetDefinition.GetGenericParameters()
                     .ToDictionary(handle => handle, handle => target.Reader.GetGenericParameter(handle).Index));
-                if (IsCoreComparable(target) && selected.Add(TypeNode.ToJson(physicalType)))
+                var surface = _publicTypeCatalog.Surface(reader, edge, publicArguments);
+                if (IsCoreComparable(target) && surface.IsPublic && selected.Add(TypeNode.ToJson(physicalType)))
                 {
                     var declaration = targetDefinition.GetMethods().Single(handle => {
                         var method = target.Reader.GetMethodDefinition(handle);
                         return target.Reader.GetString(method.Name) == "CompareTo" &&
                             (method.Attributes & MethodAttributes.Static) == 0 && method.GetGenericParameters().Count == 0;
                     });
+                    // Operator lookup first excludes non-operators. Standard
+                    // low priority therefore preserves an existing named API.
                     var view = InheritedFunction(new InheritedDefaultImplementation(target.Reader, declaration,
                         "CompareTo", sourceType.Argument.Select(argument => argument.Type).ToImmutableArray(),
-                        targetDecoder, null, 0, null, "", false, 0, false), "compareTo", 2, names);
+                        targetDecoder, null, 0, null, "", false, 0, false), "compareTo", 2 | 8, names,
+                        argumentSignatures: edgeDecoders);
                     var binding = ClrExternalAnnotation(names, owner);
                     AddTarget("memberOwner", TypeNode.ToJson(physicalType));
                     AddTarget("memberName", target.Reader.GetString(target.Reader.GetMethodDefinition(declaration).Name));
@@ -62,7 +85,20 @@ internal sealed partial class AssemblyScanner
                         },
                     });
                 }
-                Visit(target, targetDecoder, targetFrame, targetDecoder.DeclarationArguments(target.Handle, sourceType), physicalType.Args);
+                Visit(target, targetDecoder, targetFrame, targetDecoder.DeclarationArguments(target.Handle, sourceType),
+                    physicalType.Args, surface.TypeArguments, targetDecoder.DeclarationArguments(target.Handle, edgeDecoders));
+
+                void RecordShape(KType raw, KType annotated)
+                {
+                    rawShapes.Add(annotated, raw);
+                    if (raw.Argument.Count != annotated.Argument.Count)
+                        throw new InvalidDataException("Native edge NRT changed its declared argument shape");
+                    for (var i = 0; i < raw.Argument.Count; i++)
+                        if (raw.Argument[i].Type is { } original && annotated.Argument[i].Type is { } projected)
+                            RecordShape(original, projected);
+                    if (annotated.FlexibleUpperBound is { } upper)
+                        RecordShape(raw.FlexibleUpperBound ?? raw, upper);
+                }
             }
         }
 

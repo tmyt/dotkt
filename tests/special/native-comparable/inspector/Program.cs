@@ -10,7 +10,9 @@ var tool = Assembly.LoadFrom(Path.GetFullPath(args[0]));
 var snapshotType = tool.GetType("ReferenceMetadataSnapshot", true)!;
 var inputs = new[] { typeof(object).Assembly.Location, typeof(NativeComparison.DualOrder).Assembly.Location,
     Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location)!, "System.Runtime.dll") };
-if (args.Length > 1) inputs = inputs.Append(Path.GetFullPath(args[1])).ToArray();
+var hasReference = args.Length > 1;
+if (hasReference) inputs = inputs.Append(Path.GetFullPath(args[1])).ToArray();
+inputs = inputs.Append(typeof(NativeComparison.ComparableBase<>).Assembly.Location).ToArray();
 var snapshots = Array.CreateInstance(snapshotType, inputs.Length);
 for (var i = 0; i < inputs.Length; i++) snapshots.SetValue(snapshotType.GetMethod("Open")!.Invoke(null, [inputs[i]])!, i);
 object Discover(string name) => tool.GetType(name, true)!.GetMethod("Discover")!.Invoke(null, [snapshots])!;
@@ -22,9 +24,12 @@ var views = Discover("SourceInterfaceViews");
 var cases = new List<(int Input, string Name, int Expected)> {
     (0, "DateTime", 1), (0, "IComparable`1", 0),
     (1, "NativeOrder", 1), (1, "InheritedOrder", 1), (1, "ExplicitOrder", 1),
-    (1, "InheritedExplicitOrder", 1), (1, "DualOrder", 2), (1, "PermutedOrder`2", 1), (1, "MutableOrder", 1),
+    (1, "InheritedExplicitOrder", 1), (1, "DualOrder", 2), (1, "PermutedOrder`2", 1),
+    (1, "NullableArgumentOrder`1", 1), (1, "HiddenComparisonContract", 0), (1, "MutableOrder", 1),
+    (1, "CrossAssemblyOrder", 1), (1, "AnnotatedCrossAssemblyOrder", 1),
+    (1, "NullableCrossAssemblyOrder", 1), (1, "LowercaseCollisionOrder", 1),
 };
-if (inputs.Length > 3) cases.AddRange(cases.Where(test => test.Input == 1).Select(test => (3, test.Name, test.Expected)).ToArray());
+if (hasReference) cases.AddRange(cases.Where(test => test.Input == 1).Select(test => (3, test.Name, test.Expected)).ToArray());
 var runtimeTargets = new Dictionary<string, string[]>();
 foreach (var (inputIndex, typeName, expected) in cases) {
     var input = inputs[inputIndex];
@@ -55,6 +60,8 @@ foreach (var (inputIndex, typeName, expected) in cases) {
     var owners = new List<string>();
     foreach (var view in operators) {
         if (((int)Get(view, "Flags") & 1) == 0) throw new Exception("Selected target annotation is invisible to the frontend");
+        if (!Items(view, "FunctionAnnotation").Any(a => ClassName(Get(a, "Id")) == "kotlin.internal.LowPriorityInOverloadResolution"))
+            throw new Exception("Convenience view can shadow an existing native named member");
         if ((((int)Get(view, "Flags") >> 4) & 3) != 0) throw new Exception("Source view invented a virtual/abstract slot");
         var annotation = Items(view, "FunctionAnnotation").Single(a => ClassName(Get(a, "Id")) == "kotlin.clr.ClrExternal");
         var facts = Items(annotation, "Argument").ToDictionary(a => Text(Get(a, "NameId")), a => Text(Get(Get(a, "Value"), "StringValue")));
@@ -63,6 +70,41 @@ foreach (var (inputIndex, typeName, expected) in cases) {
             throw new Exception("A source-only view was assigned a fabricated declaration identity");
         using var target = JsonDocument.Parse(facts["memberOwner"]);
         if (target.RootElement.GetProperty("name").GetString() != "System.IComparable`1") throw new Exception("Target lost its exact native owner");
+        var parameter = Get(Items(view, "ValueParameter").Single(), "Type");
+        if (typeName == "PermutedOrder`2") {
+            void RequireBoxArgument(object type) {
+                var argument = Get(Items(type, "Argument").Single(), "Type");
+                if (!(bool)Get(type, "Nullable") || !(bool)Get(argument, "HasTypeParameter") ||
+                    (int)Get(argument, "TypeParameter") != 1 || (bool)Get(argument, "Nullable"))
+                    throw new Exception("Declaration T? must annotate only Box<!1>?, not its inserted argument");
+            }
+            RequireBoxArgument(parameter);
+            RequireBoxArgument(Get(Items(original.Single(), "ValueParameter").Single(), "Type"));
+        }
+        if (typeName is "DateTime" or "MutableOrder" && (bool)Get(parameter, "Nullable"))
+            throw new Exception("A value-type contract argument became nullable");
+        if (typeName == "NullableArgumentOrder`1") {
+            var nativeParameter = Get(Items(original.Single(), "ValueParameter").Single(), "Type");
+            var nativeArgument = Get(Items(nativeParameter, "Argument").Single(), "Type");
+            var argument = Get(Items(parameter, "Argument").Single(), "Type");
+            if (!(bool)Get(nativeParameter, "Nullable") || !(bool)Get(nativeArgument, "Nullable"))
+                throw new Exception("Native nullable-argument fixture lost its declared source shape");
+            if (!(bool)Get(parameter, "Nullable") || !(bool)Get(argument, "Nullable"))
+                throw new Exception("Selected interface edge lost its nullable argument");
+        }
+        if (typeName == "DualOrder" && (bool)Get(parameter, "Nullable") != facts["memberOwner"].Contains("System.String"))
+            throw new Exception("Constructed reference/value argument nullability changed");
+        if (typeName is "CrossAssemblyOrder" or "AnnotatedCrossAssemblyOrder" or "NullableCrossAssemblyOrder") {
+            var native = Get(Items(original.Single(), "ValueParameter").Single(), "Type");
+            var nullable = typeName == "NullableCrossAssemblyOrder";
+            if ((bool)Get(native, "Nullable") != nullable || (bool)Get(parameter, "Nullable") != nullable ||
+                Get(native, "FlexibleUpperBound") is not null || Get(parameter, "FlexibleUpperBound") is not null)
+                throw new Exception("Cross-assembly substitution confused NRT with structural Nullable<T>");
+            var physical = target.RootElement.GetProperty("args")[0];
+            if (nullable ? physical.GetProperty("name").GetString() != "System.Nullable`1"
+                : physical.GetProperty("name").GetString() != "NativeComparison.ComparisonToken")
+                throw new Exception("Selected physical slot disagrees with the cross-assembly source argument");
+        }
         owners.Add(facts["memberOwner"]);
     }
     if (owners.Distinct().Count() != operators.Length) throw new Exception("Constructed contracts collapsed");
@@ -75,7 +117,7 @@ foreach (var (inputIndex, typeName, expected) in cases) {
         throw new Exception("Reference assembly projection changed the selected declaration owner or frame");
     Console.WriteLine($"{typeName} ({(inputIndex == 3 ? "reference" : "runtime")}): original CompareTo={original.Length}, operator compareTo={operators.Length}; targets={string.Join(";", owners)}");
 }
-if (inputs.Length > 3) {
+if (hasReference) {
     Guid Mvid(int index) {
         var reader = (MetadataReader)snapshotType.GetProperty("Reader")!.GetValue(snapshots.GetValue(index))!;
         return reader.GetGuid(reader.GetModuleDefinition().Mvid);

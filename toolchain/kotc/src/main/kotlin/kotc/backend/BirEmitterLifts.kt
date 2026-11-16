@@ -821,12 +821,15 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 					BirParameter(parameter.name.asString(), type)
 				}
 				val arguments = regs.map { BirLocal(it.name.asString()) }
-				val liftedOwner = ownerSpec(ownerClass, boundRecv.type)
+				val liftedOwner = if (externalMember != null)
+					externalMemberDeclarationOwner(physicalIdentityDeclaration, boundRecv.type)
+					else ownerSpec(ownerClass, boundRecv.type)
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated companion function reference lost its type arguments in its lifted method frame")
 				val rawCall = BirCallInstance(ownerType = liftedOwner, virtual = virtual, recv = adapterReceiver,
 					method = fn.name.asString(), sig = overloadSignature(fn), typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() },
-					args = arguments, anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = memberDeclarationIdentity)
+					args = arguments, anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = memberDeclarationIdentity,
+					externalMember = externalMember)
 				val call = memberVisibilityStamped(fn, rawCall)
 				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) BirExpressionStatement(call) else BirReturn(call)
 				liftedFunction(lname, freeTps, parameters, liftedFuncType.ret, listOf(body))
@@ -945,7 +948,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			val callE = BirCallInstance(ownerType = selectedOwner, virtual = virtual, recv = BirLocal("__self"),
 				method = fn.name.asString(), sig = signature, typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() },
 				ret = resultType, sty = resultType, args = arguments, overrides = overrideFacts,
-				anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = effectiveIdentity)
+				anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = effectiveIdentity, externalMember = externalMember)
 			val retT = liftedFnType.ret
 			val body = if (fn.returnType.isUnit()) BirExpressionStatement(callE) else BirReturn(callE)
 			liftedFunction(lname, freeTps, parameters, retT, listOf(body))

@@ -2560,8 +2560,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
                 ApplyPInvokeProjection(method, function, names);
-                // A member's declaring-class path already carries its physical owner. Preserve only the exact
-                // frontend identity; ClrExternal is the top-level declaration transport.
+                // Ordinary members already carry their physical declaring class.
+                // Exact-target convenience views add their ClrExternal facts separately.
                 if (declarationIdentity is { } identity)
                     function.FunctionAnnotation.Add(
                         KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
@@ -3808,7 +3808,9 @@ internal sealed partial class AssemblyScanner : IDisposable
         MethodDefinition method,
         ImmutableArray<KType> types,
         NameTable names,
-        SignatureDecoder signatures)
+        SignatureDecoder signatures,
+        ImmutableArray<KType> substitutedDeclarationTypes = default,
+        ImmutableArray<SignatureDecoder> argumentSignatures = default)
     {
         var rows = method.GetParameters()
             .Select(handle => (Handle: handle, Row: reader.GetParameter(handle)))
@@ -3816,20 +3818,30 @@ internal sealed partial class AssemblyScanner : IDisposable
             .ToDictionary(parameter => parameter.Row.SequenceNumber);
         for (var i = 0; i < types.Length; i++)
         {
+            // A declaration's single T slot contributes only outer NRT after
+            // substitution; it does not annotate the inserted argument tree.
+            var outerNullabilityOnly = !substitutedDeclarationTypes.IsDefault &&
+                substitutedDeclarationTypes[i].HasTypeParameter &&
+                substitutedDeclarationTypes[i].TypeParameter >= 0 &&
+                !argumentSignatures.IsDefault && substitutedDeclarationTypes[i].TypeParameter < argumentSignatures.Length;
+            var argumentDecoder = outerNullabilityOnly
+                ? argumentSignatures[substitutedDeclarationTypes[i].TypeParameter] : null;
             if (!rows.TryGetValue(i + 1, out var entry))
             {
                 yield return new ValueParameter
                 {
                     Name = names.String($"arg{i}"),
                     Type = ProjectInheritedType(
-                        reader, default, types[i], methodHandle, signatures),
+                        reader, default, types[i], methodHandle, signatures,
+                        outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentDecoder),
                 };
                 continue;
             }
             var attrs = signatures.Attributes;
             var name = entry.Row.Name.IsNil ? $"arg{i}" : reader.GetString(entry.Row.Name);
             var type = ProjectInheritedType(
-                reader, entry.Handle, types[i], methodHandle, signatures);
+                reader, entry.Handle, types[i], methodHandle, signatures,
+                outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentDecoder);
             var value = new ValueParameter
             {
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
@@ -3850,7 +3862,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         InheritedDefaultImplementation inherited,
         string name,
         int kotlinFlags,
-        NameTable names)
+        NameTable names,
+        ImmutableArray<SignatureDecoder> argumentSignatures = default)
     {
         var reader = inherited.Reader;
         var declarationHandle = inherited.Declaration;
@@ -3890,7 +3903,9 @@ internal sealed partial class AssemblyScanner : IDisposable
                     declaration,
                     parameterTypes,
                     names,
-                    inherited.Signatures)
+                    inherited.Signatures,
+                    !argumentSignatures.IsDefault ? signature.ParameterTypes : default,
+                    argumentSignatures)
             },
         };
         AddInheritedMethodTypeParameters(
@@ -3917,7 +3932,10 @@ internal sealed partial class AssemblyScanner : IDisposable
         KType physical,
         EntityHandle contextOwner,
         SignatureDecoder signatures,
-        bool flowContract = false)
+        bool flowContract = false,
+        bool outerNullabilityOnly = false,
+        SignatureDecoder? argumentSignatures = null,
+        bool preserveDecodedNullable = false)
     {
         var attrs = signatures.Attributes;
         TypeNode? exact = null;
@@ -3953,7 +3971,8 @@ internal sealed partial class AssemblyScanner : IDisposable
             "KotlinTypeAttribute" => result,
             "KotlinSuspendFunctionTypeAttribute" or "KotlinNullableGenericAttribute"
                 => signatures.ApplyOuterNullability(result, bytes, contextByte),
-            _ => signatures.ApplyNullability(result, bytes, contextByte),
+            _ when outerNullabilityOnly => (argumentSignatures ?? signatures).ApplyOuterNullability(result, bytes, contextByte),
+            _ => signatures.ApplyNullability(result, bytes, contextByte, preserveDecodedNullable),
         };
         if (flowContract && attrs.Has(slot, MetadataAttributes.MaybeNull, requireTrust: false))
             result = signatures.AsPlatform(result);
@@ -4028,11 +4047,13 @@ internal sealed partial class AssemblyScanner : IDisposable
         return 0;
     }
 
-    private static KType SubstituteTypeParameters(KType source, ImmutableArray<KType> arguments)
+    private static KType SubstituteTypeParameters(KType source, ImmutableArray<KType> arguments,
+        Func<KType, int, bool>? preserveArgumentShape = null)
     {
         if (source.HasTypeParameter && source.TypeParameter >= 0 && source.TypeParameter < arguments.Length)
         {
             var replacement = arguments[source.TypeParameter].Clone();
+            if (preserveArgumentShape?.Invoke(source, source.TypeParameter) == true) return replacement;
             // Substitution replaces the classifier, not the use-site nullability. `T?` instantiated with a non-null
             // owner argument remains nullable; returning the argument verbatim weakened restored method bounds such
             // as `E : T?` to `E : String` on inherited interface declarations.
@@ -4041,7 +4062,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             {
                 replacement.Nullable = source.Nullable || replacement.Nullable;
                 replacement.FlexibleTypeCapabilitiesId = source.FlexibleTypeCapabilitiesId;
-                replacement.FlexibleUpperBound = SubstituteTypeParameters(sourceUpper, arguments);
+                replacement.FlexibleUpperBound = SubstituteTypeParameters(sourceUpper, arguments, preserveArgumentShape);
                 replacement.FlexibleUpperBound.ClearFlexibleTypeCapabilitiesId();
                 replacement.FlexibleUpperBound.FlexibleUpperBound = null;
             }
@@ -4049,10 +4070,10 @@ internal sealed partial class AssemblyScanner : IDisposable
         }
         var copy = source.Clone();
         for (var i = 0; i < copy.Argument.Count; i++)
-            if (copy.Argument[i].Type is { } argument)
-                copy.Argument[i].Type = SubstituteTypeParameters(argument, arguments);
-        if (copy.FlexibleUpperBound is { } upper)
-            copy.FlexibleUpperBound = SubstituteTypeParameters(upper, arguments);
+            if (source.Argument[i].Type is { } argument)
+                copy.Argument[i].Type = SubstituteTypeParameters(argument, arguments, preserveArgumentShape);
+        if (source.FlexibleUpperBound is { } upper)
+            copy.FlexibleUpperBound = SubstituteTypeParameters(upper, arguments, preserveArgumentShape);
         return copy;
     }
 
@@ -8363,10 +8384,12 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
             .Where(index => index.HasValue).Select(index => index!.Value).ToArray();
 
     public ImmutableArray<KType> DeclarationArguments(TypeDefinitionHandle owner, KType constructed)
+        => DeclarationArguments(owner, constructed.Argument.Select(argument => argument.Type).ToImmutableArray());
+
+    public ImmutableArray<T> DeclarationArguments<T>(TypeDefinitionHandle owner, ImmutableArray<T> arguments)
     {
-        var arguments = constructed.Argument.Select(argument => argument.Type).ToArray();
         if (_attrs.Int32(owner, MetadataAttributes.DotKtNs + "KotlinInnerAttribute") is not int capturedOuter)
-            return arguments.ToImmutableArray();
+            return arguments;
         var frame = NullableFrameMetadata.TypeFrame(_md, _attrs, owner);
         var order = frame is null
             ? InnerReferenceCatalog.SemanticArgumentOrder(_md, owner)
@@ -8374,7 +8397,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
         if (order.Length != arguments.Length)
             throw new InvalidDataException("constructed inner type arguments do not match its declaration frame");
         // KLIB presents inner arguments own-first, while declaration type-variable IDs are outer-first.
-        var declarationArguments = new KType[arguments.Length];
+        var declarationArguments = new T[arguments.Length];
         for (var i = 0; i < order.Length; i++) declarationArguments[order[i]] = arguments[i];
         return declarationArguments.ToImmutableArray();
     }
@@ -8460,7 +8483,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
     // Fold a declaration slot's NRT metadata over a decoded type, walking the tree in the SAME pre-order the emitting
     // compiler flattened it in (see [ConsumesNullability] for which nodes hold a byte). A node that holds no byte still
     // has its arguments walked, because the flattening does: `Dictionary<int, string?>` is `[1, 2]`, not `[1]`.
-    public KType ApplyNullability(KType source, byte[]? flags, byte context)
+    public KType ApplyNullability(KType source, byte[]? flags, byte context, bool preserveDecodedNullable = false)
     {
         var index = 0;
         return Walk(source);
@@ -8497,7 +8520,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
                 return copy;
             }
             for (var i = 0; i < copy.Argument.Count; i++)
-                if (copy.Argument[i].Type is { } arg)
+                if (type.Argument[i].Type is { } arg)
                     copy.Argument[i].Type = Walk(arg, nativeSignature);
             // NRT on a native generic variable does not construct Nullable<T>.
             // Otherwise closing T at Int would change the callable ABI to int?.
@@ -8513,7 +8536,9 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
                     2 => AsNullable(copy),
                     _ => AsNonNull(copy),
                 };
-            return copy;
+            // A raw decoded Nullable<T> has already contributed this bit.
+            // Declaration NRT may not erase that structural wrapper.
+            return preserveDecodedNullable && type.Nullable ? AsNullable(copy) : copy;
         }
     }
 
@@ -8767,7 +8792,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
     }
 
     // Is this node a CLR value type? Its NRT byte, when it holds one, is a placeholder rather than an annotation.
-    private bool IsValueType(KType type) =>
+    internal bool IsValueType(KType type) =>
         !type.HasTypeParameter && type.HasClassName && IsValueTypeName(_names.ClassName(type.ClassName));
 
     private static string NormalizeKotlinName(string name) => name switch

@@ -49,11 +49,53 @@ public sealed class Box<T>
     public Box(int value) => Value = value;
 }
 
-public sealed class PermutedOrder<A, B> : IComparable<Box<B>>
+public class PermutedOrder<A, B> : IComparable<Box<B>>
 {
     public int Value { get; }
     public PermutedOrder(int value) => Value = value;
     public int CompareTo(Box<B>? other) => Value - (other?.Value ?? 0);
+}
+
+public sealed class NullableArgumentOrder<T> : IComparable<Box<T?>> where T : class
+{
+    public int Value { get; }
+    public NullableArgumentOrder(int value) => Value = value;
+    public int CompareTo(Box<T?>? other) => Value - (other?.Value ?? 0);
+}
+
+internal sealed class HiddenComparisonArgument { }
+public sealed class HiddenComparisonContract : IComparable<HiddenComparisonArgument>
+{
+    int IComparable<HiddenComparisonArgument>.CompareTo(HiddenComparisonArgument? value) => 0;
+}
+
+public struct ComparisonToken
+{
+    public int Value;
+    public ComparisonToken(int value) => Value = value;
+}
+public sealed class CrossAssemblyOrder : ComparableBase<ComparisonToken>
+{
+    public int Value { get; }
+    public CrossAssemblyOrder(int value) => Value = value;
+    public override int CompareTo(ComparisonToken value) => Value - value.Value;
+}
+public sealed class AnnotatedCrossAssemblyOrder : AnnotatedComparableBase<ComparisonToken>
+{
+    public int Value { get; }
+    public AnnotatedCrossAssemblyOrder(int value) => Value = value;
+    public override int CompareTo(ComparisonToken value) => Value - value.Value;
+}
+public sealed class NullableCrossAssemblyOrder : NullableComparableBase<ComparisonToken>
+{
+    public int Value { get; }
+    public NullableCrossAssemblyOrder(int value) => Value = value;
+    public override int CompareTo(ComparisonToken? value) => Value - (value?.Value ?? 0);
+}
+public sealed class LowercaseCollisionOrder : IComparable<int>
+{
+    public int CompareTo(int value) => value - 7;
+    public int compareTo(int value) => 1000 + value;
 }
 
 public struct MutableOrder : IComparable<MutableOrder>

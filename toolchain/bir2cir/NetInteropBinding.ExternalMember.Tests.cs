@@ -25,18 +25,29 @@ static partial class NetInteropBinding
         BirFileDeclaration File(BirCallInstance call) => new() { FileClass = "SelectedExternal",
             Methods = new[] { new BirFunctionDeclaration { Name = "test", Body = new IBirStatement[] { new BirReturn { Value = call } } } } };
         BirCallInstance Call(BirFileDeclaration file) => (BirCallInstance)((BirReturn)file.Methods.Value[0].Body.Value[0]).Value.Value;
-        BirConstrainedCall Lower(BirFileDeclaration file)
+        BirGraphValue Lower(BirFileDeclaration file)
         {
             var original = Call(file);
             var receiver = original.Recv.Value;
             var arguments = original.Args.Value;
             Apply(file, refs);
-            var result = (BirConstrainedCall)((BirReturn)file.Methods.Value[0].Body.Value[0]).Value.Value;
-            if (!ReferenceEquals(result.Recv.Value, receiver) || !ReferenceEquals(result.Args.Value, arguments)
-                || result.MemberRef.Value.Name.Value != "CompareTo"
-                || result.MemberRef.Value.ParameterTypes.Value is not [TypeNode.Tv { Scope: "type", I: 0 }]
-                || result.Ret.Value != intType || result.Sty.Value != intType)
+            var result = (BirGraphValue)((BirReturn)file.Methods.Value[0].Body.Value[0]).Value.Value;
+            var (recv, args, member, ret, sty) = result switch {
+                BirConstrainedCall value => (value.Recv.Value, value.Args.Value, value.MemberRef.Value, value.Ret.Value, value.Sty.Value),
+                BirNativeInstance value when value.Dispatch.Value == "callvirt"
+                    => (value.Recv.Value, value.Args.Value, value.MemberRef.Value, value.Ret.Value, value.Sty.Value),
+                _ => throw new InvalidOperationException("Selected external receiver has no explicit physical dispatch"),
+            };
+            if (!ReferenceEquals(recv, receiver) || !ReferenceEquals(args, arguments)
+                || member.Name.Value != "CompareTo"
+                || member.ParameterTypes.Value is not [TypeNode.Tv { Scope: "type", I: 0 }]
+                || ret != intType || sty != intType)
                 throw new InvalidOperationException("Selected external member lost its open declaration, results or actual operands");
+            ClrMemberResolution.Apply(file, refs, null);
+            var after = (BirGraphValue)((BirReturn)file.Methods.Value[0].Body.Value[0]).Value.Value;
+            if (!ReferenceEquals(result, after) || result is BirNativeInstance native &&
+                (!ReferenceEquals(native.MemberRef.Value, member) || native.ArgTypes.IsPresent || native.ResolvedMemberParams.IsPresent))
+                throw new InvalidOperationException("Native resolution reselected an authored external target");
             return result;
         }
         foreach (var argument in new[] { stringType, intType })
@@ -51,14 +62,22 @@ static partial class NetInteropBinding
             if (Call(json).ExternalMember.Value.Owner.Value.Type != Call(binary).ExternalMember.Value.Owner.Value.Type)
                 throw new InvalidOperationException("JSON and MessagePack changed a selected constructed owner");
             foreach (var copy in new[] { file, json, binary })
-                if (Lower(copy).Iface.Value != new TypeNode.Fqn("System.IComparable`1", new[] { argument }))
+            {
+                var result = Lower(copy);
+                var selectedOwner = result switch {
+                    BirConstrainedCall value when argument == intType => value.Iface.Value,
+                    BirNativeInstance value when argument == stringType => value.Type.Value,
+                    _ => throw new InvalidOperationException("Reference/value receiver dispatch changed"),
+                };
+                if (selectedOwner != new TypeNode.Fqn("System.IComparable`1", new[] { argument }))
                     throw new InvalidOperationException("Selected external construction collapsed");
+            }
         }
         var generic = new TypeNode.Fqn(typeof(ExternalGeneric<,>).FullName!, new TypeNode[] { stringType, intType });
         var declared = new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { new TypeNode.Tv("type", 1) });
-        var mapped = Lower(File(Selected(generic, declared)));
-        if (mapped.Iface.Value is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "System.Collections.Generic.List`1", Args: [TypeNode.Fqn { Name: "System.Int32" }] }] }
-            || mapped.RecvType.Value != generic || mapped.CalleeParams.Value is not [TypeNode.Tv { Scope: "type", I: 0 }])
+        var mapped = (BirNativeInstance)Lower(File(Selected(generic, declared)));
+        if (mapped.Type.Value is not TypeNode.Fqn { Args: [TypeNode.Fqn { Name: "System.Collections.Generic.List`1", Args: [TypeNode.Fqn { Name: "System.Int32" }] }] }
+            || mapped.MemberRef.Value.ParameterTypes.Value is not [TypeNode.Tv { Scope: "type", I: 0 }])
             throw new InvalidOperationException("Selected external member used the caller's frame instead of the declaring owner's frame");
         var pending = Selected(stringType, stringType);
         var rejected = false;

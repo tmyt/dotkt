@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../../interop/producer/NativeComparable.cs" Link="NativeComparable.cs" />
+    <ProjectReference Include="../../../interop/field-slot-base/FieldSlotBase.csproj" />
   </ItemGroup>
 </Project>

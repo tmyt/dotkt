@@ -2148,13 +2148,25 @@ KLIB surface remains collision-free.
 **Implementing an arity-family generic interface uses the arity-qualified name + the VERBATIM .NET member surface.**
 `class Ver : IComparable1<Ver> { override fun CompareTo(other: Ver?): Int }` — the classifier is `IComparable1`
 (the generic member of the `System.IComparable` family), and its member is the .NET name `CompareTo` with an
-NRT-oblivious `Ver?` parameter, NOT the Kotlin operator `compareTo`. (dll2klib surfaces .NET members verbatim — it
-does not camelCase or operator-map them; the `compareTo`/operator restoration applies only to **round-tripped DotKt**
-assemblies, whose members are already Kotlin-named.) The natural spelling `IComparable<Ver>` does **not** resolve to
+NRT-oblivious `Ver?` parameter, NOT the Kotlin operator `compareTo`. Native declarations retain their CLR names;
+the interface itself does not acquire a renamed or additional abstract method. The natural spelling
+`IComparable<Ver>` does **not** resolve to
 the generic — `IComparable` is the non-generic (arity-0) member, so it errors *"no type arguments expected"*; this is
 the arity hard-limit above, not a bug. **For Kotlin comparability, implement `kotlin.Comparable<T>` instead** — it
 gives the `operator compareTo` / `<` and emits BOTH CLR faces (`System.IComparable``1<T>` and the non-generic
 `System.IComparable` cast-and-forward bridge), so a BCL consumer's natural-ordering dispatch works.
+
+Native **classes** with an applicable, publicly visible constructed core `System.IComparable<T>` contract also
+receive an additional final `operator fun compareTo(other: T): Int` view. It calls that exact interface slot,
+including inherited/explicit implementations and contracts whose argument is not the receiver type. Original
+native `CompareTo` APIs and CLR signatures/interfaces are unchanged; no comparison is synthesized from relational
+operators. Kotlin nullability comes from the selected contract and its actual constructed arguments.
+The standard low-priority marker keeps an existing native lowercase `compareTo` preferred for an ordinary named
+call, while relational syntax considers only operator candidates and uses the contract view.
+
+This view is a source convenience, not a new CLR virtual slot: override the native `CompareTo` when that CLR
+member is virtual. It follows Kotlin's ordinary final-member rules and can shadow an existing extension or
+conflict with a same-signature declaration in a Kotlin subclass.
 
 **Nested generic types are not projected** (`List<T>.Enumerator`); members referencing them degrade to `Any?`.
 Iteration is unaffected because the backend enumerates through `IEnumerable<T>` and
