@@ -908,5 +908,5 @@ def outputs(root, definitions):
         prop = member(field)
         model += [f"            {prop} = source.{prop},"]
     model += ["        };", "    }", "}", ""]
-    return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
-            root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}
+    return {root / "toolchain/bir2cir/IR/Generated/BirGraph.Model.Generated.cs": "\n".join(model),
+            root / "toolchain/bir2cir/IR/Generated/BirGraph.Json.Generated.cs": "\n".join(codec)}

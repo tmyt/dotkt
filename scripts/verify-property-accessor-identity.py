@@ -212,7 +212,8 @@ def validate_sources() -> list[str]:
         ROOT / "toolchain" / "ilemit",
         ROOT / "toolchain" / "kotc" / "src" / "main" / "kotlin" / "kotc" / "backend",
     )
-    allocator = ROOT / "toolchain" / "bir2cir" / "KotlinPropertyAccessors.cs"
+    allocator = (ROOT / "toolchain" / "bir2cir" / "Binding" / "Properties"
+                 / "KotlinPropertyAccessors" / "KotlinPropertyAccessors.cs")
     for source_root in roots:
         for file in sorted(source_root.rglob("*")):
             if file.suffix not in {".cs", ".kt"}:

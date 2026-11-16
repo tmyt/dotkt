@@ -64,7 +64,7 @@ through `System.Array`. The detailed classifier and array rules are in
 
 ## Implementation and coverage
 
-`toolchain/bir2cir/BirTypeLowering.cs` applies primitive aliases in both value and generic positions.
+`toolchain/bir2cir/Lowering/Values/BirTypeLowering/BirTypeLowering.cs` applies primitive aliases in both value and generic positions.
 Number's trusted stdlib binding and nominal conversion contract are declared in
 `libraries/stdlib/clr/builtins/Number.kt`.
 

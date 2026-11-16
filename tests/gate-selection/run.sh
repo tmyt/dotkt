@@ -77,7 +77,10 @@ mixed_suites="$(suite_line eng/KotlinClr.targets tests/msbuild/run.sh tests/targ
 # Backend edits affect direct lowering, in-repo builds, CLR import and packaged consumers.
 # The C#-only ABI oracle, upstream checksum and policy self-tests do not consume these tools.
 compiler_suites='compiler_tests schema sanity lowering stdlib_source_array msbuild targetuniverse pinvoke dll2klib packagedsdk'
-for path in toolchain/bir2cir/Program.cs toolchain/ilemit/Emitter.Expressions.cs toolchain/bir2cir toolchain/ilemit; do
+for path in toolchain/bir2cir/Program.cs \
+	toolchain/bir2cir/Lowering/Generics/FBoundStarProjectionErasure/FBoundStarProjectionErasure.cs \
+	toolchain/bir2cir/IR/Generated/BirGraph.Model.Generated.cs \
+	toolchain/ilemit/Emitter.Expressions.cs toolchain/bir2cir toolchain/ilemit; do
 	assert_suites backend-consumers "$path" "$compiler_suites"
 	plan="$(bash "$ROOT/scripts/gate.sh" --dry-run "$path")"
 	grep -qx 'clean stdlib rebuild: YES' <<<"$plan" || die "$path must rebuild the baked stdlib"
