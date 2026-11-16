@@ -417,6 +417,7 @@ private fun BirEmitter.sourceInterfaceSuperTypes(klass: IrClass): List<TypeNode>
 
 internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceDefinition {
 	rejectClrEnumOnNonEnum(iface)
+	checkUnimplementedClrEvents(iface)
 	// A mixed inherited event already inherits its ordinary getter from the ordinary property interface.
 	// The frontend intersection wrapper is not a new source declaration or another getter obligation.
 	fun inheritedMixedEvent(p: IrProperty) = isClrEventProperty(p) && hasOrdinaryPropertySlot(p) &&

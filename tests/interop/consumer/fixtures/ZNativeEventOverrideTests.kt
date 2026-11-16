@@ -85,6 +85,10 @@ class NativeEventOverrideTests {
         check(calls == 1 && DefaultEventProbe.Added == 1)
         defaultToken.close()
         check(DefaultEventProbe.Removed == 1)
+        val directDefaultToken = defaultSource.Changed.subscribe { _, _ -> calls++ }
+        check(calls == 2 && DefaultEventProbe.Added == 2)
+        directDefaultToken.close()
+        check(DefaultEventProbe.Removed == 2)
         check(!DefaultEventProbe.DeclaresOwnEvent(defaultSource))
 
         DefaultEventProbe.GenericAdded = 0
@@ -95,6 +99,10 @@ class NativeEventOverrideTests {
         check(DefaultEventProbe.GenericAdded == 1)
         genericToken.close()
         check(DefaultEventProbe.GenericRemoved == 1)
+        val directGenericToken = genericSource.Changed.subscribe { _ -> }
+        check(DefaultEventProbe.GenericAdded == 2)
+        directGenericToken.close()
+        check(DefaultEventProbe.GenericRemoved == 2)
         check(!DefaultEventProbe.DeclaresOwnEvent(genericSource))
     }
 }
