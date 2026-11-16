@@ -20,7 +20,9 @@ sealed partial class Emitter
         (IsTargetSignatureInstantiation(type) ? type.GetGenericTypeDefinition() : type).IsInterface;
 
     static bool IsValueType(Type type) =>
-        (IsTargetSignatureInstantiation(type) ? type.GetGenericTypeDefinition() : type).IsValueType;
+        // A generic parameter is not a concrete value type. Querying its base
+        // class can reach a SignatureType constraint with no reflection shape.
+        !type.IsGenericParameter && (IsTargetSignatureInstantiation(type) ? type.GetGenericTypeDefinition() : type).IsValueType;
 
     // TypeBuilder.SetParent validates parent.IsInterface before storing it, but SignatureType intentionally throws for
     // attribute queries. TypeBuilder's persisted metadata writer subsequently unwraps UnderlyingSystemType. Supply the
