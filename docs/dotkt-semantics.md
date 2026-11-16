@@ -757,8 +757,8 @@ ilemit receives only resolved CLR operations.
 An unchecked non-reified `value as T` with `T : Number` retains the raw Number classifier guard even when its
 result is unused or deferred in Object storage. Concrete typed consumers still perform their existing CLR
 narrowing; this does not make a boxed Long usable as an Int.
-As with other unchecked class-bound casts, that raw bound guard admits null; the original generic cast and
-its typed consumer keep their existing null handling. Direct and reified non-null Number casts still reject null.
+As with other unchecked class-bound casts, that raw bound guard admits null; actual typed consumers retain
+their own null handling. Direct and reified non-null Number casts still reject null.
 
 This is not a Kotlin-reflection implementation. Under the native class-token contract (§2, §5g),
 `Number::class` names its physical alias, `System.Object`. A generic `T::class`

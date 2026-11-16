@@ -68,7 +68,6 @@ import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
-import org.jetbrains.kotlin.ir.util.eraseTypeParameters
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.IrType
 import org.jetbrains.kotlin.ir.types.classFqName
@@ -94,12 +93,6 @@ private fun IrType.hasReifiedRuntimeOperand(): Boolean {
     return element?.hasReifiedRuntimeOperand() == true
 }
 
-// Keep Kotlin's erased bound before inlining substitutes the source variable.
-// Its classifier and stars are Kotlin facts, not a CLR storage selection.
-private fun BirEmitter.erasedTypeOperand(type: IrType): TypeNode? {
-    val parameter = (type.classifierOrNull as? IrTypeParameterSymbol)?.owner ?: return null
-    return if (parameter.isReified) null else birType(type.eraseTypeParameters())
-}
 //
 // #122: stamp the FRONTEND-RESOLVED static type `sty` (the instantiated `node.type`, incl. smart-cast refinement,
 // generic args and nullability) at this single chokepoint. bir2cir's StaticType CONSUMES it — reading an operand's

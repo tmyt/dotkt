@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -28,18 +29,18 @@ static partial class PrimitiveOperatorLowering
         if (args.Length == 1 && ArithOp.TryGetValue(member, out var symbol))
         {
             symbol = ArithmeticSymbol(ownerName, member, symbol);
-            var right = CloneOperand(args[0]);
+            var right = TypedOperand(args[0], memberCall.Sig.OrEmpty().ElementAtOrDefault(0));
             if (symbol is "<<" or ">>" or ">>>")
                 right = Binary("&", right, Integer(ShiftMask(ownerName)));
-            return TypedDeclaredReturn(memberCall, ownerName, Binary(symbol, CloneOperand(receiver), right));
+            return TypedDeclaredReturn(memberCall, ownerName, Binary(symbol, TypedOperand(receiver, owner), right));
         }
         if (args.Length == 0 && UnaryOp.TryGetValue(member, out var unary))
             return TypedDeclaredReturn(memberCall, ownerName, new BirUnaryOperation {
-                Op = unary, E = OptionalField<IBirExpression>.Of(CloneOperand(receiver)),
+                Op = unary, E = OptionalField<IBirExpression>.Of(TypedOperand(receiver, owner)),
             });
         if (args.Length == 0 && member is "inc" or "dec")
             return TypedDeclaredReturn(memberCall, ownerName,
-                Binary(member == "inc" ? "+" : "-", CloneOperand(receiver), Integer(1)));
+                Binary(member == "inc" ? "+" : "-", TypedOperand(receiver, owner), Integer(1)));
         return null;
     }
 
@@ -85,7 +86,7 @@ static partial class PrimitiveOperatorLowering
             if (leftFloat is { } lf && rightFloat is { } rf && (lf.nullable || rf.nullable))
                 return TypedNullableFloatEquality(left, lf.nullable, right, rf.nullable,
                     lf.nullable ? lf.elem : rf.elem, totalOrder: false);
-            return Binary("==", CloneOperand(left), CloneOperand(right));
+            return Binary("==", TypedCompareOperand(left, right, locals), TypedCompareOperand(right, left, locals));
         }
         return null;
     }
@@ -96,6 +97,8 @@ static partial class PrimitiveOperatorLowering
         var type = BirGraphStaticType.Surface(operand, locals);
         if (type is TypeNode.Nullable nullable && nullable.Of is TypeNode.Fqn named && ComparePrimFq.Contains(named.Name))
             return new BirNullableValue { Elem = nullable.Of, E = OptionalField<IBirExpression>.Of(CloneOperand(operand)) };
+        if (type is TypeNode.Fqn primitive && ComparePrimFq.Contains(primitive.Name))
+            return Cast(type, CloneOperand(operand));
         if (type is TypeNode.Fqn { Name: "kotlin.Any" })
         {
             var otherType = BirGraphStaticType.Surface(other, locals);
@@ -145,6 +148,10 @@ static partial class PrimitiveOperatorLowering
 
     static IBirExpression CloneOperand(IBirExpression expression)
         => expression == null ? null : (IBirExpression)((BirGraphValue)expression).DeepClone();
+    // Preserve the selected primitive receiver/parameter boundary even before
+    // inline expansion or source erasure changes the operand's physical type.
+    static IBirExpression TypedOperand(IBirExpression expression, TypeNode target)
+        => target == null ? CloneOperand(expression) : Cast(target, CloneOperand(expression));
     static BirCast Cast(TypeNode type, IBirExpression expression)
         => new() { Type = type, E = OptionalField<IBirExpression>.Of(expression) };
     static BirBinaryOperation Binary(string op, IBirExpression left, IBirExpression right)
