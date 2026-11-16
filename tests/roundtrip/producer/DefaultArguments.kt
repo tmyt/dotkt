@@ -13,6 +13,9 @@ fun kinds(tag: String, n: Long = 5L, r: Double = 1.5, ch: Char = 'z', note: Stri
     "$tag/$n/$r/$ch/${note ?: "none"}"
 class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($x,$y)" }
 
+fun readReference(value: kotlin.clr.ClrRef<Int>, extra: Int = value.value): Int = value.value + extra
+fun <T> referenceDefault(value: kotlin.clr.ClrRef<T>, extra: T = value.value): T = extra
+
 open class InheritedBase<T>(private val seed: T) {
     fun inheritedValue(): T = seed
     open fun describe(value: T = inheritedValue(), tail: String = "$value!"): String = "base:$value/$tail"

@@ -78,6 +78,13 @@ public static class NodeType
     static bool Refutes(TypeNode sty, JsonNode? slot)
         => TypeJson.Read(slot) is TypeNode result && !IrSanity.StampAgrees(sty, result);
 
+    public static TypeNode? AddressOf(TypeNode? type)
+    {
+        var value = type;
+        while (value is TypeNode.Mod modifier) value = modifier.Of;
+        return type == null || value is TypeNode.ByRef ? type : new TypeNode.ByRef(type);
+    }
+
     /// <summary>
     /// The node's own static type, or null when only an index could answer. <paramref name="recurse"/> is the
     /// caller's FULL deriver, used for the kinds whose type is an OPERAND's type (`binOp`, `unaryOp`, `arrayGet`);
@@ -147,6 +154,8 @@ public static class NodeType
                 return TypeJson.Read(o["type"]) ?? BlockResultType(o, recurse, primArrayElem);
             case "stackGet": case "byrefLoad":
                 return TypeJson.Read(o["elem"]);
+            case "byrefOf":
+                return AddressOf(recurse(o["inner"]));
             case "arrayGet":
                 // A bir2cir-authored read carries `elem`; kotc's does NOT (BirEmitterCalls emits the faithful
                 // `{array,index}` intrinsic and leaves the element to be derived), so fall back to the ARRAY's own
