@@ -579,7 +579,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		propertyAssociations.getOrPut(property) { "p${propertyAssociationCounter++}" }
 	// A call value BOUND by the enclosing call's evaluation plan (§2.7): the `bindRef` READ that renders it. Keyed by
 	// the value EXPRESSION's identity, so every reader of that one IR node — the call's own receiver/argument slot, an
-	// inner-class `new`'s enclosing-instance arg, a spliced default, a reconstructed `copy` field — reaches the ONE
+	// inner-class `new`'s enclosing-instance arg or a spliced default — reaches the ONE
 	// binding through the ordinary `expr()`. Installed by [CallPlan.bindValue] and released with the plan's scope.
 	internal val planReads = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.expressions.IrExpression, kotc.bir.BirExpression>()
 	// The evaluation plan of each call whose emission is in progress, keyed by the CALL node's identity — what

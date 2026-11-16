@@ -14,15 +14,17 @@ static partial class KotlinPropertyAccessors
             if (node is not BirFieldGet { DataClassCopyDefault: { HasValue: true, Value: true },
                     OwnerType: { HasValue: true, Value: TypeNode.Fqn owner },
                     Name.HasValue: true, Recv.HasValue: true } field
-                || !refs.TryKotlinPropertyAccessor(owner.Name, field.Name.Value, "get", 0, 0,
-                    Array.Empty<TypeNode>(), owner.Args ?? Array.Empty<TypeNode>(), out var method, out var isVirtual))
+                || !refs.TryKotlinPropertyAccessorBinding(owner.Name, field.Name.Value, "get", 0, 0,
+                    Array.Empty<TypeNode>(), owner.Args ?? Array.Empty<TypeNode>(), out var getter))
                 return node;
             return new BirCallInstance {
-                OwnerType = field.OwnerType, Method = method, PropertyName = field.Name, PropertyAccessor = "get",
+                OwnerType = field.OwnerType, Method = getter.Name, PropertyName = field.Name, PropertyAccessor = "get",
+                DeclarationId = getter.DeclarationId != null ? OptionalField<string>.Of(getter.DeclarationId) : default,
                 Recv = field.Recv, Args = Array.Empty<IBirExpression>(), Sig = Array.Empty<TypeNode>(),
-                Virtual = isVirtual, Ret = field.Ret, Sty = field.Sty,
-                MemberVisibility = field.MemberVisibility, MemberOwnerTypeParams = field.MemberOwnerTypeParams,
-                MemberSignature = Array.Empty<TypeNode>(), MemberReturnType = field.MemberType,
+                Virtual = getter.IsVirtual, Ret = field.Ret, Sty = field.Sty,
+                MemberVisibility = getter.PhysicalVisibility, MemberOwnerTypeParams = field.MemberOwnerTypeParams,
+                MemberSignature = getter.SignatureParameters.Select(BirGraphValue.CopyType).ToArray(),
+                MemberReturnType = BirGraphValue.CopyType(getter.SignatureReturn),
             };
         });
 }

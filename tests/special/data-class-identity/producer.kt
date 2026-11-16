@@ -16,6 +16,9 @@ data class FieldData(@kotlin.clr.ClrField val value: Int)
 
 data class Named(@get:kotlin.clr.ClrName("readValue") val value: Int)
 
+interface HasValue { val value: Int }
+data class Virtual(override val value: Int) : HasValue
+
 data class Hidden private constructor(val value: Int) {
     companion object {
         fun make(value: Int): Hidden = Hidden(value)

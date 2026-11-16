@@ -57,6 +57,7 @@ for codec in json msgpack; do
             --runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$run/il/DataIdentity.dll")" \
             --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" "$run/$view/consumer-cir/"*.cir."$codec"
         write_runtimeconfig "$run/$view/consumer-il" DataIdentityConsumer
+        dotnet "$inspector" --data-consumer-accessors "$run/$view/consumer-il/DataIdentityConsumer.dll"
         cp "$STDLIB_RT_DLL" "$run/il/DataIdentity.dll" "$run/$view/consumer-il/"
         actual="$(dotnet "$run/$view/consumer-il/DataIdentityConsumer.dll")"
         [[ "$actual" == 'data identity roundtrip: OK' ]] || die "data identity consumer returned '$actual'"

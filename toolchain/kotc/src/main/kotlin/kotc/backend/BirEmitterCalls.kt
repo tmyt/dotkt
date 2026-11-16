@@ -125,7 +125,7 @@ internal fun BirEmitter.fieldDeclarationOwner(callee: IrSimpleFunction, receiver
  *  vector; ilemit never reconstructs default semantics.
  *
  *  EVALUATION (docs/bir-cir-spec.md §2.7): a fill can give one of this call's values a SECOND reader — a same-module
- *  default splices it, a reconstructed data-class `copy` field reads the receiver, a cross-module `@KotlinDefault`
+ *  default splices it, a cross-module `@KotlinDefault`
  *  carrier binds it. Where that is possible this pass builds the call's EVALUATION PLAN: every value the call supplies
  *  becomes an ordered BINDING (receivers, then the supplied arguments, then the filled defaults in declaration order —
  *  Kotlin's order), and every reader is a `bindRef` READ of it. Where it is not possible no plan is emitted and the
@@ -176,10 +176,9 @@ internal fun BirEmitter.filledArgs(
 	// evaluation plan — i.e. where a value can acquire a SECOND reader, or where the array's ORDER is not Kotlin's:
 	//  (a) a same-module default this call fills READS one of the call's values (an earlier parameter, a receiver, an
 	//      enclosing instance): the captureSubst channel below splices the value into the default;
-	//  (b) a CROSS-MODULE omission: either a `defaultArg` placeholder, whose @KotlinDefault carrier binds
-	//      `{defaultArgReceiver kind}` / `{defaultArgParam n}` to THIS call's own values in bir2cir, or a data-class
-	//      `copy` field reconstructed as a
-	//      read of the receiver. Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
+	//  (b) a CROSS-MODULE omission: a `defaultArg` placeholder, whose @KotlinDefault carrier binds
+	//      `{defaultArgReceiver kind}` / `{defaultArgParam n}` to THIS call's own values in bir2cir.
+	//      Taken WHOLE (any IrErrorExpression omission) rather than per fill kind, so the test can
 	//      never disagree with what the loop below actually emits — a placeholder outside a plan is a loud bir2cir
 	//      failure — and a plan whose values all turn out to have one reader costs nothing: CallEvalLowering inlines
 	//      every single-reader binding straight back into its slot.

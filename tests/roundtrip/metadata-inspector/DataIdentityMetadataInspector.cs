@@ -8,8 +8,29 @@ static class DataIdentityMetadataInspector
     const string Marker = "DotKt.Runtime.CompilerServices.KotlinDataAttribute";
     const string Package = "roundtrip.dataidentity.";
     static readonly HashSet<string> DataTypes = new(StringComparer.Ordinal) {
-        "Point", "Box", "Hidden", "Secret", "FieldData", "Named", "Container.Nested", "Token",
+        "Point", "Box", "Hidden", "Secret", "FieldData", "Named", "Virtual", "Container.Nested", "Token",
     };
+
+    public static void VerifyConsumerAccessors(string dllPath)
+    {
+        using var stream = File.OpenRead(dllPath);
+        using var pe = new PEReader(stream);
+        var md = pe.GetMetadataReader();
+        bool IsUnsafeAccessor(CustomAttributeHandle handle)
+        {
+            var attribute = md.GetCustomAttribute(handle);
+            if (attribute.Constructor.Kind != HandleKind.MemberReference) return false;
+            var constructor = md.GetMemberReference((MemberReferenceHandle)attribute.Constructor);
+            if (constructor.Parent.Kind != HandleKind.TypeReference) return false;
+            var type = md.GetTypeReference((TypeReferenceHandle)constructor.Parent);
+            return md.GetString(type.Namespace) == "System.Runtime.CompilerServices"
+                && md.GetString(type.Name) == "UnsafeAccessorAttribute";
+        }
+        var accessors = md.MethodDefinitions.Count(handle => md.GetMethodDefinition(handle).GetCustomAttributes().Any(IsUnsafeAccessor));
+        // Secret.value is private. All other generated-copy defaults select public
+        // getters or the public ClrField and must not borrow backing-field privacy.
+        Require(accessors == 1, $"{dllPath}: expected only the private getter's UnsafeAccessor, found {accessors}");
+    }
 
     public static void VerifyMarkers(string dllPath, bool native = false)
     {

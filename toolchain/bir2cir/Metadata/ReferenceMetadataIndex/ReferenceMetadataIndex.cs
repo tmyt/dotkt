@@ -4765,6 +4765,18 @@ sealed partial class ReferenceMetadataIndex
     {
         physicalMethodName = null;
         isVirtual = false;
+        if (!TryKotlinPropertyAccessorBinding(ownerFqn, propertyName, accessorKind, paramCount,
+            methodArity, accessorSignature, ownerTypeArguments, out var selected)) return false;
+        physicalMethodName = selected.Name;
+        isVirtual = selected.IsVirtual;
+        return true;
+    }
+
+    internal bool TryKotlinPropertyAccessorBinding(string ownerFqn, string propertyName, string accessorKind, int paramCount,
+        int methodArity, IReadOnlyList<TypeNode> accessorSignature, TypeNode[] ownerTypeArguments,
+        out MemberBinding selected)
+    {
+        selected = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var declarations = list.Where(member => member.SourcePropertyName == propertyName
                 && !member.IsPropertyBridge && member.AccessorKind == accessorKind && member.ParamCount == paramCount
@@ -4773,10 +4785,9 @@ sealed partial class ReferenceMetadataIndex
         if (accessorSignature == null && declarations.Count > 1) return false;
         var candidates = declarations.Where(member => AccessorSignatureMatches(
                 member, accessorSignature, ownerTypeArguments))
-            .Select(member => (member.Name, member.IsVirtual)).Distinct().ToList();
+            .GroupBy(member => (member.Name, member.IsVirtual, member.MetadataToken)).ToList();
         if (candidates.Count != 1) return false;
-        physicalMethodName = candidates[0].Name;
-        isVirtual = candidates[0].IsVirtual;
+        selected = candidates[0].First();
         return true;
     }
 
@@ -5718,6 +5729,9 @@ sealed partial class ReferenceMetadataIndex
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
                             SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
+                            PhysicalVisibility = method.IsPublic ? "public"
+                                : method.IsFamily || method.IsFamilyOrAssembly ? "protected"
+                                : method.IsAssembly ? "internal" : "private",
                             ParameterNullableFlags = dotKtAuthored
                                 ? method.GetParameters().Select((parameter, i) => ReferenceParameterNullableFlags(parameter,
                                     nativeSignature?.Parameters[i] ?? DeclarationTypeNode(parameter.ParameterType))).ToArray() : null,
@@ -8756,6 +8770,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
+    public string PhysicalVisibility { get; init; }
     public byte[][] ParameterNullableFlags { get; init; }
     public int[] VarargPositions { get; init; } = Array.Empty<int>();
 }
