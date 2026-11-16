@@ -32,6 +32,7 @@ PY="${PYTHON:-python3}"
 "$PY" tests/ir/test-bir-graph-model.py || exit 1
 "$PY" tests/ir/test-typealias-schema.py || exit 1
 "$PY" tests/ir/test-generic-receiver-schema.py || exit 1
+"$PY" tests/ir/test-external-member-schema.py || exit 1
 "$PY" tests/ir/test-valueblock-schema.py || exit 1
 ./gradlew -q :kotc:test --tests kotc.bir.TypeNodeTest --tests kotc.bir.SourceMetadataTest \
     --tests kotc.bir.TypeParameterDeclarationTest --tests kotc.pipeline.BirFileConfigurationTest || exit 1

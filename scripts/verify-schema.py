@@ -372,6 +372,29 @@ class V:
     def err(self, f, path, msg):
         self.viol.append((f, path, msg))
 
+    def external_member_binding(self, f, path, value):
+        shape = _definitions["birExternalMemberBinding"]
+        if not isinstance(value, dict) or set(value) != set(shape["required"]):
+            self.err(f, path, "externalMember must carry exactly its declared owner and member fields")
+            return
+        if not isinstance(value["member"], str):
+            self.err(f, path + "/member", "externalMember.member must be a string")
+        if not isinstance(value["owner"], str):
+            self.err(f, path + "/owner", "externalMember.owner must be encoded declaration TypeNode text")
+            return
+        try:
+            owner = json.loads(value["owner"])
+        except ValueError:
+            self.err(f, path + "/owner", "externalMember.owner must contain valid TypeNode JSON")
+            return
+        if not isinstance(owner, dict) or owner.get("t") != "fqn":
+            self.err(f, path + "/owner", "externalMember.owner must contain a named declaration TypeNode")
+            return
+        # This schema-declared frozen foreign frame is not a lexical BIR type
+        # slot. Validate its contents without substituting source arguments or
+        # forbidding the physical types that trusted CLR metadata can state.
+        self.walk(f, owner, path + "/owner/content", role="signature", native_signature=True)
+
     def physical_scalar(self, f, path, value):
         tag = value.get("a") if isinstance(value, dict) else None
         shape = CIR_SCALAR_SHAPES.get(tag) if isinstance(tag, str) else None
@@ -573,7 +596,7 @@ class V:
             self.err(f, path, "Kotlin star projection must be lowered by bir2cir before CIR")
         # The three ECMA signature carriers are bir2cir-authored CIR facts: Kotlin source cannot spell a
         # pointer, a multi-dimensional array or a custom modifier, so one in kotc's BIR is a producer defect.
-        if f.endswith(".bir.json"):
+        if f.endswith(".bir.json") and not native_signature:
             if t in ("ptr", "fnPtr", "mod"):
                 self.err(f, path, f"type {t!r} is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
             if t == "array" and "rank" in o:
@@ -1377,6 +1400,11 @@ class V:
             clr_owner = o.get("k") in CLR_OWNER_KINDS
             for key, val in o.items():
                 p = path + "/" + key
+                if key == "externalMember":
+                    if not f.endswith(".bir.json") or o.get("k") != "callInstance":
+                        self.err(f, p, "externalMember belongs to a BIR instance call and must be consumed before CIR")
+                    self.external_member_binding(f, p, val)
+                    continue
                 if key == "defaultBir":
                     if (not f.endswith(".bir.json") or not isinstance(val, dict)
                             or set(val) != {"index", "body"}

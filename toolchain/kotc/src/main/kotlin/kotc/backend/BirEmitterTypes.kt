@@ -541,14 +541,41 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
 	return clrExternalOwner(decl)
 }
 
+private fun BirEmitter.clrExternalAnnotation(
+	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
+): IrConstructorCall? {
+	val host = (decl as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: decl
+	return host.annotations.firstOrNull {
+		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
+	}
+}
+
 private fun BirEmitter.clrExternalArguments(
 	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
-): List<org.jetbrains.kotlin.ir.expressions.IrExpression>? {
-	val host = (decl as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: decl
-	val annotation = host.annotations.firstOrNull {
-		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
-	} ?: return null
-	return regularArgs(annotation)
+): List<org.jetbrains.kotlin.ir.expressions.IrExpression>? = clrExternalAnnotation(decl)?.let { regularArgs(it) }
+
+/** Exact projected declaration facts. No CLR lookup or frame substitution belongs in kotc. */
+internal fun BirEmitter.clrExternalMember(
+	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
+): kotc.bir.BirExternalMemberBinding? {
+	val annotation = clrExternalAnnotation(decl) ?: return null
+	fun argument(name: String): String? {
+		val index = annotation.symbol.owner.parameters.indexOfFirst { isValueParameter(it) && it.name.asString() == name }
+		return (annotation.arguments.getOrNull(index) as? IrConst)?.value as? String
+	}
+	// Optional annotation arguments retain their constructor positions even
+	// when sourceView was not supplied; compacting them would change the target.
+	val owner = argument("memberOwner") ?: return null
+	val member = argument("memberName") ?: return null
+	return if (owner.isEmpty() && member.isEmpty()) null else kotc.bir.BirExternalMemberBinding(owner, member)
+}
+
+/** The selected Kotlin declaration's constructed frame, not its fake override's receiver frame. */
+internal fun BirEmitter.externalMemberDeclarationOwner(declaration: IrSimpleFunction, receiver: IrType): TypeNode {
+	val owner = declaration.parent as? IrClass ?: error("Selected external member has no declaration class")
+	val constructed = correspondingSupertypeInstantiation(receiver, owner, allowCapturedArguments = true)
+		?: error("Selected external member declaration is not a supertype of its receiver")
+	return birType(constructed)
 }
 
 /** The Kotlin-facing declaration owner written by dll2klib. This fact is kept distinct from the exact TypeDef name;

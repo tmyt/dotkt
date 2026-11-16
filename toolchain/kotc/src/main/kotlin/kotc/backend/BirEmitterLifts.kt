@@ -626,6 +626,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 	val memberDeclarationIdentity = selectedDeclarationId
 		?: declarationIdForPhysicalAllocation(physicalIdentityDeclaration) ?: declarationIdForPhysicalAllocation(fn)
 	val flagsOperation = clrFlagsOperation(fn)
+	val externalMember = clrExternalMember(physicalIdentityDeclaration) ?: clrExternalMember(fn)
 	// A suspend function reference (`::suspendFn`, typed KSuspendFunctionN) -> a `newSuspendLambda` ADAPTER: the
 	// suspend lambda `{ args -> target(args) }` whose body is a suspendCall to the target. A plain `newDelegate`
 	// cannot carry the cold-suspend protocol (bir2cir has no suspend-delegate lowering; it DOES build a SuspendLambda
@@ -820,12 +821,15 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 					BirParameter(parameter.name.asString(), type)
 				}
 				val arguments = regs.map { BirLocal(it.name.asString()) }
-				val liftedOwner = ownerSpec(ownerClass, boundRecv.type)
+				val liftedOwner = if (externalMember != null)
+					externalMemberDeclarationOwner(physicalIdentityDeclaration, boundRecv.type)
+					else ownerSpec(ownerClass, boundRecv.type)
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated companion function reference lost its type arguments in its lifted method frame")
 				val rawCall = BirCallInstance(ownerType = liftedOwner, virtual = virtual, recv = adapterReceiver,
 					method = fn.name.asString(), sig = overloadSignature(fn), typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() },
-					args = arguments, anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = memberDeclarationIdentity)
+					args = arguments, anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = memberDeclarationIdentity,
+					externalMember = externalMember)
 				val call = memberVisibilityStamped(fn, rawCall)
 				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) BirExpressionStatement(call) else BirReturn(call)
 				liftedFunction(lname, freeTps, parameters, liftedFuncType.ret, listOf(body))
@@ -880,7 +884,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			BirCallInstance(ownerType = callOwner, virtual = virtual, recv = recv, method = fn.name.asString(),
 				sig = signature, typeArgs = referenceTypeArgs.takeIf { it.isNotEmpty() }, ret = resultType, sty = resultType,
 				args = arguments, overrides = overrideFacts, anySlot = true.takeIf { isAnySlotMethod(fn) },
-				declarationId = memberDeclarationIdentity, clrFlagsOperation = flagsOperation)
+				declarationId = memberDeclarationIdentity, clrFlagsOperation = flagsOperation, externalMember = externalMember)
 		else {
 			// A projected CLR member without a DotKt declaration identity still needs the adapter. Emit the same neutral
 			// external-call facts as an ordinary invocation; bir2cir resolves their physical member representation.
@@ -893,7 +897,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			BirCallInstance(ownerType = selectedOwner, virtual = virtual, recv = recv, method = fn.name.asString(),
 				sig = signature, typeArgs = referenceTypeArgs.takeIf { it.isNotEmpty() }, argTypes = argTypes,
 				ret = resultType, sty = resultType, args = arguments, overrides = overrideFacts,
-				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation)
+				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation, externalMember = externalMember)
 		}
 		val call = memberVisibilityStamped(if (externalDeclaration) declaration else fn, rawCall)
 		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) BirExpressionStatement(call) else BirReturn(call)
@@ -944,7 +948,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			val callE = BirCallInstance(ownerType = selectedOwner, virtual = virtual, recv = BirLocal("__self"),
 				method = fn.name.asString(), sig = signature, typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() },
 				ret = resultType, sty = resultType, args = arguments, overrides = overrideFacts,
-				anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = effectiveIdentity)
+				anySlot = true.takeIf { isAnySlotMethod(fn) }, declarationId = effectiveIdentity, externalMember = externalMember)
 			val retT = liftedFnType.ret
 			val body = if (fn.returnType.isUnit()) BirExpressionStatement(callE) else BirReturn(callE)
 			liftedFunction(lname, freeTps, parameters, retT, listOf(body))
@@ -977,7 +981,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			val call = BirCallInstance(ownerType = selectedOwner, method = fn.name.asString(), sig = overloadSignature(target),
 				typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() }, argTypes = regs.map { birType(it.type) },
 				ret = liftedFuncType.ret, recv = BirLocal("__self"), args = arguments,
-				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation,
+				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation, externalMember = externalMember,
 				declarationId = memberDeclarationIdentity.takeUnless { selfT.containsStarProjection() })
 			val body = if (fn.returnType.isUnit()) BirExpressionStatement(call) else BirReturn(call)
 			liftedFunction(lname, freeTps, parameters, liftedFuncType.ret, listOf(body))

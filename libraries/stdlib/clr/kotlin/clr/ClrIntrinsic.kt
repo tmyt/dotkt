@@ -15,7 +15,16 @@ package kotlin.clr
 // The frontend consumes only that source identity; physicalOwner remains a representation fact for bir2cir.
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
-public annotation class ClrExternal(val owner: String, val physicalOwner: String, val sourceView: String = "")
+public annotation class ClrExternal(
+    val owner: String,
+    val physicalOwner: String,
+    val sourceView: String = "",
+    // An additional source view may name an already-selected constructed CLR
+    // declaration. Its owner uses the declaring class's type-parameter frame;
+    // kotc forwards this compiler fact, and bir2cir alone applies that frame.
+    val memberOwner: String = "",
+    val memberName: String = "",
+)
 
 // A projected event declaration, as distinct from an ordinary property storing a ClrEvent value. dll2klib owns
 // this fact; kotc carries event-member reads, while bir2cir selects the exact native accessors.

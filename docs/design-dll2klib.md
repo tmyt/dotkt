@@ -320,6 +320,15 @@ consumes it while emitting BIR:
 - class and instance-member references receive `ownerType`; and
 - top-level, static, and inline references receive `owner`.
 
+An additional native comparison view can select a different exact declaration from its visible source name.
+For that compiler-produced view, optional `memberOwner` and `memberName` arguments identify the selected
+constructed interface declaration. `memberOwner` uses canonical TypeNode JSON in the view's native declaring
+class frame; it is not a serialized declaration ID or an overload-selection hint. `kotc` forwards this target
+unchanged and carries the selected Kotlin declaration's constructed owner frame, including fake overrides on
+Kotlin subclasses. At the BIR boundary `bir2cir` decodes the immutable typed owner once, substitutes that explicit
+frame and emits an exact MemberRef-bearing call (ordinary virtual dispatch for reference receivers, constrained
+dispatch for value receivers). `ilemit` does not rediscover the comparison contract.
+
 The annotation is not propagated beyond BIR. `kotc` requires both facts to
 recognize the current-format external declaration and transports
 `physicalOwner` in the existing owner/type fields; `bir2cir` uses that exact

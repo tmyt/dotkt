@@ -47,10 +47,11 @@ public interface NativeBoundedValueEcho
     T Echo<T>(T value) where T : roundtrip.constructorcarrier.BoundCounter<int>;
 }
 
-public struct NativeBoundCounter : roundtrip.constructorcarrier.BoundCounter<int>
+public struct NativeBoundCounter : roundtrip.constructorcarrier.BoundCounter<int>, IComparable<NativeBoundCounter>
 {
     int value;
     public NativeBoundCounter(int initial) => value = initial;
     public void increment() => value++;
     public int count() => value;
+    public int CompareTo(NativeBoundCounter other) => value.CompareTo(other.value);
 }

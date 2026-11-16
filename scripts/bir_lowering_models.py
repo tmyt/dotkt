@@ -891,10 +891,13 @@ def outputs(root, definitions):
                 # declaration, not the producer-authored static target.
                 "overrides", "clrOwnerResolved", "static", "_erasedConstraintDispatch",
                 "_exactExistentialBridgeOwnerCall", "_physicalDeclarationSignature",
-                "_foreignDeclarationSignature"}
+                "_foreignDeclarationSignature", "externalMember"}
     model += ["// Structural move only; the producer authors the new selected target.",
               "internal static class BirCallConversion", "{",
-              "    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source) => new()", "    {"]
+              "    internal static BirCallStatic MoveInstanceToStatic(BirCallInstance source)", "    {",
+              "        // Native binding must first transfer this selected declaration into its physical target.",
+              "        if (source.ExternalMember.IsPresent) throw new InvalidOperationException(\"Unconsumed selected external member at static-call authoring\");",
+              "        return new()", "        {"]
     for field, value in source_call.items():
         if field in consumed:
             continue
@@ -903,7 +906,7 @@ def outputs(root, definitions):
         if cs(value) != cs(target_call[field]):
             raise ValueError(f"Instance/static call field {field} has incompatible owning shapes")
         prop = member(field)
-        model += [f"        {prop} = source.{prop},"]
-    model += ["    };", "}", ""]
+        model += [f"            {prop} = source.{prop},"]
+    model += ["        };", "    }", "}", ""]
     return {root / "toolchain/bir2cir/BirGraph.Model.Generated.cs": "\n".join(model),
             root / "toolchain/bir2cir/BirGraph.Json.Generated.cs": "\n".join(codec)}
