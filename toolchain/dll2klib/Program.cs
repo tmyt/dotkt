@@ -3151,6 +3151,13 @@ internal sealed partial class AssemblyScanner : IDisposable
                 KotlinPropertyAccessorCarrier(pair.Getter)?.Event == _md.GetString(ev.Name)))
                 continue;
             var accessor = _md.GetMethodDefinition(accessorHandle);
+            var eventAttributes = accessor.Attributes;
+            var eventAccessors = ev.GetAccessors();
+            if ((!eventAccessors.Adder.IsNil &&
+                    (_md.GetMethodDefinition(eventAccessors.Adder).Attributes & MethodAttributes.Abstract) != 0) ||
+                (!eventAccessors.Remover.IsNil &&
+                    (_md.GetMethodDefinition(eventAccessors.Remover).Attributes & MethodAttributes.Abstract) != 0))
+                eventAttributes |= MethodAttributes.Abstract;
             var physicalHandler = signatures.DecodeEntity(ev.Type, typeContext, platform: false);
             var handler = physicalHandler;
             if (_attrs.IsDotKtAssembly)
@@ -3172,8 +3179,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 ReturnType = eventType,
                 Flags = CallableVisibility(accessorHandle, Flags.Property(
                     explicitEventShapes.Contains(_md.GetString(ev.Name) + ":" + TypeKey(physicalHandler))
-                        ? accessor.Attributes | MethodAttributes.Virtual
-                        : accessor.Attributes,
+                        ? eventAttributes | MethodAttributes.Virtual
+                        : eventAttributes,
                     canWrite: false,
                     (accessor.Attributes & MethodAttributes.Static) != 0)),
             };

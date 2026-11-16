@@ -12,6 +12,7 @@ class K : Carrier()
 class GenericK : GenericCarrier()
 class ExplicitK : ExplicitCarrier()
 class PublicDerivedK : PublicDerivedCarrier()
+class DefaultEventK : TransitiveSlotProbe.IAllDefaultEvent
 
 fun consume(value: K): IPublic = value
 fun consumeGeneric(value: GenericK): IPublicGeneric<String> = value
