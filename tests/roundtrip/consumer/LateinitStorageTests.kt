@@ -7,6 +7,9 @@ import roundtrip.lateinitstorage.exportedLateinit
 import roundtrip.lateinitstorage.exportedLateinitInitialized
 import roundtrip.lateinitstorage.exportedLateinitInitializedByDefault
 
+private lateinit var consumerLateinitValue: String
+private fun consumerLateinitInitialized(): Boolean = ::consumerLateinitValue.isInitialized
+
 class LateinitStorageTests {
     @TestAttribute
     fun genericWritesAcrossDllPreserveStateAndTypedReads() {
@@ -53,11 +56,17 @@ class LateinitStorageTests {
 
     @TestAttribute
     fun topLevelWritesAcrossDllUseTypedAccessors() {
+        assertFalse(consumerLateinitInitialized())
         assertFalse(exportedLateinitInitialized())
         assertFalse(exportedLateinitInitializedByDefault())
         exportedLateinit = "consumer"
         assertTrue(exportedLateinitInitialized())
         assertTrue(exportedLateinitInitializedByDefault())
+        assertEquals("consumer", exportedLateinit)
+        assertFalse(consumerLateinitInitialized())
+        consumerLateinitValue = "local"
+        assertTrue(consumerLateinitInitialized())
+        assertEquals("local", consumerLateinitValue)
         assertEquals("consumer", exportedLateinit)
     }
 }

@@ -66,14 +66,6 @@ static partial class MemberCallSubstitution
                     : new BirPropertySet { Type = closed, Name = member, Static = true,
                         Value = CopyCallExpression(node.Args.OrEmpty().FirstOrDefault()) };
             }
-            var injectedSignature = call.ArgTypes.OrDefault() ?? call.Sig.OrDefault();
-            if (!call.Prop.HasValue && injectedSignature != null && call.OwnerType.OrDefault() is TypeNode.Fqn classOwner
-                && refs.HasDotKtOwner(classOwner.Name) && !refs.IsFileClassOwner(classOwner.Name))
-            {
-                call.Owner = CopyCallType(classOwner);
-                if (!call.Sig.HasValue) call.Sig = injectedSignature.Select(CopyCallType).ToArray();
-                return call;
-            }
             var propertyKind = node.Prop.OrDefault();
             var exactFactory = call.DeclarationReferencedFactory.OrDefault();
             if (TryFactorySubst(call, refs, context) is { } factory) return (BirGraphValue)factory;
@@ -94,6 +86,16 @@ static partial class MemberCallSubstitution
                     return TopLevelExtensionInstance(node, refs, intrinsic, args, signature, context)
                         ?? throw new InvalidOperationException($"bir2cir: selected intrinsic declaration '{id}' has no extension receiver");
                 throw new InvalidOperationException($"bir2cir: selected intrinsic declaration '{id}' has unsupported binding '{intrinsic}'");
+            }
+            // An explicit selected owner is not a request for ownerless name attribution.
+            // Exact declaration bindings above still own factory/intrinsic substitution.
+            if (propertyKind is not ("get" or "set") && call.OwnerType.OrDefault() is TypeNode.Fqn staticOwner)
+            {
+                node.Owner = CopyCallType(staticOwner);
+                PromoteGenericShapeToSig(call);
+                if (!call.Sig.HasValue && call.ArgTypes.HasValue)
+                    call.Sig = call.ArgTypes.Value.Select(CopyCallType).ToArray();
+                return call;
             }
             if (propertyKind is "get" or "set")
             {
@@ -132,20 +134,6 @@ static partial class MemberCallSubstitution
                 {
                     node.Owner = new TypeNode.Fqn(fileClass);
                     PromoteGenericShapeToSig(call);
-                    return call;
-                }
-                if (call.ShapeTypes.HasValue && !call.Sig.HasValue
-                    && call.OwnerType.OrDefault() is TypeNode.Fqn { Name.Length: > 0 } genericOwner)
-                {
-                    node.Owner = new TypeNode.Fqn(genericOwner.Name);
-                    PromoteGenericShapeToSig(call);
-                    return call;
-                }
-                var staticSignature = call.ArgTypes.OrDefault() ?? call.Sig.OrDefault();
-                if (staticSignature != null && call.OwnerType.OrDefault() is TypeNode.Fqn staticOwner)
-                {
-                    node.Owner = CopyCallType(staticOwner);
-                    if (!call.Sig.HasValue) call.Sig = staticSignature.Select(CopyCallType).ToArray();
                     return call;
                 }
             }
