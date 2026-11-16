@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Open Kotlin arrays and iterators preserve their actual elements, not the caller's concrete T.
@@ -11,11 +10,6 @@ using DotKt.Bir;
 static partial class ErasedElementValues
 {
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
-    const string SourceVariableKey = "_erasedValueVariable";
-
-    internal static TypeNode.Tv RetainedVariable(JsonObject value) =>
-        TypeJson.Read(value[SourceVariableKey]) as TypeNode.Tv;
-
     static TypeNode.Tv Variable(TypeNode type) => type switch {
         TypeNode.Tv variable => variable,
         TypeNode.Projection projection => Variable(projection.Of),
