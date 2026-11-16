@@ -4,11 +4,13 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.nullablefunctionevent.NullableFunctionEvent
 import roundtrip.nullablefunctionevent.localNullableFunctionEvent
+import roundtrip.nullablefunctionevent.ReceiverFunctionEvent
+import roundtrip.nullablefunctionevent.localReceiverFunctionEvent
 import kotlin.clr.ClrEvent
 
 class NullableFunctionEventTests {
     @TestAttribute
-    fun nullableFunctionHandlersPreserveSubscriptionIdentityLocallyAndAcrossDlls() {
+    fun functionHandlersPreserveShapeAndSubscriptionIdentityLocallyAndAcrossDlls() {
         assertEquals(42, localNullableFunctionEvent())
         val source = NullableFunctionEvent<String>()
         val handle: ClrEvent<((String) -> Unit)?> = source.Changed
@@ -35,5 +37,19 @@ class NullableFunctionEventTests {
         nullableToken.close()
         nullableValues.fire(null)
         assertEquals(1, calls)
+
+        assertEquals(42, localReceiverFunctionEvent())
+        val receivers = ReceiverFunctionEvent<String>()
+        val receiverHandle: ClrEvent<String.(Int) -> Unit> = receivers.Changed
+        var combined = ""
+        val receiverHandler: String.(Int) -> Unit = { value -> combined += this + value.toString() }
+        val first = receiverHandle.subscribe(receiverHandler)
+        val second = receiverHandle.subscribe(receiverHandler)
+        receivers.fire("a", 2)
+        first.close()
+        receivers.fire("b", 3)
+        second.close()
+        receivers.fire("ignored", 100)
+        assertEquals("a2a2b3", combined)
     }
 }
