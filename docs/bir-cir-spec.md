@@ -970,8 +970,8 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
 
 **Why it exists.** A Kotlin call evaluates its receiver, then each supplied argument, then the callee's omitted
 defaults — each exactly once, however many emitted positions read it. On the CLR the readers are not one position: a
-same-module default splices an earlier value, a reconstructed cross-module data-class `copy` field reads the receiver,
-a `[DotKt.Runtime.CompilerServices.KotlinDefaultAttribute]` carrier binds `{defaultArgReceiver kind}` / `{defaultArgParam n}` to the call's own
+same-module default splices an earlier value, and an imported default (including a generated data-class `copy` default)
+uses a `[DotKt.Runtime.CompilerServices.KotlinDefaultAttribute]` carrier to bind `{defaultArgReceiver kind}` / `{defaultArgParam n}` to the call's own
 values. While a call
 was represented TWICE — as expressions substituted into those readers, and as independently hoisted `var`s sorted
 ahead of the call — an illegal storage answer forced one of the two to be abandoned, and **no point in that design
@@ -1009,8 +1009,8 @@ Every reader of a bound value is a `bindRef`. A `bindRef` is a pure READ and may
 not cloning an evaluation, which is the whole point.
 
 **Granularity.** A plan is emitted only where a value can acquire a SECOND reader: a same-module default that reads
-one of the call's values, a cross-module omission (a `defaultArg` reservation, or a data-class `copy` field
-reconstructed from the receiver), or a `callInline` (below). Without one the positional argument array IS the
+one of the call's values, a cross-module omission (a `defaultArg` reservation), or a `callInline` (below).
+Without one the positional argument array IS the
 evaluation plan — one reader per value, positional order. The standing invariant is the converse: **any transform that
 gives a call value a second consumer must go through a plan.** A `defaultArg` outside one is refused loudly by
 `DefaultArgSplice`.

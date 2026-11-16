@@ -23,6 +23,27 @@ const int IsInfixFunctionFlag = 1 << 9;
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
+if (args.Length == 2 && args[0] == "--data-consumer-accessors")
+{
+    DataIdentityMetadataInspector.VerifyConsumerAccessors(args[1]);
+    Console.WriteLine("generated copy defaults retain exact public/private getter access: OK");
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--data-markers-only")
+{
+    DataIdentityMetadataInspector.VerifyMarkers(args[1]);
+    Console.WriteLine("runtime source data markers and ordinary controls: OK");
+    return;
+}
+
+if (args.Length == 3 && args[0] is "--data-identity" or "--native-data-identity")
+{
+    DataIdentityMetadataInspector.Verify(args[1], args[2], native: args[0] == "--native-data-identity");
+    Console.WriteLine("source data identity and ordinary/native controls: OK");
+    return;
+}
+
 if (args.Length == 2 && args[0] is "--constructor-kinds" or "--native-constructor-kinds")
 {
     VerifyConstructorKinds(args[1], native: args[0] == "--native-constructor-kinds");
