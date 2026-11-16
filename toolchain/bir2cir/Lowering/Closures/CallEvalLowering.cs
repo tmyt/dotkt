@@ -9,7 +9,7 @@ using DotKt.Bir.Lowering;
 //
 // kotc emits an ORDERED PLAN at every call site whose values can acquire a second reader (docs/bir-cir-spec.md §2.7):
 // the receiver, the supplied arguments and the filled defaults, in Kotlin evaluation order, each a BINDING; every
-// reader — the call's own slot, a spliced default, a reconstructed `copy` field — is a `bindRef`, a pure READ.
+// reader — the call's own slot or a spliced default — is a `bindRef`, a pure READ.
 //
 // TypedCallEvalLowering consumes source plans after inline/default expansion. The shared materialisation policy
 // also serves the two remaining DOM passes that AUTHOR a plan and lower it on the spot (spec §2.7): the

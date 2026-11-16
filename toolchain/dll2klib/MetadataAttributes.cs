@@ -243,6 +243,7 @@ internal sealed class MetadataAttributes
                 or DotKtNs + "KotlinFunInterfaceAttribute"
                 or DotKtNs + "KotlinSealedAttribute"
                 or DotKtNs + "KotlinValueAttribute"
+                or DotKtNs + "KotlinDataAttribute"
                 or DotKtNs + "KotlinObjectAttribute"
                 or DotKtNs + "KotlinExtensionFunctionTypeAttribute"
                 or DotKtNs + "KotlinContextParameterAttribute"

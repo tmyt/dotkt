@@ -1112,7 +1112,7 @@ internal object BirMessagePack {
 
     private fun writeBirModifiers(value: BirModifiers, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(0 + (if (value.isInline == null) 0 else 1) + (if (value.isInfix == null) 0 else 1) + (if (value.isOperator == null) 0 else 1) + (if (value.isTailrec == null) 0 else 1) + (if (value.isExternal == null) 0 else 1) + (if (value.isExtension == null) 0 else 1) + (if (value.isOverride == null) 0 else 1) + (if (value.isAbstract == null) 0 else 1) + (if (value.isOpen == null) 0 else 1) + (if (value.isSuspend == null) 0 else 1) + (if (value.isInlineOnly == null) 0 else 1) + (if (value.isVararg == null) 0 else 1) + (if (value.isNoinline == null) 0 else 1) + (if (value.isCrossinline == null) 0 else 1) + (if (value.isContext == null) 0 else 1) + (if (value.isExtensionReceiver == null) 0 else 1) + (if (value.isAnnotation == null) 0 else 1) + (if (value.isFun == null) 0 else 1) + (if (value.isSealed == null) 0 else 1) + (if (value.isValue == null) 0 else 1) + (if (value.isObject == null) 0 else 1) + (if (value.isInner == null) 0 else 1))
+        packer.packMapHeader(0 + (if (value.isInline == null) 0 else 1) + (if (value.isInfix == null) 0 else 1) + (if (value.isOperator == null) 0 else 1) + (if (value.isTailrec == null) 0 else 1) + (if (value.isExternal == null) 0 else 1) + (if (value.isExtension == null) 0 else 1) + (if (value.isOverride == null) 0 else 1) + (if (value.isAbstract == null) 0 else 1) + (if (value.isOpen == null) 0 else 1) + (if (value.isSuspend == null) 0 else 1) + (if (value.isInlineOnly == null) 0 else 1) + (if (value.isVararg == null) 0 else 1) + (if (value.isNoinline == null) 0 else 1) + (if (value.isCrossinline == null) 0 else 1) + (if (value.isContext == null) 0 else 1) + (if (value.isExtensionReceiver == null) 0 else 1) + (if (value.isAnnotation == null) 0 else 1) + (if (value.isFun == null) 0 else 1) + (if (value.isSealed == null) 0 else 1) + (if (value.isValue == null) 0 else 1) + (if (value.isObject == null) 0 else 1) + (if (value.isInner == null) 0 else 1) + (if (value.isData == null) 0 else 1))
         value.isInline?.let { child ->
             packer.packString("inline")
             packer.packBoolean(child)
@@ -1199,6 +1199,10 @@ internal object BirMessagePack {
         }
         value.isInner?.let { child ->
             packer.packString("inner")
+            packer.packBoolean(child)
+        }
+        value.isData?.let { child ->
+            packer.packString("data")
             packer.packBoolean(child)
         }
     }

@@ -1978,6 +1978,7 @@ internal fun BirEmitter.sourceClassDefinition(klass: IrClass, captures: List<Pai
 	val mods = classModifiers(
 		sealed = klass.modality == Modality.SEALED,
 		value = klass.isValue,
+		data = klass.isData,
 		objectSingleton = isObject && !klass.isCompanion,
 		inner = klass.isInner
 	)
@@ -2315,11 +2316,12 @@ internal fun BirEmitter.functionModifiers(fn: IrSimpleFunction, inline: Boolean 
  *  so the value-class fact must be carried as this pure-Kotlin modifier instead. bir2cir keys single-field
  *  value-class erasure off it (it owns the single-vs-multi-field lowering decision). */
 internal fun BirEmitter.classModifiers(fnIface: Boolean = false, sealed: Boolean = false,
-	annotation: Boolean = false, value: Boolean = false, objectSingleton: Boolean = false, inner: Boolean = false): BirModifiers? {
-	if (!fnIface && !sealed && !annotation && !value && !objectSingleton && !inner) return null
+	annotation: Boolean = false, value: Boolean = false, objectSingleton: Boolean = false, inner: Boolean = false,
+	data: Boolean = false): BirModifiers? {
+	if (!fnIface && !sealed && !annotation && !value && !objectSingleton && !inner && !data) return null
 	return BirModifiers(isAnnotation = true.takeIf { annotation }, isFun = true.takeIf { fnIface },
 		isSealed = true.takeIf { sealed }, isValue = true.takeIf { value },
-		isObject = true.takeIf { objectSingleton }, isInner = true.takeIf { inner })
+		isObject = true.takeIf { objectSingleton }, isInner = true.takeIf { inner }, isData = true.takeIf { data })
 }
 
 /** An `inline fun` with at least one function-typed parameter (AXIS ①: `Fn`, INCLUDING `noinline` AND `crossinline`)
@@ -2534,18 +2536,15 @@ internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.i
 internal fun BirEmitter.carriesKotlinDefault(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 	fn.parameters.any { it.kind == IrParameterKind.Regular && it.defaultValue != null }
 
-/** The SYNTHETIC `copy` of a data class — the one whose omitted parameter defaults are `this.<field>` by construction.
+/** The SYNTHETIC `copy` of a data class — the one whose source defaults are `this.<field>` by construction.
  *  Name + `isData` parent is NOT enough: only the generated SIGNATURE is reserved, so a data class may also declare a
  *  differently-signed `copy` OVERLOAD of its own (`data class D(val x: Int) { fun copy(tag: String, z: Int = x * 2) }`
  *  compiles and runs), whose defaults are ordinary expressions and are NOT field reads. The generated one mirrors the
  *  primary constructor parameter-for-parameter, name-for-name AND type-for-type (both signatures are written in the
- *  class's own type-parameter frame, so the `birType` identities compare directly) — exactly the property a
- *  `this.<field>` reconstruction depends on.
- *
- *  UNMEASURED: the mis-selection this excludes is reasoned from the reconstruction's precondition, not observed. It
- *  needs a data class carrying a `copy` OVERLOAD in a REFERENCED module, and the only cross-module source that
- *  preserves the `data` nature is the frontend KLIB — the stdlib, which declares no such class. The same-module case
- *  (verified to compile and run) never reaches the reconstruction, because its default is real IR. */
+ *  class's own type-parameter frame, so the `birType` identities compare directly). This identifies the generated
+ *  source defaults while rendering IR and its KotlinDefault carriers; imported calls consume those carriers.
+ *  DLL round-trip coverage in tests/special/data-class-identity exercises both the generated copy and a declared
+ *  overload with an ordinary receiver-dependent default. */
 internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations.IrSimpleFunction): Boolean {
 	if (fn.name.asString() != "copy") return false
 	val cls = fn.parent as? IrClass ?: return false

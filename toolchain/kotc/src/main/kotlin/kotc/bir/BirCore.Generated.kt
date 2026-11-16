@@ -1258,7 +1258,8 @@ data class BirModifiers(
     val isSealed: Boolean? = null,
     val isValue: Boolean? = null,
     val isObject: Boolean? = null,
-    val isInner: Boolean? = null
+    val isInner: Boolean? = null,
+    val isData: Boolean? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -1349,6 +1350,10 @@ data class BirModifiers(
         }
         isInner?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"inner\":")
+            output.append(value)
+        }
+        isData?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"data\":")
             output.append(value)
         }
         output.append('}')

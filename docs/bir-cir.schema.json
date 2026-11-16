@@ -474,7 +474,8 @@
         "extensionReceiver": { "const": true, "x-dotkt-kotlin-name": "isExtensionReceiver" },
         "annotation": { "const": true, "x-dotkt-kotlin-name": "isAnnotation" }, "fun": { "const": true, "x-dotkt-kotlin-name": "isFun" },
         "sealed": { "const": true, "x-dotkt-kotlin-name": "isSealed" }, "value": { "const": true, "x-dotkt-kotlin-name": "isValue" },
-        "object": { "const": true, "x-dotkt-kotlin-name": "isObject" }, "inner": { "const": true, "x-dotkt-kotlin-name": "isInner" }
+        "object": { "const": true, "x-dotkt-kotlin-name": "isObject" }, "inner": { "const": true, "x-dotkt-kotlin-name": "isInner" },
+        "data": { "const": true, "x-dotkt-kotlin-name": "isData" }
       },
       "required": [], "additionalProperties": false
     },
