@@ -169,7 +169,7 @@ private class OpaqueLocalCaptureOwner<A>(private val values: Array<A>) {
     fun <T> observe(other: Array<T>): String {
         var first = values[0]
         var second = other[0]
-        fun describe(): String = "$first/$second"
+        fun describe(): String = first.toString() + "/" + second.toString()
         fun write(index: Int) { first = values[index]; second = other[index] }
         fun forward(index: Int) { write(index) }
         fun recursive(depth: Int, index: Int) {
@@ -190,6 +190,9 @@ private class OpaqueLocalCaptureOwner<A>(private val values: Array<A>) {
 
 @Suppress("UNCHECKED_CAST")
 private fun <T> opaqueCaptureInputs(): Array<T> = arrayOf<Any?>(null, "foreign", 42) as Array<T>
+
+private fun <A, T> observeOpaqueLocalCaptures(): String =
+    OpaqueLocalCaptureOwner(opaqueCaptureInputs<A>()).observe(opaqueCaptureInputs<T>())
 
 private fun <T> replaceAliased(first: ClrRef<T>, second: ClrRef<T>, next: T): T {
     first.value = next
@@ -284,8 +287,8 @@ class GenericMutableCaptureTests {
     @TestAttribute
     fun localFunctionsPreserveOpaqueArrayValuesAndAssignmentOrder() {
         val expected = "null/null|foreign/foreign|42/42"
-        assertEquals(expected, OpaqueLocalCaptureOwner(opaqueCaptureInputs<Int>()).observe(opaqueCaptureInputs<String>()))
-        assertEquals(expected, OpaqueLocalCaptureOwner(opaqueCaptureInputs<String>()).observe(opaqueCaptureInputs<Int>()))
+        assertEquals(expected, observeOpaqueLocalCaptures<Int, String>())
+        assertEquals(expected, observeOpaqueLocalCaptures<String, Int>())
         assertEquals(0, boundedLocalCapture(1, 2))
         assertEquals(0, boundedLocalCapture("before", "after"))
     }

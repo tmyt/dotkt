@@ -3292,6 +3292,7 @@ internal static class BirGraphDom
                 case "ptr": break;
                 case "local": break;
                 case "elem": break;
+                case "_erasedValueVariable": break;
                 case "volatile": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirByRefLoad at {source.GetPath()}");
             }
@@ -3300,6 +3301,7 @@ internal static class BirGraphDom
             Ptr = Field<IBirExpression>(fields, "ptr", value => ReadBirExpression(value!)),
             Local = Field<string>(fields, "local", value => value!.GetValue<string>()),
             Elem = Field<TypeNode>(fields, "elem", value => TypeNode.Read(value) ?? throw new FormatException()),
+            _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             Volatile = Field<bool>(fields, "volatile", value => value!.GetValue<bool>()),
         };
     }
