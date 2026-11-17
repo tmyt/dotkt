@@ -574,9 +574,12 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.referenced-override.log"; rc=1
 		fi
 		for alias_producer in RoundtripProducer RoundtripProducerMpp; do
+			alias_consumer=()
+			[[ "$alias_producer" != RoundtripProducer ]] || alias_consumer=("$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll")
 			if dotnet "$METADATA_INSPECTOR_DLL" --typealias-declarations \
 				"$dir/bin/$CONFIGURATION/net10.0/$alias_producer.dll" \
 				"$dir/obj/$CONFIGURATION/net10.0/klib/$alias_producer.klib" \
+				"${alias_consumer[@]}" \
 				>"$ROOT/build/nunit-$name.$alias_producer.typealiases.log" 2>&1; then
 				echo "  $alias_producer assembly typealias carriers and KLIB declarations OK"
 			else

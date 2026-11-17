@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve every UTF-16 code unit in typealias annotation Strings across DLL-to-KLIB imports.
+
 - Preserve source-erased checks for non-reified type-parameter casts without
   narrowing opaque values to a caller's CLR storage type.
 

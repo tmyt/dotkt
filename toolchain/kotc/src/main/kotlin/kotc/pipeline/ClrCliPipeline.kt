@@ -174,12 +174,11 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 /**
  * Kotlin/CLR compiler driver.
  *
- * We reuse the official common metadata frontend construction (`prepareMetadataSessions` /
- * `prepareNativeSessions`, both public CLI API), run FIR2IR explicitly for KLIB/common
- * dependencies, and swap only the final backend phase for our own. [ClrAppFrontendPipelinePhase]
- * forks the thin CLI glue around `prepareMetadataSessions` (not Kotlin-core session-construction
- * logic) solely to install `kotlin.jvm.*` as a default import before any FIR resolution runs — see
- * `ClrDefaultImports.kt`.
+ * The app/native CLI adapters use the official session factories and FIR2IR for KLIB/common
+ * dependencies. The glue installs CLR imports/scopes, preserves the common/platform module split,
+ * and selects the declared KLIB string-table decoder before resolution. Kotlin's declaration
+ * deserializers and frontend semantics remain upstream; the final backend emits BIR.
+ * See [ClrAppFrontendPipelinePhase] and [prepareClrNativeSessions].
  */
 class ClrCliPipeline(
 	override val defaultPerformanceManager: PerformanceManager,

@@ -51,7 +51,7 @@ internal fun prepareClrKlibConstants(libraries: List<KotlinLibrary>, moduleDataP
 			val packageFqName = FqName(packageName)
 			for (part in metadata.getPackageFragmentNames(packageName)) {
 				val fragment = parsePackageFragment(metadata.getPackageFragment(packageName, part))
-				val names = NameResolverImpl(fragment.strings, fragment.qualifiedNames)
+				val names = clrKlibNameResolver(library, fragment)
 				for (property in fragment.`package`.propertyList) {
 					val encoded = property.getExtensionOrNull(protocol.compileTimeValue)
 					if (encoded?.type != Value.Type.ARRAY) continue

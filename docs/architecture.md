@@ -52,6 +52,23 @@ The `dotkt_utf16_package_constants=1` manifest entry limits package scanning to 
 actually contain encoded top-level constants.
 No source-visible annotation, runtime getter or DLL reread is involved.
 
+## Imported source-metadata Strings
+
+Typealias annotation Strings are retained in structured DLL metadata, not native
+CLR SerString. At DLL-to-KLIB serialization, tables needing unpaired UTF-16 units
+declare `dotkt_string_table_codec=utf16le-base64-indexed`. Each fragment's final
+row lists the selected indexes; only those rows contain raw UTF-16LE/Base64.
+Normal values and all existing source indexes remain unchanged.
+
+The metadata-provider adapter restores the table before constructing Kotlin's
+standard declaration/annotation deserializers. App and native/stdlib sessions
+retain the original library order, visibility, forward declarations and source
+metadata. Independent KLIB readers must use `clrKlibNameResolver`, including the
+existing constant preloader. The index row is transport data, never a source
+string, and restoration must precede semantic use. This does not change Kotlin
+String types or the native CLR custom-attribute SerString limitation. See
+[the KLIB representation contract](design-dll2klib.md#klib-representation).
+
 ## Standard-library artifacts
 
 The CLR stdlib has three deliberately separate views:
