@@ -243,9 +243,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     internal TypeNode DeclarationSignatureSlot(ParameterInfo parameter) =>
         ReadDeclarationSignatureSlot(parameter, _nativeSignatures);
 
-    static TypeNode ReadDeclarationSignatureSlot(ParameterInfo parameter, ReferenceNativeSignatures signatures)
+    static TypeNode ReadDeclarationSignatureSlot(ParameterInfo parameter, NativeSignatureReader signatures)
     {
-        if (signatures.Slot(parameter) is { } native) return native;
+        if (parameter.Member is MethodBase method && signatures.Method(method) is { } native)
+            return parameter.Position < 0 ? native.Return : native.Parameters[parameter.Position];
         TypeNode type = DeclarationTypeNode(parameter.ParameterType);
         foreach (var modifier in parameter.GetOptionalCustomModifiers().Reverse())
             type = new TypeNode.Mod(false, DeclarationTypeNode(modifier), type);
@@ -254,6 +255,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return type;
     }
 
+    // Borrowed read-only declaration facts, as in the shared decoder's contract.
     internal NativeSignatureReader.Signature NativeMethodSignature(MethodBase method) => _nativeSignatures.Method(method);
     internal TypeNode NativeFieldSignature(FieldInfo field) => _nativeSignatures.Field(field);
 
@@ -635,7 +637,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // Reflection handles are borrowed from this fixed reference universe.
     // Pipeline owns its lifetime through this index, including exceptional exit.
     readonly ReferenceMetadataUniverse _universe;
-    readonly ReferenceNativeSignatures _nativeSignatures;
+    NativeSignatureReader _nativeSignatures;
     readonly Dictionary<string, (bool Found, TypeNode Type, BirLiteral Value)> _literalFieldCache =
         new(StringComparer.Ordinal);
     readonly Dictionary<string, bool> _volatileFieldCache = new(StringComparer.Ordinal);
@@ -699,9 +701,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     };
 
     ReferenceMetadataIndex(List<ReferenceAssembly> assemblies, ManagedReferenceCatalog compileRefs,
-        ReferenceNativeSignatures nativeSignatures = null)
+        NativeSignatureReader nativeSignatures = null)
     {
-        _nativeSignatures = nativeSignatures ?? new ReferenceNativeSignatures();
+        _nativeSignatures = nativeSignatures ?? new NativeSignatureReader();
         _assemblies = assemblies;
         _compileRefs = compileRefs;
         _universe = new ReferenceMetadataUniverse(compileRefs);
@@ -2149,7 +2151,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     {
         _shippedCache.Clear();
         _literalFieldCache.Clear(); _volatileFieldCache.Clear(); _awaitPlanCache.Clear();
-        _nativeSignatures.Dispose();
+        _nativeSignatures = null;
         _universe.Dispose();
     }
 
@@ -4999,31 +5001,22 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         // twin — alias so that reference resolves to DotKt.Private.Stdlib (same type shapes).
         var catalog = ManagedReferenceCatalog.Create(refs, "bir2cir", refStdlibAliasesRuntime: true);
         var assemblies = new List<ReferenceAssembly>();
-        var nativeSignatures = new ReferenceNativeSignatures();
-        try
+        var nativeSignatures = new NativeSignatureReader();
+        if (catalog.Entries.Count == 0) return new ReferenceMetadataIndex(assemblies, catalog, nativeSignatures);
+        using var mlc = catalog.CreateMetadataLoadContext();
+        foreach (var entry in catalog.Entries)
         {
-            if (catalog.Entries.Count > 0)
-            {
-                using var mlc = catalog.CreateMetadataLoadContext();
-                foreach (var entry in catalog.Entries)
-                {
-                    var reference = entry.Path;
-                    var identity = entry.Identity;
-                    assemblies.Add(new ReferenceAssembly(
-                        reference,
-                        identity.Name ?? Path.GetFileNameWithoutExtension(reference),
-                        identity.Version?.ToString() ?? "",
-                        ReadDotKtMetadata(reference, mlc, nativeSignatures.Method,
-                            parameter => ReadDeclarationSignatureSlot(parameter, nativeSignatures))));
-                }
-            }
-            return new ReferenceMetadataIndex(assemblies, catalog, nativeSignatures);
+            var reference = entry.Path;
+            var identity = entry.Identity;
+            assemblies.Add(new ReferenceAssembly(
+                reference,
+                identity.Name ?? Path.GetFileNameWithoutExtension(reference),
+                identity.Version?.ToString() ?? "",
+                ReadDotKtMetadata(reference, mlc, nativeSignatures.Method,
+                    parameter => ReadDeclarationSignatureSlot(parameter, nativeSignatures))));
         }
-        catch
-        {
-            nativeSignatures.Dispose();
-            throw;
-        }
+
+        return new ReferenceMetadataIndex(assemblies, catalog, nativeSignatures);
     }
 
     static ReferenceDotKtMetadata ReadDotKtMetadata(string reference, MetadataLoadContext mlc,

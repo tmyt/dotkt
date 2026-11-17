@@ -87,18 +87,17 @@ The resolution path's state and its current ownership:
 | `_localCarriers` | Local target and delegate entry points assign; physical function/delegate shaping reads | Module physical continuation stored ambiently | Explicit physical carrier relation input |
 | Nullable-definition / root-array queries | Native matching asks the current reference index | Borrowed handles from its universe; no process-wide outer Type cache | Fixed-input lookup is cached only by the owning universe, so interleaved compilations do not share handles |
 | `_nextAdapter`, `_nextValueAdapter` | `FreshDelegateAdapterName` / `FreshUnitDelegateTemporary`; typed physical adapter producers consume | Process allocation order leaks into compilation output | Compilation-owned declaration/name allocator with only synthesis clients |
-| `ReferenceNativeSignatures` method/field cache | Metadata scan and physical CLR binding query the existing ECMA decoder by path/MVID/token | One reference index owns the cache from scan through binding and drops it on disposal; construction failures also release it | Private decoder; method, field and slot queries return independent type vectors. Ordinary declaration projection remains outside this owner |
+| Index `nativeSignatures` | Metadata scan and physical CLR binding query the existing `NativeSignatureReader` by path/MVID/token | One reference index owns the decoder from scan through binding and drops it on disposal | Borrowed read-only declaration facts, preserving the decoder's existing behavior; ordinary declaration projection remains outside it |
 
 `CollectionTemplates`, well-known-member tables and `ResolvedOnlyKinds` are
 fixed vocabulary, not invocation state. Keep them shared. Matchers that only
 substitute/compare structured types can remain pure static policies.
 
-The native signature owner retains no reflection handles, pipeline or index
-backreference. Scan borrows method/slot query callbacks before index construction;
-later consumers query that same index-owned cache. Query copies are compiler
-facts, not runtime/native storage copies. The shared decoder grammar and the
-emitter's already instance-owned reader are unchanged. Ambient `_refs` and the
-other invocation-state rows above remain separate obligations.
+Scan borrows method/slot queries before index construction; binding uses the
+same index-owned decoder. It retains no reflection handles and closes each PE
+reader locally. There is no additional owner wrapper or defensive query copy.
+The shared grammar and emitter's instance reader are unchanged. Ambient `_refs`
+and the other invocation-state rows above remain separate obligations.
 
 The referenced-call path already has `ReferencedCallInput` and
 `ReferencedCallPlan`: the reader/writer owns graph transport; selection owns
@@ -180,7 +179,7 @@ does not enforce this ownership.
 | Index `shippedCache` | Exact trusted-ID physical-twin selection owns cached member results; disposal clears these before releasing the universe. No name/layout inference or load-context mutation is granted to consumers |
 | Index `literalFieldCache`, `volatileFieldCache`, `awaitPlanCache` | Derived queries include local-over-reference policy. A changed local-owner set invalidates them; index disposal clears them. No source graph mutation right is implied |
 | `kotlinMapStorageDefinitions`, `kotlinHashStorageDefinitions` | Lazy derived queries over ingested facts/reference signatures, not mutable local declaration graphs |
-| `NativeSignatures` reader's method/field dictionaries | Exact metadata decoding cache currently stored static even though the index owns the query lifetime; same issue as the CLR family's reader |
+| Index `nativeSignatures` | The existing decoder is created before scan and retained by the index for physical binding. It stores only managed signature facts, not open reflection/PE handles. No process-wide reader remains |
 | Static `assemblyProvenance` weak table | `IsDotKtEmittedAssembly` memoizes the immutable assembly-marker classification. Keys are actual `Assembly` objects, not names or a changing local context; weak keys allow the owning metadata universe to be collected. This cache can remain shared without imposing a process-wide reset order |
 
 The scan's `ReferenceDotKtMetadata` mutable containers are writer-owned scan
