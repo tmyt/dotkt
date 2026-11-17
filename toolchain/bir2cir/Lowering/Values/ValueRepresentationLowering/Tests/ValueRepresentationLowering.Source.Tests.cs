@@ -8,17 +8,19 @@ sealed partial class ValueRepresentationLowering
     // independent authored inputs differ only in file versus detached-method scope.
     static void NestedBoundGuardSelfTest(ValueRepresentationLowering policy)
     {
-        var cases = new List<(int Depth, BirFunctionDeclaration Source, BirFunctionDeclaration Materialized)>();
+        var cases = new List<(string Kind, int Depth, BirFunctionDeclaration Source, BirFunctionDeclaration Materialized, BirLocal Operand)>();
         var variable = new TypeNode.Tv("method", 0);
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-        foreach (var depth in new[] { 2, 3, 4 })
+        foreach (var kind in new[] { "cast", "safe" })
+        foreach (var depth in new[] { 2, 3, 4, 8 })
         {
             IBirExpression operand = new BirLocal { Name = "value", Sty = any };
             for (var index = 0; index < depth; index++)
-                operand = new BirCast { Type = variable, ReifiedTypeOperand = false,
-                    E = OptionalField<IBirExpression>.Of(operand) };
+                operand = kind == "cast"
+                    ? new BirCast { Type = variable, ReifiedTypeOperand = false, E = OptionalField<IBirExpression>.Of(operand) }
+                    : new BirInstanceOrNull { Type = variable, ReifiedTypeOperand = false, E = OptionalField<IBirExpression>.Of(operand) };
             var method = new BirFunctionDeclaration {
-                Name = "nestedBoundGuard" + depth, Ret = variable,
+                Name = "nestedBoundGuard" + kind + depth, Ret = kind == "cast" ? variable : new TypeNode.Nullable(variable),
                 Params = new[] { new BirParameter { Name = "value", Type = any } },
                 TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = Array.Empty<TypeNode>() } },
                 MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
@@ -26,24 +28,37 @@ sealed partial class ValueRepresentationLowering
                 Body = new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(operand) } },
             };
             var materialized = (BirFunctionDeclaration)method.DeepClone();
+            BirLocal materializedOperand = null;
+            materialized.Visit(node => { if (node is BirLocal { Name.Value: "value" } local) materializedOperand = local; });
             policy.BindOperations(new BirFileDeclaration { Methods = new[] { method } });
-            cases.Add((depth, method, materialized));
+            cases.Add((kind, depth, method, materialized, materializedOperand));
         }
         var differences = new List<string>();
-        foreach (var (depth, source, materialized) in cases)
+        foreach (var (kind, depth, source, materialized, operand) in cases)
         {
             policy.BindMaterializedOperations(materialized);
             var sourceCounts = Count(source);
             var materializedCounts = Count(materialized);
-            var report = $"depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
+            var report = $"kind={kind}, depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
                 $"materialized nodes={materializedCounts.Nodes}, generic casts={materializedCounts.GenericCasts}, classifier blocks={materializedCounts.Blocks}";
             Console.WriteLine("[nested bound guard] " + report);
-            var expected = depth switch { 2 => (78, 2, 4), 3 => (177, 3, 10), 4 => (334, 4, 20), _ => throw new InvalidOperationException() };
-            if (!source.StructurallyEquals(materialized) || sourceCounts != materializedCounts || sourceCounts != expected)
+            var retainedOperand = false;
+            materialized.Visit(node => retainedOperand |= ReferenceEquals(node, operand));
+            if (!source.StructurallyEquals(materialized) || sourceCounts != materializedCounts
+                || sourceCounts.GenericCasts != depth || sourceCounts.Blocks != depth
+                || sourceCounts.Nodes > 16 + 32 * depth || CountOperand(source) != 1 || CountOperand(materialized) != 1
+                || !retainedOperand)
                 differences.Add(report);
         }
         if (differences.Count != 0)
-            throw new InvalidOperationException("Source and actual materialized nested bound guards diverged: " + string.Join("; ", differences));
+            throw new InvalidOperationException("Nested bound guards must bind once per cast with linear growth and one operand: " + string.Join("; ", differences));
+
+        static int CountOperand(BirGraphValue node)
+        {
+            var count = 0;
+            node.Visit(value => { if (value is BirLocal { Name.Value: "value" }) count++; });
+            return count;
+        }
 
         static (int Nodes, int GenericCasts, int Blocks) Count(BirGraphValue node)
         {
@@ -52,7 +67,7 @@ sealed partial class ValueRepresentationLowering
             var blocks = 0;
             node.Visit(current => {
                 if (current is BirGraphNode) nodes++;
-                if (current is BirCast { Type.Value: TypeNode.Tv }) casts++;
+                if (current is BirCast { Type.Value: TypeNode.Tv } or BirInstanceOrNull { Type.Value: TypeNode.Tv }) casts++;
                 if (current is BirValueBlock) blocks++;
             });
             return (nodes, casts, blocks);
