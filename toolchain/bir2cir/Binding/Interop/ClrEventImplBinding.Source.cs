@@ -77,7 +77,7 @@ static partial class ClrEventImplBinding
                 method.ClrFinal = isVirtual && !openEvent;
                 if (externalSlot == null) return;
                 var parameters = externalSlot.GetParameters().Select(parameter =>
-                    SupertypeGraph.SubstOwnerTvs(ReferenceMetadataIndex.DeclarationSignatureSlot(parameter), baseArguments)).ToArray();
+                    SupertypeGraph.SubstOwnerTvs(refs.DeclarationSignatureSlot(parameter), baseArguments)).ToArray();
                 for (var i = 0; i < parameters.Length; i++)
                 {
                     method.Params.Value[i].Type = Copy(parameters[i]);
@@ -88,7 +88,7 @@ static partial class ClrEventImplBinding
                         baseArguments.Length == 0 ? null : baseArguments.Select(Copy).ToArray()),
                     Member = externalSlot.Name, Arity = 0, Params = parameters.Select(Copy).ToArray(),
                     Ret = SupertypeGraph.SubstOwnerTvs(
-                        ReferenceMetadataIndex.DeclarationSignatureSlot(externalSlot.ReturnParameter), baseArguments),
+                        refs.DeclarationSignatureSlot(externalSlot.ReturnParameter), baseArguments),
                 } };
             }
             MethodInfo Overridable(MethodInfo method) => baseEvent?.DeclaringType?.IsInterface == false
@@ -169,7 +169,7 @@ static partial class ClrEventImplBinding
                 out var nativeEvent, out var arguments) || nativeEvent.GetAddMethod(true) is not MethodInfo accessor)
                 throw new InvalidOperationException($"bir2cir: overridden class event '{externalOwner.Name}.{name}' was not found");
             return (delegateType, invokeParameters, null, SupertypeGraph.SubstOwnerTvs(
-                ReferenceMetadataIndex.DeclarationSignatureSlot(accessor.GetParameters().Single()), arguments));
+                refs.DeclarationSignatureSlot(accessor.GetParameters().Single()), arguments));
         }
         var parameter = add.Params.OrEmpty().FirstOrDefault();
         var sourceType = parameter?.FunctionSignatureType.OrDefault() ?? parameter?.Type.OrDefault();

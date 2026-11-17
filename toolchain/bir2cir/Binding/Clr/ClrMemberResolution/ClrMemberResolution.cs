@@ -125,7 +125,7 @@ static partial class ClrMemberResolution
         // frame; substitute the explicitly selected native owner before exact comparison, never accept either frame.
         var exact = candidates.Where(candidate => parameterOwnerArguments == null
             ? Match(candidate.GetParameters(), signature, null) == MatchKind.Exact
-            : (NativeSignatures.Method(candidate)?.Parameters
+            : (_refs.NativeMethodSignature(candidate)?.Parameters
                 ?? candidate.GetParameters().Select(parameter => RefTypeOf(parameter.ParameterType)).ToArray())
                 .Select(parameter => CanonicalNativeFormalType(
                     SupertypeGraph.SubstOwnerTvs(parameter, parameterOwnerArguments)))
@@ -280,7 +280,7 @@ static partial class ClrMemberResolution
         {
             MatchKind m;
             if (NativeSignatureReader.ContainsPointer(ps[i].ParameterType)
-                && NativeSignatures.Method((MethodBase)ps[i].Member) is { } native)
+                && _refs.NativeMethodSignature((MethodBase)ps[i].Member) is { } native)
             {
                 var actual = BirTypeLowering.LowerPhysicalType(argNodes[i], _refs.Aliases,
                     _ => false, _refs.PhysicalTypeNames, typeArg: false);

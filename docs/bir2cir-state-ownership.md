@@ -87,11 +87,18 @@ The resolution path's state and its current ownership:
 | `_localCarriers` | Local target and delegate entry points assign; physical function/delegate shaping reads | Module physical continuation stored ambiently | Explicit physical carrier relation input |
 | Nullable-definition / root-array queries | Native matching asks the current reference index | Borrowed handles from its universe; no process-wide outer Type cache | Fixed-input lookup is cached only by the owning universe, so interleaved compilations do not share handles |
 | `_nextAdapter`, `_nextValueAdapter` | `FreshDelegateAdapterName` / `FreshUnitDelegateTemporary`; typed physical adapter producers consume | Process allocation order leaks into compilation output | Compilation-owned declaration/name allocator with only synthesis clients |
-| `NativeSignatures` reader's method/field dictionaries | Exact pointer signature reader populates by path/MVID/token | Process-retained cache; does not depend on mutable local declarations, but lifetime is currently unlimited | Reference-reading/cache ownership, not an immutable static fact |
+| `ReferenceNativeSignatures` method/field cache | Metadata scan and physical CLR binding query the existing ECMA decoder by path/MVID/token | One reference index owns the cache from scan through binding and drops it on disposal; construction failures also release it | Private decoder; method, field and slot queries return independent type vectors. Ordinary declaration projection remains outside this owner |
 
 `CollectionTemplates`, well-known-member tables and `ResolvedOnlyKinds` are
 fixed vocabulary, not invocation state. Keep them shared. Matchers that only
 substitute/compare structured types can remain pure static policies.
+
+The native signature owner retains no reflection handles, pipeline or index
+backreference. Scan borrows method/slot query callbacks before index construction;
+later consumers query that same index-owned cache. Query copies are compiler
+facts, not runtime/native storage copies. The shared decoder grammar and the
+emitter's already instance-owned reader are unchanged. Ambient `_refs` and the
+other invocation-state rows above remain separate obligations.
 
 The referenced-call path already has `ReferencedCallInput` and
 `ReferencedCallPlan`: the reader/writer owns graph transport; selection owns

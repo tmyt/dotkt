@@ -41,7 +41,7 @@ static partial class ClrMemberResolution
         Type open, TypeNode[] ownerArgs,
         string desc)
     {
-        var hits = MostDerived(cands.Where(c => NativeSignatures.Method(c) != null
+        var hits = MostDerived(cands.Where(c => _refs.NativeMethodSignature(c) != null
             ? ExternalMethodImplSlotMatches(c, open, ownerArgs, argNodes, returnNode)
             : OverrideMatch(c.GetParameters(), argNodes) && OverrideParamMatch(returnNode, c.ReturnType)).ToList());
         if (hits.Count == 0) throw NoMatch(desc, cands);
