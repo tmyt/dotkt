@@ -17,8 +17,6 @@ static partial class ClrMemberResolution
     static ReferenceMetadataIndex _refs;
     static IReadOnlyDictionary<string, string> _localCarriers;
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
-    static IReadOnlySet<string> _externalCanonicalTypes = new HashSet<string>();
-    static IReadOnlySet<string> _localDeclarationIds = new HashSet<string>();
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
     // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
