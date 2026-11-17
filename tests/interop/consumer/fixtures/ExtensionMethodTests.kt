@@ -21,6 +21,16 @@ import Csext.*
 import Csextrecv.*
 import Genextval.*
 
+private fun projectionReceiver(trace: MutableList<String>): Csext.W {
+    trace.add("receiver")
+    return Csext.W(21)
+}
+
+private fun projectionArgument(trace: MutableList<String>): Int {
+    trace.add("argument")
+    return 2
+}
+
 class ExtensionMethodTests {
     @TestAttribute
     fun c1net() {
@@ -44,6 +54,11 @@ class ExtensionMethodTests {
         val w = Csext.W(21)
         assertEquals(42, w.Twice())                // top-level extension                          -> 42
         assertEquals(22, w.PlusN(1))               // top-level extension with an arg              -> 22
+        assertEquals(23, w.Observe({ 42 }))
+        assertEquals(24, Csext.Ext.Observe(w, { 43 }, 3))
+        val trace = mutableListOf<String>()
+        assertEquals(23, projectionReceiver(trace).Observe({ 44 }, projectionArgument(trace)))
+        assertEquals("receiver,argument", trace.joinToString(","))
         val b = Csext.Box<String>("hi")
         assertEquals("hi", b.Echo())               // generic extension `fun <T> Box<T>.Echo(): T` -> hi
     }

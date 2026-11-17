@@ -1740,7 +1740,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		}
 		val member = name
 		val anySlot = true.takeIf { isAnySlotMethod(callee) }
-		regularArgs(call).map { expr(it) }
 		// kotc emits the PLAIN Kotlin return type; a `suspend` callee is marked by `sourceCallSuspension` only (the Task/await
 		// lowering is a deferred downstream layer). No coroutine ABI (Task<T>) is baked here.
 		val ret = inMemberDeclarationFrame(callee) { birType(callee.returnType) }

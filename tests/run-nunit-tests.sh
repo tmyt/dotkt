@@ -845,6 +845,14 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
+		if python3 "$ROOT/tests/interop/assert-projected-call-lifts-bir.py" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/DelegateOverloadTests.bir.json" \
+			"$dir/obj/$CONFIGURATION/net10.0/bir/ExtensionMethodTests.bir.json" \
+			>"$ROOT/build/nunit-$name.projected-call-lifts.log" 2>&1; then
+			echo "  projected CLR call arguments have no orphaned delegate lifts"
+		else
+			echo "  PROJECTED CALL LIFT FAIL"; tail -25 "$ROOT/build/nunit-$name.projected-call-lifts.log"; rc=1
+		fi
 		if python3 "$ROOT/tests/assert-protected-family-cir.py" fields "$dir/obj/$CONFIGURATION/net10.0/cir" \
 			>"$ROOT/build/nunit-$name.protected-field-cir.log" 2>&1; then
 			echo "  direct protected fields retain their exact selected storage rather than interface properties"
