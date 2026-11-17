@@ -13,6 +13,8 @@ private fun isActualAlias(error: Throwable): Boolean = error is ActualCancellati
 private fun isCommonAlias(error: Throwable): Boolean = error is CommonCancellation
 private fun isArgumentError(error: Throwable): Boolean = error is IllegalArgumentException
 
+public typealias ImportedUtf16Text = Utf16Text
+
 class TypeAliasTests {
     @TestAttribute
     fun exceptionAliasRetainsRuntimeIdentityForTypeTests() {
@@ -50,9 +52,12 @@ class TypeAliasTests {
         val text: TextChain = "chain"
         val missing: NullableText = null
         val only: OnlyText = text
+        val imported: ImportedUtf16Text = text
+        val utf16Values: Utf16Values<String> = listOf(imported)
         check(text == "chain")
         check(missing == null)
         check(only == "chain")
+        check(utf16Values[0] == "chain")
     }
 
     @TestAttribute

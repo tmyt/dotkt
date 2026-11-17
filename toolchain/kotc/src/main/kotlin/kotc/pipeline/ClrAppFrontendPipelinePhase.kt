@@ -90,6 +90,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 				.map { it.file.path },
 			configuration = configuration,
 		).all
+		val stringTables = ClrKlibStringTables(klibs)
 
 		val environment = KotlinCoreEnvironment.createForProduction(
 			rootDisposable,
@@ -161,9 +162,10 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 					AbstractFirMetadataSessionFactory.JarMetadataProviderComponents(
 						packagePartProvider, librariesScope, projectEnvironment,
 					),
-					klibs,
+					stringTables.standard,
 					languageVersionSettings,
 					metadataContext,
+					additionalProviders = { session, modules, scopes, _ -> stringTables.providers(session, modules, scopes) },
 				).also(::installClrStaticDeserialization)
 			},
 			createSourceSession = { moduleData, kmpModuleKind, sessionConfigurator ->
@@ -177,6 +179,9 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 					kmpModuleKind,
 					init = sessionConfigurator,
 				)
+			},
+			additionalProvidersForMetadataLibrarySessionsInHmppMode = { session, modules, scopes, _ ->
+				stringTables.providers(session, modules, scopes)
 			},
 		)
 		prepareClrKlibConstants(klibs, libraryList.moduleDataProvider)

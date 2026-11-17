@@ -12,7 +12,6 @@ import org.jetbrains.kotlin.cli.common.fileBelongsToModuleForPsi
 import org.jetbrains.kotlin.cli.common.fir.FirDiagnosticsCompilerResultsReporter
 import org.jetbrains.kotlin.cli.common.isCommonSourceForPsi
 import org.jetbrains.kotlin.cli.common.messages.SyntaxErrorReporter
-import org.jetbrains.kotlin.cli.common.prepareNativeSessions
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles
 import org.jetbrains.kotlin.cli.jvm.compiler.KotlinCoreEnvironment
 import org.jetbrains.kotlin.cli.jvm.config.K2MetadataConfigurationKeys
@@ -67,14 +66,13 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 			SyntaxErrorReporter.reportSyntaxErrors(ktFile, diagnosticsReporter)
 		}
 		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar
-		val sessionsWithSources = prepareNativeSessions(
+		val sessionsWithSources = prepareClrNativeSessions(
 			ktFiles,
 			configuration,
 			rootModuleName,
 			resolvedLibraries = klibs,
 			libraryList,
 			extensionRegistrars,
-			metadataCompilationMode = false,
 			isCommonSourceForPsi,
 			fileBelongsToModuleForPsi,
 		)

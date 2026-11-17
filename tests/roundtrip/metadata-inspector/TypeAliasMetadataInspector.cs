@@ -44,6 +44,18 @@ internal static class TypeAliasMetadataInspector
             var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
                 .Select(entry => { using var input = entry.Open(); return PackageFragment.Parser.ParseFrom(input); })
                 .ToArray();
+            using (var manifest = new StreamReader(archive.GetEntry("default/manifest")!.Open()))
+            {
+                if (manifest.ReadToEnd().Split('\n').Contains("dotkt_string_table_codec=utf16le-base64"))
+                    foreach (var fragment in fragments)
+                        for (int index = 0; index < fragment.Strings.String.Count; index++)
+                        {
+                            var units = Convert.FromBase64String(fragment.Strings.String[index]);
+                            Require(units.Length % 2 == 0, "malformed UTF-16 string table");
+                            fragment.Strings.String[index] = new string(Enumerable.Range(0, units.Length / 2)
+                                .Select(unit => (char)(units[unit * 2] | units[unit * 2 + 1] << 8)).ToArray());
+                        }
+            }
             var aliases = declarations.Select(document => document.RootElement).ToArray();
             Require(aliases.Length > 0, "missing assembly typealias declarations");
             foreach (var declaration in aliases)
@@ -88,6 +100,18 @@ internal static class TypeAliasMetadataInspector
                     QualifiedName(regular, annotation.Id) == "kotlin.Deprecated");
                 var message = deprecated.Argument.Single(argument => regular.Strings.String[argument.NameId] == "message");
                 Require(regular.Strings.String[message.Value.StringValue] == "Use Text instead", "alias annotation argument changed");
+                var utf16 = Alias("Utf16Text");
+                var textMark = utf16.Annotation.Single();
+                var text = textMark.Argument.Single(argument => regular.Strings.String[argument.NameId] == "value").Value;
+                Require(regular.Strings.String[text.StringValue] == "prefix\ud800middle\udc00suffix😀\0",
+                    "typealias annotation UTF-16 units changed through DLL/KLIB");
+                var texts = textMark.Argument.Single(argument => regular.Strings.String[argument.NameId] == "texts").Value;
+                Require(texts.ArrayElement.Select(value => regular.Strings.String[value.StringValue]).SequenceEqual(
+                    new[] { "", "\ud800", "\udc00", "😀", "κ", "\0", "ANg=" }), "annotation array String units changed");
+                Require(regular.Strings.String[utf16.ExpandedType.TypeAnnotation.Single().Argument.Single().Value.StringValue] == "\ud800",
+                    "type-use annotation UTF-16 units changed");
+                Require(regular.Strings.String[Alias("Utf16Values").TypeParameter.Single().TypeParameterAnnotation
+                    .Single().Argument.Single().Value.StringValue] == "\udc00", "parameter annotation UTF-16 units changed");
                 Require(!md.TypeDefinitions.Select(md.GetTypeDefinition).Any(type =>
                     md.GetString(type.Namespace) == "roundtrip.aliases" && md.GetString(type.Name) == "TypeAliasesKt"),
                     "alias-only file acquired a CLR facade");

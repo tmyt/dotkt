@@ -319,6 +319,7 @@ internal static class Program
         var hasUtf16PackageConstants = scanner.HasUtf16StringConstants &&
             fragments.Any(fragment => fragment.Message.Package?.Property.Any(property =>
                 property.CompileTimeValue?.Type == Annotation.Types.Argument.Types.Value.Types.Type.Array) == true);
+        var hasEncodedStringTables = KlibStringTables.EncodeIfNeeded(fragments);
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -328,7 +329,7 @@ internal static class Program
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
             {
                 Write(zip, "default/manifest",
-                    Manifest(uniqueName, scanner.HasUtf16StringConstants, hasUtf16PackageConstants));
+                    Manifest(uniqueName, scanner.HasUtf16StringConstants, hasUtf16PackageConstants, hasEncodedStringTables));
                 // The manifest owns the ordinary unique name. KlibMetadataProtoBuf.Header carries Kotlin's Name
                 // spelling instead, and the standard loader requires a special name (`<...>`) for a module.
                 var header = new Header { ModuleName = $"<{uniqueName}>" };
@@ -352,7 +353,8 @@ internal static class Program
         Console.WriteLine($"{Path.GetFileName(input)} -> {Path.GetFileName(output)}: {fragments.Sum(x => x.Message.Class.Count)} public class(es)");
     }
 
-    private static byte[] Manifest(string uniqueName, bool hasUtf16StringConstants, bool hasUtf16PackageConstants) =>
+    private static byte[] Manifest(string uniqueName, bool hasUtf16StringConstants, bool hasUtf16PackageConstants,
+        bool hasEncodedStringTables) =>
         System.Text.Encoding.UTF8.GetBytes(
             "abi_version=2.4.0\n" +
             "compiler_version=2.4.21\n" +
@@ -360,7 +362,8 @@ internal static class Program
             "metadata_version=2.4.0\n" +
             $"unique_name={uniqueName}\n" +
             (hasUtf16StringConstants ? "dotkt_utf16_constants=1\n" : "") +
-            (hasUtf16PackageConstants ? "dotkt_utf16_package_constants=1\n" : ""));
+            (hasUtf16PackageConstants ? "dotkt_utf16_package_constants=1\n" : "") +
+            (hasEncodedStringTables ? $"{KlibStringTables.ManifestProperty}={KlibStringTables.Codec}\n" : ""));
 
     private sealed record InputMetadata(
         string Path,

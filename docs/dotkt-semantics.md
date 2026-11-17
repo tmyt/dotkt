@@ -733,6 +733,10 @@ An unpaired UTF-16 surrogate is observed as U+FFFD, matching a same-target C# at
 This metadata limitation does not apply to ordinary runtime strings, UTF-16 literal field constants,
 or scalar/array Char attribute arguments. Compiler inline/default carriers retain explicit literal
 code units inside their structured payload instead of embedding an unpaired surrogate in SerString.
+Typealias annotations are source metadata, not native CLR custom attributes. Their String values,
+including nested arrays and type/parameter annotations, retain every UTF-16 code unit across DLL/KLIB
+import. A KLIB containing unpaired string-table units declares its UTF-16 table codec explicitly;
+the frontend restores the table before standard Kotlin declaration deserialization.
 
 ## 5-number. `Number` values keep native CLR boxing; authored subclasses use nominal slots
 
