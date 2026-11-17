@@ -193,7 +193,7 @@ static partial class ClosureSynthesis
             captureFile.Types = Array.Empty<IBirTypeDeclaration>();
             AssertSurvivingCapturesLegal(new[] { captureFile });
         }
-        finally { refs.DisposeNet(); }
+        finally { refs.Dispose(); }
         Console.WriteLine("[typed materialized closures] self-test OK (owning slots, bottom-up classes, generic frames, provenance and delegate slots)");
     }
 }

@@ -30,9 +30,10 @@ contracts usable; this issue is not complete after the first slice.
 1. Preserved source call signatures have a compilation owner. Capture,
    cold-call extension, query and release are explicit operations with no
    process table or sibling-file cleanup dependency (implemented below).
-2. Separate reference loading/facts from lookup-cache and reflection lifetime
-   ownership. Local-emission shadowing is a changing compilation input, not
-   reference metadata; its dependent view must be invalidated by its owner.
+2. Fixed-reference loading, lookup caches and reflection lifetime have an
+   explicit owner. Local-emission changes invalidate derived index decisions
+   without changing fixed reference facts. Further metadata-ingestion/payload
+   authority extraction remains separate work.
 3. Separate exact member selection and physical-slot policy from graph writers;
    remove ambient reference/local-declaration inputs and process allocators.
 4. Narrow remaining carrier realization/rewrite capabilities from the inventory
@@ -84,7 +85,7 @@ The resolution path's state and its current ownership:
 | `_localTypes` | Native, declaration, referenced and delegate entry points replace it | Per invocation facts stored process-wide | Pass-owned local physical identity input, not reference metadata |
 | `_externalCanonicalTypes`, `_localDeclarationIds` | Referenced entry assigns; planner consumes | Per invocation, process-held sets | Referenced selection inputs; not shared mutation rights |
 | `_localCarriers` | Local target and delegate entry points assign; physical function/delegate shaping reads | Module physical continuation stored ambiently | Explicit physical carrier relation input |
-| `_nullableDef`, `_sysArr` | Lazy scalar queries cache reflection `Type` handles | Process-wide handles tied to whichever metadata context initialized them | Cache with the reference universe that owns the handles; never reuse after its disposal |
+| Nullable-definition / root-array queries | Native matching asks the current reference index | Borrowed handles from its universe; no process-wide outer Type cache | Fixed-input lookup is cached only by the owning universe, so interleaved compilations do not share handles |
 | `_nextAdapter`, `_nextValueAdapter` | `FreshDelegateAdapterName` / `FreshUnitDelegateTemporary`; typed physical adapter producers consume | Process allocation order leaks into compilation output | Compilation-owned declaration/name allocator with only synthesis clients |
 | `NativeSignatures` reader's method/field dictionaries | Exact pointer signature reader populates by path/MVID/token | Process-retained cache; does not depend on mutable local declarations, but lifetime is currently unlimited | Reference-reading/cache ownership, not an immutable static fact |
 
@@ -139,8 +140,9 @@ metadata context into `ReferenceAssembly` / `ReferenceDotKtMetadata`, then
 aggregates the facts. These are declaration facts, not current source graphs.
 The scan context is disposed before queries. Queries lazily create two further
 reflection contexts, whose `Type` / `MemberInfo` handles must live through all
-physical binding consumers and no longer. The pipeline currently calls
-`DisposeNet` only on its success path; explicit lifetime ownership remains work.
+physical binding consumers and no longer. `ReferenceMetadataUniverse` owns
+these lazy resources and the fixed-input type cache. `Pipeline.Run` owns the
+index with `using`, so both normal and exceptional exits dispose the universe.
 
 Each field below belongs to the `ReferenceMetadataIndex` instance unless noted.
 For the **ingested facts**, the writer is scan/aggregate construction, readers
@@ -165,10 +167,12 @@ does not enforce this ownership.
 
 | Derived / mutable state | Authority, dependencies, refresh and release |
 |---|---|
-| `localEmittedTypes`, `physicalTypeNamesSnapshot` | Pipeline reports local emission membership before transformation and after late synthesis via `SetLocalEmittedTypes`; index normalizes a private set and invalidates the snapshot. Type resolution applies local precedence. This input can change while reference facts cannot |
-| `netMlc`, `netRefAsms`, `netInit`, `netTypeCache`, `literalFieldCache`, `volatileFieldCache` | Lazy reference queries create/read/write. Depend on fixed catalog contents; local precedence must be applied outside cached reference facts. Context-backed values die at `DisposeNet`; no consumer may retain them into another compilation |
-| `physicalMlc`, `physicalStdlib`, `physicalStdlibInit`, `shippedCache` | Physical twin queries load the shipped stdlib, map trusted declaration IDs and cache member handles; same catalog/lifetime, not inferred from physical layout |
-| `kotlinMapStorageDefinitions`, `kotlinHashStorageDefinitions`, `awaitPlanCache` | Lazy derived queries; depend on ingested facts/reference signatures. Fixed-universe caches, no source declaration mutation |
+| `localEmittedTypes`, `physicalTypeNamesSnapshot` | Pipeline reports local membership through `SetLocalEmittedTypes`; the index normalizes its private set and invalidates the physical-name view. Changed membership also clears literal/volatile/awaitable decisions, which include local precedence. Fixed reference facts and their type cache remain unchanged |
+| `ReferenceMetadataUniverse.referencesContext`, `references`, `referencesInitialized`, `types` | One universe lazily loads the fixed `ManagedReferenceCatalog` and caches name/arity hits and misses. Scoped, ordered and ambiguity-checked lookups remain distinct queries. Local/Kotlin-owner policy stays outside this cache. Handles are borrowed until disposal; the assembly collection is read-only |
+| `ReferenceMetadataUniverse.physicalContext`, `physicalStdlib`, `physicalInitialized` | The same owner lazily creates the separate runtime-stdlib context using the catalog's existing twin policy, not the semantic/ref-reader context. Disposal releases both contexts and cached handles, including after failure |
+| Index `shippedCache` | Exact trusted-ID physical-twin selection owns cached member results; disposal clears these before releasing the universe. No name/layout inference or load-context mutation is granted to consumers |
+| Index `literalFieldCache`, `volatileFieldCache`, `awaitPlanCache` | Derived queries include local-over-reference policy. A changed local-owner set invalidates them; index disposal clears them. No source graph mutation right is implied |
+| `kotlinMapStorageDefinitions`, `kotlinHashStorageDefinitions` | Lazy derived queries over ingested facts/reference signatures, not mutable local declaration graphs |
 | `NativeSignatures` reader's method/field dictionaries | Exact metadata decoding cache currently stored static even though the index owns the query lifetime; same issue as the CLR family's reader |
 | Static `assemblyProvenance` weak table | `IsDotKtEmittedAssembly` memoizes the immutable assembly-marker classification. Keys are actual `Assembly` objects, not names or a changing local context; weak keys allow the owning metadata universe to be collected. This cache can remain shared without imposing a process-wide reset order |
 
@@ -177,6 +181,33 @@ outputs. Aggregation currently shares some row objects with them; later
 extraction must freeze/copy values or keep a single explicit writer, not merely
 rename the index to a read-only service. Foundational alias/primitive sets and
 metadata attribute names are fixed shared vocabulary, not resettable state.
+
+### Implemented: fixed-reference query lifetime
+
+`ReferenceMetadataUniverse` receives only a fixed catalog and has no reference
+to the index, source graphs or pipeline. It owns all lazy context creation,
+fixed-input type hits/misses and resource release. Metadata `Type` / `Assembly`
+results are borrowed and must not outlive it. Exact scoped lookup, the existing
+ordered hierarchy probe, and ambiguity-checked binding retain their current
+policies rather than sharing an accidental first-match cache decision.
+
+The index applies source/local precedence before querying fixed reference facts.
+`SetLocalEmittedTypes` is the update authority for its derived decisions; it
+invalidates dependent caches only when membership changes. Reflection-context
+ownership is not authority to modify declarations or infer source semantics.
+
+Default-value readers receive only a core-type lookup callback for same-context
+literal-carrier proofs, never a mutable load context. Scan-time readers use
+their scan context; query-time readers use their universe. The physical stdlib
+is loaded in the existing distinct runtime-twin universe. Exact member matching
+and metadata ingestion/payload policy stay with their current owning units.
+
+Boundary tests use real metadata contexts for lazy loading, cached hits/misses,
+arity and assembly identity, interleaved/subsequent compilations and disposal
+on exceptional exit. Native nullable/array matching is exercised across actual
+universes. Local-owner transitions exercise actual literal and awaitable queries,
+including restoration without polluting fixed reference facts. This does not
+complete the other resolver, metadata-fact and carrier ownership work in #1555.
 
 ## Suspend and orchestration boundaries
 

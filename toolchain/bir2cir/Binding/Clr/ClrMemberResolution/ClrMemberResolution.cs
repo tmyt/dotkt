@@ -570,12 +570,10 @@ static partial class ClrMemberResolution
         return null;
     }
 
-    static Type _nullableDef;
-    static Type NullableDef() => _nullableDef ??= RefDef("System.Nullable", 1);
-    static Type _sysArr;
+    static Type NullableDef() => RefDef("System.Nullable", 1);
     // This is an internal ABI-resolution probe, not a NetInterop ownership decision. Use ResolveRefType so DotKt
     // declaration ownership filters cannot hide the CLR root array type while matching `T[]` to Array.Copy(Array,...).
-    static Type SystemArrayMlc() => _sysArr ??= _refs.ResolveRefType("System.Array");
+    static Type SystemArrayMlc() => _refs.ResolveRefType("System.Array");
 
     // The candidate set for `name`, PREFERRING the owner's OWN declared members over interface members
     // (C#'s "most-derived declaring type wins" — §12.8.10.2): reflection's GetMethods surfaces inherited CLASS

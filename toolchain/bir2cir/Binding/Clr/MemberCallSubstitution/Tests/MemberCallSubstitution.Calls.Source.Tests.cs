@@ -139,7 +139,7 @@ static partial class MemberCallSubstitution
         }
         finally
         {
-            refs.DisposeNet();
+            refs.Dispose();
             _attributeTopLevelOwner = oldAttribute; _isValue = oldValue; _localPropertyAccessors = oldProperties;
             _localPropertyOwners = oldOwners; _localFactories = oldFactories;
         }
