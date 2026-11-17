@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Bind new classifier guards once without re-lowering their already-processed operands.
+
 - Compute declaration identities in their own generic frame, independent of caller substitutions.
 
 - Preserve every UTF-16 code unit in typealias annotation Strings across DLL-to-KLIB imports.

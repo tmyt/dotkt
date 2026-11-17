@@ -100,6 +100,10 @@ sealed partial class ValueRepresentationLowering
             if (node is IBirExecutablePayload or BirAttribute or BirOverride) return node;
             var children = lexical.Enter(node);
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value, children)));
+            return BindOperation(node, lexical);
+        }
+        BirGraphValue BindOperation(BirGraphValue node, OperationLexicalContext lexical)
+        {
             NonReifiedCastErasure.RewriteOperation(node);
             if (!bindValues) return node;
             if (node is BirCallInstance call)
@@ -136,9 +140,9 @@ sealed partial class ValueRepresentationLowering
                 var guardType = bound is TypeNode.Nullable ? bound : new TypeNode.Nullable(bound);
                 if (guard is BirCast cast) cast.Type = guardType;
                 else ((BirInstanceOrNull)guard).Type = guardType;
-                // The cloned guard is independent of the enclosing callable;
-                // its operand was already bound by the original post-order walk.
-                var expression = new BirCast { Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), E = Value((IBirExpression)Walk(guard, default)) };
+                // Bind only the new guard; its operand already completed the
+                // post-order walk and must not be recursively lowered again.
+                var expression = new BirCast { Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")), E = Value((IBirExpression)BindOperation(guard, default)) };
                 if (node is BirCast outerCast) outerCast.E = expression;
                 else ((BirInstanceOrNull)node).E = expression;
                 return node;
