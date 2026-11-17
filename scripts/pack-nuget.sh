@@ -82,6 +82,14 @@ for doc in README.md docs/user/getting-started.md; do
 	[[ -z "$stale" ]] || die "$doc: stale SDK-version fragment(s) [$stale] — expected DotKt.Sdk/$VERCORE"
 done
 
+# The current Templates install command is a versioned example too; historical
+# changelogs and the template substitution placeholders are not current examples.
+doc="docs/user/getting-started.md"
+template_versions="$(grep -oE 'dotnet[[:space:]]+new[[:space:]]+install[[:space:]]+DotKt\.Templates@[0-9][^"<>[:space:]`]*' "$ROOT/$doc" | sed 's/^.*DotKt\.Templates@/DotKt.Templates@/' || true)"
+grep -qFx "DotKt.Templates@$VERCORE" <<< "$template_versions" || die "$doc: no 'dotnet new install DotKt.Templates@$VERCORE' example — bump it to the release core ($VERCORE)"
+stale="$(grep -vFx "DotKt.Templates@$VERCORE" <<< "$template_versions" || true)"
+[[ -z "$stale" ]] || die "$doc: stale Templates install version(s) [$stale] — expected DotKt.Templates@$VERCORE"
+
 info "build compiler (installDist) + tools"
 ( cd "$ROOT" && ./gradlew -q :kotc:installDist )
 dotnet build "$ROOT/toolchain/ilemit"    -c Release -o "$ROOT/build/ilemit-bin"    -v q --nologo
