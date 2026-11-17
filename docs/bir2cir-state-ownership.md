@@ -168,6 +168,7 @@ does not enforce this ownership.
 | `physicalMlc`, `physicalStdlib`, `physicalStdlibInit`, `shippedCache` | Physical twin queries load the shipped stdlib, map trusted declaration IDs and cache member handles; same catalog/lifetime, not inferred from physical layout |
 | `kotlinMapStorageDefinitions`, `kotlinHashStorageDefinitions`, `awaitPlanCache` | Lazy derived queries; depend on ingested facts/reference signatures. Fixed-universe caches, no source declaration mutation |
 | `NativeSignatures` reader's method/field dictionaries | Exact metadata decoding cache currently stored static even though the index owns the query lifetime; same issue as the CLR family's reader |
+| Static `assemblyProvenance` weak table | `IsDotKtEmittedAssembly` memoizes the immutable assembly-marker classification. Keys are actual `Assembly` objects, not names or a changing local context; weak keys allow the owning metadata universe to be collected. This cache can remain shared without imposing a process-wide reset order |
 
 The scan's `ReferenceDotKtMetadata` mutable containers are writer-owned scan
 outputs. Aggregation currently shares some row objects with them; later
