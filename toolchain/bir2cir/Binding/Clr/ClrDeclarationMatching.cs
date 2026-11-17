@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Toolchain;
@@ -599,7 +597,7 @@ static class ClrDeclarationMatching
     internal static InvalidOperationException Malformed<T>(string desc, List<T> hits) where T : MethodBase =>
         new($"bir2cir: resolved descriptor {desc} is AMBIGUOUS — {hits.Count} members match (malformed): {string.Join("; ", hits.Select(c => c.ToString()))}");
 
-    // A resolved member's declared type, spelled as the TARGET spells it (see the header). No arity stripping,
+    // A resolved member's declared type, spelled with the target's exact metadata identity. No arity stripping,
     // no `+`-to-`.` flattening, no delegate rewritten as a Kotlin function type, no `System.Nullable`1`
     // collapsed to a nullability wrapper: each of those is a document convention for talking about a Kotlin
     // program, and each one merges types this reference has to keep apart.
