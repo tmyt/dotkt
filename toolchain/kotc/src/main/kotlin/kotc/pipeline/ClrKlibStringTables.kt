@@ -37,7 +37,7 @@ import org.jetbrains.kotlin.util.toMetadataVersion
 import java.util.Base64
 
 private const val STRING_TABLE_CODEC = "dotkt_string_table_codec"
-private const val UTF16_STRING_TABLE_CODEC = "utf16le-base64"
+private const val UTF16_STRING_TABLE_CODEC = "utf16le-base64-indexed"
 
 internal class ClrKlibStringTables(val libraries: List<KotlinLibrary>) {
     private val encoded = libraries.filter { it.manifestProperties.containsKey(STRING_TABLE_CODEC) }
@@ -53,7 +53,15 @@ internal fun clrKlibNameResolver(library: KotlinLibrary, fragment: ProtoBuf.Pack
     val codec = library.manifestProperties.getProperty(STRING_TABLE_CODEC)
         ?: return NameResolverImpl(fragment.strings, fragment.qualifiedNames)
     require(codec == UTF16_STRING_TABLE_CODEC) { "Unsupported KLIB string table codec: $codec" }
-    val strings = ProtoBuf.StringTable.newBuilder().addAllString(fragment.strings.stringList.map { encoded ->
+    val rows = fragment.strings.stringList
+    require(rows.isNotEmpty()) { "Missing UTF-16 string table index" }
+    val indexes = if (rows.last().isEmpty()) emptyList() else rows.last().split(',').map(String::toInt)
+    require(indexes.toSet().size == indexes.size && indexes.all { it in 0 until rows.size - 1 }) {
+        "Malformed UTF-16 string table index"
+    }
+    val selected = indexes.toSet()
+    val strings = ProtoBuf.StringTable.newBuilder().addAllString(rows.dropLast(1).mapIndexed { index, encoded ->
+        if (index !in selected) return@mapIndexed encoded
         val bytes = Base64.getDecoder().decode(encoded)
         require(bytes.size % 2 == 0) { "Malformed UTF-16 KLIB string" }
         CharArray(bytes.size / 2) { index ->

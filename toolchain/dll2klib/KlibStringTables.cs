@@ -1,18 +1,27 @@
 using DotKt.Klib.Metadata;
 
-// The manifest selects this whole-table codec; no string spelling is a discriminator.
+// The manifest selects the indexed table codec; no source string spelling is a discriminator.
 internal static class KlibStringTables
 {
     internal const string ManifestProperty = "dotkt_string_table_codec";
-    internal const string Codec = "utf16le-base64";
+    internal const string Codec = "utf16le-base64-indexed";
 
     internal static bool EncodeIfNeeded(IReadOnlyList<Fragment> fragments)
     {
         if (!fragments.Any(fragment => fragment.Message.Strings.String.Any(HasUnpairedSurrogate)))
             return false;
         foreach (var fragment in fragments)
+        {
+            var encoded = new List<int>();
             for (int index = 0; index < fragment.Message.Strings.String.Count; index++)
-                fragment.Message.Strings.String[index] = Encode(fragment.Message.Strings.String[index]);
+                if (HasUnpairedSurrogate(fragment.Message.Strings.String[index]))
+                {
+                    encoded.Add(index);
+                    fragment.Message.Strings.String[index] = Encode(fragment.Message.Strings.String[index]);
+                }
+            // This codec reserves the final row for explicit indexes; existing source indexes never move.
+            fragment.Message.Strings.String.Add(string.Join(',', encoded));
+        }
         return true;
     }
 

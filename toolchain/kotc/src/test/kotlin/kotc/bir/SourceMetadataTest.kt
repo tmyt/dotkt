@@ -19,8 +19,7 @@ class SourceMetadataTest {
     @Test
     fun declaredKlibStringTableCodecRestoresAnnotationCodeUnits() {
         val cases = listOf("" to "", "\ud800" to "ANg=", "\udc00" to "ANw=",
-            "😀" to "PdgA3g==", "\u0000" to "AAA=", "κ" to "ugM=", "\ufffd" to "/f8=",
-            "ANg=" to "QQBOAGcAPQA=")
+            "😀" to "😀", "\u0000" to "\u0000", "κ" to "κ", "\ufffd" to "\ufffd", "ANg=" to "ANg=")
         fun library(codec: String?) = Proxy.newProxyInstance(KotlinLibrary::class.java.classLoader,
             arrayOf(KotlinLibrary::class.java)) { _, method, _ ->
             check(method.name == "getManifestProperties")
@@ -35,9 +34,9 @@ class SourceMetadataTest {
                     .setKind(ProtoBuf.QualifiedNameTable.QualifiedName.Kind.CLASS).build(),
             )))
             .setPackage(ProtoBuf.Package.getDefaultInstance()).build()
-        val table = fragment(listOf("cwBhAG0AcABsAGUA", "TwB3AG4AZQByAA==") + cases.map { it.second })
+        val table = fragment(listOf("sample", "Owner") + cases.map { it.second } + "3,4")
         val saved = ProtoBuf.PackageFragment.parseFrom(table.toByteArray())
-        val names = clrKlibNameResolver(library("utf16le-base64"), saved)
+        val names = clrKlibNameResolver(library("utf16le-base64-indexed"), saved)
         assertEquals("sample/Owner", names.getQualifiedClassName(1))
         cases.forEachIndexed { index, (expected, _) -> assertEquals(expected, names.getString(index + 2)) }
         val ordinary = fragment(listOf("sample", "Owner", "κ😀\u0000"))

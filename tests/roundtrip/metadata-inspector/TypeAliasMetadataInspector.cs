@@ -46,15 +46,19 @@ internal static class TypeAliasMetadataInspector
                 .ToArray();
             using (var manifest = new StreamReader(archive.GetEntry("default/manifest")!.Open()))
             {
-                if (manifest.ReadToEnd().Split('\n').Contains("dotkt_string_table_codec=utf16le-base64"))
+                if (manifest.ReadToEnd().Split('\n').Contains("dotkt_string_table_codec=utf16le-base64-indexed"))
                     foreach (var fragment in fragments)
-                        for (int index = 0; index < fragment.Strings.String.Count; index++)
+                    {
+                        var indexes = fragment.Strings.String[^1];
+                        fragment.Strings.String.RemoveAt(fragment.Strings.String.Count - 1);
+                        foreach (var index in indexes.Length == 0 ? [] : indexes.Split(',').Select(int.Parse).ToArray())
                         {
                             var units = Convert.FromBase64String(fragment.Strings.String[index]);
                             Require(units.Length % 2 == 0, "malformed UTF-16 string table");
                             fragment.Strings.String[index] = new string(Enumerable.Range(0, units.Length / 2)
                                 .Select(unit => (char)(units[unit * 2] | units[unit * 2 + 1] << 8)).ToArray());
                         }
+                    }
             }
             var aliases = declarations.Select(document => document.RootElement).ToArray();
             Require(aliases.Length > 0, "missing assembly typealias declarations");
