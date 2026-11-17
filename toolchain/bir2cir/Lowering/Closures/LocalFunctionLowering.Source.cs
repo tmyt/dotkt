@@ -51,8 +51,10 @@ static partial class LocalFunctionLowering
             var identity = DeclarationIdentityBinding.PhysicalOnlyId(facade + ":" + id, "local-function");
             declaration.DeclarationId = identity;
             declaration.DeclarationSourceName = sourceName;
-            var byRef = PrepareCaptureLocations(declaration);
+            // Borrow the selected Kotlin value slot; an internal capture does
+            // not introduce a native CLR boundary that requires exact T storage.
             projectValueSignature?.Invoke(declaration, owner == null ? null : NullableRepresentationViews.TypeFacts((BirGraphValue)owner)?.NullableFrame);
+            var byRef = PrepareCaptureLocations(declaration);
             var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, owner) with {
                 Name = name, Owner = physicalOwner, DeclarationId = identity, ByRefCaptureSlots = byRef,
                 SemanticOwnerArgOrder = SemanticOwnerArgOrder(owner),
