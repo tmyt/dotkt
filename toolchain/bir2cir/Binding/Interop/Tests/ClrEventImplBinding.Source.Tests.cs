@@ -134,7 +134,7 @@ static partial class ClrEventImplBinding
                 || recipe.Add.Params.Value[0].Type.Value is not TypeNode.Fn { Params: [TypeNode.Tv] })
                 throw new InvalidOperationException("Typed event binding recaptured a changed or detached source accessor");
         }
-        finally { refs.DisposeNet(); }
+        finally { refs.Dispose(); }
         Console.WriteLine("[typed event implementations] self-test OK (continuing owners, local/native frames, static/final slots, exact forwarding, pre-strip authority)");
     }
 }

@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Own reference-metadata lookup resources per compilation, release them on
+  failure, and invalidate derived decisions when local declaration ownership changes.
+
 - Scope preserved pre-erasure call signatures to their compilation and pass
   cold-call projection explicitly, without process-wide resolver state.
 

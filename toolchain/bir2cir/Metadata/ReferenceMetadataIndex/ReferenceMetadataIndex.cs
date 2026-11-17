@@ -17,7 +17,7 @@ using DotKt.Toolchain;
 
 internal delegate bool ValueTypeOracle(TypeNode.Fqn type);
 
-sealed partial class ReferenceMetadataIndex
+sealed partial class ReferenceMetadataIndex : IDisposable
 {
     public enum TypeKeyKind
     {
@@ -654,15 +654,13 @@ sealed partial class ReferenceMetadataIndex
     // ("System.Console", "Kfc.App") to a metadata-only System.Reflection.Type here and reflects its member SHAPE
     // (static/instance/property/field/indexer/generic) to bind the plain callStatic/callInstance kotc emitted by
     // identity into the CLR-codegen `clr*` vocabulary. kotc no longer decides the .NET call shape (layer purity —
-    // this is the SAME "emit the identity, bind in bir2cir" pattern as the stdlib ref.dll, one axis over). The MLC is
-    // kept ALIVE for the whole run (Type handles are per-MLC; disposed in Driver.Run) and populated lazily.
-    MetadataLoadContext _netMlc;
-    List<Assembly> _netRefAsms;       // the explicit --compile-refs assemblies (framework + user references)
-    readonly Dictionary<string, Type> _netTypeCache = new(StringComparer.Ordinal);
+    // this is the SAME "emit the identity, bind in bir2cir" pattern as the stdlib ref.dll, one axis over).
+    // Reflection handles are borrowed from this fixed reference universe.
+    // Pipeline owns its lifetime through this index, including exceptional exit.
+    readonly ReferenceMetadataUniverse _universe;
     readonly Dictionary<string, (bool Found, TypeNode Type, BirLiteral Value)> _literalFieldCache =
         new(StringComparer.Ordinal);
     readonly Dictionary<string, bool> _volatileFieldCache = new(StringComparer.Ordinal);
-    bool _netInit;
 
     // The bare FQNs of every type DECLARED in THIS compilation (this run's BIR `types`). A local declaration is the
     // AUTHORITY for its identity — it wins over a referenced .NET/Kotlin dll that exports the SAME FQN (the #15
@@ -680,9 +678,19 @@ sealed partial class ReferenceMetadataIndex
     IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
     public void SetLocalEmittedTypes(IReadOnlySet<string> fqns)
     {
-        _localEmittedTypes = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
+        var names = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
             .ToHashSet(StringComparer.Ordinal);
+        var changed = !names.SetEquals(_localEmittedTypes);
+        _localEmittedTypes = names;
         _physicalTypeNamesSnapshot = null;
+        if (changed)
+        {
+            // These decisions include local-over-reference precedence. The
+            // universe's fixed-reference type cache does not include that policy.
+            _literalFieldCache.Clear();
+            _volatileFieldCache.Clear();
+            _awaitPlanCache.Clear();
+        }
     }
 
     bool IsLocalEmittedType(string fqn) =>
@@ -716,6 +724,7 @@ sealed partial class ReferenceMetadataIndex
     {
         _assemblies = assemblies;
         _compileRefs = compileRefs;
+        _universe = new ReferenceMetadataUniverse(compileRefs);
         foreach (var asm in assemblies)
         {
             foreach (var kv in asm.DotKt.Aliases)
@@ -1094,7 +1103,7 @@ sealed partial class ReferenceMetadataIndex
         parameterNames = declaration.GetParameters()
             .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)
             .ToArray();
-        defaults = CallableDefaultsOf(declaration, _netMlc);
+        defaults = CallableDefaultsOf(declaration, _universe.CoreType);
         return true;
     }
 
@@ -1152,7 +1161,7 @@ sealed partial class ReferenceMetadataIndex
         Dictionary<int, IBirExpression> selected = null;
         foreach (var candidate in interfaces)
         {
-            var defaults = CallableDefaultsOf(candidate, _netMlc);
+            var defaults = CallableDefaultsOf(candidate, _universe.CoreType);
             if (selected == null)
             {
                 selected = defaults;
@@ -1164,7 +1173,7 @@ sealed partial class ReferenceMetadataIndex
                     "several implemented interface declarations match that class surface but their defaults disagree; " +
                     "call through a specific interface or pass the argument explicitly");
         }
-        if (selected != null && interfaces.Any(candidate => CallableDefaultsOf(candidate, _netMlc) == null))
+        if (selected != null && interfaces.Any(candidate => CallableDefaultsOf(candidate, _universe.CoreType) == null))
             throw new InvalidOperationException(
                 $"bir2cir: cannot fill an omitted default argument of '{owner}.{method}' (arity {paramCount}) — " +
                 "several implemented interface declarations match that class surface but do not all declare the " +
@@ -1264,18 +1273,11 @@ sealed partial class ReferenceMetadataIndex
         if (HasSuspendMember(owner, name)) return true;
         try
         {
-            EnsureNetMlc();
-            if (_netMlc == null || _netRefAsms == null) return false;
             // Probe the GENERIC-arity spellings too: a `clr*` owner token is the bare FQN (`lib.Sub`), but the
             // reflected CLR type of a generic subtype is `lib.Sub`1` — a plain GetType(asm, "lib.Sub") misses it,
             // so the hierarchy walk (and thus R1b's cold-ABI existence guard) would false-negative on a suspend
             // member inherited from a super through a GENERIC referenced subtype. Try the plain name then `n`1..8`.
-            Type start = null;
-            foreach (var cand in NetTypeCandidates(owner, 0))
-            {
-                foreach (var asm in _netRefAsms) { start = SafeGetType(asm, cand); if (start != null) break; }
-                if (start != null) break;
-            }
+            var start = _universe.FirstType(owner, 0);
             if (start == null) return false;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             var work = new Queue<Type>();
@@ -2087,94 +2089,10 @@ sealed partial class ReferenceMetadataIndex
     public Type ResolveRefTypeIn(string fqn, string assemblySimpleName)
     {
         if (string.IsNullOrEmpty(fqn) || string.IsNullOrEmpty(assemblySimpleName)) return null;
-        EnsureNetMlc();
-        if (_netMlc == null) return null;
-        Type found = null;
-        foreach (var asm in _netRefAsms)
-        {
-            if (!string.Equals(asm.GetName().Name, assemblySimpleName, StringComparison.OrdinalIgnoreCase)) continue;
-            var match = SafeGetType(asm, fqn);
-            if (match == null) continue;
-            // Two references answering to one simple name is an ambiguity, not a race to be first: the whole
-            // point of stating the scope was to name ONE declaration. Every sibling resolver in this file
-            // refuses the same way.
-            if (found != null && found != match)
-                throw new InvalidOperationException(
-                    $"bir2cir: type '{fqn}' is defined by more than one reference named '{assemblySimpleName}'");
-            found = match;
-        }
-        return found;
+        return _universe.ResolveTypeIn(fqn, assemblySimpleName);
     }
 
-    Type ProbeNetType(string fqn, int genericArity)
-    {
-        // CLR permits a non-generic and one or more generic TypeDefs to share the same source-facing FQN (Task and
-        // Task<T> are the common case). The arity is part of the physical type identity; caching only by the stripped
-        // FQN lets whichever spelling is requested first poison every later lookup.
-        var cacheKey = fqn + "|" + genericArity;
-        if (_netTypeCache.TryGetValue(cacheKey, out var cached)) return cached;
-        EnsureNetMlc();
-        Type found = null;
-        if (_netMlc != null)
-        {
-            foreach (var candidate in NetTypeCandidates(fqn, genericArity))
-            {
-                var matches = new Dictionary<string, Type>(StringComparer.Ordinal);
-                foreach (var asm in _netRefAsms)
-                {
-                    var match = SafeGetType(asm, candidate);
-                    if (match != null)
-                        // Collapse type forwarders that resolve to the same defining assembly, but never pick an
-                        // arbitrary winner when two selected references really define the same FQN.
-                        matches.TryAdd(match.Assembly.GetName().FullName ?? match.Assembly.GetName().Name!, match);
-                }
-                if (matches.Count > 1)
-                    throw new InvalidOperationException(
-                        $"bir2cir: type '{candidate}' is defined by multiple compile references: " +
-                        string.Join(", ", matches.Keys.OrderBy(x => x, StringComparer.Ordinal)));
-                found = matches.Values.SingleOrDefault();
-                if (found != null) break;
-            }
-        }
-        _netTypeCache[cacheKey] = found;
-        return found;
-    }
-
-    // The FQN spellings to probe: the plain name, then the generic-arity backtick form (`List`1`). The exact arity
-    // (from the owner token's type-arg count) is tried first; a small fallback range covers a token that dropped its args.
-    static IEnumerable<string> NetTypeCandidates(string fqn, int genericArity)
-    {
-        // A supplied arity is an exact identity fact, not a hint. Probe its backtick spelling before the non-generic
-        // namesake; otherwise Task<T> deterministically resolves as Task whenever both TypeDefs exist.
-        if (genericArity > 0) yield return fqn + "`" + genericArity;
-        yield return fqn;
-        for (var k = 1; k <= 8; k++) if (k != genericArity) yield return fqn + "`" + k;
-    }
-
-    static Type SafeGetType(Assembly asm, string fqn) { try { return asm.GetType(fqn, throwOnError: false); } catch { return null; } }
-
-    void EnsureNetMlc()
-    {
-        if (_netInit) return;
-        _netInit = true;
-        try
-        {
-            _netMlc = _compileRefs.CreateMetadataLoadContext();
-            _netRefAsms = new List<Assembly>();
-            // The catalog already classified each entry as a readable managed PE (#52); a load failure here means a
-            // transitive dependency the MLC resolver could not satisfy — surface it naming the file instead of a
-            // silent skip. Non-fatal: NetInteropBinding probes the assemblies that DID load.
-            foreach (var a in _compileRefs.Entries)
-            {
-                try { _netRefAsms.Add(_netMlc.LoadFromAssemblyPath(a.Path)); }
-                catch (Exception ex) { Console.Error.WriteLine($"bir2cir: warning: could not load reference into the metadata context: {a.Path} — {ex.GetType().Name}: {ex.Message}"); }
-            }
-        }
-        catch { _netMlc = null; }
-    }
-
-    MetadataLoadContext _physicalMlc;
-    Assembly _physicalStdlib; bool _physicalStdlibInit;
+    Type ProbeNetType(string fqn, int genericArity) => _universe.ResolveType(fqn, genericArity);
 
     /// <summary>
     /// The SHIPPED declaration of a member resolved against the reference twin, or null when there is none or it
@@ -2307,7 +2225,7 @@ sealed partial class ReferenceMetadataIndex
     Type PhysicalOwnerOf(Type declaringDef)
     {
         if (declaringDef == null) return null;
-        var asm = PhysicalStdlibAssembly();
+        var asm = _universe.PhysicalStdlib;
         if (asm == null || declaringDef.Assembly?.GetName()?.Name is not string owning
             || string.Equals(ManagedReferenceCatalog.PhysicalAssemblyName(owning), owning, StringComparison.Ordinal))
             return null;
@@ -2326,7 +2244,7 @@ sealed partial class ReferenceMetadataIndex
     public Type PhysicalTypeNamed(string name, int arity = 0)
     {
         if (string.IsNullOrEmpty(name)) return null;
-        var asm = PhysicalStdlibAssembly();
+        var asm = _universe.PhysicalStdlib;
         if (asm == null) return null;
         try
         {
@@ -2336,31 +2254,11 @@ sealed partial class ReferenceMetadataIndex
         catch { return null; }
     }
 
-    Assembly PhysicalStdlibAssembly()
+    public void Dispose()
     {
-        if (_physicalStdlibInit) return _physicalStdlib;
-        _physicalStdlibInit = true;
-        var path = _compileRefs?.PhysicalStdlibPath;
-        if (string.IsNullOrEmpty(path)) return null;
-        try
-        {
-            _physicalMlc = _compileRefs.CreatePhysicalStdlibMetadataLoadContext();
-            _physicalStdlib = _physicalMlc?.LoadFromAssemblyPath(path);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"bir2cir: warning: could not read the shipped stdlib twin {path} — {ex.GetType().Name}: {ex.Message}");
-            _physicalStdlib = null;
-        }
-        return _physicalStdlib;
-    }
-
-    public void DisposeNet()
-    {
-        try { _physicalMlc?.Dispose(); } catch { }
-        _physicalMlc = null;
-        try { _netMlc?.Dispose(); } catch { }
-        _netMlc = null;
+        _shippedCache.Clear();
+        _literalFieldCache.Clear(); _volatileFieldCache.Clear(); _awaitPlanCache.Clear();
+        _universe.Dispose();
     }
 
     public int OwnerArity(string ownerFqn)
@@ -5636,7 +5534,7 @@ sealed partial class ReferenceMetadataIndex
                         // contributes its raw Kotlin-expression BIR; an ordinary ECMA-335 constant contributes a plain
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
                         // resolution, never either payload.
-                        if (CallableDefaultsOf(method, mlc) is Dictionary<int, IBirExpression> defaults)
+                        if (CallableDefaultsOf(method, coreName => mlc.CoreAssembly.GetType(coreName, throwOnError: false)) is Dictionary<int, IBirExpression> defaults)
                         {
                             AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
                             if (exactPhysicalOwner != indexedOwnerFqn)
@@ -5854,7 +5752,7 @@ sealed partial class ReferenceMetadataIndex
                             metadata.KotlinConstructorOwnerFrames[DottedFqn(ownerFqn)] = constructorFrame;
                             metadata.KotlinConstructorOwnerFrames[exactPhysicalOwner] = constructorFrame;
                         }
-                        if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, IBirExpression> cdefaults)
+                        if (CallableDefaultsOf(ctor, coreName => mlc.CoreAssembly.GetType(coreName, throwOnError: false)) is Dictionary<int, IBirExpression> cdefaults)
                         {
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
                             if (exactPhysicalOwner != ownerFqn)
@@ -7430,19 +7328,19 @@ sealed partial class ReferenceMetadataIndex
     // The complete default-value map for an already selected declaration. KotlinDefault wins because it carries the
     // Kotlin expression (including reads of earlier parameters/receivers); otherwise use the ECMA-335 constant directly.
     // This is deliberately a reference-DLL scan. Neither dll2klib nor kotc materializes a default value.
-    static Dictionary<int, IBirExpression> CallableDefaultsOf(MethodBase method, MetadataLoadContext mlc)
+    static Dictionary<int, IBirExpression> CallableDefaultsOf(MethodBase method, Func<string, Type> coreType)
     {
         var map = KotlinDefaultsOf(method);
         foreach (var p in method.GetParameters())
         {
             if (map?.ContainsKey(p.Position) == true || !p.HasDefaultValue) continue;
-            if (ConstantDefaultBir(p, mlc) is not { } bir) continue;
+            if (ConstantDefaultBir(p, coreType) is not { } bir) continue;
             (map ??= new Dictionary<int, IBirExpression>())[p.Position] = bir;
         }
         return map;
     }
 
-    static IBirExpression ConstantDefaultBir(ParameterInfo parameter, MetadataLoadContext mlc)
+    static IBirExpression ConstantDefaultBir(ParameterInfo parameter, Func<string, Type> coreType)
     {
         object value;
         try { value = parameter.RawDefaultValue; }
@@ -7488,7 +7386,7 @@ sealed partial class ReferenceMetadataIndex
         if (nullableElement != null)
         {
             var elementType = DeclarationTypeNode(nullableElement);
-            var elementValue = MetadataConstantNode(nullableElement, elementType, value, mlc);
+            var elementValue = MetadataConstantNode(nullableElement, elementType, value, coreType);
             if (elementType == null || elementValue == null) return null;
             return new BirNullableWrap
             {
@@ -7497,10 +7395,10 @@ sealed partial class ReferenceMetadataIndex
             };
         }
 
-        return MetadataConstantNode(type, declaredType, value, mlc);
+        return MetadataConstantNode(type, declaredType, value, coreType);
     }
 
-    static IBirExpression MetadataConstantNode(Type type, TypeNode declaredType, object value, MetadataLoadContext mlc)
+    static IBirExpression MetadataConstantNode(Type type, TypeNode declaredType, object value, Func<string, Type> coreType)
     {
         if (type == null || declaredType == null) return null;
         // Null reaches this helper only for a reference-typed slot: value-type null/defaults are handled above.
@@ -7592,7 +7490,7 @@ sealed partial class ReferenceMetadataIndex
                 return null;
 
             Type carrierType;
-            try { carrierType = mlc?.CoreAssembly.GetType(carrierName, throwOnError: false, ignoreCase: false); }
+            try { carrierType = coreType(carrierName); }
             catch { return null; }
             bool acceptsCarrier;
             try { acceptsCarrier = carrierType != null && type.IsAssignableFrom(carrierType); }
@@ -7600,7 +7498,7 @@ sealed partial class ReferenceMetadataIndex
             if (!acceptsCarrier) return null;
 
             var carrierDeclaredType = DeclarationTypeNode(carrierType);
-            var carrierValue = MetadataConstantNode(carrierType, carrierDeclaredType, value, mlc);
+            var carrierValue = MetadataConstantNode(carrierType, carrierDeclaredType, value, coreType);
             if (carrierDeclaredType == null || carrierValue == null) return null;
             return new BirCast
             {
@@ -7912,7 +7810,7 @@ sealed partial class ReferenceMetadataIndex
         var assemblies = new List<ReferenceAssembly> {
             new("a.dll", "a", "1", a), new("b.dll", "b", "1", b),
         };
-        var catalog = Build(Array.Empty<string>())._compileRefs;
+        var catalog = ManagedReferenceCatalog.Create(Array.Empty<string>(), "bir2cir", refStdlibAliasesRuntime: true);
         foreach (var order in new[] { assemblies, assemblies.AsEnumerable().Reverse().ToList() })
         {
             // Building an index must not reject an unused collision or discard other metadata.

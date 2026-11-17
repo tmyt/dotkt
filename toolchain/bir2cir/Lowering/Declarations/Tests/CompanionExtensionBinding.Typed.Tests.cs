@@ -83,7 +83,7 @@ static partial class CompanionExtensionBinding
                 || TypeJson.Read(materialized["owner"]) != new TypeNode.Fqn(binding.PhysicalOwner))
                 throw new InvalidOperationException("Late companion extension use lost the original scalar placement decision");
         }
-        finally { refs.DisposeNet(); }
+        finally { refs.Dispose(); }
         Console.WriteLine("[typed companion extensions] self-test OK (owning moves, storage, generic groups/wrappers, defaults and late scalar binding)");
     }
 }

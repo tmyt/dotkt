@@ -128,7 +128,7 @@ static partial class MemberCallSubstitution
                 Elem.Value: TypeNode.Fqn { Name: "System.Type" } } && CompilerMetadataIntrinsicValue("ordinary", refs) == null,
                 "compiler metadata intrinsic did not use the authoritative declaration table");
         }
-        finally { _localFactories = previousFactories; _isValue = previousOracle; refs.DisposeNet(); }
+        finally { _localFactories = previousFactories; _isValue = previousOracle; refs.Dispose(); }
         Console.WriteLine("[typed member factories] self-test OK (selected IDs, frames, mapped evaluation, storage and spread)");
     }
 }

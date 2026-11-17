@@ -65,7 +65,7 @@ static partial class ClrEventSubscriptionBinding
         MaterializationOwnershipSelfTest(refs);
         ConstraintClosureSelfTest(refs);
         ForwardedOwnersSelfTest();
-        refs.DisposeNet();
+        refs.Dispose();
         Console.WriteLine("[event callback frames] self-test OK (owning slots, receiver once, complete handle, dense/lexical/prebound and constraint closure)");
     }
 
@@ -135,7 +135,7 @@ static partial class ClrEventSubscriptionBinding
         Require(TypeNodeDataEquality.Equal(handle.Sty.Value, complete) && TypeNodeDataEquality.Equal(((BirNew)handle.Result.Value).Type.Value, complete)
             && Callbacks(handle).All(callback => callback.SynthClass.Value.Params.Value[0].Type.Value == handler),
             "complete physical handle was reclosed or its storage companion was selected as the handler");
-        physicalRefs.DisposeNet();
+        physicalRefs.Dispose();
     }
 
     static void ConstraintClosureSelfTest(ReferenceMetadataIndex refs)

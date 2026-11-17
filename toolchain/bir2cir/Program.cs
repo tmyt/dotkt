@@ -289,6 +289,9 @@ static class Bir2Cir
                 SuspendResidueLowering.SourceSelfTest();
                 ReferenceMetadataIndex.SelfTest();
                 ReferenceMetadataIndex.PhysicalParameterFactsSelfTest();
+                ClrMemberResolution.ReferenceUniverseIsolationSelfTest();
+                ReferenceMetadataUniverse.SelfTest();
+                ReferenceMetadataIndex.UniverseLifetimeSelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
                 ExternalGenericConstraintValidation.SelfTestResolved();
                 NullableTvErasureCallRealign.SelfTest();
@@ -327,7 +330,7 @@ sealed class Pipeline
     {
         Directory.CreateDirectory(_options.OutDir);
 
-        var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
+        using var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
@@ -346,9 +349,6 @@ sealed class Pipeline
             Console.Error.WriteLine(
                 "bir2cir: warning DOTKTENUM001: a generic enum operation uses reflection; "
                 + "NativeAOT/trimming must preserve the enum declaration and its generated API metadata");
-        // Release the long-lived .NET-interop MetadataLoadContext (kept alive across all transform passes for
-        // NetInteropBinding's owner resolution — A2 / #61) now that no pass needs metadata reflection.
-        refs.DisposeNet();
         // #112 Phase 4: run the SHARED IR sanity gate on the CIR we just produced — the EARLIEST catch, at the
         // bir2cir/CIR boundary (ilemit re-runs the SAME bir-common IrSanity at the head of EmitAssembly). A malformed
         // CIR (undeclared local, dangling goto, missing owner) fails LOUD here with a precise invariant message

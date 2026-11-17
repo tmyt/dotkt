@@ -197,11 +197,9 @@ partial class ReferenceMetadataIndex
     // compile set includes both user and framework assemblies; no ambient runtime directory is searched.
     MethodInfo FindGetAwaiterExtension(Type awaitable)
     {
-        EnsureNetMlc();
-        if (_netMlc == null) return null;
         var awDef = awaitable.IsGenericType ? awaitable.GetGenericTypeDefinition() : awaitable;
         var awName = awDef.FullName;
-        foreach (var asm in _netRefAsms)
+        foreach (var asm in _universe.Assemblies)
         {
             foreach (var t in SafeExportedTypes(asm))
             {

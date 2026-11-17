@@ -50,6 +50,6 @@ static partial class ClrEventSubscriptionBinding
                     BirEventAdd add => add.Type.Value, BirEventRemove remove => remove.Type.Value, _ => null },
                 new TypeNode.Fqn("Native.Source", new TypeNode[] { number })))
                 throw new InvalidOperationException("Live event binding disagrees with the inherited forwarding inventory");
-        references.DisposeNet();
+        references.Dispose();
     }
 }
