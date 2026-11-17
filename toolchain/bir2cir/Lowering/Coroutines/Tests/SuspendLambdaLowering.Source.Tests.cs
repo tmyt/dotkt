@@ -7,6 +7,7 @@ static partial class SuspendLambdaLowering
     internal static void SourceSelfTest()
     {
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        using var callSignatures = new ReferencedCallSignatures();
         var integer = new TypeNode.Fqn("kotlin.Int");
         var b = new TypeNode.Tv("type", 1);
         var function = new TypeNode.Fn(true, b, Array.Empty<TypeNode>());
@@ -29,7 +30,7 @@ static partial class SuspendLambdaLowering
         var transitions = new LambdaSourceTestTransitions();
         var module = new SuspendColdLowering.SuspendModuleContext(new[] { file }, references, new HashSet<string>(), false,
             new Dictionary<string, string> { ["kotlin.coroutines.Continuation"] = "ContinuationCarrier" },
-            _ => false, null, null, null, transitions);
+            _ => false, null, null, null, transitions, callSignatures.ProjectColdCall);
         SuspendColdLowering.ApplyNamedSource(module);
         Require(module.Stage0Complete && module.NamedEntries.Count == 0, "lambda-only module did not run all-root Stage0");
         ApplyAll(module);

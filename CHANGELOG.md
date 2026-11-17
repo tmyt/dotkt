@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Scope preserved pre-erasure call signatures to their compilation and pass
+  cold-call projection explicitly, without process-wide resolver state.
+
 - Preserve opaque generic values through ordinary Kotlin callback arguments and
   results until a typed consumer requires conversion, while retaining exact CLR delegate slots.
 
