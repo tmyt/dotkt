@@ -37,10 +37,10 @@ static partial class ClosureSynthesis
     // are snapshotted; the saved provenance therefore has the normalized shape.
     internal static MaterializedClosures ApplyMaterialized(BirFileDeclaration file,
         IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs,
-        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectSamMethod = null)
+        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectMethod = null)
     {
         var provenance = new List<ClosureProvenance>();
-        var appended = SynthesizeTyped(file, inputs, refs, projectSamMethod, provenance, skipAttributes: true);
+        var appended = SynthesizeTyped(file, inputs, refs, projectMethod, provenance, skipAttributes: true);
         return new MaterializedClosures(appended, provenance);
     }
 
@@ -48,7 +48,7 @@ static partial class ClosureSynthesis
     // independent ingredients snapshots used only by prepared-default restoration.
     static IReadOnlyList<BirClassDefinition> SynthesizeTyped(BirFileDeclaration file,
         IEnumerable<MaterializedOccurrence> inputs, ReferenceMetadataIndex refs,
-        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectSamMethod,
+        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectMethod,
         ICollection<ClosureProvenance> provenance, bool skipAttributes)
     {
         var pending = new List<BirClassDefinition>();
@@ -103,7 +103,13 @@ static partial class ClosureSynthesis
                 WalkBody(source.Body, context);
                 Record(source.Name.OrDefault(), source.Fields.OrEmpty().Where(field => field.Type.HasValue)
                     .Select(field => (field.Name.OrDefault(), field.Type.Value)), context);
-                pending.Add(BuildClosureClass((BirClosureDefinition)TypedExecutableFrames.PrepareSynthetic(source, closure.TypeArgs.OrDefault())));
+                var declaration = BuildClosureClass((BirClosureDefinition)TypedExecutableFrames.PrepareSynthetic(source, closure.TypeArgs.OrDefault()));
+                // Ordinary Kotlin scalar slots must be selected before nullable
+                // use flow inserts conversions into the newly created body.
+                if (!closure.HasDeclaredDelegateSlot && closure.FuncType.OrDefault() is TypeNode.Fn { Suspend: false, Clr: null })
+                    foreach (var method in declaration.Methods.OrEmpty())
+                        projectMethod?.Invoke(method, declaration.KotlinSupertypesPre.OrDefault()?.NullableFrame);
+                pending.Add(declaration);
                 closure.SynthClass = default;
                 return;
             }
@@ -118,7 +124,7 @@ static partial class ClosureSynthesis
                     .Select(field => (field.Name.OrDefault(), field.Type.Value)), context);
                 var declaration = (BirClassDefinition)TypedExecutableFrames.PrepareSynthetic(source, sam.TypeArgs.OrDefault());
                 var ownerFrame = declaration.KotlinSupertypesPre.OrDefault()?.NullableFrame;
-                foreach (var method in declaration.Methods.OrEmpty()) projectSamMethod?.Invoke(method, ownerFrame);
+                foreach (var method in declaration.Methods.OrEmpty()) projectMethod?.Invoke(method, ownerFrame);
                 pending.Add(declaration);
                 sam.SynthClass = default;
                 return;

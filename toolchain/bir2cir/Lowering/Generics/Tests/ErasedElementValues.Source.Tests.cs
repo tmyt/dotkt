@@ -46,6 +46,11 @@ static partial class ErasedElementValues
         var load = new BirByRefLoad { Ptr = pointer, Elem = ObjectType };
         var loaded = new BirVariable { Name = "loaded", Type = variable, Init = load };
         var nativeLoad = new BirByRefLoad { Local = "nativePointer", Elem = variable };
+        var invocation = new BirDelegateInvoke { FuncType = new TypeNode.Fn(false, ObjectType, Array.Empty<TypeNode>()),
+            Recv = new BirLocal { Name = "callback" }, Args = Array.Empty<IBirExpression>() };
+        var restored = new BirCast { Type = variable, _exactBridgeCast = true,
+            FunctionValueRestoration = true, E = invocation };
+        var callbackValue = new BirVariable { Name = "callbackValue", Type = variable, Init = restored };
         var method = new BirFunctionDeclaration { Name = "consume", Ret = ObjectType,
             TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = new TypeNode[] {
                 new TypeNode.Fqn("Contract"), new TypeNode.Fqn("Bound"),
@@ -57,7 +62,7 @@ static partial class ErasedElementValues
                 value, alias, new BirSetLocal { Name = "alias", Value = Local("value") }, addressed,
                 new BirExpressionStatement { Expr = native }, new BirExpressionStatement { Expr = conditional },
                 new BirExpressionStatement { Expr = block }, new BirExpressionStatement { Expr = cast },
-                borrowed, new BirExpressionStatement { Expr = borrow }, loaded, new BirExpressionStatement { Expr = nativeLoad },
+                borrowed, new BirExpressionStatement { Expr = borrow }, loaded, new BirExpressionStatement { Expr = nativeLoad }, callbackValue,
                 new BirExpressionStatement { Expr = closure }, new BirExpressionStatement { Expr = constrained },
             },
         };
@@ -71,7 +76,7 @@ static partial class ErasedElementValues
         var arguments = constrained.Args.Value;
         ApplyScalarCalls(root, refs, _ => false, null, call => projection.Result(call, refs));
         if (!ReferenceEquals(root.Methods.Value[0], method) || !ReferenceEquals(method.Params.Value, parameters)
-            || method.Body.Value.Length != 15
+            || method.Body.Value.Length != 16
             || method.Body.Value[0] is not BirVariable { Type.Value: TypeNode.Tv, Name.Value: "$nativeArgument$0",
                 Init.Value: BirLocal { Name.Value: "incoming", Sty.Value: TypeNode.Fqn { Name: "object" } } }
             || native.Args.Value[0] is not BirByRefOf { Inner.Value: BirLocal {
@@ -86,6 +91,8 @@ static partial class ErasedElementValues
             || pointer.Sty.Value != new TypeNode.ByRef(ObjectType)
             || load.Elem.Value != ObjectType || load.ErasedValueVariableFact.OrDefault() != variable
             || nativeLoad.Elem.Value != variable || nativeLoad.Ptr.IsPresent || nativeLoad.ErasedValueVariableFact.IsPresent
+            || restored.Type.Value != ObjectType || restored.ErasedValueVariableFact.OrDefault() != variable
+            || callbackValue.Type.Value != ObjectType || !ReferenceEquals(restored.E.Value, invocation)
             || read.ErasedValueVariableFact.OrDefault() != variable
             || ((BirLocal)alias.Init.Value).ErasedValueVariableFact.OrDefault() != variable
             || ((BirLocal)block.Result.Value).Sty.Value != ObjectType

@@ -88,6 +88,43 @@ static partial class ClosureSynthesis
         if (duplicateResult.AppendedTypes.Count != 0 || duplicate.SynthClass.IsPresent)
             throw new InvalidOperationException("Typed closure synthesis changed declaration-name deduplication");
 
+        foreach (var materialized in new[] { false, true })
+        {
+            var scalar = new TypeNode.Tv("type", 0);
+            BirNewClosure Generic(string name, bool native)
+            {
+                var value = Closure(name);
+                value.FuncType = new TypeNode.Fn(false, lexical, Array.Empty<TypeNode>());
+                value.TypeArgs = new TypeNode[] { lexical };
+                value.SynthClass.Value.Ret = lexical;
+                value.SynthClass.Value.TypeParams = new[] { new BirTypeParameter { Name = "T" } };
+                if (native) value.DotktDelegateSlot = new TypeNode.Fqn("ExactDelegate");
+                return value;
+            }
+            var ordinary = Generic("ScalarClosure", false);
+            var native = Generic("NativeClosure", true);
+            var expressions = new IBirStatement[] { new BirExpressionStatement { Expr = ordinary }, new BirExpressionStatement { Expr = native } };
+            var container = new BirFunctionDeclaration { Name = "generic", Body = expressions };
+            var scalarFile = new BirFileDeclaration { Methods = new[] { container }, Types = Array.Empty<IBirTypeDeclaration>() };
+            var projected = 0;
+            void Project(BirFunctionDeclaration actual, NullableRepresentationFrame frame)
+            {
+                if (actual.Ret.Value != scalar) throw new InvalidOperationException("Scalar closure projection lost its prepared frame");
+                actual.RetKotlinType = actual.Ret;
+                actual.Ret = new TypeNode.Fqn("object");
+                projected++;
+            }
+            if (materialized)
+                ApplyMaterialized(scalarFile, new[] { new MaterializedOccurrence(new BirGraphSlot(() => container,
+                    value => throw new InvalidOperationException("Unexpected declaration replacement")), roots[0].Context) }, null, Project);
+            else Apply(scalarFile, null, Project);
+            if (projected != 1 || scalarFile.Types.Value[0].Methods.Value[0].Ret.Value != new TypeNode.Fqn("object")
+                || scalarFile.Types.Value[0].Methods.Value[0].RetKotlinType.Value != scalar
+                || scalarFile.Types.Value[1].Methods.Value[0].Ret.Value != scalar
+                || scalarFile.Types.Value[1].Methods.Value[0].RetKotlinType.IsPresent)
+                throw new InvalidOperationException("Ordinary closure scalar results must project before use flow; native slots remain exact");
+        }
+
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         try
         {

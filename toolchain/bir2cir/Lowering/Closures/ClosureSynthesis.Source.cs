@@ -5,7 +5,7 @@ using DotKt.Cir;
 static partial class ClosureSynthesis
 {
     internal static void Apply(BirFileDeclaration file, ReferenceMetadataIndex refs,
-        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectSamMethod)
+        Action<BirFunctionDeclaration, NullableRepresentationFrame> projectMethod)
     {
         var inputs = new List<MaterializedOccurrence>();
         if (file.Methods.HasValue)
@@ -29,7 +29,7 @@ static partial class ClosureSynthesis
                 inputs.Add(new(new BirGraphSlot(() => (BirGraphValue)file.Types.Value[at], value => file.Types.Value[at] = (IBirTypeDeclaration)value),
                     SourceInputContext((BirGraphValue)file.Types.Value[at])));
             }
-        SynthesizeTyped(file, inputs, refs, projectSamMethod, null, skipAttributes: false);
+        SynthesizeTyped(file, inputs, refs, projectMethod, null, skipAttributes: false);
         foreach (var type in file.Types.OrEmpty())
             RejectDirectClrDelegateImplementation(type.Name.OrDefault(), type.Interfaces.OrEmpty(), refs);
     }

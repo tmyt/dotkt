@@ -5,6 +5,35 @@ private fun <T, R> varianceWiden(callback: (T) -> R): (T) -> Any? = callback
 private fun <T, R> varianceNullable(callback: ((T) -> R)?): ((T) -> Any?)? = callback
 private fun <T> varianceInvoke(callback: (T) -> Any?, value: T): Any? = callback(value)
 private class VarianceStorage<T>(var callback: (T) -> Any?)
+private fun <T> varianceReadResult(values: List<T>): Any? {
+    val callback: () -> T = { values[0] }
+    return callback()
+}
+private fun <T> varianceStoredResult(values: List<T>): Any? {
+    val callback: () -> T = { values[0] }
+    val result: T = callback()
+    return result
+}
+private fun <T> varianceInvokeResult(callback: () -> T): Any? = callback()
+private fun <T> varianceExactResult(values: List<T>): T {
+    val callback: () -> T = { values[0] }
+    return callback()
+}
+private fun <T : Number> varianceBoundResult(values: List<T>): Number {
+    val callback: () -> T = { values[0] }
+    return callback()
+}
+private fun <T : Number> varianceExplicitBound(callback: () -> T): Any? = callback() as T
+private fun <T> varianceNativeResult(values: List<T>): Any? {
+    val callback = System.Func1<T> { values[0] }
+    return callback()
+}
+private class VarianceResultOwner<A>(private val marker: A) {
+    fun <T> read(values: List<T>): Any? {
+        val callback: () -> T = { check(marker != null); values[0] }
+        return callback()
+    }
+}
 private class VarianceOverloads {
     fun select(callback: (Int) -> Unit): Int { callback(17); return 1 }
     fun select(callback: (String) -> Unit): Int { callback("selected"); return 2 }
@@ -53,6 +82,7 @@ class FunctionVarianceTests {
     }
 
     @TestAttribute
+    @Suppress("UNCHECKED_CAST")
     fun resultViewRetainsIdentity() {
         val length: (String) -> Int = { it.length }
         val widened = varianceWiden(length)
@@ -74,6 +104,36 @@ class FunctionVarianceTests {
         val nullableSequenceFactory: () -> CharSequence? = nullableTextFactory
         check(nullableSequenceFactory === nullableTextFactory)
         check(nullableSequenceFactory() == null)
+        val heterogeneous = listOf("heterogeneous") as List<Int>
+        check(varianceReadResult(heterogeneous) == "heterogeneous")
+        check(varianceStoredResult(heterogeneous) == "heterogeneous")
+        check(VarianceResultOwner("owner").read(heterogeneous) == "heterogeneous")
+        val absent = listOf<Any?>(null) as List<Int>
+        check(varianceReadResult(absent) == null)
+        check(varianceStoredResult(absent) == null)
+        var resultCalls = 0
+        val rawResult: () -> Any? = { resultCalls++; "heterogeneous" }
+        check(varianceInvokeResult<Int>(rawResult as () -> Int) == "heterogeneous")
+        check(resultCalls == 1)
+        check(varianceExactResult(listOf(19)) == 19)
+        var rejected = false
+        try { val exact: Int = varianceExactResult(heterogeneous); check(exact == 0) }
+        catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        check(varianceBoundResult<Int>(listOf(4.5) as List<Int>).toInt() == 4)
+        rejected = false
+        try { varianceBoundResult(heterogeneous).toInt() }
+        catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        rejected = false
+        try { varianceExplicitBound<Number>(rawResult as () -> Number) }
+        catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        check(varianceNativeResult(listOf(23)) == 23)
+        rejected = false
+        try { varianceNativeResult(heterogeneous) }
+        catch (_: ClassCastException) { rejected = true }
+        check(rejected)
     }
 
     @TestAttribute
