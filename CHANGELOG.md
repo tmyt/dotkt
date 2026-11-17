@@ -8,6 +8,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Preserve opaque generic values through ordinary Kotlin callback arguments and
   results until a typed consumer requires conversion, while retaining exact CLR delegate slots.
 
+- Bind new classifier guards once without re-lowering their already-processed operands.
+
 - Keep opaque generic values in mutable local-function captures until a typed
   consumer requires conversion, preserving exact native ref locations and aliases.
 
