@@ -21,9 +21,9 @@ for argument in sys.argv[1:]:
     generated = [method for method in document["methods"] if method.get("generated")]
     assert generated, f"{argument}: the fixture must exercise file-level delegate lifting"
     declarations = {method["declarationId"] for method in generated}
+    assert all(isinstance(identity, str) and identity for identity in declarations), "generated declaration identities must be present"
     assert len(declarations) == len(generated), "generated declaration identities must be unique"
     references = {node["declarationId"] for node in objects(document)
-                  if node.get("k") == "newDelegate"
-                  and node.get("calleeOwner") == {"t": "fqn", "name": document["fileClass"]}}
+                  if node.get("k") == "newDelegate"}
     assert references == declarations, f"{argument}: orphaned lifts {declarations - references}; missing targets {references - declarations}"
 print("projected call arguments leave one live declaration for each file-level delegate target")
