@@ -137,6 +137,7 @@ static partial class ErasedElementValues
         var valueResults = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
         var bindings = new Dictionary<string, SourceSlot>(StringComparer.Ordinal);
         var parameterOrigins = new Dictionary<SourceSlot, TypeNode.Tv>(ReferenceEqualityComparer.Instance);
+        var borrowedOrigins = new Dictionary<SourceSlot, TypeNode.Tv>(ReferenceEqualityComparer.Instance);
         var loopSlots = new Dictionary<BirForArray, SourceSlot>(ReferenceEqualityComparer.Instance);
         var mapping = new NullableRepresentationTypes(ownerFacts?.NullableFrame, methodFrame, frames, isValue, policy: policy);
         TypeNode.Tv SourceVariable(TypeNode source) => source is TypeNode.Tv variable ? Variable(mapping.Slot(variable)) : null;
@@ -149,7 +150,13 @@ static partial class ErasedElementValues
                 var slot = new SourceSlot(parameter.Declaration, parameter.Name, parameter.Type);
                 bindings[slot.Name] = slot;
                 if (slot.Type is not TypeNode.Tv && SourceVariable(parameter.KotlinType) is { } variable)
-                    parameterOrigins[slot] = variable;
+                {
+                    if (slot.Type is TypeNode.ByRef reference)
+                    {
+                        if (IsObject(reference.Of)) borrowedOrigins[slot] = variable;
+                    }
+                    else parameterOrigins[slot] = variable;
+                }
             }
 
         void BindSequence(IEnumerable<IBirStatement> statements, Dictionary<string, SourceSlot> scope)
@@ -160,7 +167,7 @@ static partial class ErasedElementValues
         TypeNode.Tv Element(IBirExpression array, Dictionary<string, SourceSlot> scope) =>
             Variable(ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface(array,
                 scope.ToDictionary(pair => pair.Key, pair => pair.Value.Type, StringComparer.Ordinal))));
-        void Bind(BirGraphValue node, Dictionary<string, SourceSlot> scope, bool location = false)
+        void Bind(BirGraphValue node, Dictionary<string, SourceSlot> scope, bool location = false, bool exactLocation = true)
         {
             if (node == null || node is IBirExecutablePayload || SourceNestedDeclaration(node)) return;
             if (node is BirNewClosure or BirNewSam or BirNewSuspendLambda) captures.Add(node);
@@ -168,7 +175,7 @@ static partial class ErasedElementValues
             if (usedName != null && scope.TryGetValue(usedName, out var used))
             {
                 uses[node] = used;
-                if (location) addressed.Add(used);
+                if (location && exactLocation) addressed.Add(used);
             }
             if (!location && scalarResults?.Invoke(node) is { } scalarResult)
             {
@@ -178,6 +185,10 @@ static partial class ErasedElementValues
             if (iteratorValues != null && !location && node is BirArrayGet arrayRead
                 && Element(arrayRead.Array.OrDefault(), scope) is { } arrayElement)
                 reads[node] = arrayElement;
+            if (!location && node is BirByRefLoad { Ptr.HasValue: true, Ptr.Value: BirLocal { Name.HasValue: true } pointer }
+                && scope.TryGetValue(pointer.Name.Value, out var borrowed)
+                && borrowedOrigins.TryGetValue(borrowed, out var borrowedVariable))
+                reads[node] = borrowedVariable;
             if (!location && node is BirFieldGet { Recv.HasValue: true } fieldRead && fieldRead.Recv.Value is BirThis
                 && fieldRead.OwnerType.OrDefault() is TypeNode.Fqn named && named.Name == owner?.Name.OrDefault()
                 && fieldRead.Name.HasValue && erasedFields.TryGetValue(fieldRead.Name.Value, out var fieldVariable))
@@ -192,7 +203,7 @@ static partial class ErasedElementValues
             {
                 var inner = new Dictionary<string, SourceSlot>(scope, StringComparer.Ordinal);
                 foreach (var statement in valueBlock.Stmts.OrEmpty()) Bind((BirGraphValue)statement, inner);
-                Bind(valueBlock.Result.OrDefault() as BirGraphValue, inner, location);
+                Bind(valueBlock.Result.OrDefault() as BirGraphValue, inner, location, exactLocation);
                 return;
             }
             if (node is BirForArray { Var.HasValue: true } loop)
@@ -212,10 +223,13 @@ static partial class ErasedElementValues
             var argument = 0;
             node.VisitSourceChildren((field, _, child) => {
                 if (SourceSkip(field, node)) return;
-                var address = field == "args" && callParameters != null && argument < callParameters.Length
-                    && SignatureValueTypes.Of(callParameters[argument]) is TypeNode.ByRef;
+                var reference = field == "args" && callParameters != null && argument < callParameters.Length
+                    ? SignatureValueTypes.Of(callParameters[argument]) as TypeNode.ByRef : null;
                 if (field == "args") argument++;
-                Bind(child.Value, scope, address || node is BirByRefOf && field == "inner");
+                var addressOperand = node is BirByRefOf && field == "inner";
+                var pointerOperand = node is BirByRefLoad or BirByRefStore && field == "ptr";
+                Bind(child.Value, scope, reference != null || addressOperand || pointerOperand,
+                    reference != null ? !IsObject(reference.Of) : addressOperand ? exactLocation : !pointerOperand);
             }, region => {
                 if (node is BirNewClosure or BirNewSam or BirNewSuspendLambda) return;
                 BindSequence(region.Statements, scope);
@@ -311,6 +325,7 @@ static partial class ErasedElementValues
                     call.Ret = ObjectType; if (call.DynRet.HasValue) call.DynRet = ObjectType; call.Sty = ObjectType; break;
                 case BirFieldGet field: field.Sty = ObjectType; break;
                 case BirArrayGet array: array.Elem = ObjectType; break;
+                case BirByRefLoad load: load.Elem = ObjectType; break;
                 default: throw new InvalidOperationException("Unknown scalar value read occurrence");
             }
         }
@@ -386,7 +401,7 @@ static partial class ErasedElementValues
 
     // Location exclusion reads the selected raw parameter vector. Unlike native
     // allocation, it does not close a callee's variables into the caller frame.
-    static TypeNode[] SourceAddressParameters(BirGraphValue node)
+    internal static TypeNode[] SourceAddressParameters(BirGraphValue node)
     {
         var member = ForeignDeclarationFacts.Read(node)?.MemberRef;
         if (member?.ParameterTypes.OrDefault() is { } parameters) return parameters;

@@ -1011,7 +1011,7 @@
       "required": ["k", "inner"], "additionalProperties": false
     },
     "birByRefLoad": {
-      "type": "object", "x-dotkt-model": { "name": "BirByRefLoad", "domain": "birCore", "role": "expression" },
+      "type": "object", "x-dotkt-model": { "name": "BirByRefLoad", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" } } },
       "properties": { "k": { "const": "byrefLoad" }, "ptr": { "$ref": "#/$defs/birExpressionNode" }, "local": { "type": "string" }, "elem": { "x-dotkt-representation-role": "Element", "$ref": "#/$defs/type" } },
       "required": ["k", "elem"], "additionalProperties": false
     },
@@ -2279,7 +2279,7 @@
       "required": ["ordinal", "underlying", "physicalValue"], "additionalProperties": false
     },
     "cirByRefLoadNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirByRefLoad", "domain": "cirExecutable", "roles": ["expression"] },
+      "type": "object", "x-dotkt-model": { "name": "CirByRefLoad", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["_erasedValueVariable"] },
       "properties": { "k": { "const": "byrefLoad" }, "elem": { "x-dotkt-representation-role": "Element", "$ref": "#/$defs/type" }, "ptr": { "$ref": "#/$defs/cirExpressionNode" }, "local": { "type": "string" }, "volatile": { "type": "boolean" } },
       "required": ["k", "elem"], "additionalProperties": false
     },

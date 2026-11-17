@@ -3,6 +3,8 @@ package genericmutablecapture
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.*
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 
 private fun <T> capturedResult(value: T): T {
     var outcome: Result<T>? = null
@@ -163,6 +165,65 @@ private fun <T : Comparable<T>> boundCell(seed: T, next: T): T {
     return current
 }
 
+private class OpaqueLocalCaptureOwner<A>(private val values: Array<A>) {
+    fun <T> observe(other: Array<T>): String {
+        var first = values[0]
+        var second = other[0]
+        fun describe(): String = first.toString() + "/" + second.toString()
+        fun write(index: Int) { first = values[index]; second = other[index] }
+        fun forward(index: Int) { write(index) }
+        fun recursive(depth: Int, index: Int) {
+            if (depth == 0) forward(index) else recursive(depth - 1, index)
+        }
+        val before = describe()
+        recursive(2, 1)
+        val middle = describe()
+        var effects = ""
+        fun fail(): A { effects += "rhs"; throw IllegalStateException("stop") }
+        fun failedWrite() { first = fail() }
+        try { failedWrite() } catch (failure: IllegalStateException) { effects += ":caught" }
+        check(describe() == middle && effects == "rhs:caught")
+        forward(2)
+        return "$before|$middle|${describe()}"
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> opaqueCaptureInputs(): Array<T> = arrayOf<Any?>(null, "foreign", 42) as Array<T>
+
+private fun <A, T> observeOpaqueLocalCaptures(): String =
+    OpaqueLocalCaptureOwner(opaqueCaptureInputs<A>()).observe(opaqueCaptureInputs<T>())
+
+private fun <T> replaceAliased(first: ClrRef<T>, second: ClrRef<T>, next: T): T {
+    first.value = next
+    return second.value
+}
+
+private class NativeLocalCaptureOwner<A> {
+    fun <T> exchange(seed: T, next: T, ownerSeed: A, ownerNext: A): Pair<A, T> {
+        var current = seed
+        var owned = ownerSeed
+        fun read(): T = current
+        fun update() { check(replaceAliased(byref(current), byref(current), next) == next) }
+        fun forward() { update() }
+        // A native use in the caller constrains sibling local readers/writers too.
+        replaceAliased(byref(owned), byref(owned), ownerNext)
+        fun writeOwner() { owned = ownerNext }
+        fun readOwner(): A = owned
+        forward()
+        writeOwner()
+        return readOwner() to read()
+    }
+}
+
+private fun <T : Comparable<T>> boundedLocalCapture(seed: T, next: T): Int {
+    var current = seed
+    fun write() { current = next }
+    fun read(): Int = current.compareTo(next)
+    write()
+    return read()
+}
+
 class GenericMutableCaptureTests {
     @TestAttribute
     fun anonymousContinuationWritesGenericResultCell() {
@@ -221,5 +282,21 @@ class GenericMutableCaptureTests {
         assertEquals("after", boundCell("before", "after"))
         assertEquals(2, inlineBoundCell(1, 2))
         assertEquals("after", inlineBoundCell("before", "after"))
+    }
+
+    @TestAttribute
+    fun localFunctionsPreserveOpaqueArrayValuesAndAssignmentOrder() {
+        val expected = "null/null|foreign/foreign|42/42"
+        assertEquals(expected, observeOpaqueLocalCaptures<Int, String>())
+        assertEquals(expected, observeOpaqueLocalCaptures<String, Int>())
+        assertEquals(0, boundedLocalCapture(1, 2))
+        assertEquals(0, boundedLocalCapture("before", "after"))
+    }
+
+    @TestAttribute
+    fun genericNativeLocationsRemainExactAcrossLocalFunctionAliases() {
+        assertEquals("after" to 42, NativeLocalCaptureOwner<String>().exchange(1, 42, "before", "after"))
+        assertEquals(42 to "after", NativeLocalCaptureOwner<Int>().exchange("before", "after", 1, 42))
+        assertEquals(null to null, NativeLocalCaptureOwner<String?>().exchange<String?>("before", null, "owner", null))
     }
 }
