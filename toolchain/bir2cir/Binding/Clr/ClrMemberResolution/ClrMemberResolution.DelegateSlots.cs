@@ -121,7 +121,7 @@ static partial class ClrMemberResolution
         if (type is TypeNode.Fn fn) return fn;
         if (type is not TypeNode.Fqn named || ResolveOwnerType(named) is not Type owner
             || !IsDelegate(owner)) return null;
-        var family = DelegateFamily(owner);
+        var family = ClrDeclarationMatching.DelegateFamily(owner);
         if (family == null && !includeNominal) return null;
         var invoke = owner.GetMethod("Invoke");
         if (invoke == null) return null;

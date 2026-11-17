@@ -84,12 +84,12 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException("Exact dispatch requires a non-generic MethodDef with matching staticness");
         _refs = refs;
         var reference = MemberRefOf(method, MemberRefNode.Kinds.Method, method.DeclaringType, declaringOwner.Args);
-        var parameters = method.GetParameters().Select(parameter => PhysicalTypeOf(parameter.ParameterType,
+        var parameters = method.GetParameters().Select(parameter => ClrDeclarationMatching.PhysicalTypeOf(_refs, _localTypes, parameter.ParameterType,
             declaringOwner.Args, typeArg: false)).ToArray();
         // This result is already closed in the caller's owner frame. Both
         // renderers stamp ret AND sty to prevent a second substitution; the
         // MemberRef retains the selected MethodDef's open signature.
-        var result = PhysicalTypeOf(method.ReturnType, declaringOwner.Args, typeArg: false);
+        var result = ClrDeclarationMatching.PhysicalTypeOf(_refs, _localTypes, method.ReturnType, declaringOwner.Args, typeArg: false);
         var visibility = method.IsPrivate ? "private" : method.IsAssembly ? "internal"
             : method.IsFamily || method.IsFamilyOrAssembly || method.IsFamilyAndAssembly ? "protected" : null;
         return new(method.Name, reference, parameters, result, visibility, visibility == null ? null
@@ -252,7 +252,7 @@ static partial class ClrMemberResolution
     static TypeNode ShippedFieldType(FieldInfo field)
     {
         var shipped = _refs.PhysicalTwinOf(field, DeclaringDefOf(field)) ?? field;
-        return _refs.NativeFieldSignature(shipped) ?? Modified(RefTypeOf(shipped.FieldType),
+        return _refs.NativeFieldSignature(shipped) ?? Modified(ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, shipped.FieldType),
             shipped.GetRequiredCustomModifiers(), shipped.GetOptionalCustomModifiers());
     }
 
@@ -268,7 +268,7 @@ static partial class ClrMemberResolution
 
     // The DEFINITION of the type that declares the member, alias-resolved once. Both the assembly and the
     // declaring head are facts about this one type, and computing it twice is how the two drift apart.
-    static Type DeclaringDefOf(MemberInfo member) => SafeDef(AliasResolve(DeclaringTypeOf(member)));
+    static Type DeclaringDefOf(MemberInfo member) => ClrDeclarationMatching.SafeDef(ClrDeclarationMatching.AliasResolve(_refs, DeclaringTypeOf(member)));
 
     // The assembly the EMITTED reference must be scoped to. Resolution reads whichever file this tool was
     // given; the program loads whatever ships. ManagedReferenceCatalog owns the one place those differ.
@@ -314,7 +314,7 @@ static partial class ClrMemberResolution
         bool? ownerArgumentsAreMethodSlots = null)
     {
         var declaring = DeclaringDefOf(member);
-        var head = PhysicalTypeName(declaring);
+        var head = ClrDeclarationMatching.PhysicalTypeName(declaring);
         // A type ARGUMENT has to be stated physically like everything else in a reference. Owner arguments may reach
         // here straight off the pre-lowering call node; the carrier itself is not rewritten downstream.
         // The owner's arguments occupy the same positions here as they do when the full owner TypeNode is
@@ -322,11 +322,11 @@ static partial class ClrMemberResolution
         // arguments are method slots (Root-H applies). Treating every owner argument as storage rewrites e.g.
         // KProperty1<List<T>, R> to KProperty1<IList<T>, R>, although its get receiver remains IReadOnlyList<T>.
         var methodSlots = ownerArgumentsAreMethodSlots
-            ?? (openOwner != null && openOwner.IsGenericType && ArgumentsAreMethodSlots(openOwner));
+            ?? (openOwner != null && openOwner.IsGenericType && ClrDeclarationMatching.ArgumentsAreMethodSlots(openOwner));
         var argsAreSlots = !methodSlots;
         var args = (ownerArgs ?? Array.Empty<TypeNode>())
             .Select(a => PhysicalOwnerArg(a, typeArg: argsAreSlots)).ToArray();
-        var openDefinition = openOwner == null ? null : SafeDef(openOwner);
+        var openDefinition = openOwner == null ? null : ClrDeclarationMatching.SafeDef(openOwner);
         // The receiver IS the declarer: its own arguments apply unchanged.
         if (openDefinition != null && openDefinition == declaring)
             return new TypeNode.Fqn(head, args.Length == 0 ? null : args);
@@ -358,9 +358,9 @@ static partial class ClrMemberResolution
     {
         if (openOwner == null) return null;
         for (var b = openOwner; b != null; b = SafeBase(b))
-            if (SafeDef(AliasResolve(b)) == declaringDef) return b;
-        foreach (var iface in SafeInterfaces(openOwner))
-            if (SafeDef(AliasResolve(iface)) == declaringDef) return iface;
+            if (ClrDeclarationMatching.SafeDef(ClrDeclarationMatching.AliasResolve(_refs, b)) == declaringDef) return b;
+        foreach (var iface in ClrDeclarationMatching.SafeInterfaces(openOwner))
+            if (ClrDeclarationMatching.SafeDef(ClrDeclarationMatching.AliasResolve(_refs, iface)) == declaringDef) return iface;
         return null;
     }
 
@@ -368,7 +368,7 @@ static partial class ClrMemberResolution
     // becomes the receiver's argument at that position, everything else keeps the target's verbatim name.
     // The declaring edge's own arguments, projected onto the receiver's. A storage slot, so the collapse applies.
     static TypeNode SubstOwnerParamsPhysical(Type t, TypeNode[] ownerArgs) =>
-        PhysicalTypeOf(t, ownerArgs ?? Array.Empty<TypeNode>(), typeArg: true);
+        ClrDeclarationMatching.PhysicalTypeOf(_refs, _localTypes, t, ownerArgs ?? Array.Empty<TypeNode>(), typeArg: true);
 
     static Type SafeBase(Type t) { try { return t.BaseType; } catch { return null; } }
 
@@ -376,7 +376,7 @@ static partial class ClrMemberResolution
 
     static TypeNode[] RefParamsOf(MethodBase member) =>
         _refs.NativeMethodSignature(member)?.Parameters ?? member.GetParameters()
-            .Select(p => Modified(RefTypeOf(p.ParameterType),
+            .Select(p => Modified(ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, p.ParameterType),
                 p.GetRequiredCustomModifiers(), p.GetOptionalCustomModifiers()))
             .ToArray();
 
@@ -389,7 +389,7 @@ static partial class ClrMemberResolution
         // is carried to make.
         var node = ret == null || ret == typeof(void) || ret.FullName == "System.Void"
             ? MemberRefNode.Void
-            : RefTypeOf(ret);
+            : ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, ret);
         var rp = method.ReturnParameter;
         return rp == null ? node
             : Modified(node, rp.GetRequiredCustomModifiers(), rp.GetOptionalCustomModifiers());
@@ -405,97 +405,9 @@ static partial class ClrMemberResolution
     // ONLY by the interleaving of a modreq and a modopt would be beyond what reflection can tell us.
     static TypeNode Modified(TypeNode node, Type[] required, Type[] optional)
     {
-        foreach (var m in required) node = new TypeNode.Mod(true, RefTypeOf(m), node);
-        foreach (var m in optional) node = new TypeNode.Mod(false, RefTypeOf(m), node);
+        foreach (var m in required) node = new TypeNode.Mod(true, ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, m), node);
+        foreach (var m in optional) node = new TypeNode.Mod(false, ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, m), node);
         return node;
-    }
-
-    // A resolved member's declared type, spelled as the TARGET spells it (see the header). No arity stripping,
-    // no `+`-to-`.` flattening, no delegate rewritten as a Kotlin function type, no `System.Nullable`1`
-    // collapsed to a nullability wrapper: each of those is a document convention for talking about a Kotlin
-    // program, and each one merges types this reference has to keep apart.
-    // The twin the member is RESOLVED in is not the twin it is CALLED in. bir2cir resolves against the stdlib's
-    // reference twin, which declares the Kotlin surface (`kotlin.collections.List<kotlin.collections.List<T>>`);
-    // the member this reference names lives in the runtime twin, which declares the physical shape
-    // (`IReadOnlyList<IList<T>>`). Those are two vocabularies for one member, and the map between them is
-    // BirTypeLowering's — POSITION-DEPENDENT, so it cannot be applied by walking the signature with one alias
-    // step. Doing that produced `IReadOnlyList<IReadOnlyList<T>>`: a member neither twin declares.
-    static TypeNode RefTypeOf(Type t) => PhysicalTypeOf(t, null, typeArg: false);
-
-    static TypeNode RefTypeOf(Type t, bool typeArg) => PhysicalTypeOf(t, null, typeArg);
-
-    /// <summary>
-    /// A reflected type, spelled as the target declares it. `ownerArgs`, when given, substitutes the declaring
-    /// type's own parameters positionally — projecting a declaration edge instead of naming it over itself.
-    /// </summary>
-    /// <remarks>
-    /// Projection and plain naming were two functions until each was found applying the alias uniformly; they
-    /// are one function now because being two is what let one be fixed and the other not.
-    /// </remarks>
-    static TypeNode PhysicalTypeOf(Type t, TypeNode[] ownerArgs, bool typeArg)
-    {
-        if (t.IsGenericParameter)
-            return ownerArgs != null && t.GenericParameterPosition < ownerArgs.Length
-                ? ownerArgs[t.GenericParameterPosition]
-                : new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
-        // An element, a pointee and a byref target are VALUE positions — `typeArg: false` — exactly as
-        // BirTypeLowering lowers them. The collapse below applies to storage slots, not to what a slot holds.
-        if (t.IsByRef) return new TypeNode.ByRef(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
-        if (t.IsPointer) return new TypeNode.Ptr(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
-        if (t.IsArray) return ArrayOf(t, PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
-        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
-        var kotlinName = AliasKey(def);
-        TypeNode[] loweredArgs = null;
-        if (t.IsGenericType && !t.IsGenericTypeDefinition)
-        {
-            var argsAreSlots = !ArgumentsAreMethodSlots(t);
-            loweredArgs = t.GetGenericArguments()
-                .Select(a => PhysicalTypeOf(a, ownerArgs, typeArg: argsAreSlots)).ToArray();
-        }
-        // ONE implementation of "which CLR type does this Kotlin type become", shared with the pass that lowered
-        // the declaration being named. Reproducing it here instead reproduced part of it: the arg-position
-        // collapse but not the generic-classifier erasure, and not the contravariant `Comparable<Any?>` collapse.
-        var head = BirTypeLowering.PhysicalHead(kotlinName,
-            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs,
-            _refs.NullableTypeFrames, _refs.PhysicalTypeNames, _localTypes);
-        return MetadataSpelling(head, def, kotlinName);
-    }
-
-    // The vector and the general array are different types even at rank 1 — `T[]` and `T[*]` — and reflection
-    // says which is which through IsSZArray. Collapsing them would let one reference name either.
-    static TypeNode ArrayOf(Type t, TypeNode elem)
-    {
-        bool sz; try { sz = t.IsSZArray; } catch { sz = true; }
-        return sz ? new TypeNode.Array(elem) : TypeNode.Array.General(elem, SafeArrayRank(t));
-    }
-
-    /// <summary>
-    /// The head decision, respelled as the TARGET's metadata spells it.
-    /// </summary>
-    /// <remarks>
-    /// The lowering speaks document vocabulary, where a generic name carries no arity backtick and nesting is
-    /// dotted; a reference is a lookup key and must carry both. When the decision left the name alone, the
-    /// reflected type's own FullName IS that spelling. When it substituted a BCL type, the substitute is named
-    /// in the same universe, so its definition supplies the spelling rather than a backtick pasted on by hand.
-    /// </remarks>
-    static TypeNode MetadataSpelling(TypeNode head, Type def, string kotlinName)
-    {
-        if (head is not TypeNode.Fqn f) return head;
-        if (f.Name == kotlinName) return new TypeNode.Fqn(PhysicalTypeName(def), f.Args);
-        var substitute = RefDef(f.Name, f.Args?.Length ?? 0);
-        return new TypeNode.Fqn(substitute != null ? PhysicalTypeName(substitute) : f.Name, f.Args);
-    }
-
-    /// <summary>
-    /// True when this constructed generic's arguments reach the target as method slots rather than storage —
-    /// so Root-V does NOT apply to them.
-    /// </summary>
-    static bool ArgumentsAreMethodSlots(Type t)
-    {
-        var def = t.IsGenericTypeDefinition ? t : t.GetGenericTypeDefinition();
-        // The KProperty carriers, for the reason BirTypeLowering gives: each argument is substituted into an
-        // interface method slot, not stored in one.
-        return BirTypeLowering.IsMethodSlotCarrier(AliasKey(def));
     }
 
     static bool IsDelegate(Type t)
@@ -508,13 +420,6 @@ static partial class ClrMemberResolution
         catch { /* a reference whose base chain does not load is simply not a delegate here */ }
         return false;
     }
-
-    static int SafeArrayRank(Type t) { try { return t.GetArrayRank(); } catch { return 1; } }
-
-    // A type's own metadata name, verbatim. Every name inside a reference is a lookup key in the target
-    // universe rather than a document type spelling, so neither the arity backtick nor `+` nesting is
-    // normalized away — normalizing either is what merged `Outer`1+Inner` into `Outer`.
-    static string PhysicalTypeName(Type t) => t.FullName ?? t.Name;
 
     static string DescribeMember(MemberInfo member)
     {

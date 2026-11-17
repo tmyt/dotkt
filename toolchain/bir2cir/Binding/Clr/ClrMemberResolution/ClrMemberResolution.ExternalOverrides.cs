@@ -59,10 +59,10 @@ static partial class ClrMemberResolution
                 }
                 catch { }
 
-                var matches = MostDerived(candidates.Where(c => OverrideMatch(c.GetParameters(), declared)).ToList());
+                var matches = ClrDeclarationMatching.MostDerived(candidates.Where(c => OverrideMatch(c.GetParameters(), declared)).ToList());
                 if (matches.Count == 0) continue;
                 if (matches.Count > 1)
-                    throw Malformed(
+                    throw ClrDeclarationMatching.Malformed(
                         $"external override base={baseNode.Name}.{name}({DescArgs(declared)})",
                         matches);
 

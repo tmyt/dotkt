@@ -76,7 +76,7 @@ static partial class ClrMemberResolution
                 $"bir2cir: newList constructs '{template.Owner}', which does not resolve to a .NET type");
         var constructors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(candidate => candidate.GetParameters().Length == 0).ToList();
-        var constructor = TryPickUniqueCtor(constructors, new List<TypeNode>(), arguments)
+        var constructor = ClrDeclarationMatching.TryPickUniqueCtor(_refs, constructors, new List<TypeNode>(), arguments)
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{template.Owner}' has no unique parameterless constructor for newList");
         node.CtorRef = NativeReference(constructor, MemberRefNode.Kinds.Ctor, open, arguments);
@@ -84,7 +84,7 @@ static partial class ClrMemberResolution
         var signature = Enumerable.Range(0, template.Arity).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToList();
         var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(method => method.Name == template.Accumulator && method.GetParameters().Length == signature.Count).ToList();
-        var accumulator = TryPickUnique(candidates, signature, arguments)
+        var accumulator = ClrDeclarationMatching.TryPickUnique(_refs, candidates, signature, arguments)
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{template.Owner}.{template.Accumulator}' does not resolve to one declaration for newList");
         node.AddRef = NativeReference(accumulator, MemberRefNode.Kinds.Method, open, arguments);
@@ -101,7 +101,7 @@ static partial class ClrMemberResolution
                 $"bir2cir: spreadConcat accumulates into '{SpreadOwner}', which does not resolve to a .NET type");
         var constructors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(candidate => candidate.GetParameters().Length == 0).ToList();
-        node.CtorRef = NativeReference(TryPickUniqueCtor(constructors, new List<TypeNode>(), arguments)
+        node.CtorRef = NativeReference(ClrDeclarationMatching.TryPickUniqueCtor(_refs, constructors, new List<TypeNode>(), arguments)
             ?? throw Missing(SpreadOwner, ".ctor"), MemberRefNode.Kinds.Ctor, open, arguments);
         var slot = new TypeNode.Tv("type", 0);
         node.AddRef = NativeSpreadMember(open, arguments, "Add", new List<TypeNode> { slot });
@@ -115,7 +115,7 @@ static partial class ClrMemberResolution
     {
         var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(method => method.Name == name && method.GetParameters().Length == signature.Count).ToList();
-        return NativeReference(TryPickUnique(candidates, signature, arguments) ?? throw Missing(SpreadOwner, name),
+        return NativeReference(ClrDeclarationMatching.TryPickUnique(_refs, candidates, signature, arguments) ?? throw Missing(SpreadOwner, name),
             MemberRefNode.Kinds.Method, open, arguments);
     }
 
@@ -140,7 +140,7 @@ static partial class ClrMemberResolution
             $"bir2cir: forEachInline walks '{name}', which does not resolve to a .NET type");
         var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(method => method.Name == member && method.GetParameters().Length == 0).ToList();
-        var selected = TryPickUnique(candidates, new List<TypeNode>(), arguments) ?? throw new InvalidOperationException(
+        var selected = ClrDeclarationMatching.TryPickUnique(_refs, candidates, new List<TypeNode>(), arguments) ?? throw new InvalidOperationException(
             $"bir2cir: '{name}.{member}' does not resolve to one declaration for forEachInline");
         return NativeReference(selected, MemberRefNode.Kinds.Method, open, arguments);
     }
@@ -161,7 +161,7 @@ static partial class ClrMemberResolution
         {
             var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Where(method => method.Name == name && method.GetParameters().Length == 2).ToList();
-            var selected = TryPickUnique(candidates, signature, Array.Empty<TypeNode>()) ?? throw new InvalidOperationException(
+            var selected = ClrDeclarationMatching.TryPickUnique(_refs, candidates, signature, Array.Empty<TypeNode>()) ?? throw new InvalidOperationException(
                 $"bir2cir: 'System.Delegate.{name}(Delegate, Delegate)' does not resolve to one declaration");
             return NativeReference(selected, MemberRefNode.Kinds.Method, open, Array.Empty<TypeNode>());
         }
@@ -187,14 +187,14 @@ static partial class ClrMemberResolution
         {
             var constructors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
                 .Where(candidate => candidate.GetParameters().Length == 1).ToList();
-            var selected = TryPickUniqueCtor(constructors, new List<TypeNode> { new TypeNode.Tv("type", 0) }, arguments)
+            var selected = ClrDeclarationMatching.TryPickUniqueCtor(_refs, constructors, new List<TypeNode> { new TypeNode.Tv("type", 0) }, arguments)
                 ?? throw new InvalidOperationException($"bir2cir: '{NullableFqn}' has no unique one-argument constructor for {kind}");
             return NativeReference(selected, MemberRefNode.Kinds.Ctor, open, arguments);
         }
         var name = kind == "nullableHasValue" ? "get_HasValue" : "get_Value";
         var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(method => method.Name == name && method.GetParameters().Length == 0).ToList();
-        var accessor = TryPickUnique(candidates, new List<TypeNode>(), arguments) ?? throw new InvalidOperationException(
+        var accessor = ClrDeclarationMatching.TryPickUnique(_refs, candidates, new List<TypeNode>(), arguments) ?? throw new InvalidOperationException(
             $"bir2cir: '{NullableFqn}.{name}' does not resolve to one declaration for {kind}");
         return NativeReference(accessor, MemberRefNode.Kinds.PropertyAccessor, open, arguments);
     }

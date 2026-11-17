@@ -57,7 +57,7 @@ static partial class ClrMemberResolution
         if (target == null || construction.Natural is not TypeNode.Fn natural) return value;
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(natural);
         if (naturalDelegate == null || SameDelegate(naturalDelegate, target)) return value;
-        if (IsVoidNode(natural.Ret) && SlotInvokeReturn(target) is TypeNode result && !IsVoidNode(result))
+        if (ClrDeclarationMatching.IsVoidNode(natural.Ret) && SlotInvokeReturn(target) is TypeNode result && !ClrDeclarationMatching.IsVoidNode(result))
             return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(natural, target, result), alwaysArguments: false);
         if (PhysicalFunctionShape(target, includeNominal: true) is TypeNode.Fn signatureType
             && NeedsSlotAdapter(natural, signatureType))

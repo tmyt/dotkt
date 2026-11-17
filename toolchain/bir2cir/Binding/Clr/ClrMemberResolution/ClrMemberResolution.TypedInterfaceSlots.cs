@@ -102,7 +102,7 @@ static partial class ClrMemberResolution
                         return KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declared, candidate.DeclaringArguments) == shape;
                     }).ToList();
                 }
-                var mostDerived = MostDerived(candidates.Select(candidate => candidate.Method)
+                var mostDerived = ClrDeclarationMatching.MostDerived(candidates.Select(candidate => candidate.Method)
                     .GroupBy(method => (method.Module, method.MetadataToken)).Select(methods => methods.First()).ToList());
                 if (mostDerived.Count == 1)
                 {

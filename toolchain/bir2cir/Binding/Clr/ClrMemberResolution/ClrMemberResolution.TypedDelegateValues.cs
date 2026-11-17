@@ -92,7 +92,7 @@ static partial class ClrMemberResolution
                 $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == 2).ToList();
-        var win = TryPickUniqueCtor(ctors,
+        var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, ctors,
             new List<TypeNode> { new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.IntPtr") },
             delegateFqn.Args ?? Array.Empty<TypeNode>())
             ?? throw new InvalidOperationException(

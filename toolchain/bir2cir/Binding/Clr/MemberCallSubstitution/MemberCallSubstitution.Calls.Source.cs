@@ -597,10 +597,10 @@ static partial class MemberCallSubstitution
             var targetOwner = ClrMemberResolution.DeclaringTypeRef(target, openOwner, physicalReceiver.Args) as TypeNode.Fqn
                 ?? throw new InvalidOperationException("Intrinsic extension has no constructed declaring owner");
             TypeNode Close(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, targetOwner.Args ?? Array.Empty<TypeNode>());
-            var parameters = target.GetParameters().Select(parameter => Close(ClrMemberResolution.MemberSigOf(parameter.ParameterType))).ToArray();
+            var parameters = target.GetParameters().Select(parameter => Close(ClrDeclarationMatching.MemberSigOf(refs, parameter.ParameterType))).ToArray();
             call.Type = CopyCallType(physicalReceiver);
             call.ArgTypes = signature.Skip(1).Select(type => SubstMethodTv(type, node.TypeArgs.OrDefault())).ToArray();
-            return (BirGraphValue)IntrinsicExtensionRepresentation.Adapt(call, parameters, Close(ClrMemberResolution.MemberSigOf(target.ReturnType)));
+            return (BirGraphValue)IntrinsicExtensionRepresentation.Adapt(call, parameters, Close(ClrDeclarationMatching.MemberSigOf(refs, target.ReturnType)));
         }
         return call;
     }

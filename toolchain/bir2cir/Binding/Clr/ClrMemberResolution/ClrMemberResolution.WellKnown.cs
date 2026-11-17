@@ -62,7 +62,7 @@ static partial class ClrMemberResolution
             // A role that cannot be resolved is a producer defect. Skipping it quietly hands the emitter a
             // table with a hole in it, and the hole only shows up as a missing member at emit time — one layer
             // past the one that could say what went wrong.
-            var win = TryPickUnique(cands, wanted, Array.Empty<TypeNode>())
+            var win = ClrDeclarationMatching.TryPickUnique(_refs, cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
@@ -79,7 +79,7 @@ static partial class ClrMemberResolution
             var ownerArgs = OwnParameters(open);
             var cands = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(c => !c.IsStatic && c.GetParameters().Length == wanted.Count).ToList();
-            var win = TryPickUniqueCtor(cands, wanted, Array.Empty<TypeNode>())
+            var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
@@ -102,7 +102,7 @@ static partial class ClrMemberResolution
         var tick = spec.IndexOf('`');
         return tick < 0
             ? ResolveOwnerType(new TypeNode.Fqn(spec))
-            : RefDef(spec[..tick], int.Parse(spec[(tick + 1)..]));
+            : ClrDeclarationMatching.RefDef(_refs, spec[..tick], int.Parse(spec[(tick + 1)..]));
     }
 
     static TypeNode ParseWellKnownParam(string spec) =>
@@ -183,7 +183,7 @@ static partial class ClrMemberResolution
             }
             candidates.Add((method, reference, parameters, returnType, declaringArgs));
         }
-        var distinct = MostDerived(candidates
+        var distinct = ClrDeclarationMatching.MostDerived(candidates
             .GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
             .Select(group => group.First().Method).ToList());
         if (distinct.Count > 1)
@@ -254,7 +254,7 @@ static partial class ClrMemberResolution
                     && method.GetParameters().Length == callSig.Length
                     && IsPublicOrProtected(method))
                 .ToList();
-            var declaration = TryPickUnique(candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
+            var declaration = ClrDeclarationMatching.TryPickUnique(_refs, candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
             if (declaration == null) continue;
             var reference = MemberRefOf(declaration, MemberRefNode.Kinds.Method, open,
                 spec.Args ?? Array.Empty<TypeNode>());
@@ -263,7 +263,7 @@ static partial class ClrMemberResolution
         // A derived interface can redeclare a base slot with the same source signature.  That is not ambiguity:
         // ordinary member lookup selects the most-derived declaration.  Apply the same existing metadata rule here,
         // before comparing the complete scalar references; unrelated declarations remain an unresolved ambiguity.
-        var mostDerived = MostDerived(answers.Select(answer => answer.Declaration)
+        var mostDerived = ClrDeclarationMatching.MostDerived(answers.Select(answer => answer.Declaration)
             .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList());
         if (mostDerived.Count == 1)
         {

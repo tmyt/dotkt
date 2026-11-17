@@ -60,11 +60,11 @@ static partial class ClrMemberResolution
         // GetMethods returns declarations in their OPEN declaring-type frames.  Specialize each through the
         // constructed owner edge before comparing it with the already-constructed descriptor: a Base<T,U> that
         // declares M(T) and M(U) must become distinguishable when reached through Base<Int32,String>.
-        var matches = MostDerived(candidates.Where(candidate =>
+        var matches = ClrDeclarationMatching.MostDerived(candidates.Where(candidate =>
             ExternalMethodImplSlotMatches(candidate, open, ownerSpec.Args, parameters, ret)).ToList());
         var description = $"external base MethodImpl={ownerSpec.Name}.{name}({DescArgs(parameters)}):{ret}";
-        if (matches.Count == 0) throw NoMatch(description, candidates);
-        if (matches.Count > 1) throw Malformed(description, matches);
+        if (matches.Count == 0) throw ClrDeclarationMatching.NoMatch(description, candidates);
+        if (matches.Count > 1) throw ClrDeclarationMatching.Malformed(description, matches);
         var winner = matches[0];
         var reference = MemberRefOf(winner, MemberRefNode.Kinds.Method, open,
             ownerSpec.Args ?? Array.Empty<TypeNode>());

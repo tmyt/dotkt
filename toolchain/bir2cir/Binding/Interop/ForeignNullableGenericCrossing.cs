@@ -206,11 +206,11 @@ static partial class ForeignNullableGenericCrossing
                 var slot = new Slot
                 {
                     Name = m.Name,
-                    Owner = DeclaringName(m) ?? spec.Name,
+                    Owner = DeclaringName(m, refs) ?? spec.Name,
                     PhysicalOwner = ClrMemberResolution.DeclaringTypeIdentity(m),
                     Arity = m.IsGenericMethodDefinition ? m.GetGenericArguments().Length : 0,
-                    Params = m.GetParameters().Select(p => ClrMemberResolution.MemberSigOf(p.ParameterType)).ToArray(),
-                    Ret = m.ReturnType == typeof(void) ? null : ClrMemberResolution.MemberSigOf(m.ReturnType),
+                    Params = m.GetParameters().Select(p => ClrDeclarationMatching.MemberSigOf(refs, p.ParameterType)).ToArray(),
+                    Ret = m.ReturnType == typeof(void) ? null : ClrDeclarationMatching.MemberSigOf(refs, m.ReturnType),
                     Implemented = !m.IsAbstract,
                     SuspendResult = refs.HasLogicalSuspendResult(m),
                 };
@@ -231,12 +231,12 @@ static partial class ForeignNullableGenericCrossing
         return ReflectedSlotCache[cacheKey] = result.ToArray();
     }
 
-    static string DeclaringName(MethodInfo m)
+    static string DeclaringName(MethodInfo m, ReferenceMetadataIndex refs)
     {
         try
         {
             return m.DeclaringType != null
-                   && ClrMemberResolution.MemberSigOf(m.DeclaringType) is TypeNode.Fqn f
+                   && ClrDeclarationMatching.MemberSigOf(refs, m.DeclaringType) is TypeNode.Fqn f
                 ? f.Name : null;
         }
         catch (Exception e) when (e is NotSupportedException or TypeLoadException or FileNotFoundException)
