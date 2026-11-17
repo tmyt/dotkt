@@ -48,7 +48,7 @@ import java.io.File
 /**
  * Fork of the stock `MetadataFrontendPipelinePhase` (2.4.21) -- PSI-only, non-light-tree branch,
  * matching the rest of kotc, which never sets [CommonConfigurationKeys.USE_LIGHT_TREE] -- needed for
- * TWO reasons:
+ * these integration points:
  *  1. The stock phase builds its FIR sessions internally via `prepareMetadataSessions` and only returns
  *     the already-resolved frontend output -- it never hands back the `FirSession` objects before
  *     resolution runs. We need that window to call [installKotlinJvmDefaultImport] (see
@@ -58,6 +58,8 @@ import java.io.File
  *     same module). We inline its body (all public CLI/FIR symbols: `FirMetadataSessionFactory`,
  *     `SessionConstructionUtils.prepareSessions`, ...) to drive that flag off `hasCommonSources` and get
  *     the common/platform module split. See the call site below.
+ *  3. Library sessions need CLR scope hooks and the manifest-selected KLIB string-table reader
+ *     before any declaration or annotation is deserialized.
  *
  * `prepareMetadataSessions` itself IS public CLI API (`org.jetbrains.kotlin.cli.common`), so this
  * reimplements only the thin CLI glue around it plus its (now flag-parameterised) session-preparation
@@ -122,9 +124,9 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// no `-Xfragments`/HMPP structure is passed, `prepareSessions` takes the legacy-MPP split
 		// (common module + platform-module-depends-on-common). Downstream Fir2Ir actualization + BIR emit
 		// already handle the multi-session output — the stdlib self-build uses the same two tail phases.
-		// The block below is a verbatim copy of `prepareMetadataSessions` (upstream
-		// `compiler/cli/.../common/FirSessionConstructionUtils.kt`, 2.4.21) with the sole `metadataCompilationMode`
-		// literal parameterised — keep it in sync on a frontend bump. NOTE: `-Xfragments` app builds (an HMPP
+		// This follows `prepareMetadataSessions` (upstream FirSessionConstructionUtils.kt, 2.4.21),
+		// parameterizing metadataCompilationMode and installing CLR scopes/declared KLIB readers.
+		// Keep the public API sequencing in sync on a frontend bump. NOTE: `-Xfragments` app builds (an HMPP
 		// module structure rather than `-Xcommon-sources`) are NOT wired here yet — `hasCommonSources` would be
 		// false and force single-session; widening the guard to also cover an HMPP structure is a follow-up.
 		val hasCommonSources = ktFiles.any { isCommonSourceForPsi(it) }

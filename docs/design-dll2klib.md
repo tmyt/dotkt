@@ -113,8 +113,24 @@ schemas in:
 - `upstream/compiler/util-klib/src/KlibMetadataProtoBuf.proto`
 
 KLIB extension fields are represented as ordinary C# protobuf fields with the
-same wire numbers. Kotlin's registered extension parser therefore reads the
-result as standard KLIB metadata.
+same wire numbers. Kotlin's registered extension parser reads this protobuf
+layout; String values additionally honor the manifest-selected codec below.
+
+If a projected string table contains an unpaired UTF-16 surrogate, the manifest
+declares `dotkt_string_table_codec=utf16le-base64-indexed`. For this codec, each
+fragment reserves its final string-table row for a comma-separated list of
+encoded row indexes (empty when that fragment needs none). Only those selected
+rows carry raw little-endian UTF-16 code units as Base64. Existing source indexes,
+identifier strings and ordinary values do not move or change; the final index
+row is not a source string.
+
+`kotc` restores these selected rows and removes the index row before constructing
+the standard Kotlin `NameResolver` and declaration/annotation deserializers.
+Every KLIB reader, including compile-time-constant loading, uses
+`clrKlibNameResolver` rather than constructing a resolver directly from the wire
+table. Strings are never classified by their spelling. Standard upstream KLIBs
+without this codec remain ordinary inputs; stock readers alone cannot restore
+the selected internal codec.
 
 The module identity is derived from the CLR assembly identity and MVID. The manifest records that identity as the
 ordinary `unique_name`; the protobuf header records the corresponding Kotlin special name (`module_name=<...>`), as
