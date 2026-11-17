@@ -143,8 +143,10 @@ class FunctionVarianceTests {
         check(varianceInvokeResult<Int>(rawResult as () -> Int) == "heterogeneous")
         check(resultCalls == 1)
         var boundCalls = 0
-        check(varianceBoundLength { boundCalls++; "four" } == 4)
+        check(varianceBoundLength<CharSequence> { boundCalls++; "four" } == 4)
         check(boundCalls == 1)
+        check(varianceBoundLength<CharSequence>(sequenceFactory) == 6)
+        check(evaluations == 2)
         check(varianceBoundLength { VarianceText("five") } == 4)
         check(varianceExactResult(listOf(19)) == 19)
         var rejected = false
