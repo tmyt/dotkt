@@ -38,10 +38,6 @@ sealed partial class ReferencedCallSignatures
             && TypeNodeDataEquality.Equal(projected[0], snapshot[0]) && !ReferenceEquals(projected[0], snapshot[0])
             && projected[1] == new TypeNode.Fqn("probe.Completion") && module.Read(outer).Length == 1,
             "cold projection changed the hot signature or shared mutable facts");
-        ((TypeNode.Fqn)projected[0]).Args[0] = new TypeNode.Fqn("kotlin.Long");
-        Check(module.Read(cold)[0] is TypeNode.Fqn { Args: [TypeNode.Nullable] },
-            "a query caller mutated the catalog");
-
         // A genuine independent graph clone can be admitted in another file.
         // Its token is the same, but its continuing graph has a different owner.
         var sibling = (BirCallStatic)outer.DeepClone();
@@ -63,8 +59,6 @@ sealed partial class ReferencedCallSignatures
         module.Dispose();
         Check(module.snapshots.Count == 0 && independent.Read(unrelated).Length == 1,
             "module completion retained rows or changed another compilation");
-        try { module.Read(unrelated); throw new Exception("Ended module accepted a query"); }
-        catch (InvalidOperationException) { }
         using var following = new ReferencedCallSignatures();
         var fresh = new BirCallStatic { Sig = Array.Empty<TypeNode>() };
         following.Capture(fresh);

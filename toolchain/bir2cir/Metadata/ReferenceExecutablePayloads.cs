@@ -4,14 +4,13 @@ using DefaultKey = ReferenceMetadataIndex.DefaultKey;
 using SignatureKey = ReferenceMetadataIndex.SignatureKey;
 
 // Fixed imported executable facts, not live declarations or a reflection service.
-// Capture severs mutable scan-input aliases once; all lookup views share these
-// private snapshots. Queries return independently owned splice ingredients.
+// Scan publishes read-only templates; queries return independently owned splice
+// ingredients, preserving the existing materialization behavior.
 // The index owns this managed-only catalog for its compilation lifetime.
 sealed class ReferenceExecutablePayloads
 {
-    // Borrowed decoded inputs at the scan/capture frontier. This is not an
-    // immutable graph claim: construction copies them before publishing queries.
-    // No other declaration facts or mutation capabilities enter the catalog.
+    // Borrowed decoded scan facts. The scan writer is complete before lookup;
+    // no other declaration facts or mutation capabilities enter the catalog.
     internal sealed record ScanInput(
         IReadOnlyDictionary<DefaultKey, Dictionary<int, IBirExpression>> KotlinDefaults,
         IReadOnlySet<DefaultKey> KotlinDefaultsConflicted,
@@ -32,59 +31,38 @@ sealed class ReferenceExecutablePayloads
 
     internal ReferenceExecutablePayloads(IEnumerable<ScanInput> inputs)
     {
-        // A declaration's default map is indexed by signature, relaxed signature,
-        // arity and identity; an inline payload by candidate shape and identity.
-        // Capture each input object once, not once per derived lookup entry.
-        var defaultCopies = new Dictionary<Dictionary<int, IBirExpression>, Dictionary<int, IBirExpression>>(
-            ReferenceEqualityComparer.Instance);
-        var inlineCopies = new Dictionary<BirInlinePayload, BirInlinePayload>(ReferenceEqualityComparer.Instance);
-        Dictionary<int, IBirExpression> CaptureDefaults(Dictionary<int, IBirExpression> source)
-        {
-            if (!defaultCopies.TryGetValue(source, out var captured))
-                defaultCopies.Add(source, captured = CloneDefaults(source));
-            return captured;
-        }
-        BirInlinePayload CaptureInline(BirInlinePayload source)
-        {
-            if (!inlineCopies.TryGetValue(source, out var captured))
-                inlineCopies.Add(source, captured = (BirInlinePayload)source.DeepClone());
-            return captured;
-        }
         foreach (var input in inputs)
         {
             conflictingDefaults.UnionWith(input.KotlinDefaultsConflicted);
             foreach (var (key, source) in input.KotlinDefaults)
             {
-                var captured = CaptureDefaults(source);
-                defaults.TryAdd(key, captured);
+                defaults.TryAdd(key, source);
                 // Signature entries do not fold, and construction always states
                 // its owner: unrelated constructors never become ownerless calls.
                 if (key.Signature != null || key.Method == ReferenceMetadataIndex.CtorKeyName) continue;
                 var name = key.Method + "|" + key.ParamCount;
                 if (ambiguousDefaults.Contains(name)) continue;
                 if (input.KotlinDefaultsConflicted.Contains(key)
-                    || ownerlessDefaults.TryGetValue(name, out var previous) && !ExecutableBirCodec.SameDefaults(previous, captured))
+                    || ownerlessDefaults.TryGetValue(name, out var previous) && !ExecutableBirCodec.SameDefaults(previous, source))
                 {
                     ownerlessDefaults.Remove(name);
                     ambiguousDefaults.Add(name);
                 }
-                else ownerlessDefaults.TryAdd(name, captured);
+                else ownerlessDefaults.TryAdd(name, source);
             }
             foreach (var (id, source) in input.KotlinDefaultsByDeclarationId)
             {
-                var captured = CaptureDefaults(source);
-                if (!defaultsById.TryAdd(id, captured) && !ExecutableBirCodec.SameDefaults(defaultsById[id], captured))
+                if (!defaultsById.TryAdd(id, source) && !ExecutableBirCodec.SameDefaults(defaultsById[id], source))
                     conflictingDefaultIds.Add(id);
             }
             foreach (var (key, payloads) in input.InlinePayloads)
             {
                 if (!inline.TryGetValue(key, out var candidates)) inline[key] = candidates = new();
-                candidates.AddRange(payloads.Select(CaptureInline));
+                candidates.AddRange(payloads);
             }
             foreach (var (id, source) in input.InlinePayloadsByDeclarationId)
             {
-                var captured = CaptureInline(source);
-                if (!inlineById.TryAdd(id, captured) && !ExecutableBirCodec.SameInline(inlineById[id], captured))
+                if (!inlineById.TryAdd(id, source) && !ExecutableBirCodec.SameInline(inlineById[id], source))
                     conflictingInlineIds.Add(id);
             }
         }

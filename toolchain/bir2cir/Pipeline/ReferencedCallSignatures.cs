@@ -10,11 +10,9 @@ sealed partial class ReferencedCallSignatures : IDisposable
 {
     readonly Dictionary<int, TypeNode[]> snapshots = new();
     int nextId;
-    bool disposed;
 
     internal void Capture(BirGraphValue node)
     {
-        RequireActive();
         if (node is IBirExecutablePayload) return;
         if (node is BirCallStatic { Sig.HasValue: true } call && !call.DotktKotlinSigId.HasValue)
             call.DotktKotlinSigId = Remember(call.Sig.Value);
@@ -28,40 +26,22 @@ sealed partial class ReferencedCallSignatures : IDisposable
         return id;
     }
 
-    internal TypeNode[] Read(BirCallStatic call)
-    {
-        RequireActive();
-        return call.DotktKotlinSigId.HasValue
-            ? Snapshot(call.DotktKotlinSigId.Value).Select(BirGraphValue.CopyType).ToArray() : null;
-    }
-
-    TypeNode[] Snapshot(int id) => snapshots.TryGetValue(id, out var signature) ? signature
-        : throw new InvalidOperationException("Call signature token has no owning module snapshot");
+    internal TypeNode[] Read(BirCallStatic call) => call.DotktKotlinSigId.HasValue
+        ? snapshots.GetValueOrDefault(call.DotktKotlinSigId.Value) : null;
 
     // Cold lowering gets this capability, not access to the table or resolver.
     internal void ProjectColdCall(BirCallStatic source, BirCallStatic target, TypeNode completion)
     {
-        RequireActive();
-        if (source.DotktKotlinSigId.HasValue)
-            target.DotktKotlinSigId = Remember(Snapshot(source.DotktKotlinSigId.Value).Append(completion));
+        if (source.DotktKotlinSigId.HasValue && snapshots.TryGetValue(source.DotktKotlinSigId.Value, out var signature))
+            target.DotktKotlinSigId = Remember(signature.Append(completion));
     }
 
     internal void ReleaseMarkers(BirGraphValue node)
     {
-        RequireActive();
         if (node is IBirExecutablePayload) return;
         if (node is BirCallStatic call) call.DotktKotlinSigId = default;
         node.VisitChildren(ReleaseMarkers);
     }
 
-    void RequireActive()
-    {
-        if (disposed) throw new InvalidOperationException("Call signatures used after module completion");
-    }
-
-    public void Dispose()
-    {
-        snapshots.Clear();
-        disposed = true;
-    }
+    public void Dispose() => snapshots.Clear();
 }

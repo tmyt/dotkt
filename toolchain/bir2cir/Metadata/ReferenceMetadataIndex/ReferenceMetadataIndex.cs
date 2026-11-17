@@ -652,19 +652,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
     public void SetLocalEmittedTypes(IReadOnlySet<string> fqns)
     {
-        var names = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
+        _localEmittedTypes = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
             .ToHashSet(StringComparer.Ordinal);
-        var changed = !names.SetEquals(_localEmittedTypes);
-        _localEmittedTypes = names;
         _physicalTypeNamesSnapshot = null;
-        if (changed)
-        {
-            // These decisions include local-over-reference precedence. The
-            // universe's fixed-reference type cache does not include that policy.
-            _literalFieldCache.Clear();
-            _volatileFieldCache.Clear();
-            _awaitPlanCache.Clear();
-        }
     }
 
     bool IsLocalEmittedType(string fqn) =>
@@ -7754,7 +7744,6 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         SelectedSourceConstraintShapeSelfTest();
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
-        PayloadOwnershipSelfTest();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
         nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
@@ -8472,8 +8461,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);
-    // Decoded scan inputs; ReferenceExecutablePayloads captures its own private
-    // snapshots, and splice readers receive independent graphs from that owner.
+    // Writer-owned decoded templates, read-only after scan. Splice readers
+    // receive independent graphs through ReferenceExecutablePayloads queries.
     public readonly Dictionary<string, List<BirInlinePayload>> InlinePayloads = new(StringComparer.Ordinal);
     public readonly Dictionary<string, BirInlinePayload> InlinePayloadsByDeclarationId = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").

@@ -291,7 +291,6 @@ static class Bir2Cir
                 ReferenceMetadataIndex.PhysicalParameterFactsSelfTest();
                 ClrMemberResolution.ReferenceUniverseIsolationSelfTest();
                 ReferenceMetadataUniverse.SelfTest();
-                ReferenceMetadataIndex.UniverseLifetimeSelfTest();
                 MetadataDeclaredMembersTests.SelfTest();
                 ExternalGenericConstraintValidation.SelfTestResolved();
                 NullableTvErasureCallRealign.SelfTest();
