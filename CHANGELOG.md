@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Give imported inline/default executable payloads one private capture/query
+  owner, isolating scan inputs and independently materialized splice graphs.
+
 - Own reference-metadata lookup resources per compilation, release them on
   failure, and invalidate derived decisions when local declaration ownership changes.
 
