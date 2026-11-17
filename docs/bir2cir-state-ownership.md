@@ -86,7 +86,7 @@ The resolution path's state and its current ownership:
 | `_externalCanonicalTypes`, `_localDeclarationIds` | Referenced entry assigns; planner consumes | Per invocation, process-held sets | Referenced selection inputs; not shared mutation rights |
 | `_localCarriers` | Local target and delegate entry points assign; physical function/delegate shaping reads | Module physical continuation stored ambiently | Explicit physical carrier relation input |
 | Nullable-definition / root-array queries | Native matching asks the current reference index | Borrowed handles from its universe; no process-wide outer Type cache | Fixed-input lookup is cached only by the owning universe, so interleaved compilations do not share handles |
-| `_nextAdapter`, `_nextValueAdapter` | `FreshDelegateAdapterName` / `FreshUnitDelegateTemporary`; typed physical adapter producers consume | Process allocation order leaks into compilation output | Compilation-owned declaration/name allocator with only synthesis clients |
+| `PhysicalDelegateDeclarations.nextAdapter`, `nextValue` | Adapter declaration construction and value-temporary allocation | One compilation, shared by construction and final value-flow consumers | Pipeline supplies the declaration builder; consumers retain separate per-file caches and publication rights |
 | Index `nativeSignatures` | Metadata scan and physical CLR binding query the existing `NativeSignatureReader` by path/MVID/token | One reference index owns the decoder from scan through binding and drops it on disposal | Borrowed read-only declaration facts, preserving the decoder's existing behavior; ordinary declaration projection remains outside it |
 
 `CollectionTemplates`, well-known-member tables and `ResolvedOnlyKinds` are
@@ -100,6 +100,15 @@ allocator or resource lifetime. It returns selected reflection declarations and
 new type descriptors, borrowed within the index lifetime. Binding entry points
 still own call/slot graph updates and pass their current facts; removing their
 remaining ambient invocation state is a separate boundary, not claimed here.
+
+`PhysicalDelegateDeclarations` owns adapter declaration construction and its two
+identity allocators. The pipeline creates one instance for construction and final
+value-flow lowering. It receives the existing selected plan, reference queries
+and Unit-value factory and returns a new declaration, not an appended graph.
+`TypedPhysicalDelegateAdapter` retains per-file reuse and declaration publication;
+the two lowering consumers keep separate caches as before. Allocation order and
+declaration bodies are unchanged within a compilation. No new validation,
+defensive copies or internal-mutation guarantees are added.
 
 Scan borrows method/slot queries before index construction; binding uses the
 same index-owned decoder. It retains no reflection handles and closes each PE

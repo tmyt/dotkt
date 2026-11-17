@@ -7,13 +7,13 @@ static partial class ClrMemberResolution
     // The final construction owner runs after all member/interface resolution.
     // Pending owning slots are captured before appending adapter declarations:
     // newly authored adapters are final, not additional materialization inputs.
-    public static void MaterializeDelegateSlots(BirFileDeclaration document, ReferenceMetadataIndex refs,
+    public static void MaterializeDelegateSlots(PhysicalDelegateDeclarations declarations, BirFileDeclaration document, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes, IReadOnlyDictionary<string, string> localCarriers = null)
     {
         _refs = refs;
         _localCarriers = localCarriers;
         _localTypes = localTypes ?? new HashSet<string>();
-        var adapters = new TypedPhysicalDelegateAdapter(refs, () => UnitSingletonRead(refs));
+        var adapters = new TypedPhysicalDelegateAdapter(refs, () => UnitSingletonRead(refs), declarations);
         var pending = new List<BirGraphSlot>();
         Collect(document);
         foreach (var slot in pending)

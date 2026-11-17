@@ -6,6 +6,7 @@ static partial class ClrMemberResolution
 {
     internal static void SelfTestTypedDelegateSlots() => TypedDelegateValueSelfTest(refs =>
     {
+        var declarations = new PhysicalDelegateDeclarations();
         var priorTypes = _localTypes;
         var priorCarriers = _localCarriers;
         try
@@ -42,7 +43,7 @@ static partial class ClrMemberResolution
             static BirGraphValue Expression(BirFileDeclaration file, int index)
                 => (BirGraphValue)((BirExpressionStatement)file.Methods.Value[0].Body.Value[index]).Expr.Value;
             void Apply(BirFileDeclaration file)
-                => MaterializeDelegateSlots(file, refs, new HashSet<string>());
+                => MaterializeDelegateSlots(declarations, file, refs, new HashSet<string>());
             static void Require(bool value, string message)
             {
                 if (!value) throw new InvalidOperationException("Typed delegate slots: " + message);

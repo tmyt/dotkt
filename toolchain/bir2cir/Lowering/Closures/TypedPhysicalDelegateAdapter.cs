@@ -9,14 +9,17 @@ sealed class TypedPhysicalDelegateAdapter
 {
     readonly ReferenceMetadataIndex references;
     readonly Func<IBirExpression> unitValue;
+    readonly PhysicalDelegateDeclarations declarations;
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
     BirFileDeclaration document;
     string scope;
 
-    internal TypedPhysicalDelegateAdapter(ReferenceMetadataIndex references, Func<IBirExpression> unitValue)
+    internal TypedPhysicalDelegateAdapter(ReferenceMetadataIndex references, Func<IBirExpression> unitValue,
+        PhysicalDelegateDeclarations declarations)
     {
         this.references = references;
         this.unitValue = unitValue;
+        this.declarations = declarations;
     }
 
     internal IBirExpression AdaptUnitDelegateValue(BirFileDeclaration document, IBirExpression expression,
@@ -24,7 +27,7 @@ sealed class TypedPhysicalDelegateAdapter
     {
         var plan = ClrMemberResolution.UnitDelegateValuePlan(references, source, target, out var slot);
         if (plan == null) return null;
-        var temporary = ClrMemberResolution.FreshUnitDelegateTemporary();
+        var temporary = declarations.FreshValueTemporary();
         var adapter = AdapterClass(document, plan);
         var adapted = new BirNewClosure {
             ClosureType = new TypeNode.Fqn(adapter), Method = "invoke",
@@ -68,69 +71,12 @@ sealed class TypedPhysicalDelegateAdapter
         }
         var key = ClrMemberResolution.DelegateAdapterKey(plan);
         if (adapters.TryGetValue(key, out var existing)) return existing;
-        var name = ClrMemberResolution.FreshDelegateAdapterName(scope);
-        var self = new TypeNode.Fqn(name);
-        var arguments = Enumerable.Range(0, plan.Arity)
-            .Select(i => (IBirExpression)new BirLocal { Name = "p" + i }).ToArray();
-        if (plan.Parameters != null)
-            for (var i = 0; i < arguments.Length; i++)
-                if (!plan.Frame.DelegateParams[i].Equals(plan.Parameters[i]))
-                    arguments[i] = new BirCast { Type = plan.Frame.DelegateParams[i], E = OptionalField<IBirExpression>.Of(arguments[i]) };
-        var call = new BirDelegateInvoke {
-            FuncType = plan.Frame,
-            Recv = new BirFieldGet { OwnerType = self, Recv = new BirThis(), Name = "d" },
-            Args = arguments,
-            InvokeRef = BirMemberReference.FromPhysical(
-                ClrMemberResolution.DelegateInvokeReference(references, plan.Frame)),
-        };
-        IBirStatement[] body;
-        if (plan.Parameters == null)
-            body = new IBirStatement[] {
-                new BirExpressionStatement { Expr = call }, new BirReturn { Value = OptionalField<IBirExpression>.Of(unitValue()) },
-            };
-        else if (IsVoid(plan.Return))
-            body = new IBirStatement[] {
-                new BirExpressionStatement { Expr = call }, new BirReturn(),
-            };
-        else if (IsVoid(plan.Frame.Ret))
-            body = new IBirStatement[] {
-                new BirExpressionStatement { Expr = call }, new BirReturn { Value = OptionalField<IBirExpression>.Of(unitValue()) },
-            };
-        else
-            body = new IBirStatement[] { new BirReturn {
-                Value = plan.Frame.Ret.Equals(plan.Return) ? call : new BirCast { Type = plan.Return, E = call },
-            } };
-        var invoke = new BirFunctionDeclaration {
-            Name = "invoke", Static = false, Override = false, Virtual = false,
-            Params = Enumerable.Range(0, plan.Arity).Select(i => new BirParameter {
-                Name = "p" + i, Type = plan.Parameters?[i] ?? new TypeNode.Tv("type", i),
-            }).ToArray(),
-            Ret = plan.Return, Body = body, BodyTerminates = true,
-        };
-        var declaration = new BirClassDefinition {
-            Name = name, Kind = "class", Generated = true,
-            Base = OptionalField<TypeNode>.Null, Interfaces = Array.Empty<TypeNode>(),
-            Fields = new[] { new BirFieldDeclaration { Name = "d", Type = plan.Frame } },
-            Ctors = new[] { new BirConstructor {
-                Params = new[] { new BirParameter { Name = "d", Type = plan.Frame } },
-                BaseArgs = OptionalField<IBirExpression[]>.Null,
-                Body = new IBirStatement[] { new BirSetField {
-                    OwnerType = self, Recv = new BirThis(), Name = "d", Value = new BirLocal { Name = "d" },
-                } },
-            } },
-            Methods = new[] { invoke },
-        };
-        var arity = plan.GenericArity ?? plan.Arity;
-        if (arity != 0)
-            declaration.TypeParams = Enumerable.Range(0, arity).Select(i => new BirTypeParameter {
-                Name = "T" + i, SpecialConstraints = new[] { "allowsRefStruct" },
-            }).ToArray();
+        var declaration = declarations.CreateAdapter(scope, plan, references, unitValue);
+        var name = declaration.Name.Value;
         document.Types = document.Types.OrEmpty().Append(declaration).ToArray();
         adapters[key] = name;
         return name;
     }
-
-    static bool IsVoid(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
 
     internal static void SelfTest() => ClrMemberResolution.TypedDelegateValueSelfTest(references =>
     {
@@ -141,7 +87,8 @@ sealed class TypedPhysicalDelegateAdapter
         var root = new BirFileDeclaration { FileClass = "Probe.Owner", Types = Array.Empty<IBirTypeDeclaration>() };
         var original = new BirLocal { Name = "effectfulDelegate" };
         var adapter = new TypedPhysicalDelegateAdapter(references,
-            () => new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("kotlin.Unit"), Name = "INSTANCE" });
+            () => new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("kotlin.Unit"), Name = "INSTANCE" },
+            new PhysicalDelegateDeclarations());
         var first = (BirValueBlock)adapter.AdaptUnitDelegateValue(root, original, source, target);
         var variable = (BirVariable)first.Stmts.Value.Single();
         var conditional = (BirConditional)first.Result.Value;

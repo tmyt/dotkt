@@ -1298,12 +1298,13 @@ sealed class Pipeline
         // Interface obligations resolve against the complete final declaration
         // graph, using the same owning records as the following consumers.
         ClrMemberResolution.ResolveInterfaceSlots(physicalDocuments, refs);
+        var delegateDeclarations = new PhysicalDelegateDeclarations();
         foreach (var (root, file) in physicalRoots)
         {
             // All member and interface-slot resolution is complete module-wide.
             // Materialize each construction's final delegate and any required
             // adapter as owning typed declarations with exact member bindings.
-            ClrMemberResolution.MaterializeDelegateSlots(root, refs, emittedLocalTypes, localExistentialOwners);
+            ClrMemberResolution.MaterializeDelegateSlots(delegateDeclarations, root, refs, emittedLocalTypes, localExistentialOwners);
             ForeignStarProjectionBinding.DropDeclarationSignatures(root);
             // A saved foreign return is the resolver's declaration fact, not a
             // value to reconstruct from the caller-facing type or memberRef.
@@ -1325,7 +1326,7 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         var physicalExistentialOwners = localExistentialOwners.Values.ToHashSet(StringComparer.Ordinal);
-        TypedPhysicalValueCoercion.ApplyAll(physicalDocuments,
+        TypedPhysicalValueCoercion.ApplyAll(delegateDeclarations, physicalDocuments,
             () => ClrMemberResolution.UnitSingletonRead(refs), isValueFqn, referenceBuild: _options.RefBuild,
             isReferenceOwner: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
                 is { IsClass: true, IsValueType: false } native
