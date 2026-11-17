@@ -8,17 +8,19 @@ sealed partial class ValueRepresentationLowering
     // independent authored inputs differ only in file versus detached-method scope.
     static void NestedBoundGuardSelfTest(ValueRepresentationLowering policy)
     {
-        var cases = new List<(int Depth, BirFunctionDeclaration Source, BirFunctionDeclaration Materialized, BirLocal Operand)>();
+        var cases = new List<(string Kind, int Depth, BirFunctionDeclaration Source, BirFunctionDeclaration Materialized, BirLocal Operand)>();
         var variable = new TypeNode.Tv("method", 0);
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        foreach (var kind in new[] { "cast", "safe" })
         foreach (var depth in new[] { 2, 3, 4, 8 })
         {
             IBirExpression operand = new BirLocal { Name = "value", Sty = any };
             for (var index = 0; index < depth; index++)
-                operand = new BirCast { Type = variable, ReifiedTypeOperand = false,
-                    E = OptionalField<IBirExpression>.Of(operand) };
+                operand = kind == "cast"
+                    ? new BirCast { Type = variable, ReifiedTypeOperand = false, E = OptionalField<IBirExpression>.Of(operand) }
+                    : new BirInstanceOrNull { Type = variable, ReifiedTypeOperand = false, E = OptionalField<IBirExpression>.Of(operand) };
             var method = new BirFunctionDeclaration {
-                Name = "nestedBoundGuard" + depth, Ret = variable,
+                Name = "nestedBoundGuard" + kind + depth, Ret = kind == "cast" ? variable : new TypeNode.Nullable(variable),
                 Params = new[] { new BirParameter { Name = "value", Type = any } },
                 TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = Array.Empty<TypeNode>() } },
                 MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> {
@@ -29,15 +31,15 @@ sealed partial class ValueRepresentationLowering
             BirLocal materializedOperand = null;
             materialized.Visit(node => { if (node is BirLocal { Name.Value: "value" } local) materializedOperand = local; });
             policy.BindOperations(new BirFileDeclaration { Methods = new[] { method } });
-            cases.Add((depth, method, materialized, materializedOperand));
+            cases.Add((kind, depth, method, materialized, materializedOperand));
         }
         var differences = new List<string>();
-        foreach (var (depth, source, materialized, operand) in cases)
+        foreach (var (kind, depth, source, materialized, operand) in cases)
         {
             policy.BindMaterializedOperations(materialized);
             var sourceCounts = Count(source);
             var materializedCounts = Count(materialized);
-            var report = $"depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
+            var report = $"kind={kind}, depth={depth}: typed nodes={sourceCounts.Nodes}, generic casts={sourceCounts.GenericCasts}, classifier blocks={sourceCounts.Blocks}; " +
                 $"materialized nodes={materializedCounts.Nodes}, generic casts={materializedCounts.GenericCasts}, classifier blocks={materializedCounts.Blocks}";
             Console.WriteLine("[nested bound guard] " + report);
             var retainedOperand = false;
@@ -65,7 +67,7 @@ sealed partial class ValueRepresentationLowering
             var blocks = 0;
             node.Visit(current => {
                 if (current is BirGraphNode) nodes++;
-                if (current is BirCast { Type.Value: TypeNode.Tv }) casts++;
+                if (current is BirCast { Type.Value: TypeNode.Tv } or BirInstanceOrNull { Type.Value: TypeNode.Tv }) casts++;
                 if (current is BirValueBlock) blocks++;
             });
             return (nodes, casts, blocks);

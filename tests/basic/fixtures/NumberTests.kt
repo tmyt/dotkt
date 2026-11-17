@@ -44,9 +44,11 @@ private class NumberCastInput(private val value: Any?) {
     fun read(): Any? { reads++; return value }
 }
 private fun <T : Number> nestedNumberCast(value: NumberCastInput): T = ((value.read() as T) as T) as T
+private fun <T : Number> nestedNumberSafe(value: NumberCastInput): T? = (value.read() as? T) as? T
 private class NumberCaster<A, N : Number> {
     fun <T : N> cast(value: Any?): T = value as T
     fun <T : N> nestedCast(value: NumberCastInput): T = ((value.read() as T) as T) as T
+    fun <T : N> nestedSafe(value: NumberCastInput): T? = (value.read() as? T) as? T
 }
 private fun <T> numberArrayIdentity(value: Array<T>): Array<T> = value
 private fun <T : Number> boundedNumberArray(value: Any, replacement: T): Boolean {
@@ -122,6 +124,15 @@ class NumberTests {
         val nestedNull: Any? = NumberCaster<Any, Number>().nestedCast<Number>(absentInput)
         check(nestedNull == null)
         assertEquals(1, absentInput.reads)
+        val safePrimitive = NumberCastInput(17)
+        assertEquals(17, nestedNumberSafe<Number>(safePrimitive)?.toInt())
+        assertEquals(1, safePrimitive.reads)
+        val safeInvalid = NumberCastInput("bad")
+        check(NumberCaster<Any, Number>().nestedSafe<Number>(safeInvalid) == null)
+        assertEquals(1, safeInvalid.reads)
+        val safeNull = NumberCastInput(null)
+        check(nestedNumberSafe<Number>(safeNull) == null)
+        assertEquals(1, safeNull.reads)
         rejected = false
         try { numberCast<Number>(null) } catch (_: NullPointerException) { rejected = true }
         check(rejected)
