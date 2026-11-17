@@ -42,18 +42,18 @@ static partial class ClrMemberResolution
         new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat");
 
     // Shared by final native storage binding and already-authored Unit reads.
-    static MemberRefNode StaticFieldReference(TypeNode.Fqn owner, string name)
+    static MemberRefNode StaticFieldReference(ReferenceMetadataIndex bindingReferences, TypeNode.Fqn owner, string name)
     {
         // A type this compilation emits keeps the local axis (#395) and must not be given an external identity,
         // even though the reference surface can answer for it: the stdlib runtime build compiles against a
         // PREVIOUS build of the assembly it is producing, so kotlin.text.HexFormat+$Companion resolved there and
         // was handed a reference to itself that the emitter's own universe then could not contain.
         if (_localTypes.Contains(owner.Name)) return null;
-        var open = ResolveOwnerType(owner);
+        var open = ResolveOwnerType(owner, refs: bindingReferences);
         if (open == null) return null;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
-        return field == null ? null : ClrMemberReferences.FieldRefOf(_refs, _localTypes, field, open, owner.Args ?? Array.Empty<TypeNode>());
+        return field == null ? null : ClrMemberReferences.FieldRefOf(bindingReferences, _localTypes, field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
     static bool IsFunctionShape(TypeNode type) => type switch

@@ -9,8 +9,6 @@ static partial class ClrMemberResolution
         static void Need(bool value, string reason)
         { if (!value) throw new InvalidOperationException("Source local delegate targets: " + reason); }
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
-        var previousReferences = _refs;
-        try
         {
             var integer = new TypeNode.Fqn("System.Int32"); var text = new TypeNode.Fqn("System.String");
             var erased = new TypeNode.Fqn("System.Object"); var unit = new TypeNode.Fqn("void");
@@ -99,6 +97,5 @@ static partial class ClrMemberResolution
             Need(first.StructurallyEquals(once), "initial local target binding is not stable on an already-open delegate signature");
             Console.WriteLine("[source local delegate targets] IDs, exact frames, function identity, slots and clock: OK");
         }
-        finally { _refs = previousReferences; }
     }
 }

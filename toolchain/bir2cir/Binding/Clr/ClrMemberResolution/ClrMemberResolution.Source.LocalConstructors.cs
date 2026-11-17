@@ -38,7 +38,7 @@ static partial class ClrMemberResolution
         return definitions;
     }
 
-    internal static void ResolveLocalConstructors(IReadOnlyList<BirFileDeclaration> roots)
+    internal static void ResolveLocalConstructors(ReferenceMetadataIndex bindingReferences, IReadOnlyList<BirFileDeclaration> roots)
     {
         var definitions = LocalConstructorDefinitions(roots);
 
@@ -96,7 +96,7 @@ static partial class ClrMemberResolution
                         // constructor declaration's thisArgs/baseArgs vectors.
                         for (var index = 0; index < arguments.Length; index++)
                             MarkDelegateSlot((BirGraphValue)arguments[index], CloseDelegateArgumentSlot(
-                                winner.Parameters[index], ownerArguments, []), _refs, _localTypes);
+                                winner.Parameters[index], ownerArguments, []), bindingReferences, _localTypes);
                         break;
                     case BirConstructor constructor: constructor.DelegationSig = targets; break;
                 }

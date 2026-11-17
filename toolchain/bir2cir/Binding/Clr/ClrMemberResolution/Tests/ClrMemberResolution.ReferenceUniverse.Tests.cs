@@ -8,26 +8,23 @@ static partial class ClrMemberResolution
 {
     internal static void ReferenceUniverseIsolationSelfTest()
     {
-        var previous = _refs;
         var first = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         var second = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         try
         {
             foreach (var references in new[] { first, second, first })
             {
-                _refs = references;
                 var integer = references.ResolveRefType("System.Int32");
                 var nullable = references.ResolveRefType("System.Nullable", 1).MakeGenericType(integer);
-                if (!ClrDeclarationMatching.DeclaredConstructorSlotMatches(_refs, new TypeNode.Nullable(new TypeNode.Fqn("System.Int32")), nullable))
+                if (!ClrDeclarationMatching.DeclaredConstructorSlotMatches(references, new TypeNode.Nullable(new TypeNode.Fqn("System.Int32")), nullable))
                     throw new InvalidOperationException("Native nullable selection retained another reference universe's Type handle");
-                if (ClrDeclarationMatching.SystemArrayMlc(_refs) != references.ResolveRefType("System.Array"))
+                if (ClrDeclarationMatching.SystemArrayMlc(references) != references.ResolveRefType("System.Array"))
                     throw new InvalidOperationException("Native array selection retained another reference universe's Type handle");
             }
         }
         finally
         {
             first.Dispose(); second.Dispose();
-            _refs = previous;
         }
         Console.WriteLine("[reference-universe native selection] self-test OK (interleaved nullable and array declaration identities)");
     }
@@ -35,7 +32,6 @@ static partial class ClrMemberResolution
     internal static void NativeSignatureLifetimeSelfTest()
     {
         var path = Path.Combine(Path.GetTempPath(), "dotkt-native-signatures-" + Guid.NewGuid().ToString("N") + ".dll");
-        var previous = _refs;
         try
         {
             File.WriteAllBytes(path, NativeSignatureImage());
@@ -58,7 +54,7 @@ static partial class ClrMemberResolution
                 throw new InvalidOperationException("Disposing one reference index changed another compilation's decoder");
             Console.WriteLine("[reference native signatures] self-test OK (shared scan/binding decoder and independent compilations)");
         }
-        finally { _refs = previous; File.Delete(path); }
+        finally { File.Delete(path); }
     }
 
     // A real function-pointer MethodDef exercises the raw decoder rather than

@@ -59,7 +59,7 @@ static partial class ClrMemberResolution
                 }
                 catch { }
 
-                var matches = ClrDeclarationMatching.MostDerived(candidates.Where(c => OverrideMatch(c.GetParameters(), declared)).ToList());
+                var matches = ClrDeclarationMatching.MostDerived(candidates.Where(c => OverrideMatch(refs, c.GetParameters(), declared)).ToList());
                 if (matches.Count == 0) continue;
                 if (matches.Count > 1)
                     throw ClrDeclarationMatching.Malformed(

@@ -47,11 +47,11 @@ static partial class ClrMemberResolution
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>
     public static void ResolveWellKnown(BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var table = new Dictionary<string, MemberRefNode>(StringComparer.Ordinal);
         foreach (var (role, owner, name, parameters) in WellKnownMembers)
         {
-            var open = ResolveOwnerType(new TypeNode.Fqn(owner))
+            var open = ResolveOwnerType(new TypeNode.Fqn(owner), refs: refs)
                 ?? throw new InvalidOperationException(
                     $"bir2cir: the fixed-member table needs '{owner}' for role '{role}', which does not resolve "
                     + "to a .NET type");
@@ -62,28 +62,28 @@ static partial class ClrMemberResolution
             // A role that cannot be resolved is a producer defect. Skipping it quietly hands the emitter a
             // table with a hole in it, and the hole only shows up as a missing member at emit time — one layer
             // past the one that could say what went wrong.
-            var win = ClrDeclarationMatching.TryPickUnique(_refs, cands, wanted, Array.Empty<TypeNode>())
+            var win = ClrDeclarationMatching.TryPickUnique(refs, cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
+            table[role] = ClrMemberReferences.MemberRefOf(refs, _localTypes, win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
         {
             // A name may state its arity — `System.Nullable`1` is a different type from the static `System.Nullable`
             // beside it, and the bare name resolves to the wrong one.
-            var open = OwnerOfSpec(owner)
+            var open = OwnerOfSpec(refs, owner)
                 ?? throw new InvalidOperationException(
                     $"bir2cir: the fixed-member table needs '{owner}' for role '{role}'");
             var wanted = parameters.Select(ParseWellKnownParam).ToList();
             var ownerArgs = OwnParameters(open);
             var cands = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(c => !c.IsStatic && c.GetParameters().Length == wanted.Count).ToList();
-            var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, cands, wanted, Array.Empty<TypeNode>())
+            var win = ClrDeclarationMatching.TryPickUniqueCtor(refs, cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
+            table[role] = ClrMemberReferences.MemberRefOf(refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         }
         root.WellKnownRefs = PhysicalMemberTable.Create(table);
     }
@@ -97,12 +97,12 @@ static partial class ClrMemberResolution
             : Array.Empty<TypeNode>();
 
     // `Name`N` -> the arity-N definition; a bare name -> whatever that name alone resolves to.
-    static Type OwnerOfSpec(string spec)
+    static Type OwnerOfSpec(ReferenceMetadataIndex bindingReferences, string spec)
     {
         var tick = spec.IndexOf('`');
         return tick < 0
-            ? ResolveOwnerType(new TypeNode.Fqn(spec))
-            : ClrDeclarationMatching.RefDef(_refs, spec[..tick], int.Parse(spec[(tick + 1)..]));
+            ? ResolveOwnerType(new TypeNode.Fqn(spec), refs: bindingReferences)
+            : ClrDeclarationMatching.RefDef(bindingReferences, spec[..tick], int.Parse(spec[(tick + 1)..]));
     }
 
     static TypeNode ParseWellKnownParam(string spec) =>
@@ -139,8 +139,8 @@ static partial class ClrMemberResolution
         declarationMember = null;
         declarationParams = null;
         declarationReturn = null;
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        var open = ResolveOwnerType(physicalOwner) ?? refs.PhysicalTypeNamed(physicalOwner.Name);
+        refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        var open = ResolveOwnerType(physicalOwner, refs: refs) ?? refs.PhysicalTypeNamed(physicalOwner.Name);
         if (open == null || !open.IsInterface) return false;
         var ownerArgs = physicalOwner.Args ?? Array.Empty<TypeNode>();
         var declarationOwners = new[] { open }.Concat(open.GetInterfaces())
@@ -167,7 +167,7 @@ static partial class ClrMemberResolution
             var selectionArgs = declaringArgs;
             if (selectionOwnerArgs != null)
             {
-                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(_refs, _localTypes, method, open, selectionOwnerArgs) as TypeNode.Fqn;
+                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, _localTypes, method, open, selectionOwnerArgs) as TypeNode.Fqn;
                 selectionArgs = selectionOwner?.Args ?? Array.Empty<TypeNode>();
             }
             var selectionParameters = reference.ParameterTypes
@@ -245,7 +245,7 @@ static partial class ClrMemberResolution
             // Resolve against this exact constructed graph edge.  The reference index's ordinary call lookup is
             // receiver-oriented and may legitimately answer from an implemented interface; here the graph has
             // already identified each declaration owner, so declared-only reflection avoids counting it twice.
-            var open = ResolveOwnerType(spec) ?? refs.PhysicalTypeNamed(spec.Name);
+            var open = ResolveOwnerType(spec, refs: refs) ?? refs.PhysicalTypeNamed(spec.Name);
             if (open == null) continue;
             var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
                     | BindingFlags.DeclaredOnly)
@@ -254,9 +254,9 @@ static partial class ClrMemberResolution
                     && method.GetParameters().Length == callSig.Length
                     && IsPublicOrProtected(method))
                 .ToList();
-            var declaration = ClrDeclarationMatching.TryPickUnique(_refs, candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
+            var declaration = ClrDeclarationMatching.TryPickUnique(refs, candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
             if (declaration == null) continue;
-            var reference = ClrMemberReferences.MemberRefOf(_refs, _localTypes, declaration, MemberRefNode.Kinds.Method, open,
+            var reference = ClrMemberReferences.MemberRefOf(refs, _localTypes, declaration, MemberRefNode.Kinds.Method, open,
                 spec.Args ?? Array.Empty<TypeNode>());
             answers.Add(new(declaration, reference, spec.Args ?? Array.Empty<TypeNode>()));
         }

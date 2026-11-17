@@ -15,8 +15,6 @@ static partial class ClrMemberResolution
             try { query(); } catch (InvalidOperationException) { refused = true; }
             Require(refused, "selection inferred a MethodDef without the exact descriptor/staticness/arity");
         }
-        var previous = _refs;
-        try
         {
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var owner = new TypeNode.Fqn("System.Runtime.CompilerServices.Unsafe");
@@ -64,7 +62,7 @@ static partial class ClrMemberResolution
                     && method.GetGenericArguments().Length == 2 && method.GetParameters() is [var span, var comparable]
                     && span.ParameterType.IsGenericType && span.ParameterType.GetGenericTypeDefinition() == typeof(Span<>)
                     && comparable.ParameterType.IsGenericParameter);
-            var searchSignature = search.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, parameter.ParameterType)).ToArray();
+            var searchSignature = search.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(refs, _localTypes, parameter.ParameterType)).ToArray();
             var searchFacts = SelectedMethodTypeParametersInPhysicalFrame(new TypeNode.Fqn("System.MemoryExtensions"),
                 search.Name, 2, false, searchSignature, refs);
             Require(searchFacts.Length == 2 && searchFacts[1].Constraints.Value.Any(type => type is TypeNode.Fqn {
@@ -77,7 +75,7 @@ static partial class ClrMemberResolution
             var read = typeof(System.Runtime.InteropServices.MemoryMarshal).GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Single(method => method.Name == "Read" && method.IsGenericMethodDefinition && method.GetParameters().Length == 1);
             var readFacts = SelectedMethodTypeParametersInPhysicalFrame(new TypeNode.Fqn("System.Runtime.InteropServices.MemoryMarshal"),
-                read.Name, 1, false, read.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, parameter.ParameterType)).ToArray(), refs);
+                read.Name, 1, false, read.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(refs, _localTypes, parameter.ParameterType)).ToArray(), refs);
             Require(readFacts.Length == 1 && readFacts[0].SpecialConstraints.Value.Contains("struct")
                 && readFacts[0].SpecialConstraints.Value.Contains("new")
                 && readFacts[0].Constraints.Value.Any(type => type is TypeNode.Fqn { Name: "System.ValueType" }),
@@ -102,7 +100,6 @@ static partial class ClrMemberResolution
             Refused(() => SelectedMethodTypeParametersInPhysicalFrame(constructedOwner, "ConvertAll", 1, true,
                 Convert(new TypeNode.Tv("type", 0)), refs, new TypeNode[] { ownerVariable }));
         }
-        finally { _refs = previous; }
         Console.WriteLine("[typed native generic parameter facts] self-test OK (exact framework selection, physical constraints, frames, presence, independent ownership)");
     }
 }

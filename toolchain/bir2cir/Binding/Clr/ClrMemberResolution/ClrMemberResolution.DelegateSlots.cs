@@ -86,10 +86,9 @@ static partial class ClrMemberResolution
     // construction's `funcType` and its own `delegateCtorRef` would name two different delegates.
     // A delegate's arguments are METHOD slots (Root-H), the same classification the reference carrier makes for
     // them, so they are lowered in that position and not as storage.
-    static TypeNode.Fqn DelegateFqnOfSlot(TypeNode slotType, ReferenceMetadataIndex refs = null,
+    static TypeNode.Fqn DelegateFqnOfSlot(TypeNode slotType, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes = null)
     {
-        refs ??= _refs;
         localTypes ??= _localTypes;
         if (refs == null)
             throw new InvalidOperationException("bir2cir: delegate slot resolution has no reference universe");
@@ -108,10 +107,10 @@ static partial class ClrMemberResolution
 
     // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
     // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
-    static TypeNode.Fn PhysicalFunctionShape(TypeNode type, bool includeNominal = false)
+    static TypeNode.Fn PhysicalFunctionShape(ReferenceMetadataIndex bindingReferences, TypeNode type, bool includeNominal = false)
     {
         if (type is TypeNode.Fn fn) return fn;
-        if (type is not TypeNode.Fqn named || ResolveOwnerType(named) is not Type owner
+        if (type is not TypeNode.Fqn named || ResolveOwnerType(named, refs: bindingReferences) is not Type owner
             || !IsDelegate(owner)) return null;
         var family = ClrDeclarationMatching.DelegateFamily(owner);
         if (family == null && !includeNominal) return null;
@@ -119,12 +118,12 @@ static partial class ClrMemberResolution
         if (invoke == null) return null;
         var args = named.Args ?? Array.Empty<TypeNode>();
         var ret = invoke.ReturnType.FullName == "System.Void"
-            ? new TypeNode.Fqn("void") : SubstOwnerParams(invoke.ReturnType, args);
+            ? new TypeNode.Fqn("void") : SubstOwnerParams(bindingReferences, invoke.ReturnType, args);
         return new TypeNode.Fn(false, ret,
-            invoke.GetParameters().Select(p => SubstOwnerParams(p.ParameterType, args)).ToArray(), null, family);
+            invoke.GetParameters().Select(p => SubstOwnerParams(bindingReferences, p.ParameterType, args)).ToArray(), null, family);
     }
 
-    static bool HasRepresentationSlotSeam(IReadOnlyDictionary<string, string> localCarriers,
+    static bool HasRepresentationSlotSeam(ReferenceMetadataIndex bindingReferences, IReadOnlyDictionary<string, string> localCarriers,
         TypeNode.Fn natural, TypeNode.Fn target)
     {
         static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" };
@@ -138,12 +137,12 @@ static partial class ClrMemberResolution
             TypeNode.Oblivious oblivious => Core(oblivious.Of),
             _ => type,
         };
-        static bool NeedsNominalDowncast(IReadOnlyDictionary<string, string> localCarriers,
+        static bool NeedsNominalDowncast(ReferenceMetadataIndex references, IReadOnlyDictionary<string, string> localCarriers,
             TypeNode value, TypeNode destination) =>
             Core(destination) is TypeNode.Fqn { Args: { Length: > 0 } } exact
             && Core(value) is TypeNode.Fqn carrier
             && (localCarriers?.TryGetValue(exact.Name, out var local) == true && local == carrier.Name
-                || _refs?.TryExistentialPhysicalOwner(exact.Name, out var referenced) == true
+                || references?.TryExistentialPhysicalOwner(exact.Name, out var referenced) == true
                     && referenced == carrier.Name);
         if (natural.DelegateParams.Length != target.DelegateParams.Length)
             throw new InvalidOperationException("Delegate slot parameter count differs from its construction");
@@ -151,13 +150,13 @@ static partial class ClrMemberResolution
         // Exact->carrier reference covariance/contravariance is already delegate-compatible. Only the proven
         // carrier->exact direction needs the value adapter's checked conversion, never a byref conversion.
         return natural.DelegateParams.Zip(target.DelegateParams,
-                (source, destination) => Seam(source, destination) || NeedsNominalDowncast(localCarriers, destination, source))
+                (source, destination) => Seam(source, destination) || NeedsNominalDowncast(bindingReferences, localCarriers, destination, source))
             .Any(seam => seam)
-            || Seam(natural.Ret, target.Ret) || NeedsNominalDowncast(localCarriers, natural.Ret, target.Ret);
+            || Seam(natural.Ret, target.Ret) || NeedsNominalDowncast(bindingReferences, localCarriers, natural.Ret, target.Ret);
     }
 
-    static bool NeedsSlotAdapter(IReadOnlyDictionary<string, string> localCarriers, TypeNode.Fn natural, TypeNode.Fn target) =>
-        HasRepresentationSlotSeam(localCarriers, natural, target)
+    static bool NeedsSlotAdapter(ReferenceMetadataIndex bindingReferences, IReadOnlyDictionary<string, string> localCarriers, TypeNode.Fn natural, TypeNode.Fn target) =>
+        HasRepresentationSlotSeam(bindingReferences, localCarriers, natural, target)
         || ((natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             != (target.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }));
 
@@ -239,16 +238,16 @@ static partial class ClrMemberResolution
     // The declared return of a delegate's `Invoke`, in the instantiation the slot names. ECMA-335 II.14.6 gives a
     // delegate exactly one `Invoke`, so there is no candidate set; its return is read off the open declaration and
     // substituted positionally, exactly as the constructed type would report it.
-    static TypeNode SlotInvokeReturn(TypeNode.Fqn slot)
+    static TypeNode SlotInvokeReturn(ReferenceMetadataIndex bindingReferences, TypeNode.Fqn slot)
     {
-        var open = ResolveOwnerType(slot);
+        var open = ResolveOwnerType(slot, refs: bindingReferences);
         if (open == null) return null;
         var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.Name == "Invoke").ToList();
         if (invoke.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: the delegate '{slot.Name}' has {invoke.Count} Invoke declarations, not one");
-        return SubstOwnerParams(invoke[0].ReturnType, slot.Args ?? Array.Empty<TypeNode>());
+        return SubstOwnerParams(bindingReferences, invoke[0].ReturnType, slot.Args ?? Array.Empty<TypeNode>());
     }
 
     const string UnitFqn = "kotlin.Unit";
@@ -257,11 +256,11 @@ static partial class ClrMemberResolution
     // Replace the void-returning construction with a `newClosure` over an adapter that produces the Unit value the
     // slot's Invoke has to return. The original construction becomes the adapter's single capture, so its own
     // resolved constructor and Invoke keep describing the natural delegate.
-    static DelegateAdapterPlan VoidDelegateAdapterPlan(IReadOnlyDictionary<string, string> localCarriers,
+    static DelegateAdapterPlan VoidDelegateAdapterPlan(ReferenceMetadataIndex bindingReferences, IReadOnlyDictionary<string, string> localCarriers,
         TypeNode.Fn naturalFn, TypeNode.Fqn slot, TypeNode slotReturn)
     {
-        if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn target
-            && HasRepresentationSlotSeam(localCarriers, naturalFn, target))
+        if (PhysicalFunctionShape(bindingReferences, slot, includeNominal: true) is TypeNode.Fn target
+            && HasRepresentationSlotSeam(bindingReferences, localCarriers, naturalFn, target))
             return BoxedDelegateAdapterPlan(naturalFn, target);
         // The value the adapter returns is the `Unit` singleton, so the slot's Invoke must be able to receive it.
         // Kotlin resolution only fills such a slot from a `Unit` lambda, so anything else is a producer defect

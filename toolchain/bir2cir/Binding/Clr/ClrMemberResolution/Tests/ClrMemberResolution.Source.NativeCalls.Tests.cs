@@ -17,7 +17,7 @@ static partial class ClrMemberResolution
             catch (InvalidOperationException error) when (error.Message.Contains(fragment, StringComparison.Ordinal)) { return; }
             throw new InvalidOperationException("Typed native calls: missing refusal for " + fragment);
         }
-        var savedReferences = _refs; var savedLocals = _localTypes;
+        var savedLocals = _localTypes;
         try
         {
             var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
@@ -97,7 +97,7 @@ static partial class ClrMemberResolution
                 "generic static selection closed the open MethodDef or lost its actual generic facts");
             Need(convert.MemberRef.Value.ParameterTypes.Value[0] is TypeNode.Fqn { Name: "System.Converter`2", Args: [TypeNode.Tv { Scope: "type", I: 0 }, TypeNode.Tv { Scope: "method", I: 0 }] }
                 && convert.ResolvedMemberReturn.Value is TypeNode.Fqn { Name: "System.Collections.Generic.List", Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
-                && convert.ReceiverMode.Value == "value" && convert.Dispatch.Value == Dispatch(convertDeclaration, ResolveOwnerType(listOwner), false)
+                && convert.ReceiverMode.Value == "value" && convert.Dispatch.Value == Dispatch(convertDeclaration, ResolveOwnerType(listOwner, refs: references), false)
                 && ReferenceEquals(convert.Recv.Value, convertReceiver) && ReferenceEquals(convert.Args.Value, convertArguments)
                 && !convert.ResolvedMemberParams.IsPresent && convert._resolvedMethodTypeParams.Value.Length == 1,
                 "generic instance descriptor was closed before selection, stamped from the caller return, or copied its operands");
@@ -126,7 +126,7 @@ static partial class ClrMemberResolution
             var collection = new BirNewClr { Type = new TypeNode.Fqn("System.Collections.ObjectModel.Collection", new TypeNode[] { text }),
                 Args = viewArguments, ArgTypes = new TypeNode[] { sourceView },
                 MemberSignature = new TypeNode[] { new TypeNode.Fqn("System.Collections.Generic.IList", new TypeNode[] { typeTv }) } };
-            ResolveNativeCallsSource(collection);
+            ResolveNativeCallsSource(references, collection);
             Need(ReferenceEquals(collection.Args.Value, viewArguments) && viewArguments[0] is BirCast cast
                 && cast.Type.Value == new TypeNode.Fqn("System.Collections.Generic.IList", new TypeNode[] { text })
                 && ReferenceEquals(cast.E.Value, actualView) && !cast.Sty.IsPresent
@@ -135,26 +135,26 @@ static partial class ClrMemberResolution
 
             var explicitNullReference = new BirConstrainedCall { MemberRef = OptionalField<BirMemberReference>.Null,
                 Super = true, ResolvedMemberParams = Array.Empty<TypeNode>() };
-            ResolveNativeCallsSource(explicitNullReference);
+            ResolveNativeCallsSource(references, explicitNullReference);
             Need(explicitNullReference.MemberRef.IsNull && !explicitNullReference.Super.IsPresent && explicitNullReference.ResolvedMemberParams.HasValue,
                 "constrained ContainsKey short-circuit was weakened to HasValue");
             var alreadyResolved = new BirGenericStatic { MemberRef = empty.MemberRef, ResolvedMemberReturn = OptionalField<TypeNode>.Null,
                 ResolvedMemberParams = Array.Empty<TypeNode>() };
-            ResolveNativeCallsSource(alreadyResolved);
+            ResolveNativeCallsSource(references, alreadyResolved);
             Need(alreadyResolved.ResolvedMemberReturn.IsNull && ReferenceEquals(alreadyResolved.MemberRef.Value, empty.MemberRef.Value)
                 && !alreadyResolved.ResolvedMemberParams.IsPresent, "generic explicit-null return presence short-circuit changed");
-            Refused(() => ResolveNativeCallsSource(new BirGenericStatic { ResolvedMemberReturn = OptionalField<TypeNode>.Null }),
+            Refused(() => ResolveNativeCallsSource(references, new BirGenericStatic { ResolvedMemberReturn = OptionalField<TypeNode>.Null }),
                 "declared-return stamp without its resolved memberRef");
-            Refused(() => ResolveNativeCallsSource(new BirGenericStatic { Type = new TypeNode.Fqn("System.Array"), Method = "Empty",
+            Refused(() => ResolveNativeCallsSource(references, new BirGenericStatic { Type = new TypeNode.Fqn("System.Array"), Method = "Empty",
                 TypeArgs = new TypeNode[] { text }, Args = Array.Empty<IBirExpression>(), ResolvedMemberParams = OptionalField<TypeNode[]>.Null }),
                 "no usable frontend-resolved parameter vector");
-            Refused(() => ResolveNativeCallsSource(new BirConstrainedCall { Iface = item.Iface, Method = "get_Item" }), "requires an 'args' array");
-            Refused(() => ResolveNativeCallsSource(new BirNew { Type = builder.Type,
+            Refused(() => ResolveNativeCallsSource(references, new BirConstrainedCall { Iface = item.Iface, Method = "get_Item" }), "requires an 'args' array");
+            Refused(() => ResolveNativeCallsSource(references, new BirNew { Type = builder.Type,
                 Args = new IBirExpression[] { new BirLocal { Name = "capacity", Sty = integer } },
                 ArgTypes = new TypeNode[] { integer }, MemberSignature = new TypeNode[] { integer },
                 ConstructorDeclarationId = "missing-current-selected-constructor" }), "selects 0 runtime MethodDefs");
         }
-        finally { _refs = savedReferences; _localTypes = savedLocals; }
+        finally { _localTypes = savedLocals; }
         Console.WriteLine("[source native calls] constructors, exact open declarations, dispatch roots, protected/array/delegate roles and owning operands: OK");
     }
 }

@@ -6,8 +6,6 @@ static partial class ClrMemberResolution
 {
     internal static void SelfTestTypedBaseConstructors()
     {
-        var priorReferences = _refs;
-        try
         {
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var text = new TypeNode.Fqn("System.String");
@@ -81,7 +79,6 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(exception.BaseArgs.Value, arguments),
                 "last selected constructor must replace the previous reference without replacing arguments");
         }
-        finally { _refs = priorReferences; }
         Console.WriteLine("[typed base constructors] self-test OK (exact open signatures, closed targets, continuing declarations, exclusions)");
     }
 
