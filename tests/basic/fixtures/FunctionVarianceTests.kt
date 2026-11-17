@@ -15,6 +15,21 @@ private fun <T> varianceStoredResult(values: List<T>): Any? {
     return result
 }
 private fun <T> varianceInvokeResult(callback: () -> T): Any? = callback()
+private fun <T> variancePassParameter(values: List<T>): Any? {
+    val callback: (T) -> Any? = { check(values.size == 1); it }
+    return callback(values[0])
+}
+private fun <T> varianceNativeParameter(values: List<T>): Int {
+    val destination = System.Collections.Generic.List<T>()
+    val callback: (T) -> Unit = { destination.Add(it) }
+    callback(values[0])
+    return destination.Count
+}
+private fun <T : CharSequence> varianceParameterLength(values: List<T>): Int {
+    val callback: (T) -> Int = { check(values.size == 1); it.length }
+    return callback(values[0])
+}
+private fun <T : CharSequence> varianceBoundLength(callback: () -> T): Int = callback().length
 private fun <T> varianceExactResult(values: List<T>): T {
     val callback: () -> T = { values[0] }
     return callback()
@@ -47,6 +62,7 @@ private class VarianceText(private val text: String) : CharSequence {
 
 class FunctionVarianceTests {
     @TestAttribute
+    @Suppress("UNCHECKED_CAST")
     fun argumentViewRetainsIdentity() {
         val identity: (Any?) -> Any? = { it }
         val integers = varianceNarrow<Int>(identity)
@@ -79,6 +95,17 @@ class FunctionVarianceTests {
         check(overloads.select(textCallback) == 2)
         check(selectedNumber == 17)
         check(selectedText == "selected")
+        val heterogeneous = listOf("heterogeneous") as List<Int>
+        check(variancePassParameter(heterogeneous) == "heterogeneous")
+        check(variancePassParameter<Int>(listOf<Any?>(null) as List<Int>) == null)
+        check(variancePassParameter(listOf(17)) == 17)
+        check(varianceNativeParameter(listOf(23)) == 1)
+        var rejected = false
+        try { varianceNativeParameter(heterogeneous) }
+        catch (_: ClassCastException) { rejected = true }
+        check(rejected)
+        check(varianceParameterLength<CharSequence>(listOf("four")) == 4)
+        check(varianceParameterLength<CharSequence>(listOf(VarianceText("five"))) == 4)
     }
 
     @TestAttribute
@@ -115,6 +142,10 @@ class FunctionVarianceTests {
         val rawResult: () -> Any? = { resultCalls++; "heterogeneous" }
         check(varianceInvokeResult<Int>(rawResult as () -> Int) == "heterogeneous")
         check(resultCalls == 1)
+        var boundCalls = 0
+        check(varianceBoundLength { boundCalls++; "four" } == 4)
+        check(boundCalls == 1)
+        check(varianceBoundLength { VarianceText("five") } == 4)
         check(varianceExactResult(listOf(19)) == 19)
         var rejected = false
         try { val exact: Int = varianceExactResult(heterogeneous); check(exact == 0) }
