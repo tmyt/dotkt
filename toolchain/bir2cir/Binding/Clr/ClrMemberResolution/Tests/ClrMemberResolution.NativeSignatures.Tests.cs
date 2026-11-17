@@ -4,9 +4,9 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using DotKt.Bir;
 
-sealed partial class ReferenceMetadataIndex
+static partial class ClrMemberResolution
 {
-    static void NativeSignatureLifetimeSelfTest()
+    internal static void NativeSignatureLifetimeSelfTest()
     {
         static void Check(bool condition, string message)
         { if (!condition) throw new InvalidOperationException("Reference native signatures: " + message); }
@@ -14,12 +14,13 @@ sealed partial class ReferenceMetadataIndex
             CallingConvention: 0, Ret: TypeNode.Tv { Scope: "method", I: 0 },
             Params: [TypeNode.Tv { Scope: "method", I: 0 }] };
         var path = Path.Combine(Path.GetTempPath(), "dotkt-native-signatures-" + Guid.NewGuid().ToString("N") + ".dll");
+        var previous = _refs;
         try
         {
             File.WriteAllBytes(path, NativeSignatureImage());
             var inputs = new[] { typeof(object).Assembly.Location, path };
-            using var first = Build(inputs);
-            using var second = Build(inputs);
+            using var first = ReferenceMetadataIndex.Build(inputs);
+            using var second = ReferenceMetadataIndex.Build(inputs);
             var firstType = first.ResolveRefType("NativeSignatureSubject");
             var secondType = second.ResolveRefType("NativeSignatureSubject");
             var method = firstType.GetMethod("Echo");
@@ -71,7 +72,7 @@ sealed partial class ReferenceMetadataIndex
                 "one index's disposal invalidated another compilation");
             Console.WriteLine("[reference native signatures] self-test OK (scan, CLR consumers, owned vectors and independent lifetimes)");
         }
-        finally { File.Delete(path); }
+        finally { _refs = previous; File.Delete(path); }
     }
 
     // Real ECMA signatures: generic managed function pointers in an abstract

@@ -7775,7 +7775,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
         PayloadOwnershipSelfTest();
-        NativeSignatureLifetimeSelfTest();
+        ClrMemberResolution.NativeSignatureLifetimeSelfTest();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
         nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
