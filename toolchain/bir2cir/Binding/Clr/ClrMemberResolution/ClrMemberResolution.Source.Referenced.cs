@@ -11,8 +11,8 @@ static partial class ClrMemberResolution
     {
         _refs = refs;
         _localTypes = localTypes ?? new HashSet<string>();
-        _externalCanonicalTypes = externalCanonicalTypes ?? new HashSet<string>();
-        _localDeclarationIds = localDeclarationIds ?? new HashSet<string>();
+        externalCanonicalTypes ??= new HashSet<string>();
+        localDeclarationIds ??= new HashSet<string>();
         void Walk(BirGraphValue node, string context)
         {
             if (node is IBirExecutablePayload) return;
@@ -21,7 +21,7 @@ static partial class ClrMemberResolution
             var input = ReadSourceReferencedCall(node, readSourceSignature);
             if (input != null)
                 WriteSourceReferencedCall(node, PlanReferencedCall(input, context, refs,
-                    _localTypes, _externalCanonicalTypes, _localDeclarationIds));
+                    _localTypes, externalCanonicalTypes, localDeclarationIds));
         }
         Walk(root, file ?? "<unknown>");
         releaseSourceSignatures(root);

@@ -270,6 +270,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // the semantic call signature only validates that the selected declaration still has the physical ABI this use
     // expects after every representation pass. A failed validation is not permission to search sibling overloads.
     public bool TryDeclarationIdentityMethod(
+        IReadOnlySet<string> localTypes,
         string id,
         int methodArity,
         bool isStatic,
@@ -361,7 +362,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         // descriptor. Validate that exact instantiation through the same inheritance projection used by the
         // emitted memberRef; a type variable is not a wildcard and must not select another overload.
         if (!physicalMatches && selectedSignature.All(type => type != null)
-            && ClrMemberResolution.DeclaringTypeRef(selected, callOwner, ownerArguments) is TypeNode.Fqn constructed)
+            && ClrMemberReferences.DeclaringTypeRef(this, localTypes, selected, callOwner, ownerArguments) is TypeNode.Fqn constructed)
             physicalMatches = ConstructedDeclarationDescribesCall(selectedSignature, completedCallSignature,
                 constructed.Args ?? Array.Empty<TypeNode>());
         // Reified declarations may have compiler-owned physical parameters that are intentionally absent from the

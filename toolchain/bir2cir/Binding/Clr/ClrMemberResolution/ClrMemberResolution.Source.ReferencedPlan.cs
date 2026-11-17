@@ -47,13 +47,13 @@ static partial class ClrMemberResolution
         {
             var callOwner = ResolveOwnerType(owner, refs)
                 ?? throw new InvalidOperationException($"bir2cir: selected call owner '{owner.Name}' does not resolve");
-            if (!refs.TryDeclarationIdentityMethod(call.Identity, call.MethodArity, isStatic, signature,
+            if (!refs.TryDeclarationIdentityMethod(localTypes, call.Identity, call.MethodArity, isStatic, signature,
                 callOwner, owner.Args, out var selectedSignature, out var selected, out _, out var failure))
                 throw new InvalidOperationException($"bir2cir: {context} [{call.Kind} {owner.Name}.{name}]: " +
                     $"frontend declaration identity '{call.Identity}' {failure}");
             // Identity selected the MethodDef, not the receiver's instantiation
             // of its declaring type. Project through that actual call owner.
-            var reference = MemberRefOf(refs, selected, MemberRefNode.Kinds.Method, callOwner, owner.Args);
+            var reference = ClrMemberReferences.MemberRefOf(refs, localTypes, selected, MemberRefNode.Kinds.Method, callOwner, owner.Args);
             return new(ClearIdentity: true, Signature: selectedSignature, Reference: reference, Declaration: selected,
                 DelegateOwnerArguments: (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>(),
                 IdentityBound: true, StampReturn: call.Kind == "constrainedCall");
@@ -66,7 +66,7 @@ static partial class ClrMemberResolution
             owner.Args ?? Array.Empty<TypeNode>(), out var physicalSignature, out var declaration, out var declaringOwner))
             return plan;
         return plan with { Signature = physicalSignature,
-            Reference = MemberRefOf(refs, declaration, MemberRefNode.Kinds.Method, declaringOwner, owner.Args),
+            Reference = ClrMemberReferences.MemberRefOf(refs, localTypes, declaration, MemberRefNode.Kinds.Method, declaringOwner, owner.Args),
             Declaration = declaration, DelegateOwnerArguments = owner.Args ?? Array.Empty<TypeNode>() };
     }
 }
