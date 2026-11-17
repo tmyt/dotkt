@@ -970,8 +970,7 @@ sealed class Pipeline
         // module-wide inventories. These are physical snapshots at this clock,
         // not a second capture of source eligibility or carrier demand.
         foreach (var source in captured) ClrMemberResolution.EnsurePlainCallDescriptors(source);
-        ClrMemberResolution.ResolveLocalDelegateTargetsSource(captured, refs,
-            localCarriers: localExistentialOwners);
+        ClrMemberResolution.ResolveLocalDelegateTargetsSource(captured, refs);
         var starProjectionBounds = StarProjectionBoundLowering.CollectTypeParamBounds(captured);
         var declarationCollisionSources = new List<BirFileDeclaration>();
         var physicalPreparation = new PhysicalAbiPreparation(
@@ -1326,7 +1325,7 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         var physicalExistentialOwners = localExistentialOwners.Values.ToHashSet(StringComparer.Ordinal);
-        TypedPhysicalValueCoercion.ApplyAll(delegateDeclarations, physicalDocuments,
+        TypedPhysicalValueCoercion.ApplyAll(delegateDeclarations, localExistentialOwners, physicalDocuments,
             () => ClrMemberResolution.UnitSingletonRead(refs), isValueFqn, referenceBuild: _options.RefBuild,
             isReferenceOwner: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
                 is { IsClass: true, IsValueType: false } native

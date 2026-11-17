@@ -124,7 +124,8 @@ static partial class ClrMemberResolution
             invoke.GetParameters().Select(p => SubstOwnerParams(p.ParameterType, args)).ToArray(), null, family);
     }
 
-    static bool HasRepresentationSlotSeam(TypeNode.Fn natural, TypeNode.Fn target)
+    static bool HasRepresentationSlotSeam(IReadOnlyDictionary<string, string> localCarriers,
+        TypeNode.Fn natural, TypeNode.Fn target)
     {
         static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" };
         static bool Seam(TypeNode left, TypeNode right) => !SameDelegate(left, right)
@@ -137,10 +138,11 @@ static partial class ClrMemberResolution
             TypeNode.Oblivious oblivious => Core(oblivious.Of),
             _ => type,
         };
-        static bool NeedsNominalDowncast(TypeNode value, TypeNode destination) =>
+        static bool NeedsNominalDowncast(IReadOnlyDictionary<string, string> localCarriers,
+            TypeNode value, TypeNode destination) =>
             Core(destination) is TypeNode.Fqn { Args: { Length: > 0 } } exact
             && Core(value) is TypeNode.Fqn carrier
-            && (_localCarriers?.TryGetValue(exact.Name, out var local) == true && local == carrier.Name
+            && (localCarriers?.TryGetValue(exact.Name, out var local) == true && local == carrier.Name
                 || _refs?.TryExistentialPhysicalOwner(exact.Name, out var referenced) == true
                     && referenced == carrier.Name);
         if (natural.DelegateParams.Length != target.DelegateParams.Length)
@@ -149,13 +151,13 @@ static partial class ClrMemberResolution
         // Exact->carrier reference covariance/contravariance is already delegate-compatible. Only the proven
         // carrier->exact direction needs the value adapter's checked conversion, never a byref conversion.
         return natural.DelegateParams.Zip(target.DelegateParams,
-                (source, destination) => Seam(source, destination) || NeedsNominalDowncast(destination, source))
+                (source, destination) => Seam(source, destination) || NeedsNominalDowncast(localCarriers, destination, source))
             .Any(seam => seam)
-            || Seam(natural.Ret, target.Ret) || NeedsNominalDowncast(natural.Ret, target.Ret);
+            || Seam(natural.Ret, target.Ret) || NeedsNominalDowncast(localCarriers, natural.Ret, target.Ret);
     }
 
-    static bool NeedsSlotAdapter(TypeNode.Fn natural, TypeNode.Fn target) =>
-        HasRepresentationSlotSeam(natural, target)
+    static bool NeedsSlotAdapter(IReadOnlyDictionary<string, string> localCarriers, TypeNode.Fn natural, TypeNode.Fn target) =>
+        HasRepresentationSlotSeam(localCarriers, natural, target)
         || ((natural.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             != (target.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }));
 
@@ -255,10 +257,11 @@ static partial class ClrMemberResolution
     // Replace the void-returning construction with a `newClosure` over an adapter that produces the Unit value the
     // slot's Invoke has to return. The original construction becomes the adapter's single capture, so its own
     // resolved constructor and Invoke keep describing the natural delegate.
-    static DelegateAdapterPlan VoidDelegateAdapterPlan(TypeNode.Fn naturalFn, TypeNode.Fqn slot, TypeNode slotReturn)
+    static DelegateAdapterPlan VoidDelegateAdapterPlan(IReadOnlyDictionary<string, string> localCarriers,
+        TypeNode.Fn naturalFn, TypeNode.Fqn slot, TypeNode slotReturn)
     {
         if (PhysicalFunctionShape(slot, includeNominal: true) is TypeNode.Fn target
-            && HasRepresentationSlotSeam(naturalFn, target))
+            && HasRepresentationSlotSeam(localCarriers, naturalFn, target))
             return BoxedDelegateAdapterPlan(naturalFn, target);
         // The value the adapter returns is the `Unit` singleton, so the slot's Invoke must be able to receive it.
         // Kotlin resolution only fills such a slot from a `Unit` lambda, so anything else is a producer defect

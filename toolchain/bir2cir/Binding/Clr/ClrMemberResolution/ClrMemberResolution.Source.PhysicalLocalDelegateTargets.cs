@@ -11,7 +11,6 @@ static partial class ClrMemberResolution
         ReferenceMetadataIndex refs, IReadOnlyDictionary<string, string> localCarriers = null)
     {
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        _localCarriers = localCarriers;
         var owners = SourceLocalDelegateOwners(roots);
         var localTypes = owners.Keys.ToHashSet(StringComparer.Ordinal);
         void Bind(BirGraphValue node)
@@ -73,7 +72,7 @@ static partial class ClrMemberResolution
         }
         void Reconcile(BirGraphValue node, TypeNode.Fn natural, TypeNode.Fn target)
         {
-            if (!NeedsSlotAdapter(natural, target)) return;
+            if (!NeedsSlotAdapter(localCarriers, natural, target)) return;
             if (!node.HasDeclaredDelegateSlot) MarkDelegateSlot(node, target, refs, localTypes);
             if (node is BirNewDelegate direct) direct.FuncType = natural;
             else ((BirNewClosure)node).FuncType = natural;
