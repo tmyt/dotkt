@@ -240,9 +240,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>
         (binding.SignatureParameters, binding.SignatureReturn);
 
-    internal static TypeNode DeclarationSignatureSlot(ParameterInfo parameter)
+    internal TypeNode DeclarationSignatureSlot(ParameterInfo parameter) =>
+        ReadDeclarationSignatureSlot(parameter, _nativeSignatures);
+
+    static TypeNode ReadDeclarationSignatureSlot(ParameterInfo parameter, NativeSignatureReader signatures)
     {
-        if (parameter.Member is MethodBase method && NativeSignatures.Method(method) is { } native)
+        if (parameter.Member is MethodBase method && signatures.Method(method) is { } native)
             return parameter.Position < 0 ? native.Return : native.Parameters[parameter.Position];
         TypeNode type = DeclarationTypeNode(parameter.ParameterType);
         foreach (var modifier in parameter.GetOptionalCustomModifiers().Reverse())
@@ -252,7 +255,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return type;
     }
 
-    static readonly NativeSignatureReader NativeSignatures = new();
+    // Borrowed read-only declaration facts, as in the shared decoder's contract.
+    internal NativeSignatureReader.Signature NativeMethodSignature(MethodBase method) => _nativeSignatures.Method(method);
+    internal TypeNode NativeFieldSignature(FieldInfo field) => _nativeSignatures.Field(field);
 
     internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
         SelectDeclarationTwin(constructors, constructor => KotlinDeclarationIdentityPayload(
@@ -632,6 +637,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // Reflection handles are borrowed from this fixed reference universe.
     // Pipeline owns its lifetime through this index, including exceptional exit.
     readonly ReferenceMetadataUniverse _universe;
+    NativeSignatureReader _nativeSignatures;
     readonly Dictionary<string, (bool Found, TypeNode Type, BirLiteral Value)> _literalFieldCache =
         new(StringComparer.Ordinal);
     readonly Dictionary<string, bool> _volatileFieldCache = new(StringComparer.Ordinal);
@@ -694,8 +700,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte",
     };
 
-    ReferenceMetadataIndex(List<ReferenceAssembly> assemblies, ManagedReferenceCatalog compileRefs)
+    ReferenceMetadataIndex(List<ReferenceAssembly> assemblies, ManagedReferenceCatalog compileRefs,
+        NativeSignatureReader nativeSignatures = null)
     {
+        _nativeSignatures = nativeSignatures ?? new NativeSignatureReader();
         _assemblies = assemblies;
         _compileRefs = compileRefs;
         _universe = new ReferenceMetadataUniverse(compileRefs);
@@ -2143,6 +2151,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     {
         _shippedCache.Clear();
         _literalFieldCache.Clear(); _volatileFieldCache.Clear(); _awaitPlanCache.Clear();
+        _nativeSignatures = null;
         _universe.Dispose();
     }
 
@@ -4992,7 +5001,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         // twin — alias so that reference resolves to DotKt.Private.Stdlib (same type shapes).
         var catalog = ManagedReferenceCatalog.Create(refs, "bir2cir", refStdlibAliasesRuntime: true);
         var assemblies = new List<ReferenceAssembly>();
-        if (catalog.Entries.Count == 0) return new ReferenceMetadataIndex(assemblies, catalog);
+        var nativeSignatures = new NativeSignatureReader();
+        if (catalog.Entries.Count == 0) return new ReferenceMetadataIndex(assemblies, catalog, nativeSignatures);
         using var mlc = catalog.CreateMetadataLoadContext();
         foreach (var entry in catalog.Entries)
         {
@@ -5002,13 +5012,15 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 reference,
                 identity.Name ?? Path.GetFileNameWithoutExtension(reference),
                 identity.Version?.ToString() ?? "",
-                ReadDotKtMetadata(reference, mlc)));
+                ReadDotKtMetadata(reference, mlc, nativeSignatures.Method,
+                    parameter => ReadDeclarationSignatureSlot(parameter, nativeSignatures))));
         }
 
-        return new ReferenceMetadataIndex(assemblies, catalog);
+        return new ReferenceMetadataIndex(assemblies, catalog, nativeSignatures);
     }
 
-    static ReferenceDotKtMetadata ReadDotKtMetadata(string reference, MetadataLoadContext mlc)
+    static ReferenceDotKtMetadata ReadDotKtMetadata(string reference, MetadataLoadContext mlc,
+        Func<MethodBase, NativeSignatureReader.Signature> methodSignature, Func<ParameterInfo, TypeNode> signatureSlot)
     {
         var metadata = new ReferenceDotKtMetadata();
         // The substitution index via MetadataLoadContext (a metadata-only reflection read) is the SOLE scan. A former
@@ -5017,14 +5029,15 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         // spurious "metadata scan failed: TypeLoadException Type: 'kotlin.String'" on every build — and aborted early,
         // and its output fed ONLY dead resolution paths (the unreferenced Resolve(CallSite)/Resolve(TypeSite)/
         // ResolveClrProperty). The live @ClrTypeAlias/@ClrIntrinsic/rule-3 substitution reads exclusively from here.
-        ScanSubstitutionMetadata(reference, metadata, mlc);
+        ScanSubstitutionMetadata(reference, metadata, mlc, methodSignature, signatureSlot);
         return metadata;
     }
 
     // Populate the substitution index (Aliases / TypeKinds / HelperTypes / MemberBindings) from the ref.dll using a
     // MetadataLoadContext so the metadata-only assembly reads cleanly. Per-type try/catch: one malformed type is
     // skipped, never aborting the whole scan (the failure mode that left Assembly.LoadFrom's index empty).
-    static void ScanSubstitutionMetadata(string reference, ReferenceDotKtMetadata metadata, MetadataLoadContext mlc)
+    static void ScanSubstitutionMetadata(string reference, ReferenceDotKtMetadata metadata, MetadataLoadContext mlc,
+        Func<MethodBase, NativeSignatureReader.Signature> methodSignature, Func<ParameterInfo, TypeNode> signatureSlot)
     {
         try
         {
@@ -5397,7 +5410,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
-                        var nativeSignature = NativeSignatures.Method(method);
+                        var nativeSignature = methodSignature(method);
                         var countRange = CountRangeOf(method);
                         var collectionFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
@@ -5510,8 +5523,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                                 ?.ConstructorArguments[1].Value as string : null,
                             SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
-                            SignatureParameters = method.GetParameters().Select(DeclarationSignatureSlot).ToArray(),
-                            SignatureReturn = DeclarationSignatureSlot(method.ReturnParameter),
+                            SignatureParameters = method.GetParameters().Select(signatureSlot).ToArray(),
+                            SignatureReturn = signatureSlot(method.ReturnParameter),
                             PhysicalVisibility = method.IsPublic ? "public"
                                 : method.IsFamily || method.IsFamilyOrAssembly ? "protected"
                                 : method.IsAssembly ? "internal" : "private",
@@ -7755,6 +7768,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
         PayloadOwnershipSelfTest();
+        ClrMemberResolution.NativeSignatureLifetimeSelfTest();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
         nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
