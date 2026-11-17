@@ -81,7 +81,7 @@ The resolution path's state and its current ownership:
 | State | Writers / readers | Lifetime and problem | Required boundary |
 |---|---|---|---|
 | `ReferencedCallSignatures.snapshots`, `nextId` | Module source capture allocates; cold-call capability extends; referenced graph reader borrows read-only vectors; root cleanup removes markers only | Compilation lifetime, independent from another module and each root's marker cleanup | Private catalog; only capture, projection, query/release and disposal operations; no selector reads the table |
-| `_refs` | Native, referenced, inherited, interface, attribute, delegate, well-known and MemberRef entry points assign it; scalar matchers/renderers read it | Ambient last-call reference universe, including calls made before the final binding pass | Explicit reference queries passed to exact selection / rendering; no dependency on another entry point's initialization |
+| `_refs` | Binding entry points assign it; binding queries/writers supply current facts to the scalar matching/reference units | Ambient last-call reference universe, including calls made before the final binding pass | Explicit reference queries passed to exact selection / rendering; no dependency on another entry point's initialization |
 | `_localTypes` | Native, declaration, referenced and delegate entry points replace it | Per invocation facts stored process-wide | Pass-owned local physical identity input, not reference metadata |
 | `_externalCanonicalTypes`, `_localDeclarationIds` | Referenced entry assigns; planner consumes | Per invocation, process-held sets | Referenced selection inputs; not shared mutation rights |
 | `_localCarriers` | Local target and delegate entry points assign; physical function/delegate shaping reads | Module physical continuation stored ambiently | Explicit physical carrier relation input |
@@ -100,6 +100,15 @@ allocator or resource lifetime. It returns selected reflection declarations and
 new type descriptors, borrowed within the index lifetime. Binding entry points
 still own call/slot graph updates and pass their current facts; removing their
 remaining ambient invocation state is a separate boundary, not claimed here.
+
+`ClrMemberReferences` constructs exact method/field identities and physical
+declaring/signature types from selected reflection declarations and explicit
+reference/local-type facts. It has no fields, graph writer, resource ownership
+or resolver backreference. Selection and dispatch policy stay with binding.
+Existing binding entry points still supply their current facts; the two scalar
+forwarders for current external callers remain pending that input extraction,
+not a claim that ambient binding state is gone. No new compatibility path or
+internal-mutation guarantee is introduced.
 
 `PhysicalDelegateDeclarations` owns adapter declaration construction and its two
 identity allocators. The pipeline creates one instance for construction and final
@@ -268,7 +277,7 @@ and declaration admission remain with their existing producers, not this catalog
 Existing default/inline collision and runtime producer/consumer tests remain
 the behavior coverage for this extraction; the artificial scan-input mutation
 fixture is removed. Other ingested facts, ambient CLR
-resolver inputs/allocators and carrier capabilities still need their own work.
+resolver inputs and carrier capabilities still need their own work.
 
 ## Suspend and orchestration boundaries
 

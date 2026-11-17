@@ -92,7 +92,7 @@ static partial class ClrMemberResolution
             $"newClr owner={TypeNode.ToJson(owner)} ({DescArgs(signature)})");
 
         CoerceNativeConstructorViews(arguments, selected.GetParameters(), signature, ownerArguments);
-        var reference = BirMemberReference.FromPhysical(MemberRefOf(selected, MemberRefNode.Kinds.Ctor, open, ownerArguments));
+        var reference = BirMemberReference.FromPhysical(ClrMemberReferences.MemberRefOf(_refs, _localTypes, selected, MemberRefNode.Kinds.Ctor, open, ownerArguments));
         StampNativeDelegateArgumentTargets(arguments, Array.Empty<TypeNode>(), selected,
             ownerArguments ?? Array.Empty<TypeNode>());
         switch (node)
@@ -133,7 +133,7 @@ static partial class ClrMemberResolution
         // instruction instead names its virtual root slot, never the body.
         var target = dispatch == "constrained" ? ConstrainedSlot(declaration, open) : declaration;
         return new(declaration, BirMemberReference.FromPhysical(
-            MemberRefOf(target, MemberRefNode.Kinds.Method, open, ownerArguments)), dispatch,
+            ClrMemberReferences.MemberRefOf(_refs, _localTypes, target, MemberRefNode.Kinds.Method, open, ownerArguments)), dispatch,
             NativeDeclaredReturn(declaration.ReturnType));
     }
 

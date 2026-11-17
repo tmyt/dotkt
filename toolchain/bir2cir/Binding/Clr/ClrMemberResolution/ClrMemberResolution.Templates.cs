@@ -53,7 +53,7 @@ static partial class ClrMemberResolution
         if (open == null) return null;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
-        return field == null ? null : FieldRefOf(field, open, owner.Args ?? Array.Empty<TypeNode>());
+        return field == null ? null : ClrMemberReferences.FieldRefOf(_refs, _localTypes, field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
     static bool IsFunctionShape(TypeNode type) => type switch

@@ -66,7 +66,7 @@ static partial class ClrMemberResolution
         if (matches.Count == 0) throw ClrDeclarationMatching.NoMatch(description, candidates);
         if (matches.Count > 1) throw ClrDeclarationMatching.Malformed(description, matches);
         var winner = matches[0];
-        var reference = MemberRefOf(winner, MemberRefNode.Kinds.Method, open,
+        var reference = ClrMemberReferences.MemberRefOf(_refs, _localTypes, winner, MemberRefNode.Kinds.Method, open,
             ownerSpec.Args ?? Array.Empty<TypeNode>());
         descriptor.MemberRef = BirMemberReference.FromPhysical(reference with { Name = name });
         descriptor.ReferenceMember = default;
@@ -77,14 +77,14 @@ static partial class ClrMemberResolution
     {
         // Reflection may express an inherited member in the receiver's frame.
         // Substitute the declaration's own signature through the declaring edge once.
-        candidate = (MethodInfo)OpenDeclarationOf(candidate);
-        var declarer = DeclaringTypeRef(candidate, open, ownerArgs ?? Array.Empty<TypeNode>()) as TypeNode.Fqn;
+        candidate = (MethodInfo)ClrMemberReferences.OpenDeclarationOf(candidate);
+        var declarer = ClrMemberReferences.DeclaringTypeRef(_refs, _localTypes, candidate, open, ownerArgs ?? Array.Empty<TypeNode>()) as TypeNode.Fqn;
         var declaringArgs = declarer?.Args ?? Array.Empty<TypeNode>();
-        var candidateParameters = RefParamsOf(candidate)
+        var candidateParameters = ClrMemberReferences.RefParamsOf(_refs, _localTypes, candidate)
             .Select(type => MethodImplComparisonType(
                 SupertypeGraph.SubstOwnerTvs(type, declaringArgs))).ToArray();
         var candidateReturn = MethodImplComparisonType(
-            SupertypeGraph.SubstOwnerTvs(RefReturnOf(candidate), declaringArgs));
+            SupertypeGraph.SubstOwnerTvs(ClrMemberReferences.RefReturnOf(_refs, _localTypes, candidate), declaringArgs));
         var descriptorParameters = parameters.Select(MethodImplComparisonType).ToArray();
         var descriptorReturn = MethodImplComparisonType(ret);
         return candidateParameters.Length == parameters.Count
