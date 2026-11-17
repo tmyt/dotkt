@@ -498,17 +498,18 @@ internal static partial class BirGraphJson
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
         OptionalField<bool> field1 = default;
-        OptionalField<IBirExpression> field2 = default;
-        OptionalField<bool> field3 = default;
-        OptionalField<TypeNode> field4 = default;
+        OptionalField<TypeNode> field2 = default;
+        OptionalField<IBirExpression> field3 = default;
+        OptionalField<bool> field4 = default;
         OptionalField<TypeNode> field5 = default;
-        OptionalField<bool> field6 = default;
+        OptionalField<TypeNode> field6 = default;
         OptionalField<bool> field7 = default;
         OptionalField<bool> field8 = default;
-        OptionalField<IBirExpression> field9 = default;
+        OptionalField<bool> field9 = default;
         OptionalField<IBirExpression> field10 = default;
         OptionalField<IBirExpression> field11 = default;
-        OptionalField<TypeNode> field12 = default;
+        OptionalField<IBirExpression> field12 = default;
+        OptionalField<TypeNode> field13 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -516,7 +517,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 13); if (ReadString(ref reader) != "cast") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 14); if (ReadString(ref reader) != "cast") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -525,49 +526,53 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "e":
+                case "erasedTypeOperand":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "e":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 case "dotktProjectedCollection":
-                    Seen(ref seen, 1UL << 3);
-                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
                 case "_erasedValueVariable":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 5);
-                    field5 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
                     break;
                 case "_physicalDeclarationSignature":
-                    Seen(ref seen, 1UL << 6);
-                    field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
-                    break;
-                case "_exactBridgeCast":
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "functionValueRestoration":
+                case "_exactBridgeCast":
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "kotlinTypeWitness":
+                case "functionValueRestoration":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "kotlinRuntimeTypeWitness":
+                case "kotlinTypeWitness":
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "kotlinClassifierPredicate":
+                case "kotlinRuntimeTypeWitness":
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "sty":
+                case "kotlinClassifierPredicate":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "sty":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -577,17 +582,18 @@ internal static partial class BirGraphJson
         {
             Type = field0,
             ReifiedTypeOperand = field1,
-            E = field2,
-            DotktProjectedCollection = field3,
-            _erasedValueVariable = field4,
-            SuspendFnTypePre = field5,
-            _physicalDeclarationSignature = field6,
-            _exactBridgeCast = field7,
-            FunctionValueRestoration = field8,
-            KotlinTypeWitness = field9,
-            KotlinRuntimeTypeWitness = field10,
-            KotlinClassifierPredicate = field11,
-            Sty = field12,
+            ErasedTypeOperand = field2,
+            E = field3,
+            DotktProjectedCollection = field4,
+            _erasedValueVariable = field5,
+            SuspendFnTypePre = field6,
+            _physicalDeclarationSignature = field7,
+            _exactBridgeCast = field8,
+            FunctionValueRestoration = field9,
+            KotlinTypeWitness = field10,
+            KotlinRuntimeTypeWitness = field11,
+            KotlinClassifierPredicate = field12,
+            Sty = field13,
         };
     }
 
@@ -666,11 +672,12 @@ internal static partial class BirGraphJson
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
         OptionalField<bool> field1 = default;
-        OptionalField<IBirExpression> field2 = default;
-        OptionalField<TypeNode> field3 = default;
-        OptionalField<IBirExpression> field4 = default;
+        OptionalField<TypeNode> field2 = default;
+        OptionalField<IBirExpression> field3 = default;
+        OptionalField<TypeNode> field4 = default;
         OptionalField<IBirExpression> field5 = default;
         OptionalField<IBirExpression> field6 = default;
+        OptionalField<IBirExpression> field7 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -678,7 +685,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 7); if (ReadString(ref reader) != "isInstRef") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 8); if (ReadString(ref reader) != "isInstRef") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -687,25 +694,29 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "e":
+                case "erasedTypeOperand":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "e":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 3);
-                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
                     break;
                 case "kotlinTypeWitness":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
-                    break;
-                case "kotlinRuntimeTypeWitness":
                     Seen(ref seen, 1UL << 5);
                     field5 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
-                case "kotlinClassifierPredicate":
+                case "kotlinRuntimeTypeWitness":
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "kotlinClassifierPredicate":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -715,11 +726,12 @@ internal static partial class BirGraphJson
         {
             Type = field0,
             ReifiedTypeOperand = field1,
-            E = field2,
-            SuspendFnTypePre = field3,
-            KotlinTypeWitness = field4,
-            KotlinRuntimeTypeWitness = field5,
-            KotlinClassifierPredicate = field6,
+            ErasedTypeOperand = field2,
+            E = field3,
+            SuspendFnTypePre = field4,
+            KotlinTypeWitness = field5,
+            KotlinRuntimeTypeWitness = field6,
+            KotlinClassifierPredicate = field7,
         };
     }
 

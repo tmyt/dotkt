@@ -92,6 +92,7 @@ private fun IrType.hasReifiedRuntimeOperand(): Boolean {
     val element = ((this as? IrSimpleType)?.arguments?.singleOrNull() as? IrTypeProjection)?.type
     return element?.hasReifiedRuntimeOperand() == true
 }
+
 //
 // #122: stamp the FRONTEND-RESOLVED static type `sty` (the instantiated `node.type`, incl. smart-cast refinement,
 // generic args and nullability) at this single chokepoint. bir2cir's StaticType CONSUMES it — reading an operand's
@@ -349,7 +350,7 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 	else original
 	return nullableValueUnwrapElem(node.argument.type, node.typeOperand)?.let { elem ->
 		kotc.bir.BirNullableValue(elem = elem, e = operand)
-	} ?: kotc.bir.BirCast(type = birType(node.typeOperand), reifiedTypeOperand = node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand(), e = operand)
+	} ?: kotc.bir.BirCast(type = birType(node.typeOperand), reifiedTypeOperand = node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand(), erasedTypeOperand = erasedTypeOperand(node.typeOperand), e = operand)
 }
 
 internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (node) {
@@ -572,7 +573,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 			// `Nullable<uint>`, not a boxed reference via `isInstRef` (same #118 class as `!!`/smart-cast).
 			val velem = node.typeOperand.takeIf { it.isPrimitiveOrUnsigned() }?.classFqName?.asString()?.let { TypeNode.Fqn(it) }
 			if (velem != null) kotc.bir.BirSafeValueCast(elem = velem, e = expr(node.argument))
-			else kotc.bir.BirInstanceOrNull(type = birType(node.typeOperand), reifiedTypeOperand = node.typeOperand.hasReifiedRuntimeOperand(), e = expr(node.argument))
+			else kotc.bir.BirInstanceOrNull(type = birType(node.typeOperand), reifiedTypeOperand = node.typeOperand.hasReifiedRuntimeOperand(), erasedTypeOperand = erasedTypeOperand(node.typeOperand), e = expr(node.argument))
 		}
 		// A fun-interface SAM conversion (`Comparator { a, b -> … }`) -> a synthetic class implementing the interface
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that

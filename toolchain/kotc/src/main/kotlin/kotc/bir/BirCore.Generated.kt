@@ -84,7 +84,8 @@ data class BirBinaryOperation(
 data class BirCast(
     val type: TypeNode,
     val e: BirExpression,
-    val reifiedTypeOperand: Boolean? = null
+    val reifiedTypeOperand: Boolean? = null,
+    val erasedTypeOperand: TypeNode? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"cast\"")
@@ -93,6 +94,10 @@ data class BirCast(
         reifiedTypeOperand?.let { value ->
             output.append(",\"reifiedTypeOperand\":")
             output.append(value)
+        }
+        erasedTypeOperand?.let { value ->
+            output.append(",\"erasedTypeOperand\":")
+            value.writeJson(output)
         }
         output.append(",\"e\":")
         e.writeJson(output)
@@ -117,7 +122,8 @@ data class BirIsInstance(
 data class BirInstanceOrNull(
     val type: TypeNode,
     val e: BirExpression,
-    val reifiedTypeOperand: Boolean? = null
+    val reifiedTypeOperand: Boolean? = null,
+    val erasedTypeOperand: TypeNode? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"isInstRef\"")
@@ -126,6 +132,10 @@ data class BirInstanceOrNull(
         reifiedTypeOperand?.let { value ->
             output.append(",\"reifiedTypeOperand\":")
             output.append(value)
+        }
+        erasedTypeOperand?.let { value ->
+            output.append(",\"erasedTypeOperand\":")
+            value.writeJson(output)
         }
         output.append(",\"e\":")
         e.writeJson(output)

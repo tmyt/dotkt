@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve source-erased checks for non-reified type-parameter casts without
+  narrowing opaque values to a caller's CLR storage type.
+
 - Preserve Kotlin data-class identity across DLL-to-KLIB roundtrips, including
   declaration-only reference assemblies.
 - Compress beneficial MessagePack compiler metadata attributes with raw DEFLATE

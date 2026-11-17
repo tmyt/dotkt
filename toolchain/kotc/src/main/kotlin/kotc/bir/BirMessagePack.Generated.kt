@@ -207,7 +207,7 @@ internal object BirMessagePack {
 
     private fun writeBirCast(value: BirCast, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.reifiedTypeOperand == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.reifiedTypeOperand == null) 0 else 1) + (if (value.erasedTypeOperand == null) 0 else 1))
         packer.packString("k")
         packer.packString("cast")
         packer.packString("type")
@@ -215,6 +215,10 @@ internal object BirMessagePack {
         value.reifiedTypeOperand?.let { child ->
             packer.packString("reifiedTypeOperand")
             packer.packBoolean(child)
+        }
+        value.erasedTypeOperand?.let { child ->
+            packer.packString("erasedTypeOperand")
+            writeType(child, packer, depth + 1)
         }
         packer.packString("e")
         write(value.e, packer, depth + 1)
@@ -233,7 +237,7 @@ internal object BirMessagePack {
 
     private fun writeBirInstanceOrNull(value: BirInstanceOrNull, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.reifiedTypeOperand == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.reifiedTypeOperand == null) 0 else 1) + (if (value.erasedTypeOperand == null) 0 else 1))
         packer.packString("k")
         packer.packString("isInstRef")
         packer.packString("type")
@@ -241,6 +245,10 @@ internal object BirMessagePack {
         value.reifiedTypeOperand?.let { child ->
             packer.packString("reifiedTypeOperand")
             packer.packBoolean(child)
+        }
+        value.erasedTypeOperand?.let { child ->
+            packer.packString("erasedTypeOperand")
+            writeType(child, packer, depth + 1)
         }
         packer.packString("e")
         write(value.e, packer, depth + 1)

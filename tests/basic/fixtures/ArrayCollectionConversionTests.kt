@@ -64,7 +64,7 @@ class ArrayCollectionConversionTests {
         var rejected = false
         try {
             ArrayConversionCollection(listOf<Any?>(7, "bad")).into(partial)
-        } catch (failure: ClassCastException) {
+        } catch (failure: System.ArrayTypeMismatchException) {
             rejected = true
         }
         check(rejected && partial[0] == 7 && partial[1] == 98)

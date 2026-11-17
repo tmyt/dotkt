@@ -49,6 +49,9 @@ import roundtrip.defaultarguments.InheritedLeaf
 import roundtrip.defaultarguments.InheritedMappedLeaf
 import roundtrip.defaultarguments.readReference
 import roundtrip.defaultarguments.referenceDefault
+import roundtrip.defaultarguments.erasedInlineObject
+import roundtrip.defaultarguments.erasedNullableInlineObject
+import roundtrip.defaultarguments.erasedDefaultObject
 import roundtrip.nrt.retNonNull
 import roundtrip.nrt.takeNonNull
 import roundtrip.nrt.retNullable
@@ -433,6 +436,13 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual("imported", referenceDefault(kotlin.clr.byref(text)))
         var nullable: Int? = null
         ClassicAssert.AreEqual(null, referenceDefault(kotlin.clr.byref(nullable)))
+        ClassicAssert.AreEqual("heterogeneous", erasedInlineObject<Int>("heterogeneous") {})
+        ClassicAssert.AreEqual(null, erasedInlineObject<Int>(null) {})
+        ClassicAssert.AreEqual(null, erasedNullableInlineObject<Int>(null) {})
+        ClassicAssert.AreEqual(42, erasedNullableInlineObject<String>(42) {})
+        ClassicAssert.AreEqual("heterogeneous", erasedDefaultObject<Int>("heterogeneous"))
+        ClassicAssert.AreEqual(null, erasedDefaultObject<Int>(null))
+        ClassicAssert.AreEqual("explicit", erasedDefaultObject<Int>("heterogeneous", "explicit"))
     }
 
     // roundtrip-nrt (#48): tri-state nullability — non-null (byte 1) + nullable (byte 2) reference via

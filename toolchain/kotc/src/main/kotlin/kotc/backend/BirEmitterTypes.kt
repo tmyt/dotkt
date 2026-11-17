@@ -62,6 +62,7 @@ import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
+import org.jetbrains.kotlin.ir.util.eraseTypeParameters
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -84,6 +85,28 @@ import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
+
+// Kotlin's erased classifier application has no lexical type-variable slots,
+// including those captured by an inner/local class. Function classifier stars
+// retain the same function vocabulary as ordinary Kotlin function types.
+internal fun BirEmitter.erasedTypeOperand(type: IrType): TypeNode? {
+    val parameter = (type.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.owner ?: return null
+    if (parameter.isReified) return null
+    val erased = type.eraseTypeParameters()
+    val klass = (erased.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrClassSymbol)?.owner
+    val name = erased.classFqName?.asString()
+    val function = name != null && (name.startsWith("kotlin.Function") || name.startsWith("kotlin.reflect.KFunction")
+        || name.startsWith("kotlin.coroutines.SuspendFunction") || name.startsWith("kotlin.reflect.KSuspendFunction"))
+    val raw = when {
+        function -> TypeNode.Fn(name!!.contains("SuspendFunction"), TypeNode.Star,
+            List(klass!!.typeParameters.size - 1) { TypeNode.Star })
+        klass != null && (klass.isInner || liftedCaptureArgs(klass).isNotEmpty()) ->
+            sourceClassifierType(klass, List(klass.typeParameters.size + innerEnclosingTypeParams(klass).size
+                + liftedCaptureArgs(klass).size) { TypeNode.Star })
+        else -> return birType(erased)
+    }
+    return if (erased.isMarkedNullable()) TypeNode.Nullable(raw) else raw
+}
 
 internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// A default expression is the CALLEE's IR, rendered into the CALLER's frame (the `$default` scope at the JSON

@@ -270,6 +270,7 @@ static class Bir2Cir
                 ExactMutableViewDispatch.SelfTest();
                 KotlinCollectionClassifierLowering.SelfTest();
                 KotlinRuntimeTypeWitness.SourceSelfTest();
+                NonReifiedCastErasure.SourceSelfTest();
                 StarProjectionLowering.SourceSelfTest();
                 GenericArrayStorageLowering.SelfTest();
                 ErasedElementValues.SelfTest();

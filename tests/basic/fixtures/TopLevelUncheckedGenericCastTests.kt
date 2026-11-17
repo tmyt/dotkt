@@ -7,6 +7,70 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 @Suppress("UNCHECKED_CAST")
 private fun <T> read(raw: Any?): T = raw as T
 
+@Suppress("UNCHECKED_CAST")
+private fun <T> erasedObject(raw: Any?): Any? = raw as T
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> erasedSafeObject(raw: Any?): Any? = raw as? T
+
+@Suppress("UNCHECKED_CAST")
+private inline fun <T> erasedInlineObject(raw: Any?, action: () -> Unit): Any? { action(); return raw as T }
+
+@Suppress("UNCHECKED_CAST")
+private inline fun <T> erasedNullableInlineObject(raw: Int?, action: () -> Unit): Any? {
+    val saved: Int? = raw
+    action()
+    return saved as T
+}
+
+@Suppress("UNCHECKED_CAST")
+private inline fun <T> splicedValue(raw: Any?, action: () -> Unit): T { action(); return raw as T }
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> erasedDefaultObject(raw: Any?, result: Any? = raw as T): Any? = result
+
+@Suppress("UNCHECKED_CAST")
+private fun <T> erasedClosureObject(raw: Any?): Any? = run { raw as T }
+
+private open class CastBound
+private class CastDerived : CastBound()
+private interface CastMarker<T>
+private class TextCastMarker : CastMarker<String>
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : CastBound> erasedBoundObject(raw: Any?): Any? = raw as T
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : CastMarker<Int>> erasedMarkerObject(raw: Any?): Any? = raw as? T
+
+private class CastOwner<A : CastBound> {
+    @Suppress("UNCHECKED_CAST")
+    fun eraseOwner(raw: Any?): Any? = raw as A
+    @Suppress("UNCHECKED_CAST")
+    fun <B> erase(raw: Any?): Any? = raw as B
+}
+
+@Suppress("UNCHECKED_CAST")
+private inline fun <T : CastBound> splicedBound(raw: Any?, action: () -> Unit): T { action(); return raw as T }
+
+private fun concreteBound(raw: Any?): CastDerived = splicedBound<CastDerived>(raw) {}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : () -> Unit> erasedFunctionObject(raw: Any?): Any? = raw as T
+
+private fun <T : () -> Unit> callPresentFunction(value: T?) { if (value != null) value() }
+
+private class CastOuter<A> {
+    inner class Inner
+    @Suppress("UNCHECKED_CAST")
+    fun <T : Inner> erase(raw: Any?): Any? = raw as T
+}
+
+@Suppress("UNCHECKED_CAST")
+private fun <T : CastOuter<*>.Inner> erasedInnerObject(raw: Any?): Any? = raw as T
+
+private inline fun <reified T> checkedObject(raw: Any?): Any? = raw as T
+
 private fun <T> deferred(seed: T, consume: Boolean, raw: Any?): Int {
     val value = read<T>(raw)
     if (!consume) return 7
@@ -68,6 +132,37 @@ class TopLevelUncheckedGenericCastTests {
         assertEquals(0, deferred(0, true, null))
         assertEquals("wrong".hashCode(), deferred(0, true, "wrong"))
         assertEquals(42, deferred(0, true, 42))
+        assertEquals("wrong", erasedObject<Int>("wrong"))
+        assertEquals(null, erasedObject<Int>(null))
+        assertEquals(42, erasedObject<String>(42))
+        assertEquals("wrong", erasedSafeObject<Int>("wrong"))
+        assertEquals(null, erasedSafeObject<Int>(null))
+        assertEquals("wrong", erasedInlineObject<Int>("wrong") {})
+        assertEquals(null, erasedNullableInlineObject<Int>(null) {})
+        assertEquals(42, erasedNullableInlineObject<String>(42) {})
+        assertEquals("wrong", erasedDefaultObject<Int>("wrong"))
+        assertEquals("explicit", erasedDefaultObject<Int>("wrong", "explicit"))
+        assertEquals("wrong", erasedClosureObject<Int>("wrong"))
+        assertEquals("wrong", CastOwner<CastDerived>().erase<Int>("wrong"))
+        val derived = CastDerived()
+        assertTrue(erasedBoundObject<CastDerived>(derived) === derived)
+        val base = CastBound()
+        assertTrue(erasedBoundObject<CastDerived>(base) === base)
+        assertTrue(CastOwner<CastDerived>().eraseOwner(base) === base)
+        val marker = TextCastMarker()
+        assertTrue(erasedMarkerObject<CastMarker<Int>>(marker) === marker)
+        assertEquals(null, erasedMarkerObject<CastMarker<Int>>("wrong"))
+        var evaluations = 0
+        assertEquals("once", erasedInlineObject<Int>(run { evaluations++; "once" }) {})
+        assertEquals(1, evaluations)
+        val action: () -> Unit = { evaluations++ }
+        assertTrue(erasedFunctionObject<() -> Unit>(action) === action)
+        callPresentFunction(action)
+        callPresentFunction<() -> Unit>(null)
+        assertEquals(2, evaluations)
+        val inner = CastOuter<Int>().Inner()
+        assertTrue(erasedInnerObject<CastOuter<Int>.Inner>(inner) === inner)
+        assertTrue(CastOuter<String>().erase<CastOuter<String>.Inner>(inner) === inner)
     }
 
     @TestAttribute
@@ -93,6 +188,53 @@ class TopLevelUncheckedGenericCastTests {
         var failed = false
         try {
             concrete("wrong")
+        } catch (_: System.InvalidCastException) {
+            failed = true
+        }
+        assertTrue(failed)
+        failed = false
+        try {
+            checkedObject<Int>("wrong")
+        } catch (_: System.InvalidCastException) {
+            failed = true
+        }
+        assertTrue(failed)
+        failed = false
+        try {
+            System.Math.Abs(read<Int>("wrong"))
+        } catch (_: System.InvalidCastException) {
+            failed = true
+        }
+        assertTrue(failed)
+        assertEquals(42, System.Math.Abs(read<Int>(-42)))
+        assertEquals(43, splicedValue<Int>(42) {} + 1)
+        assertEquals(-42, -splicedValue<Int>(42) {})
+        assertTrue(splicedValue<Int>(41) {} < splicedValue<Int>(42) {})
+        assertTrue(!splicedValue<Boolean>(false) {})
+        assertEquals("false", if (splicedValue<Boolean>(false) {}) "true" else "false")
+        assertEquals(42L, splicedValue<Int>(42) {}.toLong())
+        var remaining = 0
+        while (splicedValue<Boolean>(remaining > 0) {}) { remaining--; break }
+        assertEquals(0, remaining)
+        val derived = CastDerived()
+        assertTrue(concreteBound(derived) === derived)
+        failed = false
+        try {
+            concreteBound(CastBound())
+        } catch (_: System.InvalidCastException) {
+            failed = true
+        }
+        assertTrue(failed)
+        failed = false
+        try {
+            splicedValue<Int>("wrong") {} + 1
+        } catch (_: System.InvalidCastException) {
+            failed = true
+        }
+        assertTrue(failed)
+        failed = false
+        try {
+            erasedBoundObject<CastDerived>("wrong")
         } catch (_: System.InvalidCastException) {
             failed = true
         }

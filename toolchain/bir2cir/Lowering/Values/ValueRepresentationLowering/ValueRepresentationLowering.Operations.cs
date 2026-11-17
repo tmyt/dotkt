@@ -90,16 +90,18 @@ sealed partial class ValueRepresentationLowering
 
     void BindOperationRoot(BirGraphValue root, OperationLexicalContext context, bool preserveOwnership)
     {
-        if (referenceBuild || bindings.Count == 0) return;
-        if (sourceCompleted) throw new InvalidOperationException("Source value operations used after source declaration completion");
+        var bindValues = !referenceBuild && bindings.Count != 0;
+        if (bindValues && sourceCompleted) throw new InvalidOperationException("Source value operations used after source declaration completion");
         var suffix = 0;
         var names = new HashSet<string>(StringComparer.Ordinal);
-        root.Visit(node => node.VisitNameFields(name => names.Add(name)));
+        if (bindValues) root.Visit(node => node.VisitNameFields(name => names.Add(name)));
         BirGraphValue Walk(BirGraphValue node, OperationLexicalContext lexical)
         {
             if (node is IBirExecutablePayload or BirAttribute or BirOverride) return node;
             var children = lexical.Enter(node);
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value, children)));
+            NonReifiedCastErasure.RewriteOperation(node);
+            if (!bindValues) return node;
             if (node is BirCallInstance call)
             {
                 if (call.Super.OrDefault() && call.DeclarationId.HasValue

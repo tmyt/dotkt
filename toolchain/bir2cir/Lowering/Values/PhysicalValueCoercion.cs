@@ -14,8 +14,10 @@ static partial class PhysicalValueCoercion
         source = SignatureValueTypes.Of(source);
         target = SignatureValueTypes.Of(target);
         ValidateNativePointerConversion(source, target);
-        return source is TypeNode.Tv && target is TypeNode.Tv && !source.Equals(target)
-        || target is TypeNode.Tv && source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
+        // An erased bound is not assignable to a CLR generic stack slot, even
+        // when that slot is constrained to the same bound. Narrow at the actual
+        // storage/argument/return edge, not at the source unchecked cast.
+        return target is TypeNode.Tv && source != null && !IsVoid(source) && source != target
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && !IsVoid(target) && NeedsBox(target, isValue)
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }

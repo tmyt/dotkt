@@ -61,6 +61,11 @@ for method in methods.values():
         )
     operator = next(stmt for stmt in method["body"] if stmt.get("k") != "sourcePoint")["value"]
     operand = operator.get("lhs") if method["name"] == "add" else operator.get("e")
+    # The selected primitive operand boundary can enclose the independent
+    # object-return restoration. Both must remain before the operator.
+    while (operand is not casts[0] and operand.get("k") == "cast"
+           and operand.get("type") == int_type):
+        operand = operand.get("e", {})
     if operand is not casts[0]:
         raise SystemExit(f"{method['name']} extracts the concrete value after rather than before its operator")
     calls.append(matches[0])
