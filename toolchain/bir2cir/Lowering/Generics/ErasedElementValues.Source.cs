@@ -185,7 +185,7 @@ static partial class ErasedElementValues
             if (iteratorValues != null && !location && node is BirArrayGet arrayRead
                 && Element(arrayRead.Array.OrDefault(), scope) is { } arrayElement)
                 reads[node] = arrayElement;
-            if (!location && node is BirByRefLoad { Ptr.Value: BirLocal { Name.HasValue: true } pointer }
+            if (!location && node is BirByRefLoad { Ptr.HasValue: true, Ptr.Value: BirLocal { Name.HasValue: true } pointer }
                 && scope.TryGetValue(pointer.Name.Value, out var borrowed)
                 && borrowedOrigins.TryGetValue(borrowed, out var borrowedVariable))
                 reads[node] = borrowedVariable;
