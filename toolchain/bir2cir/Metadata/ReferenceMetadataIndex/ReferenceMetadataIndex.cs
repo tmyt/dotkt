@@ -658,19 +658,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
     public void SetLocalEmittedTypes(IReadOnlySet<string> fqns)
     {
-        var names = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
+        _localEmittedTypes = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
             .ToHashSet(StringComparer.Ordinal);
-        var changed = !names.SetEquals(_localEmittedTypes);
-        _localEmittedTypes = names;
         _physicalTypeNamesSnapshot = null;
-        if (changed)
-        {
-            // These decisions include local-over-reference precedence. The
-            // universe's fixed-reference type cache does not include that policy.
-            _literalFieldCache.Clear();
-            _volatileFieldCache.Clear();
-            _awaitPlanCache.Clear();
-        }
     }
 
     bool IsLocalEmittedType(string fqn) =>
@@ -7675,6 +7665,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         static BirConstant DefaultText(string text) => new() {
             Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(text),
         };
+        static string ReadDefault(Dictionary<int, IBirExpression> values) =>
+            values?.GetValueOrDefault(0) is BirConstant { Value.Value: BirLiteral.TextLiteral text } ? text.Value : null;
         if (Same(new TypeNode[] { null }, new TypeNode[] { new TypeNode.Fqn("System.String") }))
             throw new InvalidOperationException("An absent nullable-generic carrier matched a concrete type");
         var first = new RichEnumMetadata(new Dictionary<string, string> { ["FIRST"] = "firstField" },
@@ -7694,6 +7686,20 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         a.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = DefaultText("a") };
         b.KotlinDefaultsByDeclarationId["default-conflict"] = new() { [0] = DefaultText("b") };
         a.KotlinDefaultsByDeclarationId["unique-default"] = new() { [0] = DefaultText("retained") };
+        var exact = new SignatureKey(new[] { ParamKeyFqn("kotlin.collections.List") });
+        var relaxed = new SignatureKey(new[] { ParamKeyFqn("kotlin.collections.List", relaxed: true) });
+        var projected = new SignatureKey(new[] { ParamKeyFqn("System.Collections.Generic.IReadOnlyList") });
+        a.KotlinDefaults[new("fold.A", "pick", 1, exact)] = new() { [0] = DefaultText("exact") };
+        a.KotlinDefaults[new("fold.A", "pick", 1, relaxed, Relaxed: true)] = new() { [0] = DefaultText("relaxed") };
+        foreach (var (owner, metadata) in new[] { ("fold.A", a), ("fold.B", b) })
+        {
+            metadata.KotlinDefaults[new(owner, "same", 1)] = new() { [0] = DefaultText("same") };
+            metadata.KotlinDefaults[new(owner, "different", 1)] = new() { [0] = DefaultText(owner) };
+            metadata.KotlinDefaults[new(owner, CtorKeyName, 1)] = new() { [0] = DefaultText(owner) };
+        }
+        var conflicted = new DefaultKey("fold.A", "conflicted", 1);
+        a.KotlinDefaults[conflicted] = new() { [0] = DefaultText("unused") };
+        a.KotlinDefaultsConflicted.Add(conflicted);
         a.InlinePayloadsByDeclarationId["inline-conflict"] = new BirInlinePayload { Body = Array.Empty<IBirStatement>() };
         b.InlinePayloadsByDeclarationId["inline-conflict"] = new BirInlinePayload { Body = new IBirStatement[] { new BirReturn() } };
         a.InlinePayloadsByDeclarationId["unique-inline"] = new BirInlinePayload { Body = Array.Empty<IBirStatement>() };
@@ -7713,6 +7719,16 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         {
             // Building an index must not reject an unused collision or discard other metadata.
             var index = new ReferenceMetadataIndex(order, catalog);
+            if (ReadDefault(index.KotlinDefaultValuesFor("fold.A", "pick", 1, exact, relaxed)) != "exact"
+                || ReadDefault(index.KotlinDefaultValuesFor("fold.A", "pick", 1, projected, relaxed)) != "relaxed"
+                || ReadDefault(index.KotlinDefaultValuesFor(null, "same", 1)) != "same"
+                || index.KotlinDefaultsAmbiguous(null, "same", 1)
+                || index.KotlinDefaultValuesFor(null, "different", 1) != null || !index.KotlinDefaultsAmbiguous(null, "different", 1)
+                || index.KotlinDefaultValuesFor(null, "conflicted", 1) != null || !index.KotlinDefaultsAmbiguous(null, "conflicted", 1)
+                || ReadDefault(index.KotlinDefaultValuesFor("fold.A", CtorKeyName, 1)) != "fold.A"
+                || ReadDefault(index.KotlinDefaultValuesFor("fold.B", CtorKeyName, 1)) != "fold.B"
+                || index.KotlinDefaultValuesFor(null, CtorKeyName, 1) != null || index.KotlinDefaultsAmbiguous(null, CtorKeyName, 1))
+                throw new InvalidOperationException("Default lookup lost signature precedence, ownerless conflict handling or constructor separation");
             if (index.KotlinDefaultValuesForDeclarationIdentity("unique-default")?[0] is not BirConstant {
                     Value.Value: BirLiteral.TextLiteral { Value: "retained" } }
                 || index.InlineValueByDeclarationIdentity("unique-inline")?.Body.OrDefault()?.Length != 0)
@@ -7767,7 +7783,6 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         SelectedSourceConstraintShapeSelfTest();
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
-        PayloadOwnershipSelfTest();
         ClrMemberResolution.NativeSignatureLifetimeSelfTest();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
@@ -8486,8 +8501,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);
-    // Decoded scan inputs; ReferenceExecutablePayloads captures its own private
-    // snapshots, and splice readers receive independent graphs from that owner.
+    // Writer-owned decoded templates, read-only after scan. Splice readers
+    // receive independent graphs through ReferenceExecutablePayloads queries.
     public readonly Dictionary<string, List<BirInlinePayload>> InlinePayloads = new(StringComparer.Ordinal);
     public readonly Dictionary<string, BirInlinePayload> InlinePayloadsByDeclarationId = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").

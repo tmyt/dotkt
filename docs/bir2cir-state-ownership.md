@@ -31,8 +31,8 @@ contracts usable; this issue is not complete after the first slice.
    cold-call extension, query and release are explicit operations with no
    process table or sibling-file cleanup dependency (implemented below).
 2. Fixed-reference loading, lookup caches and reflection lifetime have an
-   explicit owner. Local-emission changes invalidate derived index decisions
-   without changing fixed reference facts. Further metadata-ingestion/payload
+   explicit owner. Local-emission changes invalidate the physical-name view,
+   not fixed reference facts. Further metadata-ingestion/payload
    authority extraction remains separate work.
 3. Separate exact member selection and physical-slot policy from graph writers;
    remove ambient reference/local-declaration inputs and process allocators.
@@ -80,7 +80,7 @@ The resolution path's state and its current ownership:
 
 | State | Writers / readers | Lifetime and problem | Required boundary |
 |---|---|---|---|
-| `ReferencedCallSignatures.snapshots`, `nextId`, `disposed` | Module source capture allocates; cold-call capability extends; referenced graph reader queries copies; root cleanup removes markers only | Compilation lifetime, independent from another module and each root's marker cleanup | Private catalog; only capture, projection, query/release and disposal operations; no selector reads the table |
+| `ReferencedCallSignatures.snapshots`, `nextId` | Module source capture allocates; cold-call capability extends; referenced graph reader borrows read-only vectors; root cleanup removes markers only | Compilation lifetime, independent from another module and each root's marker cleanup | Private catalog; only capture, projection, query/release and disposal operations; no selector reads the table |
 | `_refs` | Native, referenced, inherited, interface, attribute, delegate, well-known and MemberRef entry points assign it; scalar matchers/renderers read it | Ambient last-call reference universe, including calls made before the final binding pass | Explicit reference queries passed to exact selection / rendering; no dependency on another entry point's initialization |
 | `_localTypes` | Native, declaration, referenced and delegate entry points replace it | Per invocation facts stored process-wide | Pass-owned local physical identity input, not reference metadata |
 | `_externalCanonicalTypes`, `_localDeclarationIds` | Referenced entry assigns; planner consumes | Per invocation, process-held sets | Referenced selection inputs; not shared mutation rights |
@@ -119,7 +119,7 @@ declaration-mutation capability.
 - `ProjectColdCall` creates an independent extended row and writes the new
   call's token. Suspend lowering receives this operation as a callback, not the
   catalog, other CLR binding services, or arbitrary graph mutation rights.
-- `Read` returns a deep copy to the graph reader. The referenced-call planner
+- `Read` lends the frozen vector read-only to the graph reader. The referenced-call planner
   receives that source vector as data and no longer reads a global table.
   The graph reader/writer receives only read and marker-release callbacks, not
   capture, cold projection or module disposal authority. Calls created without
@@ -128,10 +128,9 @@ declaration-mutation capability.
   remain valid for independently owned clones in sibling roots until module
   disposal. It does not release another file's shared row.
 - `Dispose` clears all rows; a new compilation starts its own allocator.
-  Operations after this internal phase frontier fail rather than using a stale
-  process catalog. No persisted-format compatibility contract is added.
+  No extra disposed-query or missing-token diagnostic contract is added.
 
-Boundary selftests cover nested/payload capture, input/query/cold-row isolation,
+Boundary selftests cover nested/payload capture, source/cold-row isolation,
 real cold-call synthesis through the supplied capability, cross-file clone
 selection after original-root release, module disposal, and interleaved then
 subsequent independent compilations. These tests replace/extend the existing
@@ -173,18 +172,18 @@ does not enforce this ownership.
 
 | Derived / mutable state | Authority, dependencies, refresh and release |
 |---|---|
-| `localEmittedTypes`, `physicalTypeNamesSnapshot` | Pipeline reports local membership through `SetLocalEmittedTypes`; the index normalizes its private set and invalidates the physical-name view. Changed membership also clears literal/volatile/awaitable decisions, which include local precedence. Fixed reference facts and their type cache remain unchanged |
+| `localEmittedTypes`, `physicalTypeNamesSnapshot` | Pipeline reports local membership through `SetLocalEmittedTypes`; the index normalizes its private set and invalidates the physical-name view. Fixed reference facts and their type cache remain unchanged |
 | `ReferenceMetadataUniverse.referencesContext`, `references`, `referencesInitialized`, `types` | One universe lazily loads the fixed `ManagedReferenceCatalog` and caches name/arity hits and misses. Scoped, ordered and ambiguity-checked lookups remain distinct queries. Local/Kotlin-owner policy stays outside this cache. Handles are borrowed until disposal; the assembly collection is read-only |
 | `ReferenceMetadataUniverse.physicalContext`, `physicalStdlib`, `physicalInitialized` | The same owner lazily creates the separate runtime-stdlib context using the catalog's existing twin policy, not the semantic/ref-reader context. Disposal releases both contexts and cached handles, including after failure |
 | Index `shippedCache` | Exact trusted-ID physical-twin selection owns cached member results; disposal clears these before releasing the universe. No name/layout inference or load-context mutation is granted to consumers |
-| Index `literalFieldCache`, `volatileFieldCache`, `awaitPlanCache` | Derived queries include local-over-reference policy. A changed local-owner set invalidates them; index disposal clears them. No source graph mutation right is implied |
+| Index `literalFieldCache`, `volatileFieldCache`, `awaitPlanCache` | Cold lowering and source storage consume these after initial local membership is set and before its late update. They are not queried after that update; disposal clears them. No new arbitrary-update/invalidation guarantee is needed |
 | `kotlinMapStorageDefinitions`, `kotlinHashStorageDefinitions` | Lazy derived queries over ingested facts/reference signatures, not mutable local declaration graphs |
 | Index `nativeSignatures` | The existing decoder is created before scan and retained by the index for physical binding. It stores only managed signature facts, not open reflection/PE handles. No process-wide reader remains |
 | Static `assemblyProvenance` weak table | `IsDotKtEmittedAssembly` memoizes the immutable assembly-marker classification. Keys are actual `Assembly` objects, not names or a changing local context; weak keys allow the owning metadata universe to be collected. This cache can remain shared without imposing a process-wide reset order |
 
 The scan's `ReferenceDotKtMetadata` mutable containers are writer-owned scan
-outputs. Executable payloads are captured privately as described below. Other
-fact aggregation currently shares some row objects with the scan; later
+outputs. Payload queries materialize separate splice graphs as described below.
+Fact aggregation shares read-only templates with the completed scan; later
 extraction must freeze/copy values or keep a single explicit writer, not merely
 rename the index to a read-only service. Foundational alias/primitive sets and
 metadata attribute names are fixed shared vocabulary, not resettable state.
@@ -199,8 +198,9 @@ ordered hierarchy probe, and ambiguity-checked binding retain their current
 policies rather than sharing an accidental first-match cache decision.
 
 The index applies source/local precedence before querying fixed reference facts.
-`SetLocalEmittedTypes` is the update authority for its derived decisions; it
-invalidates dependent caches only when membership changes. Reflection-context
+`SetLocalEmittedTypes` is the update authority for its physical-name view.
+Literal/volatile/await queries finish before the late membership update; there
+is no later consumer requiring new invalidation behavior. Reflection-context
 ownership is not authority to modify declarations or infer source semantics.
 
 Default-value readers receive only a core-type lookup callback for same-context
@@ -212,30 +212,25 @@ and metadata ingestion/payload policy stay with their current owning units.
 Boundary tests use real metadata contexts for lazy loading, cached hits/misses,
 arity and assembly identity, interleaved/subsequent compilations and disposal
 on exceptional exit. Native nullable/array matching is exercised across actual
-universes. Local-owner transitions exercise actual literal and awaitable queries,
-including restoration without polluting fixed reference facts. This does not
+universes. The artificial local-owner update fixture is removed; it exercised
+query ordering not used by the pipeline. This does not
 complete the other resolver, metadata-fact and carrier ownership work in #1555.
 
 ### Implemented: imported executable-payload authority
 
 `ReferenceExecutablePayloads` receives only five decoded payload/conflict inputs,
 not the reference index, reflection contexts, other metadata facts, or live
-source/physical declarations. Those inputs are borrowed mutable scan values at
-the capture frontier. Construction deep-copies each input default map and inline
-payload once; reference-identity capture tables are local to construction, so
-signature/arity/identity/candidate views share only private captured templates.
-The owner retains no scan input or update capability. Its managed facts live
+source/physical declarations. Scan writes finish before these query indexes are
+constructed. Signature/arity/identity/candidate views borrow the same read-only
+decoded templates, preserving the original aggregation behavior without an
+additional capture copy. The catalog has no scan update capability. Its facts live
 with the compilation's reference index; there is no reflection resource to close
 or changing local-membership input to invalidate.
 
-The scan records remain available to other metadata readers, so capture retains
-a private template copy in addition to the decoded inputs. Memoization avoids
-per-view copies, not that second catalog. Removing the input storage requires
-an explicit scan-publication handoff, not clearing another owner's containers.
-
 Queries return independent maps/graphs for the existing splice/admission owners.
-Neither changing a scan input after capture nor materializing one lookup result
-can modify another index or lookup view. Default signature/relaxed/arity ordering,
+Materializing one lookup result cannot change the templates. Mutation of a
+completed scan is not a supported operation to add defensive guarantees for.
+Default signature/relaxed/arity ordering,
 constructor separation, conflict handling and stdlib ownerless candidates retain
 their existing policies. Scan conflict recording and query comparison share
 `ExecutableBirCodec`'s pure equality helper; this catalog does not interpret expressions,
@@ -244,9 +239,9 @@ select overloads from bodies, or reconstruct declaration identities.
 The local `TypedInlineBirIndex` source snapshots and exact reflected optional
 default readers remain distinct authorities. Source graph construction, mutation
 and declaration admission remain with their existing producers, not this catalog.
-Actual index boundary tests cover input/query isolation, inline bodies/frames,
-independent indexes, and subsequent inputs; existing collision and runtime
-producer/consumer tests remain in place. Other ingested facts, ambient CLR
+Existing default/inline collision and runtime producer/consumer tests remain
+the behavior coverage for this extraction; the artificial scan-input mutation
+fixture is removed. Other ingested facts, ambient CLR
 resolver inputs/allocators and carrier capabilities still need their own work.
 
 ## Suspend and orchestration boundaries
