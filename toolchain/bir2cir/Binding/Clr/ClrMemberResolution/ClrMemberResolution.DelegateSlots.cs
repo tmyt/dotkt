@@ -106,14 +106,6 @@ static partial class ClrMemberResolution
 
     // ---- materialization -----------------------------------------------------------------------
 
-    static int _nextAdapter;
-    static int _nextValueAdapter;
-
-    // Both the earlier construction pass and the final typed value-flow owner
-    // synthesize this family. Keep one allocator across their explicit boundary.
-    internal static string FreshDelegateAdapterName(string scope) => $"dotkt${scope}$UnitDelegateAdapter{_nextAdapter++}";
-    internal static string FreshUnitDelegateTemporary() => $"dotkt$unitDelegateValue{_nextValueAdapter++}";
-
     // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
     // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
     static TypeNode.Fn PhysicalFunctionShape(TypeNode type, bool includeNominal = false)

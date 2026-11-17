@@ -98,7 +98,7 @@ static partial class GenericArrayStorageLowering
         {
             var sources = new[] { File("FirstArrayFile", "$arrayIndex$0"), File("SecondArrayFile", "$arrayStorage$1") };
             if (physical)
-                TypedPhysicalValueCoercion.ApplyAll(sources,
+                TypedPhysicalValueCoercion.ApplyAll(new PhysicalDelegateDeclarations(), sources,
                     () => throw new InvalidOperationException("Unexpected array Unit conversion"),
                     type => type.Name == "System.Int32", references: refs);
             else

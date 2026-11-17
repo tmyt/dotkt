@@ -12,7 +12,6 @@ static partial class ClrMemberResolution
         static TypeNode.Fqn Named(string name, params TypeNode[] arguments) => new(name, arguments.Length == 0 ? null : arguments);
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         var previousReferences = _refs; var previousCarriers = _localCarriers;
-        var adaptersBefore = _nextAdapter; var temporariesBefore = _nextValueAdapter;
         try
         {
             var unit = Named("kotlin.Unit"); var none = Named("void"); var text = Named("System.String");
@@ -129,8 +128,6 @@ static partial class ClrMemberResolution
                 throw new Exception("Ambiguous current declaration target was accepted");
             }
             catch (InvalidOperationException error) when (error.Message.Contains("resolves to 2 exact local methods", StringComparison.Ordinal)) { }
-            Need(_nextAdapter == adaptersBefore && _nextValueAdapter == temporariesBefore,
-                "slot marking materialized an adapter or allocated an evaluation temporary");
             Console.WriteLine("[physical local delegate targets] current declarations, Unit/void, exact frames, slots and reference leaves: OK");
         }
         finally { _refs = previousReferences; _localCarriers = previousCarriers; }
