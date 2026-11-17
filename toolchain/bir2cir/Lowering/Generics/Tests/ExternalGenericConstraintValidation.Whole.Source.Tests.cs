@@ -32,7 +32,7 @@ static partial class ExternalGenericConstraintValidation
                 BindingFlags.Static | BindingFlags.NonPublic);
             var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(references, reflected,
                 MemberRefNode.Kinds.Method, reflected.DeclaringType, Array.Empty<TypeNode>()));
-            var selected = reflected.GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+            var selected = reflected.GetGenericArguments().Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
             // A real referenced declaration owns !!0, not this nongeneric
             // caller. Both its MemberRef and carried selection vectors stay
             // outside the whole use-site check's caller frame.

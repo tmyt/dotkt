@@ -629,7 +629,7 @@ static partial class MemberCallSubstitution
         _ => t,
     };
 
-    // The receiver-type key of a call's first-arg type (mirrors ReferenceMetadataIndex.RecvKey on the ref.dll side).
+    // The receiver-type key of a call's first-arg type (mirrors ReferenceMetadataReader.RecvKey on the ref.dll side).
     // A specialized primitive-array Fqn maps to "[]" via RecvKeyOfFqn (same collapse the ref-side applies to a real
     // int[]) — see the helper for why generic `Array<T>` already reaches "[]" and the primitive variants need it (#153).
     static string RecvKeyOf(TypeNode sig0) => sig0 switch

@@ -109,7 +109,7 @@ static partial class ClrMemberResolution
                 "closed owner versus open declaration frame, exact dispatch or receiver/argument identity changed");
             var arrayParameter = typeof(Array).GetMethod("Empty")!.GetGenericArguments().Single();
             Require(generic._resolvedMethodTypeParams.Value.Single().StructurallyEquals(
-                    ReferenceMetadataIndex.GenericParamSourceDeclaration(arrayParameter))
+                    ReferenceMetadataReader.GenericParamSourceDeclaration(arrayParameter))
                 && generic.MemberRef.Value.GenericArity.Value == 1
                 && generic.MemberRef.Value.ReturnType.Value == new TypeNode.Array(new TypeNode.Tv("method", 0))
                 && generic.TypeArgs.Value.Single() == text,

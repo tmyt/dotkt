@@ -30,6 +30,6 @@ static partial class ClrMemberResolution
     {
         var parameters = ResolvedMethodTypeParameters(target, argumentCount);
         return parameters == null ? default : OptionalField<BirTypeParameter[]>.Of(
-            parameters.Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray());
+            parameters.Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray());
     }
 }

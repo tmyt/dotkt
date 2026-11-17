@@ -74,7 +74,7 @@ static partial class ClrMemberResolution
     {
         var generic = typeof(ClrMemberResolution).GetMethod(nameof(TypedInterfaceConstraintProbe), BindingFlags.Static | BindingFlags.NonPublic)
             .GetGenericArguments().Single();
-        var reflected = ReferenceMetadataIndex.GenericParamSourceDeclaration(generic);
+        var reflected = ReferenceMetadataReader.GenericParamSourceDeclaration(generic);
         var descriptor = new BirTypeParameter { Name = "DifferentSourceName",
             Constraints = new TypeNode[] { new TypeNode.Fqn("System.IComparable", new TypeNode[] { new TypeNode.Tv("method", 0) }) },
             SpecialConstraints = new[] { "class", "new" } };

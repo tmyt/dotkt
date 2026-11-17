@@ -1,3 +1,4 @@
+using static ReferenceMetadataReader;
 using DotKt.Bir.Lowering;
 
 sealed partial class ReferenceMetadataIndex

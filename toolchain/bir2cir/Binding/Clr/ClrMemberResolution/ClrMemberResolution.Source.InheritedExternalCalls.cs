@@ -33,7 +33,7 @@ static partial class ClrMemberResolution
             call.MemberRef = BirMemberReference.FromPhysical(plan.Reference);
             var declared = ResolvedMethodTypeParameters(plan.Declaration, call.TypeArgs.OrEmpty().Length);
             call._resolvedMethodTypeParams = declared == null ? default(OptionalField<BirTypeParameter[]>)
-                : OptionalField<BirTypeParameter[]>.Of(declared.Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray());
+                : OptionalField<BirTypeParameter[]>.Of(declared.Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray());
             // This is the same selected-parameter writer used by referenced
             // binding, with the existing module delegate/carrier authorities.
             StampSourceReferencedDelegateTargets(call.Args.OrDefault(), call.TypeArgs.OrEmpty(),

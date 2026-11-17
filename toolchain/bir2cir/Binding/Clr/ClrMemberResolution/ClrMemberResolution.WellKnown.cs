@@ -176,7 +176,7 @@ static partial class ClrMemberResolution
             if (wantedShape != null)
             {
                 var declaredTypeParams = method.GetGenericArguments()
-                    .Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+                    .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
                 if (KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declaredTypeParams, selectionArgs)
                     != wantedShape)
                     continue;
