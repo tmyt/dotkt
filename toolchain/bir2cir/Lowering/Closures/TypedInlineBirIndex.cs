@@ -73,16 +73,9 @@ sealed class TypedInlineBirIndex
 
 sealed partial class ReferenceMetadataIndex
 {
-    internal BirInlinePayload InlineValueByDeclarationIdentity(string id)
-    {
-        if (id != null && _conflictingInlineDeclarationIds.Contains(id))
-            throw new InvalidOperationException($"conflicting inline declaration identity '{id}'");
-        return id != null && _inlinePayloadByDeclarationId.TryGetValue(id, out var payload) ? (BirInlinePayload)payload.DeepClone() : null;
-    }
+    internal BirInlinePayload InlineValueByDeclarationIdentity(string id) => _executablePayloads.InlineByIdentity(id);
     internal IReadOnlyList<BirInlinePayload> InlineValueCandidates(string owner, string name, int pc, int ga)
-        => owner == null || name == null ? null : CloneInlineValues(_inlinePayloads.GetValueOrDefault($"{owner}|{name}|{pc}|{ga}"));
+        => _executablePayloads.InlineCandidates(owner, name, pc, ga);
     internal IReadOnlyList<BirInlinePayload> OwnerlessInlineValueCandidates(string name, int pc, int ga)
-        => name == null ? null : CloneInlineValues(_ownerlessInlineCandidates.GetValueOrDefault($"{name}|{pc}|{ga}"));
-    static IReadOnlyList<BirInlinePayload> CloneInlineValues(IReadOnlyList<BirInlinePayload> payloads)
-        => payloads?.Select(payload => (BirInlinePayload)payload.DeepClone()).ToArray();
+        => _executablePayloads.OwnerlessInlineCandidates(name, pc, ga);
 }

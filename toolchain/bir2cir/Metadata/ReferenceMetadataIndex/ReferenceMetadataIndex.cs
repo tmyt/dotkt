@@ -621,33 +621,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
     readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"
-    readonly Dictionary<DefaultKey, Dictionary<int, IBirExpression>> _kotlinDefaults = new();
-    readonly Dictionary<string, Dictionary<int, IBirExpression>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
-    readonly HashSet<string> _conflictingDefaultDeclarationIds = new(StringComparer.Ordinal);
-    // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
-    // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
-    // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
-    // defaults; owners that DISAGREE mark it AMBIGUOUS (the splice loud-refuses rather than guess).
-    readonly Dictionary<string, Dictionary<int, IBirExpression>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
-    readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
-    // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
-    readonly HashSet<DefaultKey> _kotlinDefaultsConflicted = new();
-    // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> owning decoded payloads (one per overload
-    // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
-    // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
-    // re-lowers in THIS app's context). owner = the .NET type FullName (file-facade class); pc/ga = the reflected
-    // GetParameters/GetGenericArguments counts (parity with InlineBirStash's params.Count / typeParams.Count).
-    readonly Dictionary<string, List<BirInlinePayload>> _inlinePayloads = new(StringComparer.Ordinal);
-    // OWNER-LESS callInline index (S3, §4.2 #75 S4b): "name|pc|ga" -> owning payloads across EVERY `kotlin.*`
-    // file-class hosting that shape. kotc cannot name the stdlib file class (the stdlib KLIB carries no physical owner —
-    // whole stdlib rides the klib), so a scope-fn/@InlineOnly callInline carries owner=null. Since the bare `name|pc|ga`
-    // collides across owners (Iterable/Array/IntArray/CharSequence `filter`/`map`/`forEach` etc.), the owner canNOT be picked
-    // by the key alone — InlineSplice gathers ALL candidates here and picks the UNIQUE one whose declared params match the
-    // call's `paramSig`; the winning payload's own `owner` field names the host. Restricted to `kotlin.*` so a user-lib
-    // inline fn sharing a name|pc|ga cannot leak in.
-    readonly Dictionary<string, List<BirInlinePayload>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
-    readonly Dictionary<string, BirInlinePayload> _inlinePayloadByDeclarationId = new(StringComparer.Ordinal);
-    readonly HashSet<string> _conflictingInlineDeclarationIds = new(StringComparer.Ordinal);
+    readonly ReferenceExecutablePayloads _executablePayloads;
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the exact compile references.
     // NetInteropBinding resolves a dll2klib-projected owner FQN
@@ -725,6 +699,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         _assemblies = assemblies;
         _compileRefs = compileRefs;
         _universe = new ReferenceMetadataUniverse(compileRefs);
+        _executablePayloads = new ReferenceExecutablePayloads(assemblies.Select(assembly =>
+            new ReferenceExecutablePayloads.ScanInput(assembly.DotKt.KotlinDefaults,
+                assembly.DotKt.KotlinDefaultsConflicted, assembly.DotKt.KotlinDefaultsByDeclarationId,
+                assembly.DotKt.InlinePayloads, assembly.DotKt.InlinePayloadsByDeclarationId)));
         foreach (var asm in assemblies)
         {
             foreach (var kv in asm.DotKt.Aliases)
@@ -974,46 +952,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                     _topLevelStatics[kv.Key] = lst = new List<(string, string, TypeKey)>();
                 lst.AddRange(kv.Value);
             }
-            foreach (var key in asm.DotKt.KotlinDefaultsConflicted) _kotlinDefaultsConflicted.Add(key);
-            foreach (var kv in asm.DotKt.KotlinDefaults)
-            {
-                _kotlinDefaults.TryAdd(kv.Key, kv.Value);
-                // Only an arity key folds: a signature-keyed entry does not, and a CONSTRUCTOR is never called
-                // ownerlessly (a `new` always names its type), so folding `.ctor|pc` would only make every type of the
-                // same ctor arity collide with every other.
-                if (kv.Key.Signature != null || kv.Key.Method == CtorKeyName) continue;
-                var np = kv.Key.Method + "|" + kv.Key.ParamCount;
-                if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
-                // The OWNERFUL key is already known to be carried by two declarations that disagree, so the ownerless
-                // fold of it cannot identify one either — mark it rather than folding the first-seen declaration in.
-                if (asm.DotKt.KotlinDefaultsConflicted.Contains(kv.Key))
-                {
-                    _kotlinDefaultsOwnerless.Remove(np);
-                    _kotlinDefaultsAmbiguous.Add(np);
-                    continue;
-                }
-                if (_kotlinDefaultsOwnerless.TryGetValue(np, out var have))
-                {
-                    if (!SameDefaults(have, kv.Value)) { _kotlinDefaultsOwnerless.Remove(np); _kotlinDefaultsAmbiguous.Add(np); }
-                }
-                else _kotlinDefaultsOwnerless[np] = kv.Value;
-            }
-            foreach (var kv in asm.DotKt.KotlinDefaultsByDeclarationId)
-                if (!_kotlinDefaultsByDeclarationId.TryAdd(kv.Key, kv.Value)
-                    && !SameDefaults(_kotlinDefaultsByDeclarationId[kv.Key], kv.Value))
-                    _conflictingDefaultDeclarationIds.Add(kv.Key);
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
-            // §4.2 (#75 S4b): merge candidate lists across assemblies — every overload sharing owner|name|pc|ga is kept; the
-            // call site disambiguates by paramSig. (No poisoning: structural selection replaces the recv0-key collision.)
-            foreach (var kv in asm.DotKt.InlinePayloads)
-            {
-                if (!_inlinePayloads.TryGetValue(kv.Key, out var lst)) _inlinePayloads[kv.Key] = lst = new List<BirInlinePayload>();
-                lst.AddRange(kv.Value);
-            }
-            foreach (var kv in asm.DotKt.InlinePayloadsByDeclarationId)
-                if (!_inlinePayloadByDeclarationId.TryAdd(kv.Key, kv.Value)
-                    && !ExecutableBirCodec.SameInline(_inlinePayloadByDeclarationId[kv.Key], kv.Value))
-                    _conflictingInlineDeclarationIds.Add(kv.Key);
         }
         // A flattened Kotlin identity cannot distinguish where nested CLR generic slots are owned. Current-format
         // external classifiers carry the exact TypeDef spelling, so exact physical indexes remain authoritative;
@@ -1025,19 +964,6 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             _byRefLikeOwners.Remove(ambiguous);
             _publicParameterlessConstructibleOwners.Remove(ambiguous);
             _referenceTypeShapes.Remove(ambiguous);
-        }
-        // Build the owner-less candidate index (S3, §4.2): "name|pc|ga" -> candidate payloads across every `kotlin.*`
-        // file-class hosting that shape. The owner is NOT resolvable from the bare key (it collides across owners) — the call
-        // site selects by paramSig and reads the winner's own `owner` field. Restricted to `kotlin.*` (kotc emits owner-less
-        // ONLY for the klib stdlib; a user-lib inline fn is always owner-ful) so a user `T.use(block)` cannot leak in.
-        foreach (var (key, jsons) in _inlinePayloads)
-        {
-            var bar = key.IndexOf('|');
-            if (bar < 0) continue;
-            if (!key.AsSpan(0, bar).StartsWith("kotlin.")) continue;
-            var npg = key[(bar + 1)..];   // name|pc|ga
-            if (!_ownerlessInlineCandidates.TryGetValue(npg, out var lst)) _ownerlessInlineCandidates[npg] = lst = new List<BirInlinePayload>();
-            lst.AddRange(jsons);
         }
     }
 
@@ -1054,37 +980,11 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
     public Dictionary<int, IBirExpression> KotlinDefaultValuesFor(string owner, string method, int paramCount,
-        SignatureKey sigKey = null, SignatureKey relaxedSigKey = null)
-    {
-        if (method == null) return null;
-        if (owner != null)
-        {
-            var key = new DefaultKey(owner, method, paramCount);
-            // A call carries its callee's declared parameter vector (`sig`/`shapeTypes`, or a `new`'s `argTypes`), so try
-            // the SIGNATURE key first — that is what tells same-arity overloads apart. Exact first, then with class
-            // positions collapsed (the call's Kotlin spelling and the reference's CLR spelling only compare there), then
-            // the arity key, which refuses when two declarations carry it with different defaults.
-            if (sigKey != null)
-            {
-                var exactKey = new DefaultKey(owner, method, paramCount, sigKey);
-                if (_kotlinDefaults.TryGetValue(exactKey, out var bySig)
-                    && !_kotlinDefaultsConflicted.Contains(exactKey)) return CloneDefaultValues(bySig);
-                var relaxed = new DefaultKey(owner, method, paramCount, relaxedSigKey, Relaxed: true);
-                if (_kotlinDefaults.TryGetValue(relaxed, out var byRelaxed) && !_kotlinDefaultsConflicted.Contains(relaxed))
-                    return CloneDefaultValues(byRelaxed);
-            }
-            if (_kotlinDefaultsConflicted.Contains(key)) return null;
-            return _kotlinDefaults.TryGetValue(key, out var exact) ? CloneDefaultValues(exact) : null;
-        }
-        return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? CloneDefaultValues(ownerless) : null;
-    }
+        SignatureKey sigKey = null, SignatureKey relaxedSigKey = null) =>
+        _executablePayloads.DefaultValues(owner, method, paramCount, sigKey, relaxedSigKey);
 
-    public Dictionary<int, IBirExpression> KotlinDefaultValuesForDeclarationIdentity(string id)
-    {
-        if (id != null && _conflictingDefaultDeclarationIds.Contains(id))
-            throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{id}'");
-        return id != null ? CloneDefaultValues(_kotlinDefaultsByDeclarationId.GetValueOrDefault(id)) : null;
-    }
+    public Dictionary<int, IBirExpression> KotlinDefaultValuesForDeclarationIdentity(string id) =>
+        _executablePayloads.DefaultValuesByIdentity(id);
 
     // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
     // from that MethodDef. A call through a derived receiver names the derived type but can select a base declaration;
@@ -1167,7 +1067,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 selected = defaults;
                 continue;
             }
-            if (defaults == null || !SameDefaults(selected, defaults))
+            if (defaults == null || !ExecutableBirCodec.SameDefaults(selected, defaults))
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{owner}.{method}' (arity {paramCount}) — " +
                     "several implemented interface declarations match that class surface but their defaults disagree; " +
@@ -1184,22 +1084,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // True when the name+arity cannot identify ONE set of defaults: a genuinely ownerless name carried by >1 owner that
     // disagree, or an OWNERFUL key two same-arity declarations (ctor overloads) carry with different defaults.
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
-        method != null && (owner == null
-            ? _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount)
-            : _kotlinDefaultsConflicted.Contains(new DefaultKey(owner, method, paramCount)));
-
-    static Dictionary<int, IBirExpression> CloneDefaultValues(IReadOnlyDictionary<int, IBirExpression> values)
-        => values?.ToDictionary(pair => pair.Key, pair => (IBirExpression)((BirGraphValue)pair.Value).DeepClone());
-
-    static bool SameDefaults(Dictionary<int, IBirExpression> a, Dictionary<int, IBirExpression> b)
-    {
-        if (a.Count != b.Count) return false;
-        foreach (var kv in a)
-            if (!b.TryGetValue(kv.Key, out var value) || !ReferenceEquals(value, kv.Value)
-                && !ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, value).AsSpan().SequenceEqual(
-                    ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, kv.Value))) return false;
-        return true;
-    }
+        _executablePayloads.DefaultsAmbiguous(owner, method, paramCount);
 
     // A PE row token is module-local, not part of the selected declaration's ABI.
     static bool SameDeclarationBinding(MemberBinding a, MemberBinding b) =>
@@ -7646,7 +7531,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         Put(new DefaultKey(ownerFqn, name, ps.Length, SigKeyOf(ps, relaxed: true), Relaxed: true), defaults);
         if (metadata.KotlinDefaults.TryGetValue(arityKey, out var prior))
         {
-            if (!SameDefaults(prior, defaults)) metadata.KotlinDefaultsConflicted.Add(arityKey);
+            if (!ExecutableBirCodec.SameDefaults(prior, defaults)) metadata.KotlinDefaultsConflicted.Add(arityKey);
             return;
         }
         metadata.KotlinDefaults[arityKey] = defaults;
@@ -7657,7 +7542,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             // refuses too rather than serving the last writer.
             if (metadata.KotlinDefaults.TryGetValue(key, out var had))
             {
-                if (!SameDefaults(had, d)) metadata.KotlinDefaultsConflicted.Add(key);
+                if (!ExecutableBirCodec.SameDefaults(had, d)) metadata.KotlinDefaultsConflicted.Add(key);
                 return;
             }
             metadata.KotlinDefaults[key] = d;
@@ -7869,6 +7754,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         SelectedSourceConstraintShapeSelfTest();
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
+        PayloadOwnershipSelfTest();
         var nativeDescriptors = Build(new[] { typeof(object).Assembly.Location });
         nativeDescriptors._ownerAlias["ProofObject"] = "System.Object";
         nativeDescriptors._ownerAlias["kotlin.Int"] = "System.Int32";
@@ -8586,7 +8472,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);
-    // Decoded inline graphs are retained as owning values; DOM consumers materialize independent neighbours.
+    // Decoded scan inputs; ReferenceExecutablePayloads captures its own private
+    // snapshots, and splice readers receive independent graphs from that owner.
     public readonly Dictionary<string, List<BirInlinePayload>> InlinePayloads = new(StringComparer.Ordinal);
     public readonly Dictionary<string, BirInlinePayload> InlinePayloadsByDeclarationId = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").

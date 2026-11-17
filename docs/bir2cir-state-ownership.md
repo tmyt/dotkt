@@ -158,7 +158,7 @@ cache invalidation. Grouping fields does not permit later writers.
 | Declaration frames / constraints | `ownerArity`, `ownerTypeParams`, `ownerTypeParamDeclarations`, `ownerNullableFrames`, `kotlinConstructorOwnerFrames`, `publicParameterlessConstructibleOwners`, `publicParameterlessConstructiblePhysicalOwners`, `ownerCtorParams`, `ownerTypeParamConstraints`, `ownerTypeParamBounds`, `innerCapturedCount`, `innerSemanticOwner` |
 | Member / constructor / hierarchy identity | `membersByOwner`, `membersByPhysicalOwner`, `methodImplsByBody`, `declarationById`, `declarationFamilyCounts`, `ctorsByOwner`, `aliasConstructorAdaptersByOwner`, `referenceTypeShapes`, `referenceTypeShapesByPhysicalOwner`, `exactPhysicalTypeByDottedName`, `physicalTypeBySemanticName` |
 | Compiler binding facts | `helperTypes`, `restrictsSuspension`, `topLevelIntrinsics`, `topLevelIntrinsicsBySig`, `ambiguousTopLevelIntrinsics`, `topLevelIntrinsicByref`, `extMemberIntrinsics`, `inlineBacking`, `topLevelStatics`, `collectionFactories` |
-| Default / inline payload authority | `kotlinDefaults`, `kotlinDefaultsByDeclarationId`, `conflictingDefaultDeclarationIds`, `kotlinDefaultsOwnerless`, `kotlinDefaultsAmbiguous`, `kotlinDefaultsConflicted`, `inlinePayloads`, `ownerlessInlineCandidates`, `inlinePayloadByDeclarationId`, `conflictingInlineDeclarationIds` |
+| Default / inline payload authority | Index `executablePayloads` delegates to `ReferenceExecutablePayloads`: private `defaults`, `conflictingDefaults`, `defaultsById`, `conflictingDefaultIds`, `ownerlessDefaults`, `ambiguousDefaults`, `inline`, `inlineById`, `conflictingInlineIds`, `ownerlessInline`. Construction is the only writer; every query returns an independent graph |
 
 Payload lookup returns source ingredients for the owning splice/admission
 contract, not permission to mutate the stored shared payload. `TypeNode` arrays
@@ -177,7 +177,8 @@ does not enforce this ownership.
 | Static `assemblyProvenance` weak table | `IsDotKtEmittedAssembly` memoizes the immutable assembly-marker classification. Keys are actual `Assembly` objects, not names or a changing local context; weak keys allow the owning metadata universe to be collected. This cache can remain shared without imposing a process-wide reset order |
 
 The scan's `ReferenceDotKtMetadata` mutable containers are writer-owned scan
-outputs. Aggregation currently shares some row objects with them; later
+outputs. Executable payloads are captured privately as described below. Other
+fact aggregation currently shares some row objects with the scan; later
 extraction must freeze/copy values or keep a single explicit writer, not merely
 rename the index to a read-only service. Foundational alias/primitive sets and
 metadata attribute names are fixed shared vocabulary, not resettable state.
@@ -208,6 +209,39 @@ on exceptional exit. Native nullable/array matching is exercised across actual
 universes. Local-owner transitions exercise actual literal and awaitable queries,
 including restoration without polluting fixed reference facts. This does not
 complete the other resolver, metadata-fact and carrier ownership work in #1555.
+
+### Implemented: imported executable-payload authority
+
+`ReferenceExecutablePayloads` receives only five decoded payload/conflict inputs,
+not the reference index, reflection contexts, other metadata facts, or live
+source/physical declarations. Those inputs are borrowed mutable scan values at
+the capture frontier. Construction deep-copies each input default map and inline
+payload once; reference-identity capture tables are local to construction, so
+signature/arity/identity/candidate views share only private captured templates.
+The owner retains no scan input or update capability. Its managed facts live
+with the compilation's reference index; there is no reflection resource to close
+or changing local-membership input to invalidate.
+
+The scan records remain available to other metadata readers, so capture retains
+a private template copy in addition to the decoded inputs. Memoization avoids
+per-view copies, not that second catalog. Removing the input storage requires
+an explicit scan-publication handoff, not clearing another owner's containers.
+
+Queries return independent maps/graphs for the existing splice/admission owners.
+Neither changing a scan input after capture nor materializing one lookup result
+can modify another index or lookup view. Default signature/relaxed/arity ordering,
+constructor separation, conflict handling and stdlib ownerless candidates retain
+their existing policies. Scan conflict recording and query comparison share
+`ExecutableBirCodec`'s pure equality helper; this catalog does not interpret expressions,
+select overloads from bodies, or reconstruct declaration identities.
+
+The local `TypedInlineBirIndex` source snapshots and exact reflected optional
+default readers remain distinct authorities. Source graph construction, mutation
+and declaration admission remain with their existing producers, not this catalog.
+Actual index boundary tests cover input/query isolation, inline bodies/frames,
+independent indexes, and subsequent inputs; existing collision and runtime
+producer/consumer tests remain in place. Other ingested facts, ambient CLR
+resolver inputs/allocators and carrier capabilities still need their own work.
 
 ## Suspend and orchestration boundaries
 
