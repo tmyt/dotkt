@@ -38,17 +38,17 @@ static partial class ClrMemberResolution
             Ret = text, Sty = text, Args = new IBirExpression[] {
                 new BirConstant { Type = text, Value = new BirLiteral.TextLiteral("left") },
                 new BirConstant { Type = text, Value = new BirLiteral.TextLiteral("right") } } };
-        var snapshotIds = new List<int>();
+        using var signatures = new ReferencedCallSignatures();
         try
         {
             var call = Concat();
-            CaptureReferencedStaticCallSignatures(call);
-            snapshotIds.Add(call.DotktKotlinSigId.Value);
+            signatures.Capture(call);
+            var clone = (BirCallStatic)call.DeepClone();
             // Representation erased the visible vector after source capture.
             // The same snapshot row still selects the authored string overload.
             call.Sig = new TypeNode[] { declarationObject, declarationObject }; call.ArgTypes = new TypeNode[] { declarationObject, declarationObject };
-            var sibling = Concat(); CaptureReferencedStaticCallSignatures(sibling);
-            var siblingId = sibling.DotktKotlinSigId.Value; snapshotIds.Add(siblingId);
+            var sibling = Concat(); signatures.Capture(sibling);
+            var siblingId = sibling.DotktKotlinSigId.Value;
             var receiver = new BirLocal { Name = "list", Sty = listType };
             var index = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) };
             var item = new BirCallInstance { OwnerType = receiver.Sty, Method = "get_Item", Ret = text, Sty = text,
@@ -85,17 +85,23 @@ static partial class ClrMemberResolution
             var root = File(call, item, generic, direct, bound, registration, stale, selectedLocal, exact, unselected);
             var methods = root.Methods.Value; var body = methods[0].Body.Value; var callArguments = call.Args.Value;
             var saved = new byte[] { 1, 2, 4 }; methods[0].InlineBir = saved;
-            ResolveReferencedStaticCalls(root, refs, locals, canonical, ids, "Consumer.kt");
+            ResolveReferencedStaticCalls(root, refs, locals, canonical, ids, signatures, "Consumer.kt");
             Require(call.MemberRef.Value.Name.Value == "Concat", "canonical runtime owner did not bind Concat");
             Require(call.MemberRef.Value.ParameterTypes.Value.SequenceEqual(new TypeNode[] { text, text }),
                 "source snapshot selected unexpected MemberRef parameters: " + string.Join(", ", call.MemberRef.Value.ParameterTypes.Value.AsEnumerable()));
             Require(call.Sig.Value.SequenceEqual(new TypeNode[] { text, text }),
                 "selected comparison signature changed: " + string.Join(", ", call.Sig.Value.AsEnumerable()));
             Require(!call.ArgTypes.IsPresent, "selected call retained its old argument descriptor");
-            Require(!call.DotktKotlinSigId.IsPresent && !KotlinSigSnapshots.ContainsKey(snapshotIds[0]),
-                "current file retained its source snapshot");
-            Require(sibling.DotktKotlinSigId.Value == siblingId && KotlinSigSnapshots.ContainsKey(siblingId),
+            Require(!call.DotktKotlinSigId.IsPresent && signatures.Read(call) == null,
+                "current file retained its source token");
+            Require(sibling.DotktKotlinSigId.Value == siblingId && signatures.Read(sibling).Length == 2,
                 "current file consumed a sibling's snapshot");
+            // Resolve the independently owned clone after the original file
+            // released its token. Shared source facts outlive either file.
+            clone.Sig = new TypeNode[] { declarationObject, declarationObject };
+            ResolveReferencedStaticCalls(File(clone), refs, locals, canonical, ids, signatures, "Clone.kt");
+            Require(clone.MemberRef.Value.ParameterTypes.Value.SequenceEqual(new TypeNode[] { text, text })
+                && !clone.DotktKotlinSigId.IsPresent, "a cross-file clone lost the source overload after file release");
             Require(item.MemberRef.Value.DeclaringType.Value == receiver.Sty.Value
                 && item.MemberRef.Value.ReturnType.Value == new TypeNode.Tv("type", 0)
                 && item.Ret.Value == text && item.Sty.Value == text && !item.Super.IsPresent && !item.Virtual.Value
@@ -151,7 +157,7 @@ static partial class ClrMemberResolution
                 && selectedConstrained.DeclarationId.Value == selectedPropertyId
                 && inheritedSelection.DeclarationId.Value == selectedPropertyId,
                 "selected constrained property retained its semantic role or lost its scalar-resolution identity");
-            ResolveReferencedStaticCalls(selectedRoot, refs, locals, canonical, ids, "Selected.kt");
+            ResolveReferencedStaticCalls(selectedRoot, refs, locals, canonical, ids, signatures, "Selected.kt");
             Require(selectedConstrained.MemberRef.Value.Name.Value == "get_Item"
                 && selectedConstrained.MemberRef.Value.DeclaringType.Value == interfaceType
                 && selectedConstrained.MemberRef.Value.ReturnType.Value == new TypeNode.Tv("type", 0)
@@ -173,14 +179,13 @@ static partial class ClrMemberResolution
                     && !property.Prop.IsPresent && property.Virtual.Value == !property.Super.Value
                     && property.MemberRef.Value.DeclaringType.Value == interfaceType,
                     "source property association changed its selected physical accessor or super dispatch");
-            ResolveReferencedStaticCalls(File(sibling), refs, locals, canonical, ids, "Sibling.kt");
-            Require(!sibling.DotktKotlinSigId.IsPresent && !KotlinSigSnapshots.ContainsKey(siblingId),
+            ResolveReferencedStaticCalls(File(sibling), refs, locals, canonical, ids, signatures, "Sibling.kt");
+            Require(!sibling.DotktKotlinSigId.IsPresent && signatures.Read(sibling) == null,
                 "a sibling file lost its own snapshot lifetime");
             Console.WriteLine("[source final referenced calls] shared exact selection, snapshots, current owners, delegate slots and physical frames: OK");
         }
         finally
         {
-            foreach (var id in snapshotIds) KotlinSigSnapshots.Remove(id);
             _refs = previousReferences; _localTypes = previousLocals;
             _externalCanonicalTypes = previousCanonical; _localDeclarationIds = previousIds;
         }

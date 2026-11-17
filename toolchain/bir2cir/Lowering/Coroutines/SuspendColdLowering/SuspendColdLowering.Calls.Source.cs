@@ -131,7 +131,7 @@ static partial class SuspendColdLowering
                         Args = arguments, Ret = AnyTn, TypeArgs = typeArguments };
                     if (call.CalleeOwner.HasValue) plain.CalleeOwner = call.CalleeOwner;
                     if (identity != null) plain.DeclarationId = identity;
-                    ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(call, plain, ContAny());
+                    _module.ProjectCallSignature(call, plain, ContAny());
                     var staticSignature = AppendCompletion(SelectedColdSignature(call.CalleeParams, call.Sig, call.ArgTypes, call.ShapeTypes));
                     plain.Sig = staticSignature;
                     if (call.CalleeParams.HasValue) plain.CalleeParams = CopyCallTypes(staticSignature);

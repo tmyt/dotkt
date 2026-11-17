@@ -6,7 +6,7 @@ static partial class ClrMemberResolution
 {
     internal static void ResolveReferencedStaticCalls(BirGraphValue root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes, IReadOnlySet<string> externalCanonicalTypes,
-        IReadOnlySet<string> localDeclarationIds, string file = null)
+        IReadOnlySet<string> localDeclarationIds, ReferencedCallSignatures signatures, string file = null)
     {
         _refs = refs;
         _localTypes = localTypes ?? new HashSet<string>();
@@ -17,13 +17,13 @@ static partial class ClrMemberResolution
             if (node is IBirExecutablePayload) return;
             var childContext = ReferencedSourceDeclarationContext(node, context);
             node.VisitOwnChildSlots((_, _, slot) => Walk(slot.Value, childContext));
-            var input = ReadSourceReferencedCall(node);
+            var input = ReadSourceReferencedCall(node, signatures);
             if (input != null)
                 WriteSourceReferencedCall(node, PlanReferencedCall(input, context, refs,
                     _localTypes, _externalCanonicalTypes, _localDeclarationIds));
         }
         Walk(root, file ?? "<unknown>");
-        DropKotlinSigSnapshots(root);
+        signatures.ReleaseMarkers(root);
     }
 
     static string ReferencedSourceDeclarationContext(BirGraphValue node, string fallback)
@@ -39,10 +39,10 @@ static partial class ClrMemberResolution
         return $"{fallback}: {name}";
     }
 
-    static ReferencedCallInput ReadSourceReferencedCall(BirGraphValue node) => node switch {
+    static ReferencedCallInput ReadSourceReferencedCall(BirGraphValue node, ReferencedCallSignatures signatures) => node switch {
         BirCallStatic call => new(call.Tag, call.Owner.OrDefault() ?? call.CalleeOwner.OrDefault() ?? call.OwnerType.OrDefault(),
             call.Method.OrDefault(), call.Sig.OrDefault(), call.TypeArgs.OrEmpty().Length, call.DeclarationId.OrDefault(),
-            call.MemberRef.HasValue && call.DotktDeclarationIdentityBound.OrDefault(), call.DotktKotlinSigId.HasValue ? call.DotktKotlinSigId.Value : null,
+            call.MemberRef.HasValue && call.DotktDeclarationIdentityBound.OrDefault(), signatures.Read(call),
             call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Prop.OrDefault(), false),
         BirCallInstance call => new(call.Tag, call.OwnerType.OrDefault(), call.Method.OrDefault(), call.Sig.OrDefault(),
             call.TypeArgs.OrEmpty().Length, call.DeclarationId.OrDefault(), call.MemberRef.HasValue && call.DotktDeclarationIdentityBound.OrDefault(),
@@ -134,14 +134,4 @@ static partial class ClrMemberResolution
         => StampNativeDelegateArgumentTargets(arguments, methodArguments,
             plan.Declaration, plan.DelegateOwnerArguments);
 
-    static void DropKotlinSigSnapshots(BirGraphValue node)
-    {
-        if (node is IBirExecutablePayload) return;
-        if (node is BirCallStatic call)
-        {
-            if (call.DotktKotlinSigId.HasValue) KotlinSigSnapshots.Remove(call.DotktKotlinSigId.Value);
-            call.DotktKotlinSigId = default;
-        }
-        node.VisitOwnChildSlots((_, _, slot) => DropKotlinSigSnapshots(slot.Value));
-    }
 }

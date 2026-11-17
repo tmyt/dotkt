@@ -17,6 +17,7 @@ static partial class SuspendColdLowering
             static void Check(bool condition, string reason)
             { if (!condition) throw new InvalidOperationException("Typed suspend engine: " + reason); }
             var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+            using var callSignatures = new ReferencedCallSignatures();
             var method = new BirFunctionDeclaration { Name = "core", Mods = new BirModifiers { Suspend = true },
                 Ret = IntTn, SuspendRet = IntTn, SuspendResult = IntTn,
                 Params = Array.Empty<BirParameter>(), Body = Array.Empty<IBirStatement>() };
@@ -26,7 +27,7 @@ static partial class SuspendColdLowering
             var transitions = new DeclarationTestTransitions();
             var context = new SuspendModuleContext(new[] { file }, references, new HashSet<string>(), false,
                 new Dictionary<string, string> { ["kotlin.coroutines.Continuation"] = "ContinuationCarrier" },
-                _ => false, null, new Dictionary<string, int[]>(), new Dictionary<string, string>(), transitions);
+                _ => false, null, new Dictionary<string, int[]>(), new Dictionary<string, string>(), transitions, callSignatures.ProjectColdCall);
             context.PrepareStage0();
             SourceFunGen Generator() => new(context, new SourceFunctionInput.Named(file, owner, method, "", []));
 

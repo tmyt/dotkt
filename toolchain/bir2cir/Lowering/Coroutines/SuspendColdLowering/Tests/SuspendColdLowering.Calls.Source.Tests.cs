@@ -7,6 +7,7 @@ static partial class SuspendColdLowering
     internal static void CallsSourceSelfTest()
     {
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        using var callSignatures = new ReferencedCallSignatures();
         var integer = new TypeNode.Fqn("kotlin.Int");
         var text = new TypeNode.Fqn("kotlin.String");
         var any = new TypeNode.Fqn("kotlin.Any");
@@ -19,7 +20,7 @@ static partial class SuspendColdLowering
         SuspendModuleContext Context(BirFileDeclaration file, SourceDeclarationSignatures signatures = null) => new(
             new[] { file }, references, new HashSet<string> { ContinuationImplFqn, "kotlin.Result" }, false,
             new Dictionary<string, string> { ["kotlin.coroutines.Continuation"] = "ContinuationCarrier" },
-            _ => false, signatures, null, null, new DeclarationTestTransitions());
+            _ => false, signatures, null, null, new DeclarationTestTransitions(), callSignatures.ProjectColdCall);
 
         var methodParameter = new BirTypeParameter { Name = "M" };
         var selected = new BirCallInstance { OwnerType = new TypeNode.Fqn("Base"), Method = "work", SuspendCall = true,
@@ -83,10 +84,18 @@ static partial class SuspendColdLowering
             SuspendRet = BoolTn, SuspendResult = BoolTn, Body = Array.Empty<IBirStatement>() } } };
         var signatures = new SourceDeclarationSignatures();
         file = signatures.Capture(new[] { file })[0];
+        callSignatures.Capture(file);
         owner = (BirClassDefinition)file.Types.Value[0]; caller = owner.Methods.Value[0];
         module = Context(file, signatures); module.PrepareStage0();
         output = new SourceFunGen(module, new SourceFunctionInput.Named(file, owner, caller, "", [])).Build();
         machine = (BirClassDefinition)output.Types.Single();
+        BirCallStatic configuredCold = null;
+        machine.Visit(node => {
+            if (node is BirCallStatic call && call.Method.OrDefault() == "captureContext$dotkt_suspend") configuredCold = call;
+        });
+        Require(configuredCold != null && callSignatures.Read(configuredCold) is [var completion]
+            && TypeNodeDataEquality.Equal(completion, ContAnyTn),
+            "cold call synthesis bypassed the module's pre-erasure signature projection capability");
         Require(TypeNodeDataEquality.Equal(machine.Fields.Value.Single(field => field.Name.Value == "__awaitable$1").Type.Value, task)
             && machine.Fields.Value.Single(field => field.Name.Value == "__awval$2").Type.Value == integer,
             "captureContext suspension lost the earlier awaitable or closed result type");

@@ -15,8 +15,6 @@ using DotKt.Bir;
 static partial class ClrMemberResolution
 {
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
-    static readonly Dictionary<int, TypeNode[]> KotlinSigSnapshots = new();
-    static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
     static IReadOnlyDictionary<string, string> _localCarriers;
     static IReadOnlySet<string> _localTypes = new HashSet<string>();

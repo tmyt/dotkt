@@ -11,11 +11,12 @@ static partial class SuspendColdLowering
             if (!condition) throw new InvalidOperationException("Typed suspend declarations: " + message);
         }
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        using var callSignatures = new ReferencedCallSignatures();
         var metadataFile = new BirFileDeclaration { FileClass = "MetadataOnly",
             Methods = Array.Empty<BirFunctionDeclaration>(), Types = Array.Empty<IBirTypeDeclaration>() };
         var metadataContext = new SuspendModuleContext(new[] { metadataFile },
             ReferenceMetadataIndex.Build(Array.Empty<string>()), new HashSet<string>(), false,
-            new Dictionary<string, string>(), _ => false, null, null, null, new DeclarationTestTransitions());
+            new Dictionary<string, string>(), _ => false, null, null, null, new DeclarationTestTransitions(), callSignatures.ProjectColdCall);
         ApplyNamedSource(metadataContext);
         SuspendLambdaLowering.ApplyAll(metadataContext);
         Require(metadataContext.Stage0Complete && metadataContext.NamedEntries.Count == 0
@@ -50,7 +51,7 @@ static partial class SuspendColdLowering
         var identities = new Dictionary<string, string> { ["visit-source"] = "original-source" };
         var context = new SuspendModuleContext(new[] { file }, references, new HashSet<string>(), false,
             new Dictionary<string, string> { ["kotlin.coroutines.Continuation"] = "ContinuationCarrier" },
-            _ => false, null, positions, identities, transitions);
+            _ => false, null, positions, identities, transitions, callSignatures.ProjectColdCall);
         Require(context.NamedEntries.Count == 2 && ReferenceEquals(context.NamedEntries[0].Method, source)
             && ReferenceEquals(context.NamedEntries[1].Method, sibling), "physical signature equality collapsed actual declarations");
         ApplyNamedSource(context);
@@ -98,7 +99,7 @@ static partial class SuspendColdLowering
         var retained = new BirFunctionDeclaration { Body = new IBirStatement[] { bodyStatement } };
         var local = new SuspendModuleContext(new[] { file }, references, new HashSet<string> { ContinuationImplFqn }, false,
             new Dictionary<string, string> { ["kotlin.coroutines.Continuation"] = "ContinuationCarrier" },
-            _ => false, null, null, null, transitions);
+            _ => false, null, null, null, transitions, callSignatures.ProjectColdCall);
         var independent = local.AcquireBody(new SourceFunctionInput.Named(file, owner, retained, "", []));
         Require(ReferenceEquals(retained.Body.Value[0], bodyStatement) && !ReferenceEquals(independent[0], bodyStatement)
             && transitions.Cloned.Contains(bodyStatement), "retained source body was mutated or independent birth was not reported");

@@ -4,7 +4,7 @@ using DotKt.Bir;
 static partial class ClrMemberResolution
 {
     sealed record ReferencedCallInput(string Kind, TypeNode Owner, string Name, TypeNode[] Signature,
-        int MethodArity, string Identity, bool AlreadyBound, int? Snapshot,
+        int MethodArity, string Identity, bool AlreadyBound, TypeNode[] SourceSignature,
         string PropertyName, string PropertyKind, string Prop, bool Super);
 
     sealed record ReferencedCallPlan(bool ClearIdentity = false, bool PropertySelected = false,
@@ -26,8 +26,7 @@ static partial class ClrMemberResolution
         if (localTypes.Contains(owner.Name) && !externalCanonicalTypes.Contains(owner.Name))
             return new(ClearIdentity: call.Identity != null && !localDeclarationIds.Contains(call.Identity));
         if (call.Identity != null && localDeclarationIds.Contains(call.Identity)) return new();
-        var signature = call.Snapshot is int snapshotId && KotlinSigSnapshots.TryGetValue(snapshotId, out var saved)
-            ? saved : call.Signature;
+        var signature = call.SourceSignature ?? call.Signature;
         if (signature.Any(type => type == null)) return new();
         KotlinPropertyAccessors.TryCallIdentity(call.PropertyName, call.PropertyKind, call.Name, call.Prop,
             out var propertyName, out var propertyKind);

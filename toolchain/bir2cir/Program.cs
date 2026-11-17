@@ -137,7 +137,7 @@ static class Bir2Cir
                 NullableTvErasureCallRealign.SelfTestSourceUses();
                 ValueSlotNullableWrite.SelfTestSource();
                 NullableGenericErasure.SourceSelfTest();
-                ClrMemberResolution.SourceSignatureSelfTest();
+                ReferencedCallSignatures.SelfTest();
                 EnumMemberBinding.SelfTestSource();
                 AnySlotRebind.SelfTestSource();
                 RoundtripMetadata.SourceSuspendResultSelfTest();
@@ -391,6 +391,7 @@ sealed class Pipeline
         // physical shaping can rename accessors, companion cores or suspend entries.
         // Later metadata must not reconstruct them from get_/set_ or CLR names.
         var signatures = new SourceDeclarationSignatures();
+        using var callSignatures = new ReferencedCallSignatures();
         captured = signatures.Capture(captured);
         var valuePolicy = new ValueRepresentationSourcePolicy(captured, refs, referenceBuild);
         for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
@@ -613,7 +614,7 @@ sealed class Pipeline
             }
             // Preserve the selected Kotlin overload and logical suspend result
             // before declaration erasure; function values consume erased slots.
-            if (appBuild) ClrMemberResolution.CaptureReferencedStaticCallSignatures(source);
+            if (appBuild) callSignatures.Capture(source);
             RoundtripMetadata.FreezeSuspendResults(new[] { source });
             NullableGenericErasure.Apply(source, isValueFqn);
             captured[sourceIndexInModule] = (BirFileDeclaration)FunctionValueRepresentation.Apply(source, refs.IsByRefLikeFqn);
@@ -862,7 +863,7 @@ sealed class Pipeline
         var suspendModule = new SuspendColdLowering.SuspendModuleContext(captured, refs,
             inventory.EmittedTypeFqns, appBuild, localExistentialOwners, isValueFqn, signatures,
             scalarSlots.Parameters, carrierRealization.Declarations.PhysicalDeclarationSources,
-            suspendTransitions);
+            suspendTransitions, callSignatures.ProjectColdCall);
         // Named Cold also runs in reference builds: the selected id|cold
         // MethodDef must exist in the reference twin before bodies are squashed.
         // Lambda bodies need no reference-build state-machine materialization.
@@ -1012,7 +1013,7 @@ sealed class Pipeline
             if (appBuild)
                 ClrMemberResolution.ResolveReferencedStaticCalls(source, refs,
                     physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
-                    physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[sourcePosition].Path));
+                    physicalPreparation.Declarations.DeclarationIds, callSignatures, OutputNameFor(inputsWithSources[sourcePosition].Path));
 
             // Record source identity and NRT before stripping reference-nullable
             // wrappers. Nullable Unit retains its distinct value-returning ABI.
@@ -1088,7 +1089,7 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++)
             ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
-                physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[index].Path));
+                physicalPreparation.Declarations.DeclarationIds, callSignatures, OutputNameFor(inputsWithSources[index].Path));
 
         // Complete collection surfaces module-wide before any consumer snapshots
         // their final interface graph. Helper signatures use the pre-birth
@@ -1128,7 +1129,7 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++)
             ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
-                physicalPreparation.Declarations.DeclarationIds, OutputNameFor(inputsWithSources[index].Path));
+                physicalPreparation.Declarations.DeclarationIds, callSignatures, OutputNameFor(inputsWithSources[index].Path));
         if (!referenceBuild)
             foreach (var source in captured) ExactExternalDeclarationIdentity.Apply(source, refs);
 

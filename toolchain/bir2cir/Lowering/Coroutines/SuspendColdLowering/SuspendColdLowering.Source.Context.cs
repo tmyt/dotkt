@@ -18,6 +18,7 @@ static partial class SuspendColdLowering
         internal IDictionary<string, int[]> PhysicalParameterIndices { get; }
         internal IDictionary<string, string> PhysicalDeclarationSources { get; }
         internal SourceDeclarationTransitions Transitions { get; }
+        internal Action<BirCallStatic, BirCallStatic, TypeNode> ProjectCallSignature { get; }
         internal IReadOnlyList<SourceNamedEntry> NamedEntries { get; private set; }
         internal IReadOnlyDictionary<string, IBirTypeDeclaration> Closures { get; private set; }
         internal IReadOnlyList<SourceHelperDeclaration> HelperDeclarations { get; private set; }
@@ -38,13 +39,15 @@ static partial class SuspendColdLowering
             SourceDeclarationSignatures sourceSignatures,
             IDictionary<string, int[]> physicalParameterIndices,
             IDictionary<string, string> physicalDeclarationSources,
-            SourceDeclarationTransitions transitions)
+            SourceDeclarationTransitions transitions,
+            Action<BirCallStatic, BirCallStatic, TypeNode> projectCallSignature)
         {
             Roots = roots; References = references; EmittedTypeNames = emittedTypeNames;
             AppBuild = appBuild; ExistentialOwners = existentialOwners; IsValue = isValue ?? (_ => false);
             SourceSignatures = sourceSignatures; PhysicalParameterIndices = physicalParameterIndices;
             PhysicalDeclarationSources = physicalDeclarationSources;
             Transitions = transitions ?? throw new ArgumentNullException(nameof(transitions));
+            ProjectCallSignature = projectCallSignature ?? throw new ArgumentNullException(nameof(projectCallSignature));
             var entries = new List<SourceNamedEntry>();
             var closures = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
             var helpers = new List<SourceHelperDeclaration>();
