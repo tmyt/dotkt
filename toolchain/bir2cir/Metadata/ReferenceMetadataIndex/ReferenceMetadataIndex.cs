@@ -654,7 +654,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // ("System.Console", "Kfc.App") to a metadata-only System.Reflection.Type here and reflects its member SHAPE
     // (static/instance/property/field/indexer/generic) to bind the plain callStatic/callInstance kotc emitted by
     // identity into the CLR-codegen `clr*` vocabulary. kotc no longer decides the .NET call shape (layer purity —
-    // this is the SAME "emit the identity, bind in bir2cir" pattern as the stdlib ref.dll, one axis over). The MLC is
+    // this is the SAME "emit the identity, bind in bir2cir" pattern as the stdlib ref.dll, one axis over).
     // Reflection handles are borrowed from this fixed reference universe.
     // Pipeline owns its lifetime through this index, including exceptional exit.
     readonly ReferenceMetadataUniverse _universe;
