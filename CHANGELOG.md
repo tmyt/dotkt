@@ -19,6 +19,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the compiler tools' build mode. Repository stdlib helpers support
   `DOTKT_BUILD_CONFIGURATION`; packaging and verification default it to Release.
 
+- Project CLR member arguments once, avoiding unused lifted lambda declarations.
+
 ## 0.9.25 (2026-11-16)
 
 ### Release highlights
