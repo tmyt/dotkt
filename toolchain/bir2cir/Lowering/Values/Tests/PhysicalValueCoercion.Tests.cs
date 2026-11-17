@@ -225,7 +225,7 @@ static partial class PhysicalValueCoercion
         Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
     {
         var owning = roots.Select(BirGraphDom.ReadBirFileDeclaration).ToArray();
-        TypedPhysicalValueCoercion.ApplyAll(new PhysicalDelegateDeclarations(), owning, () => BirGraphDom.ReadBirExpression(unitValue()),
+        TypedPhysicalValueCoercion.ApplyAll(new PhysicalDelegateDeclarations(), null, owning, () => BirGraphDom.ReadBirExpression(unitValue()),
             isValue, referenceBuild, isReferenceOwner, isExistentialOwner, isNativeReference, referencedCarrier, references);
         for (var index = 0; index < roots.Count; index++)
         {
@@ -248,7 +248,7 @@ static partial class PhysicalValueCoercion
     }
 
     static void NormalizeNumericForSelfTest(BirFileDeclaration root, bool referenceBuild) =>
-        TypedPhysicalValueCoercion.ApplyAll(new PhysicalDelegateDeclarations(), new[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
+        TypedPhysicalValueCoercion.ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"),
             _ => false, referenceBuild);
 
     static string Str(JsonNode node) => node is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;

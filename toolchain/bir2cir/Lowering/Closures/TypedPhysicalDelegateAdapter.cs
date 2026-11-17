@@ -22,10 +22,11 @@ sealed class TypedPhysicalDelegateAdapter
         this.declarations = declarations;
     }
 
-    internal IBirExpression AdaptUnitDelegateValue(BirFileDeclaration document, IBirExpression expression,
+    internal IBirExpression AdaptUnitDelegateValue(IReadOnlyDictionary<string, string> localCarriers,
+        BirFileDeclaration document, IBirExpression expression,
         TypeNode source, TypeNode target)
     {
-        var plan = ClrMemberResolution.UnitDelegateValuePlan(references, source, target, out var slot);
+        var plan = ClrMemberResolution.UnitDelegateValuePlan(references, localCarriers, source, target, out var slot);
         if (plan == null) return null;
         var temporary = declarations.FreshValueTemporary();
         var adapter = AdapterClass(document, plan);
@@ -89,7 +90,7 @@ sealed class TypedPhysicalDelegateAdapter
         var adapter = new TypedPhysicalDelegateAdapter(references,
             () => new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("kotlin.Unit"), Name = "INSTANCE" },
             new PhysicalDelegateDeclarations());
-        var first = (BirValueBlock)adapter.AdaptUnitDelegateValue(root, original, source, target);
+        var first = (BirValueBlock)adapter.AdaptUnitDelegateValue(null, root, original, source, target);
         var variable = (BirVariable)first.Stmts.Value.Single();
         var conditional = (BirConditional)first.Result.Value;
         var construction = (BirNewClosure)conditional.Else.Value;
@@ -114,14 +115,14 @@ sealed class TypedPhysicalDelegateAdapter
             || invocation.InvokeRef.Value.DeclaringType.Value is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }] }
             || invoke.Body.Value[1] is not BirReturn { Value.Value: BirStaticFieldGet { Name.Value: "INSTANCE" } })
             throw new InvalidOperationException("Typed Unit delegate adapter lost its exact parameter representation or binding frame");
-        _ = adapter.AdaptUnitDelegateValue(root, new BirLocal { Name = "other" }, source, target);
+        _ = adapter.AdaptUnitDelegateValue(null, root, new BirLocal { Name = "other" }, source, target);
         if (root.Types.Value.Length != 1)
             throw new InvalidOperationException("Typed Unit delegate adapters did not share a shape within their document");
         var other = new BirFileDeclaration { FileClass = "Other.Owner", Types = Array.Empty<IBirTypeDeclaration>() };
-        _ = adapter.AdaptUnitDelegateValue(other, new BirLocal { Name = "other" }, source, target);
+        _ = adapter.AdaptUnitDelegateValue(null, other, new BirLocal { Name = "other" }, source, target);
         if (other.Types.Value.Length != 1 || ReferenceEquals(other.Types.Value[0], declaration))
             throw new InvalidOperationException("Typed Unit delegate adapter declarations leaked between documents");
-        if (adapter.AdaptUnitDelegateValue(other, new BirLocal { Name = "unchanged" }, target, target) != null)
+        if (adapter.AdaptUnitDelegateValue(null, other, new BirLocal { Name = "unchanged" }, target, target) != null)
             throw new InvalidOperationException("Typed Unit delegate adapter changed a non-void function value");
         Console.WriteLine("[typed Unit delegate values] self-test OK (single evaluation, nulls, exact generic slot frames and document ownership)");
     });

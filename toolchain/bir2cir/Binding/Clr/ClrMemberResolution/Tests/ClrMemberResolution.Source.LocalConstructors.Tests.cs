@@ -18,11 +18,11 @@ static partial class ClrMemberResolution
         static BirNew Construct(TypeNode type, TypeNode[] signature, params IBirExpression[] arguments) => new() {
             Type = type, ArgTypes = signature, Args = arguments,
         };
-        var previousReferences = _refs; var previousTypes = _localTypes; var previousCarriers = _localCarriers;
+        var previousReferences = _refs; var previousTypes = _localTypes;
         try
         {
             _refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
-            _localTypes = new HashSet<string>(); _localCarriers = null;
+            _localTypes = new HashSet<string>();
             var integer = new TypeNode.Fqn("System.Int32"); var text = new TypeNode.Fqn("System.String");
             var erased = new TypeNode.Fqn("System.Object"); var unit = new TypeNode.Fqn("void");
             var ownerT = new TypeNode.Tv("type", 0); var ownerU = new TypeNode.Tv("type", 1);
@@ -146,6 +146,6 @@ static partial class ClrMemberResolution
                 "declaration-frame matching was incorrectly owner-substituted");
             Console.WriteLine("[source local constructors] exact IDs, ordinals, frames, presence, owned views and delegate slots: OK");
         }
-        finally { _refs = previousReferences; _localTypes = previousTypes; _localCarriers = previousCarriers; }
+        finally { _refs = previousReferences; _localTypes = previousTypes; }
     }
 }

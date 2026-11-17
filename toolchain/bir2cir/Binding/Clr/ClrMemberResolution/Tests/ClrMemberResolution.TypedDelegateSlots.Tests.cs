@@ -8,7 +8,6 @@ static partial class ClrMemberResolution
     {
         var declarations = new PhysicalDelegateDeclarations();
         var priorTypes = _localTypes;
-        var priorCarriers = _localCarriers;
         try
         {
             var voidType = new TypeNode.Fqn("void");
@@ -119,6 +118,6 @@ static partial class ClrMemberResolution
                 "void-to-void SAM adapter returned a Unit value");
             Console.WriteLine("[typed delegate construction] self-test OK (five shapes, SAM, exact bindings, bottom-up ownership and cache scope)");
         }
-        finally { _localTypes = priorTypes; _localCarriers = priorCarriers; }
+        finally { _localTypes = priorTypes; }
     });
 }

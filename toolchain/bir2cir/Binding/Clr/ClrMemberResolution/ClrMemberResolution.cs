@@ -15,7 +15,6 @@ static partial class ClrMemberResolution
 {
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
     static ReferenceMetadataIndex _refs;
-    static IReadOnlyDictionary<string, string> _localCarriers;
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone

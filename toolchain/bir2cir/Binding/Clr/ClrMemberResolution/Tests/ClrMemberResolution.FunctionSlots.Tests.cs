@@ -23,19 +23,17 @@ static partial class ClrMemberResolution
             new TypeNode.Fqn("System.Action`1", new TypeNode[] { owner }), true);
         Check(fn with { Clr = null }, nominal, false);
         var sameSlot = new TypeNode.Fn(false, result, new TypeNode[] { method }, Clr: "System.Func");
-        if (HasRepresentationSlotSeam(sameSlot, sameSlot)
-            || !HasRepresentationSlotSeam(sameSlot,
+        if (HasRepresentationSlotSeam(null, sameSlot, sameSlot)
+            || !HasRepresentationSlotSeam(null, sameSlot,
                 sameSlot with { Params = new TypeNode[] { new TypeNode.Tv("method", 1) } })
-            || !HasRepresentationSlotSeam(sameSlot,
+            || !HasRepresentationSlotSeam(null, sameSlot,
                 sameSlot with { Params = new TypeNode[] { owner } })
-            || !HasRepresentationSlotSeam(sameSlot with { Ret = method },
+            || !HasRepresentationSlotSeam(null, sameSlot with { Ret = method },
                 sameSlot with { Ret = new TypeNode.Tv("method", 1) })
-            || HasRepresentationSlotSeam(sameSlot with { Params = new TypeNode[] { result } },
+            || HasRepresentationSlotSeam(null, sameSlot with { Params = new TypeNode[] { result } },
                 sameSlot with { Params = new TypeNode[] { new TypeNode.Fqn("Other.Reference") } }))
             throw new InvalidOperationException("Delegate adaptation lost exact native/storage variable identity");
-        var priorCarriers = _localCarriers;
-        _localCarriers = new Dictionary<string, string> { ["Source.Value"] = "Source.View" };
-        try
+        var localCarriers = new Dictionary<string, string> { ["Source.Value"] = "Source.View" };
         {
             var exact = new TypeNode.Fqn("Source.Value", new TypeNode[] { result });
             var carrier = new TypeNode.Fqn("Source.View");
@@ -43,15 +41,14 @@ static partial class ClrMemberResolution
             var returningCarrier = returningExact with { Ret = carrier };
             var acceptingExact = new TypeNode.Fn(false, result, new TypeNode[] { exact });
             var acceptingCarrier = acceptingExact with { Params = new TypeNode[] { carrier } };
-            if (!HasRepresentationSlotSeam(returningCarrier, returningExact)
-                || HasRepresentationSlotSeam(returningExact, returningCarrier)
-                || !HasRepresentationSlotSeam(acceptingExact, acceptingCarrier)
-                || HasRepresentationSlotSeam(acceptingCarrier, acceptingExact)
-                || HasRepresentationSlotSeam(acceptingExact with { Params = new TypeNode[] { new TypeNode.ByRef(exact) } },
+            if (!HasRepresentationSlotSeam(localCarriers, returningCarrier, returningExact)
+                || HasRepresentationSlotSeam(localCarriers, returningExact, returningCarrier)
+                || !HasRepresentationSlotSeam(localCarriers, acceptingExact, acceptingCarrier)
+                || HasRepresentationSlotSeam(localCarriers, acceptingCarrier, acceptingExact)
+                || HasRepresentationSlotSeam(localCarriers, acceptingExact with { Params = new TypeNode[] { new TypeNode.ByRef(exact) } },
                     acceptingCarrier with { Params = new TypeNode[] { new TypeNode.ByRef(carrier) } }))
                 throw new InvalidOperationException("Nominal carrier delegate seams lost value direction or converted a managed reference");
         }
-        finally { _localCarriers = priorCarriers; }
         Console.WriteLine("[function MethodImpl slots] self-test OK (exact family, arguments, receiver and generic frames)");
 
         static void Check(TypeNode left, TypeNode right, bool expected)

@@ -11,7 +11,6 @@ static partial class ClrMemberResolution
         IReadOnlySet<string> localTypes, IReadOnlyDictionary<string, string> localCarriers = null)
     {
         _refs = refs;
-        _localCarriers = localCarriers;
         _localTypes = localTypes ?? new HashSet<string>();
         var adapters = new TypedPhysicalDelegateAdapter(refs, () => UnitSingletonRead(refs), declarations);
         var pending = new List<BirGraphSlot>();
@@ -19,7 +18,7 @@ static partial class ClrMemberResolution
         foreach (var slot in pending)
         {
             var original = slot.Read();
-            var replacement = Materialize(original, document, refs, adapters);
+            var replacement = Materialize(original, document, refs, adapters, localCarriers);
             if (!ReferenceEquals(original, replacement)) slot.Replace(replacement);
         }
 
@@ -36,7 +35,7 @@ static partial class ClrMemberResolution
     }
 
     static BirGraphValue Materialize(BirGraphValue value, BirFileDeclaration document,
-        ReferenceMetadataIndex refs, TypedPhysicalDelegateAdapter adapters)
+        ReferenceMetadataIndex refs, TypedPhysicalDelegateAdapter adapters, IReadOnlyDictionary<string, string> localCarriers)
     {
         if (value is BirSamConversion conversion)
         {
@@ -58,9 +57,9 @@ static partial class ClrMemberResolution
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(natural);
         if (naturalDelegate == null || SameDelegate(naturalDelegate, target)) return value;
         if (ClrDeclarationMatching.IsVoidNode(natural.Ret) && SlotInvokeReturn(target) is TypeNode result && !ClrDeclarationMatching.IsVoidNode(result))
-            return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(natural, target, result), alwaysArguments: false);
+            return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(localCarriers, natural, target, result), alwaysArguments: false);
         if (PhysicalFunctionShape(target, includeNominal: true) is TypeNode.Fn signatureType
-            && NeedsSlotAdapter(natural, signatureType))
+            && NeedsSlotAdapter(localCarriers, natural, signatureType))
             return Adapt((IBirExpression)value, target, BoxedDelegateAdapterPlan(natural, signatureType), alwaysArguments: true);
 
         // Only the constructor binding follows this retarget operation. Target

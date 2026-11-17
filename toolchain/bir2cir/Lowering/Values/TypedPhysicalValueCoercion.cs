@@ -15,7 +15,8 @@ static class TypedPhysicalValueCoercion
     static OptionalField<IBirExpression> Field(IBirExpression expression) => OptionalField<IBirExpression>.Of(expression);
     static TypeNode[] OwnerArgs(BirMemberReference member) => (member?.DeclaringType.OrDefault() as TypeNode.Fqn)?.Args ?? [];
 
-    internal static void ApplyAll(PhysicalDelegateDeclarations declarations, IReadOnlyList<BirFileDeclaration> roots, Func<IBirExpression> unitValue,
+    internal static void ApplyAll(PhysicalDelegateDeclarations declarations, IReadOnlyDictionary<string, string> localCarriers,
+        IReadOnlyList<BirFileDeclaration> roots, Func<IBirExpression> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
         Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
         Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
@@ -25,7 +26,7 @@ static class TypedPhysicalValueCoercion
             IsReferenceOwner = isReferenceOwner ?? (_ => false),
             IsExistentialOwner = isExistentialOwner ?? (_ => false),
             IsNativeReference = isNativeReference ?? (_ => false),
-            ReferencedCarrier = referencedCarrier, References = references,
+            ReferencedCarrier = referencedCarrier, References = references, LocalCarriers = localCarriers,
             DelegateAdapters = new TypedPhysicalDelegateAdapter(references, unitValue, declarations),
         };
         foreach (var root in roots)
@@ -83,6 +84,7 @@ static class TypedPhysicalValueCoercion
         internal Func<TypeNode.Fqn, TypeNode.Fqn, bool> ReferencedCarrier;
         internal bool ReferenceBuild;
         internal ReferenceMetadataIndex References;
+        internal IReadOnlyDictionary<string, string> LocalCarriers;
         internal BirFileDeclaration Document;
         internal TypedGenericArrayStorageLowering.FreshNames ArrayNames;
         internal TypedPhysicalDelegateAdapter DelegateAdapters;
@@ -296,7 +298,7 @@ static class TypedPhysicalValueCoercion
         }
         var got = ExprType(value, scope, index);
         if (value is IBirExpression expression
-            && index.DelegateAdapters?.AdaptUnitDelegateValue(index.Document, expression, got, target) is { } adapter)
+            && index.DelegateAdapters?.AdaptUnitDelegateValue(index.LocalCarriers, index.Document, expression, got, target) is { } adapter)
             return Graph(adapter);
         return NeedsConversion(got, target, index) ? Cast(value, target) : value;
     }
@@ -968,7 +970,7 @@ static class TypedPhysicalValueCoercion
             delegateReceivers.Add((Graph(bound), receiver, declaringType));
         }
         var root = new BirFileDeclaration { FileClass = "PhysicalValues", Methods = methods.ToArray() };
-        ApplyAll(new PhysicalDelegateDeclarations(), new[] { root }, () => new BirConstant { Type = new TypeNode.Fqn("kotlin.Unit"), Value = new BirLiteral.NullLiteral() }, _ => false);
+        ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { root }, () => new BirConstant { Type = new TypeNode.Fqn("kotlin.Unit"), Value = new BirLiteral.NullLiteral() }, _ => false);
         if (branch.Type.OrDefault() != target || branch.Then.OrDefault() is not BirCast { Type.HasValue: true } first
             || first.Type.Value != target || !ReferenceEquals(first.E.OrDefault(), value)
             || branch.Else.OrDefault() is not BirCast)
@@ -1006,7 +1008,7 @@ static class TypedPhysicalValueCoercion
             var method = new BirFunctionDeclaration { Name = "storeBound", Ret = genericSlot,
                 Params = new[] { new BirParameter { Name = "input", Type = erased } },
                 Body = new IBirStatement[] { storage, returnedBound } };
-            ApplyAll(new PhysicalDelegateDeclarations(), new[] { new BirFileDeclaration { Methods = new[] { method } } },
+            ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { new BirFileDeclaration { Methods = new[] { method } } },
                 () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
             if (storage.Init.Value is not BirCast { Type.HasValue: true, E.HasValue: true } stored
                 || stored.Type.Value != genericSlot || !ReferenceEquals(stored.E.Value, input)
@@ -1031,7 +1033,7 @@ static class TypedPhysicalValueCoercion
                 new BirFunctionDeclaration { Name = "widen", Ret = baseType,
                     Params = new[] { new BirParameter { Name = "input", Type = derivedType } },
                     Body = new IBirStatement[] { returnBase } } } };
-        ApplyAll(new PhysicalDelegateDeclarations(), new[] { references }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { references }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
         if (narrowed.Init.Value is not BirCast { Type.HasValue: true } narrowedValue || narrowedValue.Type.Value != derivedType
             || consumeDerived.Args.Value[0] is not BirCast { Type.HasValue: true } argument || argument.Type.Value != derivedType
             || returnDerived.Value.Value is not BirCast { Type.HasValue: true } returnedDerived || returnedDerived.Type.Value != derivedType

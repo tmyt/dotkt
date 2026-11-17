@@ -84,7 +84,7 @@ The resolution path's state and its current ownership:
 | `_refs` | Binding entry points assign it; binding queries/writers supply current facts to the scalar matching/reference units | Ambient last-call reference universe, including calls made before the final binding pass | Explicit reference queries passed to exact selection / rendering; no dependency on another entry point's initialization |
 | `_localTypes` | Native, declaration, referenced and delegate entry points replace it | Per invocation facts stored process-wide | Pass-owned local physical identity input, not reference metadata |
 | Referenced `externalCanonicalTypes`, `localDeclarationIds` | Caller supplies; entry normalizes absent inputs and planner reads | Entry-local references, released with that walk | Ordinary explicit selection inputs, not process-held sets or new catalog owners |
-| `_localCarriers` | Local target and delegate entry points assign; physical function/delegate shaping reads | Module physical continuation stored ambiently | Explicit physical carrier relation input |
+| Physical delegate `localCarriers` | Pipeline supplies its chosen carrier relation to physical target binding, construction and value-flow | Borrowed module relation; value-flow keeps it in its existing pass-local index | Explicit seam/adapter input, not a process-held map; source-only target stamping does not consume it |
 | Nullable-definition / root-array queries | Native matching asks the current reference index | Borrowed handles from its universe; no process-wide outer Type cache | Fixed-input lookup is cached only by the owning universe, so interleaved compilations do not share handles |
 | `PhysicalDelegateDeclarations.nextAdapter`, `nextValue` | Adapter declaration construction and value-temporary allocation | One compilation, shared by construction and final value-flow consumers | Pipeline supplies the declaration builder; consumers retain separate per-file caches and publication rights |
 | Index `nativeSignatures` | Metadata scan and physical CLR binding query the existing `NativeSignatureReader` by path/MVID/token | One reference index owns the decoder from scan through binding and drops it on disposal | Borrowed read-only declaration facts, preserving the decoder's existing behavior; ordinary declaration projection remains outside it |
@@ -115,6 +115,12 @@ membership alongside its own reference index. Constructed-super signature
 validation and final MemberRef construction use those same facts explicitly;
 the index does not borrow the resolver's ambient scalar forwarder for this path.
 The referenced graph writer still has the remaining binding inputs listed above.
+
+Physical delegate seam checks receive that same carrier relation explicitly.
+Construction forwards it to materialization; final value-flow retains it in
+its existing index and supplies it per conversion. Source-only target stamping
+no longer accepts an unused relation. Cache scope, adapter construction and
+publication order stay unchanged; no map copy or new owner class is introduced.
 
 `PhysicalDelegateDeclarations` owns adapter declaration construction and its two
 identity allocators. The pipeline creates one instance for construction and final

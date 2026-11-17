@@ -9,7 +9,7 @@ static partial class ClrMemberResolution
         static void Need(bool value, string reason)
         { if (!value) throw new InvalidOperationException("Source local delegate targets: " + reason); }
         var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
-        var previousReferences = _refs; var previousCarriers = _localCarriers;
+        var previousReferences = _refs;
         try
         {
             var integer = new TypeNode.Fqn("System.Int32"); var text = new TypeNode.Fqn("System.String");
@@ -78,8 +78,7 @@ static partial class ClrMemberResolution
             // Facade membership merges; do not drop either same-physical-owner declaration vector.
             var second = new BirFileDeclaration { FileClass = "Functions", Methods = new[] { textOverload } };
             var sourceMethods = first.Methods.Value; var sourceOwnerMethods = owner.Methods.Value;
-            var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
-            ResolveLocalDelegateTargetsSource(new[] { first, second }, references, aliases);
+            ResolveLocalDelegateTargetsSource(new[] { first, second }, references);
             Need(ReferenceEquals(ordinary.Sig.Value, closedSignature) && ReferenceEquals(ordinary.Recv.Value, receiver)
                 && direct.Sig.Value.SequenceEqual(new TypeNode[] { methodVariable })
                 && bound.Sig.Value.SequenceEqual(new TypeNode[] { ownerVariable }) && bound.DeclarationId.Value == "bound-id",
@@ -96,10 +95,10 @@ static partial class ClrMemberResolution
             Need(ReferenceEquals(first.Methods.Value, sourceMethods) && ReferenceEquals(owner.Methods.Value, sourceOwnerMethods)
                 && ReferenceEquals(use.Body.Value, body) && ReferenceEquals(use.InlineBir.Value, saved),
                 "target binding cloned declarations/operands or interpreted opaque metadata");
-            var once = first.DeepClone(); ResolveLocalDelegateTargetsSource(new[] { first, second }, references, aliases);
+            var once = first.DeepClone(); ResolveLocalDelegateTargetsSource(new[] { first, second }, references);
             Need(first.StructurallyEquals(once), "initial local target binding is not stable on an already-open delegate signature");
             Console.WriteLine("[source local delegate targets] IDs, exact frames, function identity, slots and clock: OK");
         }
-        finally { _refs = previousReferences; _localCarriers = previousCarriers; }
+        finally { _refs = previousReferences; }
     }
 }

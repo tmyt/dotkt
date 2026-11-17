@@ -22,7 +22,7 @@ static partial class ClrMemberResolution
     }
 
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,
-        TypeNode source, TypeNode target, out TypeNode.Fqn slot)
+        IReadOnlyDictionary<string, string> localCarriers, TypeNode source, TypeNode target, out TypeNode.Fqn slot)
     {
         slot = null;
         // Scalar-only focused passes do not need a reference universe. A value
@@ -40,7 +40,7 @@ static partial class ClrMemberResolution
                 Ret: TypeNode.Fqn { Name: "kotlin.Unit" or "object" or "System.Object", Args: null } } wanted)
             return null;
         slot = BirTypeLowering.DelegateFqnOf(wanted);
-        return VoidDelegateAdapterPlan(natural, slot, wanted.Ret);
+        return VoidDelegateAdapterPlan(localCarriers, natural, slot, wanted.Ret);
     }
 
     internal static MemberRefNode DelegateInvokeReference(ReferenceMetadataIndex references, TypeNode stated)
