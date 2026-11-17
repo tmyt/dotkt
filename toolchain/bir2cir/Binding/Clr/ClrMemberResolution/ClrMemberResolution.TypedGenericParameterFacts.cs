@@ -12,7 +12,7 @@ static partial class ClrMemberResolution
         TypeNode.Fqn owner, string name, int arity, bool instance, IReadOnlyList<TypeNode> parameters,
         ReferenceMetadataIndex refs, TypeNode[] parameterOwnerArguments = null)
         => SelectedGenericProofDeclaration(owner, name, arity, instance, parameters, refs, parameterOwnerArguments)
-            .GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+            .GetGenericArguments().Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
 
     internal static BirTypeParameter[] SelectedMethodTypeParametersInPhysicalFrame(BirGenericStatic call, ReferenceMetadataIndex refs)
         => SelectedMethodTypeParametersInPhysicalFrame(call.Type.OrDefault(), call.Method.OrDefault(),

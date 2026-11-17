@@ -72,7 +72,7 @@ static partial class DefaultArgSplice
             var constructor = call as BirNew;
             var signature = constructor?.ArgTypes.OrDefault() ?? facts.Signature;
             var calledOwner = constructor?.Type.OrDefault() ?? facts.Owner;
-            var method = constructor == null ? facts.Method : ReferenceMetadataIndex.CtorKeyName;
+            var method = constructor == null ? facts.Method : ReferenceMetadataReader.CtorKeyName;
             if (signature == null || method == null || constructor != null && calledOwner is not TypeNode.Fqn) return;
             if (constructor != null && arguments.Length != signature.Length)
                 throw new InvalidOperationException(ConstructorDefaultPosition(((TypeNode.Fqn)calledOwner).Name, arguments.Length, signature.Length));
@@ -106,10 +106,10 @@ static partial class DefaultArgSplice
             var bindings = constructor.DelegationBindings.OrDefault();
             if (arguments == null || calledOwner == null || bindings == null || !arguments.OfType<BirBindingReference>().Any(read =>
                 bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
-            var defaults = refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataIndex.CtorKeyName, arguments.Length);
+            var defaults = refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length);
             if (defaults == null)
             {
-                if (refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataIndex.CtorKeyName, arguments.Length))
+                if (refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length))
                     throw new InvalidOperationException(AmbiguousDefault(calledOwner, arguments.Length, constructorDelegation: true));
                 return;
             }

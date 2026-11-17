@@ -98,7 +98,7 @@ static partial class ClrMemberResolution
                     var shape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(descriptor.TypeParams.Value, Array.Empty<TypeNode>());
                     candidates = candidates.Where(candidate => {
                         var declared = candidate.Method.GetGenericArguments()
-                            .Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+                            .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
                         return KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declared, candidate.DeclaringArguments) == shape;
                     }).ToList();
                 }

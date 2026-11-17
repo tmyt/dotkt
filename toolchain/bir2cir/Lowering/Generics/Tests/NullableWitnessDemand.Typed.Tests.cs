@@ -115,7 +115,7 @@ sealed partial class NullableWitnessDemand
         metadata.KotlinDefaultsByDeclarationId["external-inner"] = new Dictionary<int, IBirExpression> { [0] = innerCarrier };
         metadata.KotlinDefaultsByDeclarationId["external-outer"] = new Dictionary<int, IBirExpression> { [0] = outerCarrier };
         metadata.KotlinDefaultsByDeclarationId["external-constant"] = new Dictionary<int, IBirExpression> { [0] = False() };
-        metadata.KotlinDefaults[new("external.Base", ReferenceMetadataIndex.CtorKeyName, 2)] =
+        metadata.KotlinDefaults[new("external.Base", ReferenceMetadataReader.CtorKeyName, 2)] =
             new Dictionary<int, IBirExpression> { [1] = ownerDefault };
         var refs = ReferenceMetadataIndex.DefaultDemandTestIndex(metadata);
         var callerVariable = new TypeNode.Tv("method", 1);

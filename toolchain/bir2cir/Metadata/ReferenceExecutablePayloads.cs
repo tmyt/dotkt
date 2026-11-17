@@ -1,7 +1,7 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
-using DefaultKey = ReferenceMetadataIndex.DefaultKey;
-using SignatureKey = ReferenceMetadataIndex.SignatureKey;
+using DefaultKey = ReferenceMetadataReader.DefaultKey;
+using SignatureKey = ReferenceMetadataReader.SignatureKey;
 
 // Fixed imported executable facts, not live declarations or a reflection service.
 // Scan publishes read-only templates; queries return independently owned splice
@@ -39,7 +39,7 @@ sealed class ReferenceExecutablePayloads
                 defaults.TryAdd(key, source);
                 // Signature entries do not fold, and construction always states
                 // its owner: unrelated constructors never become ownerless calls.
-                if (key.Signature != null || key.Method == ReferenceMetadataIndex.CtorKeyName) continue;
+                if (key.Signature != null || key.Method == ReferenceMetadataReader.CtorKeyName) continue;
                 var name = key.Method + "|" + key.ParamCount;
                 if (ambiguousDefaults.Contains(name)) continue;
                 if (input.KotlinDefaultsConflicted.Contains(key)

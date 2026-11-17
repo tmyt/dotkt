@@ -190,6 +190,15 @@ metadata attribute names are fixed shared vocabulary, not resettable state.
 
 ### Implemented: fixed-reference query lifetime
 
+Metadata ingestion now belongs to `ReferenceMetadataReader`: a reference path,
+the scan's metadata context and exact native-signature readers produce one
+`ReferenceDotKtMetadata`. It owns decoding and the existing metadata-key value
+types, but receives no query index or local graph. `Build` owns scan ordering
+and context disposal; the index aggregates the completed facts and owns queries
+and their caches. Decoded templates retain the existing single-writer handoff,
+not a new defensive-copy guarantee. Lateinit decoding follows the same boundary;
+its declaration lookup remains with the index. Existing tests cover these paths.
+
 `ReferenceMetadataUniverse` receives only a fixed catalog and has no reference
 to the index, source graphs or pipeline. It owns all lazy context creation,
 fixed-input type hits/misses and resource release. Metadata `Type` / `Assembly`

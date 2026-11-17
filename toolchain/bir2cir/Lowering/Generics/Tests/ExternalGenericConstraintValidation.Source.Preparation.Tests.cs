@@ -45,7 +45,7 @@ static partial class ExternalGenericConstraintValidation
         var method = typeof(ExternalGenericConstraintValidation).GetMethod(nameof(SourcePreparationNewConstraint), BindingFlags.Static | BindingFlags.NonPublic);
         var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(refs, method,
             MemberRefNode.Kinds.Method, method.DeclaringType, Array.Empty<TypeNode>()));
-        var declarations = method.GetGenericArguments().Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+        var declarations = method.GetGenericArguments().Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
         void Validate(string name, bool accepted)
         {
             var call = new BirCallStatic { Owner = member.DeclaringType, Method = method.Name, MemberRef = member,

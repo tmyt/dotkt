@@ -116,7 +116,7 @@ static partial class MemberCallSubstitution
                 else throw new InvalidOperationException($"bir2cir: unresolved top-level property accessor '{member}' ({propertyKind}) — "
                     + "the frontend-resolved property has no exact reference MethodSemantics association");
             }
-            var signatureKey = new ReferenceMetadataIndex.SignatureKey(signature.Select(ReferenceMetadataIndex.ParamKey));
+            var signatureKey = new ReferenceMetadataReader.SignatureKey(signature.Select(ReferenceMetadataReader.ParamKey));
             if ((refs.TryTopLevelIntrinsicBySig(member, signatureKey, out var qualified)
                     || !refs.IsAmbiguousTopLevelIntrinsic(member) && !refs.HasNonIntrinsicTopLevel(member)
                         && refs.TryTopLevelIntrinsic(member, out qualified))
@@ -129,7 +129,7 @@ static partial class MemberCallSubstitution
             if (_attributeTopLevelOwner && call.CalleeOwner.OrDefault() is not TypeNode.Fqn)
             {
                 var receiverKey = signature.Count >= 1 ? RecvKeyOf(signature[0]) : "";
-                var firstKey = signature.Count >= 1 ? ReferenceMetadataIndex.ReceiverParamKey(signature[0]) : null;
+                var firstKey = signature.Count >= 1 ? ReferenceMetadataReader.ReceiverParamKey(signature[0]) : null;
                 if (refs.TryResolveTopLevelStatic(member, receiverKey, firstKey, out var fileClass))
                 {
                     node.Owner = new TypeNode.Fqn(fileClass);

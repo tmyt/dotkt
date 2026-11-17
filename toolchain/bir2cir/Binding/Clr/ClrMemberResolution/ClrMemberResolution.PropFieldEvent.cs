@@ -108,7 +108,7 @@ static partial class ClrMemberResolution
         isPublic = selected?.IsPublic ?? false;
         if (selected == null) return null;
         ownerParameters = selected.DeclaringType.GetGenericArguments()
-            .Select(ReferenceMetadataIndex.GenericParamSourceDeclaration).ToArray();
+            .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
         return selected.Reference;
     }
 
