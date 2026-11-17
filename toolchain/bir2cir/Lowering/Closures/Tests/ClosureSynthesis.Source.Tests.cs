@@ -57,9 +57,15 @@ static partial class ClosureSynthesis
         var file = new BirFileDeclaration { FileClass = "TypedFile", Methods = methods, Fields = fields, Types = new IBirTypeDeclaration[] { existing } };
         var identities = new SourceModuleIndex(new[] { file }, new Dictionary<string, string>()).DeclarationIds;
         var callbacks = 0;
+        var ordinaryCallbacks = new List<string>();
         BirFunctionDeclaration projected = null;
         NullableRepresentationFrame projectedFrame = null;
         Apply(file, refs, (actual, frame) => {
+            if (actual.Ret.OrDefault() == unit && actual.Params.OrEmpty().Length == 0 && frame == null)
+            {
+                ordinaryCallbacks.Add(actual.Name.OrDefault());
+                return;
+            }
             callbacks++;
             projected = actual;
             projectedFrame = frame;
@@ -71,7 +77,8 @@ static partial class ClosureSynthesis
             actual.Ret = new TypeNode.Fqn("object");
         });
         var synthesizedSam = file.Types.Value.OfType<BirClassDefinition>().Single(type => type.Name.OrDefault() == "TypedFile.Sam");
-        if (callbacks != 1 || !ReferenceEquals(synthesizedSam.Methods.Value.Single(), projected)
+        if (ordinaryCallbacks.Count != 7 || ordinaryCallbacks.Any(name => name != "invoke")
+            || callbacks != 1 || !ReferenceEquals(synthesizedSam.Methods.Value.Single(), projected)
             || !ReferenceEquals(projectedFrame, synthesizedSam.KotlinSupertypesPre.Value.NullableFrame)
             || ReferenceEquals(synthesizedSam, sourceSam) || sourceInvoke.Ret.Value != lexical
             || !ReferenceEquals(sourceInvoke.Params.Value[0], sourceParameter) || sourceParameter.Type.Value != lexical

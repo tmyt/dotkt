@@ -182,6 +182,12 @@ static partial class ErasedElementValues
                 reads[node] = scalarResult;
                 scalarReads.Add(node);
             }
+            // Ordinary function carriers return object. Retain the logical
+            // variable without extracting the caller's closed CLR witness.
+            if (!location && node is BirCast restoration && restoration.FunctionValueRestoration.OrDefault()
+                && restoration.Type.OrDefault() is TypeNode.Tv functionResult
+                && restoration.E.OrDefault() is BirDelegateInvoke)
+                reads[node] = functionResult;
             if (iteratorValues != null && !location && node is BirArrayGet arrayRead
                 && Element(arrayRead.Array.OrDefault(), scope) is { } arrayElement)
                 reads[node] = arrayElement;
@@ -326,6 +332,10 @@ static partial class ErasedElementValues
                 case BirFieldGet field: field.Sty = ObjectType; break;
                 case BirArrayGet array: array.Elem = ObjectType; break;
                 case BirByRefLoad load: load.Elem = ObjectType; break;
+                case BirCast restoration when restoration.FunctionValueRestoration.OrDefault():
+                    restoration.Type = ObjectType;
+                    if (restoration.Sty.HasValue) restoration.Sty = ObjectType;
+                    break;
                 default: throw new InvalidOperationException("Unknown scalar value read occurrence");
             }
         }
