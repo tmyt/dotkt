@@ -23,6 +23,7 @@ namespace Csext
         public static int Twice(this W w) => w.N * 2;
         // Extension with an extra value param -> `fun W.PlusN(k: Int): Int`.
         public static int PlusN(this W w, int k) => w.N + k;
+        public static int Observe(this W w, object callback, int amount = 2) => w.N + amount;
         // Generic extension: the receiver is `Box<T>` over the method's own type param -> `fun <T> Box<T>.Echo(): T`.
         public static T Echo<T>(this Box<T> b) => b.Value;
     }

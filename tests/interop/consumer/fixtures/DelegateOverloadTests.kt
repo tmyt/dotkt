@@ -10,6 +10,10 @@ import System.Action
 class DelegateOverloadTests {
     @TestAttribute
     fun explicitUnitSamSelectsDelegateOverload() {
+        System.GC.KeepAlive({ 42 })
+        val callbacks = System.Collections.ArrayList()
+        callbacks.Add({ 41 })
+        assertEquals(1, callbacks.Count)
         val log = mutableListOf<String>()
         val thread = Thread(ThreadStart { log.add("x"); Unit })
         thread.Start()
