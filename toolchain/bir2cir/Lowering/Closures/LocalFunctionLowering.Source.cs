@@ -23,6 +23,7 @@ static partial class LocalFunctionLowering
         var types = file.Types.OrEmpty().Where(type => type.Name.HasValue)
             .ToDictionary(type => type.Name.Value, StringComparer.Ordinal);
         var bindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
+        var nativeLocations = NativeCaptureLocations(file);
         var counter = 0;
 
         IBirTypeDeclaration TargetOwner(string semanticOwner, out string physicalOwner)
@@ -51,8 +52,9 @@ static partial class LocalFunctionLowering
             var identity = DeclarationIdentityBinding.PhysicalOnlyId(facade + ":" + id, "local-function");
             declaration.DeclarationId = identity;
             declaration.DeclarationSourceName = sourceName;
-            var byRef = PrepareCaptureLocations(declaration);
-            projectValueSignature?.Invoke(declaration, owner == null ? null : NullableRepresentationViews.TypeFacts((BirGraphValue)owner)?.NullableFrame);
+            var ownerFrame = owner == null ? null : NullableRepresentationViews.TypeFacts((BirGraphValue)owner)?.NullableFrame;
+            var byRef = PrepareCaptureLocations(declaration, nativeLocations, ownerFrame, () =>
+                projectValueSignature?.Invoke(declaration, ownerFrame));
             var binding = PrepareGenericOwnerBinding(declaration, physicalOwner, owner) with {
                 Name = name, Owner = physicalOwner, DeclarationId = identity, ByRefCaptureSlots = byRef,
                 SemanticOwnerArgOrder = SemanticOwnerArgOrder(owner),

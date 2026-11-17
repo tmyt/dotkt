@@ -18357,12 +18357,13 @@ internal static class BirGraphMessagePack
         OptionalField<IBirExpression> field0 = default;
         OptionalField<string> field1 = default;
         OptionalField<TypeNode> field2 = default;
-        OptionalField<bool> field3 = default;
+        OptionalField<TypeNode> field3 = default;
+        OptionalField<bool> field4 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 4); if (IrMessagePack.ReadString(ref reader) != "byrefLoad") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 5); if (IrMessagePack.ReadString(ref reader) != "byrefLoad") throw new FormatException(); break;
                 case "ptr":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
@@ -18375,9 +18376,13 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 2);
                     field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
-                case "volatile":
+                case "_erasedValueVariable":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "volatile":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 default: throw new FormatException();
             }
@@ -18388,14 +18393,15 @@ internal static class BirGraphMessagePack
             Ptr = field0,
             Local = field1,
             Elem = field2,
-            Volatile = field3,
+            _erasedValueVariable = field3,
+            Volatile = field4,
         };
     }
 
     internal static void WriteBirByRefLoad(ref MessagePackWriter writer, BirByRefLoad value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Ptr.IsPresent ? 1 : 0) + (value.Local.IsPresent ? 1 : 0) + (value.Elem.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Ptr.IsPresent ? 1 : 0) + (value.Local.IsPresent ? 1 : 0) + (value.Elem.IsPresent ? 1 : 0) + (value._erasedValueVariable.IsPresent ? 1 : 0) + (value.Volatile.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("byrefLoad");
         if (value.Ptr.IsPresent)
@@ -18423,6 +18429,15 @@ internal static class BirGraphMessagePack
             else
             {
                 CirMessagePack.WriteType(ref writer, value.Elem.Value, depth + 1);
+            }
+        }
+        if (value._erasedValueVariable.IsPresent)
+        {
+            writer.Write("_erasedValueVariable");
+            if (value._erasedValueVariable.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value._erasedValueVariable.Value, depth + 1);
             }
         }
         if (value.Volatile.IsPresent)

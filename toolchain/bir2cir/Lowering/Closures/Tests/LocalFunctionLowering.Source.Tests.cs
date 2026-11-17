@@ -132,6 +132,59 @@ static partial class LocalFunctionLowering
         if (selected.CalleeOwner.Value != new TypeNode.Fqn("Leaf", new TypeNode[] { new TypeNode.Fqn("C"), new TypeNode.Fqn("B"), new TypeNode.Fqn("A") })
             || selected.TypeArgs.IsPresent || member.TypeParams.IsPresent || !ReferenceEquals(leaf.Methods.Value[1], member))
             throw new InvalidOperationException("Typed local-function selection lost nested owner group order");
+        OpaqueCaptureLocationSelfTest(refs);
         Console.WriteLine("[source local functions] self-test OK (actual hoisting, recursion, byref locations, scalar authority, nested and source generic frames)");
+    }
+
+    static void OpaqueCaptureLocationSelfTest(ReferenceMetadataIndex refs)
+    {
+        var variable = new TypeNode.Tv("method", 0);
+        var integer = new TypeNode.Fqn("kotlin.Int");
+        var opaque = new TypeNode.Fqn("object");
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        var capture = new BirParameter { Name = "state", Type = variable,
+            SharedCellType = new TypeNode.Fqn("Cell", new TypeNode[] { variable }) };
+        var native = new BirParameter { Name = "native", Type = new TypeNode.ByRef(variable) };
+        var concrete = new BirParameter { Name = "count", Type = integer, SharedCellType = new TypeNode.Fqn("IntCell") };
+        var local = new BirFunctionDeclaration { SourceName = "update", Static = true, Ret = unit,
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } },
+            _syntheticTypeArgs = new TypeNode[] { variable },
+            Params = new[] { capture, new BirParameter { Name = "next", Type = variable }, native, concrete },
+            Body = new IBirStatement[] {
+                new BirSetLocal { Name = "state", Value = new BirLocal { Name = "next", Sty = variable } },
+                new BirExpressionStatement { Expr = new BirLocal { Name = "state", Sty = variable } },
+            },
+        };
+        var storage = new BirVariable { Name = "opaque", Type = opaque,
+            Init = new BirConstant { Type = opaque, Value = new BirLiteral.NullLiteral() } };
+        var nativeStorage = new BirVariable { Name = "nativeStorage", Type = opaque };
+        var direct = new BirCallLocal { Id = "update", Ret = unit, TypeArgs = new TypeNode[] { variable },
+            Sig = new TypeNode[] { variable, variable, new TypeNode.ByRef(variable), integer },
+            Args = new IBirExpression[] { new BirLocal { Name = "opaque" }, new BirLocal { Name = "opaque" },
+                new BirLocal { Name = "nativeStorage" }, new BirLocal { Name = "count" } },
+        };
+        var caller = new BirFunctionDeclaration { Name = "caller", Ret = unit, Params = Array.Empty<BirParameter>(),
+            TypeParams = new[] { new BirTypeParameter { Name = "T" } },
+            Body = new IBirStatement[] { storage, nativeStorage, new BirVariable { Name = "count", Type = integer },
+                new BirLocalFunction { Id = "update", Decl = local }, new BirExpressionStatement { Expr = direct } },
+        };
+        var file = new BirFileDeclaration { FileClass = "OpaqueCapture", Methods = new[] { caller } };
+        var roots = new[] { file };
+        var policy = GenericRepresentationPolicy.CreateSource(roots, new Dictionary<string, string>(), refs);
+        var projection = KotlinGenericScalarSlots.ApplyAll(roots, policy, refs);
+        Apply(file, refs, projection.ProjectMethod);
+        var selected = (BirCallStatic)((BirExpressionStatement)caller.Body.Value[^1]).Expr.Value;
+        if (capture.Type.Value != new TypeNode.ByRef(opaque) || capture.KotlinType.Value != variable
+            || local.Params.Value[1].Type.Value != opaque || native.Type.Value != new TypeNode.ByRef(variable)
+            || concrete.Type.Value != new TypeNode.ByRef(integer)
+            || selected.Sig.Value[0] != new TypeNode.ByRef(opaque)
+            || selected.Sig.Value[2] != new TypeNode.ByRef(variable)
+            || ((BirByRefStore)((BirExpressionStatement)local.Body.Value[0]).Expr.Value).Elem.Value != opaque
+            || ((BirByRefLoad)((BirExpressionStatement)local.Body.Value[1]).Expr.Value).Elem.Value != opaque)
+            throw new InvalidOperationException("Internal mutable capture narrowed an opaque Kotlin slot or changed an explicit native/concrete location");
+        var body = caller.Body.Value.ToList();
+        TypedPhysicalValueCoercion.AllocateNativeLocals(body.Cast<BirGraphValue>(), caller.Params.Value, body);
+        if (storage.Type.Value != opaque || nativeStorage.Type.Value != variable)
+            throw new InvalidOperationException("Internal capture and explicit native location lost their distinct storage contracts");
     }
 }

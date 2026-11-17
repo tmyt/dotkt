@@ -84,16 +84,36 @@ static partial class LocalFunctionLowering
         finally { if (method != null) method._syntheticTypeArgs = origins; }
     }
 
-    static int[] PrepareCaptureLocations(BirFunctionDeclaration declaration)
+    static bool IsBorrowedCapture(BirParameter parameter) => parameter.SharedCellType.HasValue
+        && !TypeNodeDataEquality.Equal(parameter.Type.OrDefault(), parameter.SharedCellType.Value);
+
+    static int[] PrepareCaptureLocations(BirFunctionDeclaration declaration,
+        HashSet<BirGraphValue> nativeLocations, NullableRepresentationFrame ownerFrame, Action projectValueSignature)
     {
         var slots = new List<int>();
         var locations = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         var parameters = declaration.Params.OrEmpty();
+        var captures = new HashSet<BirParameter>(parameters.Where(IsBorrowedCapture), ReferenceEqualityComparer.Instance);
+        // A real native address fixes the aliased location's physical element.
+        // Internal borrowing alone selects the ordinary Kotlin value slot first.
+        foreach (var parameter in captures)
+            if (nativeLocations.Contains(parameter))
+            {
+                var element = parameter.Type.Value;
+                if (parameter.NullableGeneric.OrDefault() is TypeNode.Tv source)
+                {
+                    var frame = source.Scope == "method" ? declaration.NullableRepresentationFrame.OrDefault() : ownerFrame;
+                    element = frame?.Variable(source, NullableRepresentationFrame.Role.Ordinary) ?? source;
+                }
+                parameter.Type = new TypeNode.ByRef(element);
+            }
+        projectValueSignature();
         for (var index = 0; index < parameters.Length; index++)
         {
             var parameter = parameters[index];
-            if (!parameter.SharedCellType.HasValue || TypeNodeDataEquality.Equal(parameter.Type.OrDefault(), parameter.SharedCellType.Value)) continue;
-            var element = BirGraphValue.CopyType(parameter.Type.OrDefault());
+            if (!captures.Contains(parameter)) continue;
+            var element = BirGraphValue.CopyType(parameter.Type.Value is TypeNode.ByRef reference
+                ? reference.Of : parameter.Type.Value);
             locations.Add(parameter.Name.OrDefault(), element);
             parameter.Type = new TypeNode.ByRef(element);
             slots.Add(index);
