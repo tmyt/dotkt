@@ -85,10 +85,10 @@ static partial class ClrMemberResolution
         else if (selectedSignature != null)
         {
             var declaration = selectedSignature.Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
-            selected = PickDeclaredConstructor(constructors, declaration,
+            selected = ClrDeclarationMatching.PickDeclaredConstructor(_refs, constructors, declaration,
                 $"selected constructor declaration on '{owner.Name}' ({DescArgs(declaration)})");
         }
-        else selected = PickUnique(constructors, constructor => constructor.GetParameters(), signature, ownerArguments,
+        else selected = ClrDeclarationMatching.PickUnique(_refs, constructors, constructor => constructor.GetParameters(), signature, ownerArguments,
             $"newClr owner={TypeNode.ToJson(owner)} ({DescArgs(signature)})");
 
         CoerceNativeConstructorViews(arguments, selected.GetParameters(), signature, ownerArguments);
@@ -119,7 +119,7 @@ static partial class ClrMemberResolution
         if (arguments == null || arguments.Length != parameters.Length) return;
         for (var index = 0; index < parameters.Length; index++)
         {
-            var declared = MemberSigOf(parameters[index].ParameterType);
+            var declared = ClrDeclarationMatching.MemberSigOf(_refs, parameters[index].ParameterType);
             var closed = ownerArguments is { Length: > 0 } ? SupertypeGraph.SubstOwnerTvs(declared, ownerArguments) : declared;
             if (CollectionViewFaces.IsViewSeam(signature[index], closed) && arguments[index] is { } actual)
                 arguments[index] = new BirCast { Type = closed, E = OptionalField<IBirExpression>.Of(actual) };
@@ -144,7 +144,7 @@ static partial class ClrMemberResolution
         TypeNode.Fqn owner; Type open;
         if (instance && ownerType is TypeNode.Array)
         {
-            open = SystemArrayMlc() ?? throw new InvalidOperationException(
+            open = ClrDeclarationMatching.SystemArrayMlc(_refs) ?? throw new InvalidOperationException(
                 "bir2cir: clrInstance array-owner method could not resolve System.Array");
             owner = new TypeNode.Fqn("System.Array");
             ((BirNativeInstance)node).Type = owner;
@@ -166,9 +166,9 @@ static partial class ClrMemberResolution
         if (!hasTypeArguments) candidates = candidates.Where(method => !method.IsGenericMethodDefinition).ToList();
         var context = $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(owner)} .{name}({DescArgs(signature)})";
         var selected = selectedSignature != null
-            ? TryPickDeclared(candidates, selectedSignature.ToList(), open)
+            ? ClrDeclarationMatching.TryPickDeclared(_refs, _localTypes, candidates, selectedSignature.ToList(), open)
                 ?? throw new InvalidOperationException($"bir2cir: selected declaration {context} has no unique open signature")
-            : PickUnique(candidates, method => method.GetParameters(), signature, owner.Args, context);
+            : ClrDeclarationMatching.PickUnique(_refs, candidates, method => method.GetParameters(), signature, owner.Args, context);
         var plan = NativeMethodSelection(selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
         WriteNativeMethodSelection(node, plan);
         StampNativeDelegateArgumentTargets(arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
@@ -200,7 +200,7 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException($"bir2cir: generic external call '{owner.Name}.{name}<{arity}>' carries no usable frontend-resolved parameter vector");
         // Match the selected OPEN declaration, never close its type TVs before
         // choosing between overloads. A unique name/arity alone is not evidence.
-        var selected = SelectedGenericDeclaration(open, name, arity, instance, signature.ToList())
+        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(_refs, _localTypes, open, name, arity, instance, signature.ToList())
             ?? throw new InvalidOperationException($"bir2cir: generic external call '{owner.Name}.{name}<{arity}>' has no unique declaration matching its frontend-resolved parameter vector in the reference set");
         var plan = NativeMethodSelection(selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
         WriteNativeMethodSelection(node, plan);
@@ -231,7 +231,7 @@ static partial class ClrMemberResolution
                 BindingFlags.Public | BindingFlags.NonPublic | (instance ? BindingFlags.Instance : BindingFlags.Static))
             .Where(IsPublicOrProtected)
             .Where(method => method.IsGenericMethodDefinition ? method.GetGenericArguments().Length == arity : arity == 0).ToList();
-        var selected = PickUnique(candidates, method => method.GetParameters(), signature, owner.Args,
+        var selected = ClrDeclarationMatching.PickUnique(_refs, candidates, method => method.GetParameters(), signature, owner.Args,
             $"{kind} owner={TypeNode.ToJson(owner)} .{name}({DescArgs(signature)})");
         // ldftn names the selected declaration, not a constrained call target.
         WriteNativeMethodSelection(node, NativeMethodSelection(selected, open, owner.Args, null));
@@ -254,9 +254,9 @@ static partial class ClrMemberResolution
             .Where(method => method.Name == name && method.GetParameters().Length == call.Args.Value.Length
                 && (method.IsGenericMethodDefinition ? method.GetGenericArguments().Length == arity : arity == 0)).ToList();
         var selected = call.ResolvedMemberParams.HasValue
-            ? TryPickDeclared(candidates, call.ResolvedMemberParams.Value.ToList(), open)
+            ? ClrDeclarationMatching.TryPickDeclared(_refs, _localTypes, candidates, call.ResolvedMemberParams.Value.ToList(), open)
             : !call.Sig.HasValue ? (candidates.Count == 1 ? candidates[0] : null)
-                : TryPickUnique(candidates, call.Sig.Value.ToList(), owner.Args ?? Array.Empty<TypeNode>());
+                : ClrDeclarationMatching.TryPickUnique(_refs, candidates, call.Sig.Value.ToList(), owner.Args ?? Array.Empty<TypeNode>());
         if (selected == null) throw new InvalidOperationException(
             $"bir2cir: constrained call '{owner.Name}.{name}' does not resolve to one declared signature");
         WriteNativeMethodSelection(call, NativeMethodSelection(selected, open, owner.Args ?? Array.Empty<TypeNode>(), null));

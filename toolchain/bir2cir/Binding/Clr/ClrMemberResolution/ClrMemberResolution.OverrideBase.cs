@@ -41,12 +41,12 @@ static partial class ClrMemberResolution
         Type open, TypeNode[] ownerArgs,
         string desc)
     {
-        var hits = MostDerived(cands.Where(c => _refs.NativeMethodSignature(c) != null
+        var hits = ClrDeclarationMatching.MostDerived(cands.Where(c => _refs.NativeMethodSignature(c) != null
             ? ExternalMethodImplSlotMatches(c, open, ownerArgs, argNodes, returnNode)
             : OverrideMatch(c.GetParameters(), argNodes) && OverrideParamMatch(returnNode, c.ReturnType)).ToList());
-        if (hits.Count == 0) throw NoMatch(desc, cands);
+        if (hits.Count == 0) throw ClrDeclarationMatching.NoMatch(desc, cands);
         if (hits.Count == 1) return hits[0];
-        throw Malformed(desc, hits);
+        throw ClrDeclarationMatching.Malformed(desc, hits);
     }
 
     static bool OverrideMatch(ParameterInfo[] ps, List<TypeNode> argNodes)
@@ -66,7 +66,7 @@ static partial class ClrMemberResolution
     static bool OverrideParamMatch(TypeNode a, Type p)
     {
         if (a is TypeNode.Oblivious ob) return OverrideParamMatch(ob.Of, p);
-        p = AliasResolve(p);
+        p = ClrDeclarationMatching.AliasResolve(_refs, p);
         if (p.IsGenericParameter) return true;   // substituted at the instantiation — wildcard
         if (p.IsByRef) return a is TypeNode.ByRef b && OverrideParamMatch(b.Of, p.GetElementType());
         if (p.IsPointer)
@@ -79,21 +79,21 @@ static partial class ClrMemberResolution
             return pointee != null && OverrideParamMatch(pointer.Of, pointee);
         }
         if (p.IsArray) return a is TypeNode.Array ar && OverrideParamMatch(ar.Elem, p.GetElementType());
-        if (p.IsGenericType && SafeDef(p) == NullableDef())
+        if (p.IsGenericType && ClrDeclarationMatching.SafeDef(p) == ClrDeclarationMatching.NullableDef(_refs))
             return a is TypeNode.Nullable nv && OverrideParamMatch(nv.Of, p.GetGenericArguments()[0]);
         if (a is TypeNode.Nullable nn) return OverrideParamMatch(nn.Of, p);   // reference-nullable arg = same .NET type
         if (p.IsGenericType)   // constructed generic reference/value type -> recurse args structurally
         {
             if (a is not TypeNode.Fqn f || f.Args == null) return false;
-            var adef = RefDef(f.Name, f.Args.Length);
-            if (adef == null || SafeDef(adef) != SafeDef(p)) return false;
+            var adef = ClrDeclarationMatching.RefDef(_refs, f.Name, f.Args.Length);
+            if (adef == null || ClrDeclarationMatching.SafeDef(adef) != ClrDeclarationMatching.SafeDef(p)) return false;
             var pa = p.GetGenericArguments();
             if (pa.Length != f.Args.Length) return false;
             for (int i = 0; i < pa.Length; i++) if (!OverrideParamMatch(f.Args[i], pa[i])) return false;
             return true;
         }
         // Scalar leaf: resolve `a` and require identity, with Kotlin `Any` == `System.Object` as the shared top type.
-        var aT = MapMlc(a);
+        var aT = ClrDeclarationMatching.MapMlc(_refs, a);
         if (aT == null) return false;
         if (aT == p) return true;
         return IsTopType(aT) && IsTopType(p);

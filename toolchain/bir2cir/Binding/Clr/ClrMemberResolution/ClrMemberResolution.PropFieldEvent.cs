@@ -23,7 +23,7 @@ static partial class ClrMemberResolution
         MemberRefNode Reference, string Dispatch, TypeNode DeclaredReturn, TypeNode WrittenSlot);
 
     static TypeNode NativeDeclaredReturn(Type type) => type == null || type == typeof(void)
-        ? new TypeNode.Fqn("void") : MemberSigOf(type);
+        ? new TypeNode.Fqn("void") : ClrDeclarationMatching.MemberSigOf(_refs, type);
 
     static NativeStorageSelection SelectNativePropertyStorage(TypeNode owner, string name,
         bool write, bool isStatic, bool superCall)
@@ -177,7 +177,7 @@ static partial class ClrMemberResolution
         if ((flags & BindingFlags.Instance) == 0) return null;
         try
         {
-            var hits = MostDerived(SafeInterfaces(open).Select(type => Accessor(type, declaredOnly: true))
+            var hits = ClrDeclarationMatching.MostDerived(ClrDeclarationMatching.SafeInterfaces(open).Select(type => Accessor(type, declaredOnly: true))
                 .Where(method => method != null)
                 .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList());
             return hits.Count == 0 ? null : UniqueAccessor(hits, open, name);
@@ -201,10 +201,10 @@ static partial class ClrMemberResolution
             }
             catch { return Array.Empty<MethodInfo>(); }
         }
-        var own = MostDerived(Named(open).ToList());
+        var own = ClrDeclarationMatching.MostDerived(Named(open).ToList());
         if (own.Count > 0) return UniqueAccessor(own, open, accName);
         if ((flags & BindingFlags.Instance) == 0) return null;
-        var baseHits = MostDerived(SafeInterfaces(open).SelectMany(Named).GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList());
+        var baseHits = ClrDeclarationMatching.MostDerived(ClrDeclarationMatching.SafeInterfaces(open).SelectMany(Named).GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList());
         return baseHits.Count > 0 ? UniqueAccessor(baseHits, open, accName) : null;
     }
 
@@ -240,7 +240,7 @@ static partial class ClrMemberResolution
     {
         if (!open.IsInterface) return ownerFqn;
         var decl = acc.DeclaringType;
-        if (decl == null || SafeDef(decl) == SafeDef(open)) return ownerFqn;
+        if (decl == null || ClrDeclarationMatching.SafeDef(decl) == ClrDeclarationMatching.SafeDef(open)) return ownerFqn;
         // The metadata universe resolves an open generic owner through a harmless object-closed probe in a few
         // reflection paths.  An accessor obtained from that probe may therefore report
         // `IReadOnlyCollection<object>` even though the owner's actual base edge is
@@ -248,9 +248,9 @@ static partial class ClrMemberResolution
         // interface graph before substituting the call site's arguments; the accessor identifies WHICH interface,
         // while the graph identifies HOW its type parameters relate to the owner.  Using acc.DeclaringType directly
         // would bake the probe's object into every generic property call.
-        var openDefinition = SafeDef(open) ?? open;
-        var declarationEdge = SafeInterfaces(openDefinition)
-            .Where(iface => SafeDef(iface) == SafeDef(decl))
+        var openDefinition = ClrDeclarationMatching.SafeDef(open) ?? open;
+        var declarationEdge = ClrDeclarationMatching.SafeInterfaces(openDefinition)
+            .Where(iface => ClrDeclarationMatching.SafeDef(iface) == ClrDeclarationMatching.SafeDef(decl))
             .SingleOrDefault() ?? decl;
         return SubstOwnerParams(declarationEdge, ownerFqn.Args ?? Array.Empty<TypeNode>());
     }
@@ -260,7 +260,7 @@ static partial class ClrMemberResolution
     // position (`T_open@i` -> ownerArgs[i]). @ClrTypeAlias'd base interfaces resolve to their BCL twin (AliasResolve).
     static TypeNode SubstOwnerParams(Type t, TypeNode[] ownerArgs)
     {
-        t = AliasResolve(t);
+        t = ClrDeclarationMatching.AliasResolve(_refs, t);
         if (t.IsGenericParameter)
             return t.GenericParameterPosition < ownerArgs.Length ? ownerArgs[t.GenericParameterPosition]
                  : new TypeNode.Tv("type", t.GenericParameterPosition);
@@ -270,9 +270,9 @@ static partial class ClrMemberResolution
             var def = t.GetGenericTypeDefinition();
             var args = t.GetGenericArguments().Select(a => SubstOwnerParams(a, ownerArgs)).ToArray();
             if (def.FullName == "System.Nullable`1") return new TypeNode.Nullable(args[0]);
-            return new TypeNode.Fqn(StripArity(Dotted(def.FullName ?? def.Name)), args);
+            return new TypeNode.Fqn(ClrDeclarationMatching.StripArity(ClrDeclarationMatching.Dotted(def.FullName ?? def.Name)), args);
         }
-        return new TypeNode.Fqn(StripArity(Dotted(t.FullName ?? t.Name)));
+        return new TypeNode.Fqn(ClrDeclarationMatching.StripArity(ClrDeclarationMatching.Dotted(t.FullName ?? t.Name)));
     }
 
     // ---- events --------------------------------------------------------------------------------
@@ -306,7 +306,7 @@ static partial class ClrMemberResolution
         List<MethodInfo> hits;
         try
         {
-            hits = MostDerived(SafeInterfaces(open).Select(type => Accessor(type, declaredOnly: true))
+            hits = ClrDeclarationMatching.MostDerived(ClrDeclarationMatching.SafeInterfaces(open).Select(type => Accessor(type, declaredOnly: true))
                 .Where(method => method != null)
                 .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList());
         }
@@ -329,7 +329,7 @@ static partial class ClrMemberResolution
         var accessor = FindEventAccessor(declaration, name, add, flags, allowNonPublic: true);
         if (accessor == null || !(accessor.IsPrivate || accessor.IsFamily || accessor.IsFamilyOrAssembly || accessor.IsAssembly)) return null;
         return new(RetargetedInterfaceOwner(declaration, accessor, owner), accessor.Name,
-            accessor.GetParameters().Select(p => MemberSigOf(p.ParameterType)).ToArray(), accessor.IsVirtual,
+            accessor.GetParameters().Select(p => ClrDeclarationMatching.MemberSigOf(_refs, p.ParameterType)).ToArray(), accessor.IsVirtual,
             accessor.IsPrivate ? "private" : accessor.IsAssembly ? "internal" : "protected");
     }
 

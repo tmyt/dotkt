@@ -116,7 +116,7 @@ static partial class ClrMemberResolution
                 call.ArgTypes = default;
                 if (plan.IdentityBound) call.DotktDeclarationIdentityBound = true;
                 if (plan.StampReturn) call.ResolvedMemberReturn = plan.Declaration.ReturnType == typeof(void)
-                    ? new TypeNode.Fqn("void") : MemberSigOf(plan.Declaration.ReturnType);
+                    ? new TypeNode.Fqn("void") : ClrDeclarationMatching.MemberSigOf(_refs, plan.Declaration.ReturnType);
                 StampSourceReferencedDelegateTargets(call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
                 break;
             case BirNewDelegate call:

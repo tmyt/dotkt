@@ -15,7 +15,7 @@ static partial class ClrMemberResolution
         if (arguments.Length != parameters.Length) return;
         for (var index = 0; index < arguments.Length; index++)
             if (arguments[index] is BirGraphValue argument)
-                MarkDelegateSlot(argument, CloseDelegateArgumentSlot(RefTypeOf(parameters[index].ParameterType),
+                MarkDelegateSlot(argument, CloseDelegateArgumentSlot(ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, parameters[index].ParameterType),
                     ownerArguments, methodArguments), _refs, _localTypes);
     }
 

@@ -79,7 +79,7 @@ static partial class ClrMemberResolution
         // program, and an attribute is decoration: refusing to compile over one would reject source because a
         // marker could not be encoded. (`PickUnique` throws, which is right where a MEMBER is being called and
         // wrong here, and the difference is the whole reason this uses the quiet form.)
-        var win = TryPickUniqueCtor(ctors, argNodes, attrFqn.Args);
+        var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, ctors, argNodes, attrFqn.Args);
         return win == null ? null : MemberRefOf(win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
     }
 }

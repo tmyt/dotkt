@@ -93,6 +93,14 @@ The resolution path's state and its current ownership:
 fixed vocabulary, not invocation state. Keep them shared. Matchers that only
 substitute/compare structured types can remain pure static policies.
 
+`ClrDeclarationMatching` now owns scalar descriptor matching, candidate selection
+and reflected signature projection. Reference queries and local physical type
+membership are explicit arguments; it has no invocation fields, graph writer,
+allocator or resource lifetime. It returns selected reflection declarations and
+new type descriptors, borrowed within the index lifetime. Binding entry points
+still own call/slot graph updates and pass their current facts; removing their
+remaining ambient invocation state is a separate boundary, not claimed here.
+
 Scan borrows method/slot queries before index construction; binding uses the
 same index-owned decoder. It retains no reflection handles and closes each PE
 reader locally. There is no additional owner wrapper or defensive query copy.
