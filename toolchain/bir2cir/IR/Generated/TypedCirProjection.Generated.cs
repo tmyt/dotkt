@@ -786,7 +786,7 @@ sealed partial class TypedCirProjection
 
     internal CirCast ProjectCirCast(BirCast value)
     {
-        if (value._exactBridgeCast.IsPresent || value._physicalDeclarationSignature.IsPresent || value.DotktProjectedCollection.IsPresent || value.FunctionValueRestoration.IsPresent || value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value._exactBridgeCast.IsPresent || value._physicalDeclarationSignature.IsPresent || value.DotktProjectedCollection.IsPresent || value.ErasedTypeOperand.IsPresent || value.FunctionValueRestoration.IsPresent || value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirCast");
         return new CirCast
         {
@@ -986,7 +986,7 @@ sealed partial class TypedCirProjection
 
     internal CirIsInstanceReference ProjectCirIsInstanceReference(BirInstanceOrNull value)
     {
-        if (value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value.ErasedTypeOperand.IsPresent || value.KotlinClassifierPredicate.IsPresent || value.KotlinRuntimeTypeWitness.IsPresent || value.KotlinTypeWitness.IsPresent || value.ReifiedTypeOperand.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirInstanceOrNull");
         return new CirIsInstanceReference
         {

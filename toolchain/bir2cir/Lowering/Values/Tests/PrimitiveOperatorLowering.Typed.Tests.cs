@@ -27,7 +27,9 @@ static partial class PrimitiveOperatorLowering
             var mask = owner is "kotlin.Long" or "kotlin.ULong" ? 63 : 31;
             var symbol = member == "shl" ? "<<" : member == "ushr" || owner is "kotlin.UInt" or "kotlin.ULong" ? ">>>" : ">>";
             if (actual is not BirBinaryOperation shifted || shifted.Op.Value != symbol
-                || !((BirGraphValue)shifted.Lhs.Value).StructurallyEquals((BirGraphValue)call.Recv.Value)
+                || shifted.Lhs.Value is not BirCast { E.HasValue: true, Type.HasValue: true } receiver
+                || receiver.Type.Value != call.OwnerType.Value
+                || !((BirGraphValue)receiver.E.Value).StructurallyEquals((BirGraphValue)call.Recv.Value)
                 || shifted.Rhs.Value is not BirBinaryOperation { Op.Value: "&" } masked
                 || !((BirGraphValue)masked.Lhs.Value).StructurallyEquals(distance)
                 || masked.Rhs.Value is not BirConstant { Type.Value: TypeNode.Fqn { Name: "kotlin.Int" }, Value.Value: BirLiteral.IntegerLiteral literal }
@@ -52,10 +54,10 @@ static partial class PrimitiveOperatorLowering
             node => node is BirConcat { Parts.Value: [BirLocal { Name.Value: "text" }, BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } }] },
             "string concatenation");
         Check(new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "unaryMinus", Recv = new BirLocal { Name = "byte" }, DynRet = integer },
-            node => node is BirConvert { To.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirUnaryOperation { Op.Value: "-", E.Value: BirLocal { Name.Value: "byte" } } },
+            node => node is BirConvert { To.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirUnaryOperation { Op.Value: "-", E.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Byte" }, E.Value: BirLocal { Name.Value: "byte" } } } },
             "narrow unary return conversion");
         Check(new BirCallInstance { OwnerType = new TypeNode.Fqn("kotlin.Byte"), Method = "inc", Recv = new BirLocal { Name = "byte" }, DynRet = new TypeNode.Fqn("kotlin.Byte") },
-            node => node is BirConvert { To.Value: TypeNode.Fqn { Name: "kotlin.Byte" }, E.Value: BirBinaryOperation { Op.Value: "+", Lhs.Value: BirLocal { Name.Value: "byte" },
+            node => node is BirConvert { To.Value: TypeNode.Fqn { Name: "kotlin.Byte" }, E.Value: BirBinaryOperation { Op.Value: "+", Lhs.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Byte" }, E.Value: BirLocal { Name.Value: "byte" } },
                 Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } } }, "narrow increment conversion");
         Check(Intrinsic("less", Local("nullable", new TypeNode.Nullable(integer)), Integer(1)),
             node => node is BirBinaryOperation { Op.Value: "<", Lhs.Value: BirNullableValue { Elem.Value: TypeNode.Fqn { Name: "kotlin.Int" }, E.Value: BirLocal { Name.Value: "nullable" } } },
@@ -71,7 +73,7 @@ static partial class PrimitiveOperatorLowering
         Check(Intrinsic("EQEQ", Local("left", new TypeNode.Fqn("kotlin.Any")), Local("right", integer)),
             node => node is BirCallStatic { Method.Value: "kotlinEquals", Args.Value: [BirLocal { Name.Value: "left" }, BirLocal { Name.Value: "right" }] }, "null-safe object equality");
         Check(Intrinsic("ieee754equals", Local("left", floating), Local("right", floating)),
-            node => node is BirBinaryOperation { Op.Value: "==", Lhs.Value: BirLocal { Name.Value: "left" }, Rhs.Value: BirLocal { Name.Value: "right" } }, "direct IEEE equality");
+            node => node is BirBinaryOperation { Op.Value: "==", Lhs.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Double" }, E.Value: BirLocal { Name.Value: "left" } }, Rhs.Value: BirCast { Type.Value: TypeNode.Fqn { Name: "kotlin.Double" }, E.Value: BirLocal { Name.Value: "right" } } }, "direct IEEE equality");
         foreach (var right in new TypeNode[] { new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 1),
                      new TypeNode.Tv("type", 0), new TypeNode.Nullable(new TypeNode.Tv("method", 0)) })
         {

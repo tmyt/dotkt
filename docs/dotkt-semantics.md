@@ -93,6 +93,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   method/type slot, so a dense synthetic index is never mistaken for an enclosing declaration index.
   kotc records the reified type operand on explicit/safe casts; an unchecked cast to an ordinary source type
   parameter does not acquire a Kotlin classifier check merely because CLR generics retain physical type arguments.
+  For an ordinary type-parameter cast, kotc also records the Kotlin-erased upper bound before inline/default
+  substitution. bir2cir selects that raw bound rather than the caller's concrete storage witness, including when
+  the result is consumed only as `Any?`. Generic bound arguments remain erased. Existing bare-type-parameter
+  null admission is unchanged; concrete/reified casts and real CLR consumers retain their own checks.
   bir2cir resolves the runtime classifier guard, nominal guard and Boolean null-match expression; ilemit emits those
   resolved operations without reconstructing Kotlin collection semantics from a CLR interface.
 - Kotlin's source rule remains authoritative: passing a **non-reified** method type parameter to a reified one
@@ -753,8 +757,8 @@ ilemit receives only resolved CLR operations.
 An unchecked non-reified `value as T` with `T : Number` retains the raw Number classifier guard even when its
 result is unused or deferred in Object storage. Concrete typed consumers still perform their existing CLR
 narrowing; this does not make a boxed Long usable as an Int.
-As with other unchecked class-bound casts, that raw bound guard admits null; the original generic cast and
-its typed consumer keep their existing null handling. Direct and reified non-null Number casts still reject null.
+As with other unchecked class-bound casts, that raw bound guard admits null; actual typed consumers retain
+their own null handling. Direct and reified non-null Number casts still reject null.
 
 This is not a Kotlin-reflection implementation. Under the native class-token contract (§2, §5g),
 `Number::class` names its physical alias, `System.Object`. A generic `T::class`

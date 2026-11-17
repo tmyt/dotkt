@@ -28,7 +28,8 @@ sealed partial class InlineExpansion
     {
         var types = CollectVarTypes(root);
         return RewriteOwning(root, node => {
-            if (node is BirCast cast && cast.E.OrDefault() is BirLocal { Name.HasValue: true } local
+            if (node is BirCast cast && !cast.ErasedTypeOperand.IsPresent
+                && cast.E.OrDefault() is BirLocal { Name.HasValue: true } local
                 && cast.Type.OrDefault() is TypeNode.Fqn target && Pass.References.IsValueType(target)
                 && types.TryGetValue(local.Name.Value, out var declared)
                 && declared is TypeNode.Nullable { Of: TypeNode.Fqn element } && element == target)
@@ -90,7 +91,7 @@ sealed partial class InlineExpansion
                     if (UnwrapNullableLocal(assignment.Value.Value, target, types) is { } value)
                         assignment.Value = OptionalField<IBirExpression>.Of(value);
                     break;
-                case BirCast { E.HasValue: true } cast when VtFqnOf(cast.Type.OrDefault()) is { } target:
+                case BirCast { E.HasValue: true, ErasedTypeOperand.IsPresent: false } cast when VtFqnOf(cast.Type.OrDefault()) is { } target:
                     if (UnwrapNullableLocal(cast.E.Value, target, types) != null)
                         return new BirNullableValue { Elem = CopyType(target), E = cast.E };
                     break;

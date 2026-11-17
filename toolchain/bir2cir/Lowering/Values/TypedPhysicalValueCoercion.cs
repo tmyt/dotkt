@@ -73,6 +73,7 @@ static class TypedPhysicalValueCoercion
         readonly Dictionary<string, TypeNode[]> closureConstructors = new(StringComparer.Ordinal);
         readonly HashSet<string> nonGenericClasses = new(StringComparer.Ordinal);
         readonly HashSet<(string Class, string Carrier)> declaredCarriers = new();
+        readonly Dictionary<(TypeNode Source, TypeNode Target), bool> referenceNarrowing = new();
         readonly Dictionary<string, SupertypeGraph.Def> types;
         internal readonly Func<IBirExpression> UnitValue;
         internal ValueTypeOracle IsValue = _ => false;
@@ -137,6 +138,16 @@ static class TypedPhysicalValueCoercion
                 && SupertypeGraph.Reaches(source, new TypeNode.Fqn(edge.Carrier), types, References))
             || References?.TryExistentialPhysicalOwner(target.Name, out var carrier) == true
                 && SupertypeGraph.Reaches(source, new TypeNode.Fqn(carrier), types, References);
+        internal bool NarrowsReference(TypeNode source, TypeNode target)
+        {
+            source = SignatureValueTypes.Of(source);
+            target = SignatureValueTypes.Of(target);
+            if (source == target || source is not TypeNode.Fqn from || target is not TypeNode.Fqn to
+                || !IsReferenceSlot(from, IsValue) || !IsReferenceSlot(to, IsValue)) return false;
+            if (!referenceNarrowing.TryGetValue((source, target), out var result))
+                referenceNarrowing[(source, target)] = result = SupertypeGraph.Reaches(to, from, types, References);
+            return result;
+        }
         internal TypeNode[] ClosureParameters(BirNewClosure expression)
         {
             if (expression.ClosureType.OrDefault() is not TypeNode.Fqn owner
@@ -268,7 +279,8 @@ static class TypedPhysicalValueCoercion
     }
     static bool NeedsConversion(TypeNode source, TypeNode target, Index index) =>
         PhysicalValueCoercion.NeedsConversion(source, target, index.IsValue,
-            index.IsExistentialOwner, index.IsNativeReference, index.HasDeclaredCarrier);
+            index.IsExistentialOwner, index.IsNativeReference, index.HasDeclaredCarrier)
+        || index.NarrowsReference(source, target);
 
     static BirGraphValue Coerce(BirGraphValue value, TypeNode target, Scope scope, Index index)
     {
@@ -623,7 +635,10 @@ static class TypedPhysicalValueCoercion
             case BirNewArray value: CoerceArray(value.Elems.OrDefault(), value.Elem.OrDefault(), scope, index); break;
             case BirNewList value: CoerceArray(value.Elems.OrDefault(), value.Elem.OrDefault(), scope, index); break;
             case BirConditional value:
+                value.Cond = C(value.Cond, new TypeNode.Fqn("System.Boolean"));
                 value.Then = C(value.Then, value.Type.OrDefault()); value.Else = C(value.Else, value.Type.OrDefault()); break;
+            case BirBranch value: value.Cond = C(value.Cond, new TypeNode.Fqn("System.Boolean")); break;
+            case BirWhile value: value.Cond = C(value.Cond, new TypeNode.Fqn("System.Boolean")); break;
         }
         if (Receiver(node) is { } receiver && Member(node) is { } member)
         {
@@ -982,6 +997,46 @@ static class TypedPhysicalValueCoercion
                 || conversion.Type.Value != declaringType || !ReferenceEquals(conversion.E.Value, receiver))
                 throw new InvalidOperationException("Owning bound delegate lost its exact declaring receiver conversion: "
                     + bound.GetType().Name + " -> " + declaringType);
+        var genericSlot = new TypeNode.Tv("method", 0);
+        foreach (var erased in new TypeNode[] { Object, source, text, new TypeNode.Array(text) })
+        {
+            var input = new BirLocal { Name = "input" };
+            var storage = new BirVariable { Name = "stored", Type = genericSlot, Init = input };
+            var returnedBound = new BirReturn { Value = new BirLocal { Name = "input" } };
+            var method = new BirFunctionDeclaration { Name = "storeBound", Ret = genericSlot,
+                Params = new[] { new BirParameter { Name = "input", Type = erased } },
+                Body = new IBirStatement[] { storage, returnedBound } };
+            ApplyAll(new[] { new BirFileDeclaration { Methods = new[] { method } } },
+                () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+            if (storage.Init.Value is not BirCast { Type.HasValue: true, E.HasValue: true } stored
+                || stored.Type.Value != genericSlot || !ReferenceEquals(stored.E.Value, input)
+                || returnedBound.Value.Value is not BirCast { Type.HasValue: true } result
+                || result.Type.Value != genericSlot)
+                throw new InvalidOperationException("An erased bound was not narrowed at its actual generic storage/return edge");
+        }
+        var baseType = new TypeNode.Fqn("PhysicalBound");
+        var derivedType = new TypeNode.Fqn("PhysicalDerived");
+        var narrowed = new BirVariable { Name = "narrowed", Type = derivedType, Init = new BirLocal { Name = "input" } };
+        var consumeDerived = new BirNativeStatic { Args = new IBirExpression[] { new BirLocal { Name = "input" } },
+            MemberRef = new BirMemberReference { ParameterTypes = new TypeNode[] { derivedType }, ReturnType = Void } };
+        var returnDerived = new BirReturn { Value = new BirLocal { Name = "input" } };
+        var returnBase = new BirReturn { Value = new BirLocal { Name = "input" } };
+        var references = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+                new BirClassDefinition { Name = "PhysicalBound", Kind = "class" },
+                new BirClassDefinition { Name = "PhysicalDerived", Kind = "class", Base = baseType } },
+            Methods = new[] {
+                new BirFunctionDeclaration { Name = "narrow", Ret = derivedType,
+                    Params = new[] { new BirParameter { Name = "input", Type = baseType } },
+                    Body = new IBirStatement[] { narrowed, new BirExpressionStatement { Expr = consumeDerived }, returnDerived } },
+                new BirFunctionDeclaration { Name = "widen", Ret = baseType,
+                    Params = new[] { new BirParameter { Name = "input", Type = derivedType } },
+                    Body = new IBirStatement[] { returnBase } } } };
+        ApplyAll(new[] { references }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        if (narrowed.Init.Value is not BirCast { Type.HasValue: true } narrowedValue || narrowedValue.Type.Value != derivedType
+            || consumeDerived.Args.Value[0] is not BirCast { Type.HasValue: true } argument || argument.Type.Value != derivedType
+            || returnDerived.Value.Value is not BirCast { Type.HasValue: true } returnedDerived || returnedDerived.Type.Value != derivedType
+            || returnBase.Value.Value is not BirLocal)
+            throw new InvalidOperationException("Physical base-to-derived consumers lost narrowing or acquired an upcast check");
         Console.WriteLine("[typed physical values] self-test OK (conditional views, exact results, native storage, closed ref results, bound receivers)");
     }
 }

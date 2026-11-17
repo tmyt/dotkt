@@ -1355,6 +1355,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override string Tag => "cast";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> ReifiedTypeOperand { get; set; }
+    public OptionalField<TypeNode> ErasedTypeOperand { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
     public OptionalField<bool> DotktProjectedCollection { get; set; }
     public OptionalField<TypeNode> _erasedValueVariable { get; set; }
@@ -1376,6 +1377,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Type.HasValue) { visit("type", (TypeNode)Type.Value); }
+        if (ErasedTypeOperand.HasValue) { visit("erasedTypeOperand", (TypeNode)ErasedTypeOperand.Value); }
         if (_erasedValueVariable.HasValue) { visit("_erasedValueVariable", (TypeNode)_erasedValueVariable.Value); }
         if (Sty.HasValue) { visit("sty", (TypeNode)Sty.Value); }
     }
@@ -1383,6 +1385,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(rewrite("erasedTypeOperand", BirGenericFrameRole.Lexical, ErasedTypeOperand.Value));
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite("sty", BirGenericFrameRole.Lexical, Sty.Value));
     }
@@ -1391,6 +1394,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(rewrite("erasedTypeOperand", BirGenericFrameRole.Lexical, ErasedTypeOperand.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite("_erasedValueVariable", BirGenericFrameRole.Lexical, _erasedValueVariable.Value));
         if (KotlinTypeWitness.HasValue) { visit("kotlinTypeWitness", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
@@ -1404,6 +1408,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(type("erasedTypeOperand", BirPhysicalTypeRole.Structural, ErasedTypeOperand.Value));
         if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(type("_erasedValueVariable", BirPhysicalTypeRole.Structural, _erasedValueVariable.Value));
         if (KotlinTypeWitness.HasValue) { child("kotlinTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
@@ -1420,12 +1425,14 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
+        if (ErasedTypeOperand.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ErasedTypeOperand.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Sty.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
+        if (ErasedTypeOperand.HasValue) { BirGraphNameFields.VisitType((TypeNode)ErasedTypeOperand.Value, visit); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitType((TypeNode)_erasedValueVariable.Value, visit); }
         if (Sty.HasValue) { BirGraphNameFields.VisitType((TypeNode)Sty.Value, visit); }
     }
@@ -1461,6 +1468,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override BirGraphValue DeepClone() => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+        ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(CopyType(ErasedTypeOperand.Value)) : ErasedTypeOperand,
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
@@ -1474,6 +1482,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         var result = this with
         {
             Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(CopyType(ErasedTypeOperand.Value)) : ErasedTypeOperand,
             E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
             _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(CopyType(_erasedValueVariable.Value)) : _erasedValueVariable,
             SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
@@ -1488,6 +1497,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+        ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(rewrite(ErasedTypeOperand.Value)) : ErasedTypeOperand,
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(rewrite(_erasedValueVariable.Value)) : _erasedValueVariable,
         Sty = Sty.HasValue ? OptionalField<TypeNode>.Of(rewrite(Sty.Value)) : Sty,
     };
@@ -1496,6 +1506,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ErasedTypeOperand.Value)) : ErasedTypeOperand,
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
         _erasedValueVariable = _erasedValueVariable.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _erasedValueVariable.Value)) : _erasedValueVariable,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
@@ -1507,6 +1518,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite(Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(rewrite(ErasedTypeOperand.Value));
         if (_erasedValueVariable.HasValue) _erasedValueVariable = OptionalField<TypeNode>.Of(rewrite(_erasedValueVariable.Value));
         if (Sty.HasValue) Sty = OptionalField<TypeNode>.Of(rewrite(Sty.Value));
     }
@@ -1515,6 +1527,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Action<BirGenericFrameRole, BirGraphValue> child)
     {
         if (Type.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Type.Value); }
+        if (ErasedTypeOperand.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)ErasedTypeOperand.Value); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value); }
         if (_erasedValueVariable.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)_erasedValueVariable.Value); }
         if (SuspendFnTypePre.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)SuspendFnTypePre.Value); }
@@ -1528,6 +1541,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Action<BirGenericFrameRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)); }
+        if (ErasedTypeOperand.HasValue) { ErasedTypeOperand = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ErasedTypeOperand.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value); }
         if (_erasedValueVariable.HasValue) { _erasedValueVariable = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, _erasedValueVariable.Value)); }
         if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)); }
@@ -1541,6 +1555,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
+        if (ErasedTypeOperand.HasValue) { ErasedTypeOperand = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, ErasedTypeOperand.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (_erasedValueVariable.HasValue) { _erasedValueVariable = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, _erasedValueVariable.Value)); }
         if (KotlinTypeWitness.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)KotlinTypeWitness.Value); }
@@ -1553,6 +1568,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         Action<BirOwnershipRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (ErasedTypeOperand.HasValue) { ErasedTypeOperand = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ErasedTypeOperand.Value)); }
         if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
         if (_erasedValueVariable.HasValue) { _erasedValueVariable = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, _erasedValueVariable.Value)); }
         if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
@@ -1565,6 +1581,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         => other is BirCast value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(ReifiedTypeOperand, value.ReifiedTypeOperand, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(ErasedTypeOperand, value.ErasedTypeOperand, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(E, value.E, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(DotktProjectedCollection, value.DotktProjectedCollection, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -1582,6 +1599,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         writer.WriteString("k", "cast");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "reifiedTypeOperand", ReifiedTypeOperand, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "erasedTypeOperand", ErasedTypeOperand, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "dotktProjectedCollection", DotktProjectedCollection, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
@@ -1601,6 +1619,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
         result["k"] = "cast";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (ReifiedTypeOperand.IsPresent) result["reifiedTypeOperand"] = ReifiedTypeOperand.IsNull ? null : JsonValue.Create(ReifiedTypeOperand.Value);
+        if (ErasedTypeOperand.IsPresent) result["erasedTypeOperand"] = ErasedTypeOperand.IsNull ? null : TypeNode.Write(ErasedTypeOperand.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom(projected);
         if (DotktProjectedCollection.IsPresent) result["dotktProjectedCollection"] = DotktProjectedCollection.IsNull ? null : JsonValue.Create(DotktProjectedCollection.Value);
         if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
@@ -1847,6 +1866,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public override string Tag => "isInstRef";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> ReifiedTypeOperand { get; set; }
+    public OptionalField<TypeNode> ErasedTypeOperand { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<IBirExpression> KotlinTypeWitness { get; set; }
@@ -1859,17 +1879,20 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
         if (Type.HasValue) { visit("type", (TypeNode)Type.Value); }
+        if (ErasedTypeOperand.HasValue) { visit("erasedTypeOperand", (TypeNode)ErasedTypeOperand.Value); }
     }
     public override void RewriteOwnTypeFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(rewrite("erasedTypeOperand", BirGenericFrameRole.Lexical, ErasedTypeOperand.Value));
     }
     public override void RewriteOwnFieldsInPlace(
         Func<string, BirGenericFrameRole, TypeNode, TypeNode> rewrite,
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(rewrite("erasedTypeOperand", BirGenericFrameRole.Lexical, ErasedTypeOperand.Value));
         if (E.HasValue) { visit("e", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (KotlinTypeWitness.HasValue) { visit("kotlinTypeWitness", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (KotlinRuntimeTypeWitness.HasValue) { visit("kotlinRuntimeTypeWitness", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
@@ -1881,6 +1904,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(type("erasedTypeOperand", BirPhysicalTypeRole.Structural, ErasedTypeOperand.Value));
         if (E.HasValue) { child("e", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)E.Value!, replacement => E = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (KotlinTypeWitness.HasValue) { child("kotlinTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinTypeWitness.Value!, replacement => KotlinTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (KotlinRuntimeTypeWitness.HasValue) { child("kotlinRuntimeTypeWitness", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)KotlinRuntimeTypeWitness.Value!, replacement => KotlinRuntimeTypeWitness = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
@@ -1893,10 +1917,12 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public override void VisitStringFields(Action<string> visit)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
+        if (ErasedTypeOperand.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ErasedTypeOperand.Value, visit); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
         if (Type.HasValue) { BirGraphNameFields.VisitType((TypeNode)Type.Value, visit); }
+        if (ErasedTypeOperand.HasValue) { BirGraphNameFields.VisitType((TypeNode)ErasedTypeOperand.Value, visit); }
     }
     public override void VisitChildren(Action<BirGraphValue> visit)
     {
@@ -1930,6 +1956,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public override BirGraphValue DeepClone() => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+        ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(CopyType(ErasedTypeOperand.Value)) : ErasedTypeOperand,
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone()) : E,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         KotlinTypeWitness = KotlinTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinTypeWitness.Value).DeepClone()) : KotlinTypeWitness,
@@ -1941,6 +1968,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         var result = this with
         {
             Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
+            ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(CopyType(ErasedTypeOperand.Value)) : ErasedTypeOperand,
             E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)E.Value).DeepClone(born)) : E,
             SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
             KotlinTypeWitness = KotlinTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)KotlinTypeWitness.Value).DeepClone(born)) : KotlinTypeWitness,
@@ -1953,12 +1981,14 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public override BirGraphValue RewriteTypeFields(Func<TypeNode, TypeNode> rewrite) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(rewrite(Type.Value)) : Type,
+        ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(rewrite(ErasedTypeOperand.Value)) : ErasedTypeOperand,
     };
     public override BirGraphValue RewriteGenericFrame(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
         Func<BirGenericFrameRole, BirGraphValue, BirGraphValue> child) => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
+        ErasedTypeOperand = ErasedTypeOperand.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ErasedTypeOperand.Value)) : ErasedTypeOperand,
         E = E.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value)) : E,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
         KotlinTypeWitness = KotlinTypeWitness.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)KotlinTypeWitness.Value)) : KotlinTypeWitness,
@@ -1968,12 +1998,14 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite(Type.Value));
+        if (ErasedTypeOperand.HasValue) ErasedTypeOperand = OptionalField<TypeNode>.Of(rewrite(ErasedTypeOperand.Value));
     }
     public override void VisitGenericFrame(
         Action<BirGenericFrameRole, TypeNode> type,
         Action<BirGenericFrameRole, BirGraphValue> child)
     {
         if (Type.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Type.Value); }
+        if (ErasedTypeOperand.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)ErasedTypeOperand.Value); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value); }
         if (SuspendFnTypePre.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)SuspendFnTypePre.Value); }
         if (KotlinTypeWitness.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)KotlinTypeWitness.Value); }
@@ -1985,6 +2017,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         Action<BirGenericFrameRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)); }
+        if (ErasedTypeOperand.HasValue) { ErasedTypeOperand = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, ErasedTypeOperand.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)E.Value); }
         if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)); }
         if (KotlinTypeWitness.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)KotlinTypeWitness.Value); }
@@ -1996,6 +2029,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         Action<BirGenericFrameRole, BirRepresentationRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
+        if (ErasedTypeOperand.HasValue) { ErasedTypeOperand = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, ErasedTypeOperand.Value)); }
         if (E.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)E.Value); }
         if (KotlinTypeWitness.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)KotlinTypeWitness.Value); }
         if (KotlinRuntimeTypeWitness.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)KotlinRuntimeTypeWitness.Value); }
@@ -2006,6 +2040,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         Action<BirOwnershipRole, BirGraphValue> child)
     {
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
+        if (ErasedTypeOperand.HasValue) { ErasedTypeOperand = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ErasedTypeOperand.Value)); }
         if (E.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)E.Value); }
         if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
         if (KotlinTypeWitness.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)KotlinTypeWitness.Value); }
@@ -2016,6 +2051,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         => other is BirInstanceOrNull value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(ReifiedTypeOperand, value.ReifiedTypeOperand, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(ErasedTypeOperand, value.ErasedTypeOperand, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(E, value.E, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(SuspendFnTypePre, value.SuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(KotlinTypeWitness, value.KotlinTypeWitness, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -2027,6 +2063,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         writer.WriteString("k", "isInstRef");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "reifiedTypeOperand", ReifiedTypeOperand, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "erasedTypeOperand", ErasedTypeOperand, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "e", E, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "kotlinTypeWitness", KotlinTypeWitness, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -2040,6 +2077,7 @@ internal sealed record BirInstanceOrNull : BirGraphNode, IBirExpression, IBirAtt
         result["k"] = "isInstRef";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (ReifiedTypeOperand.IsPresent) result["reifiedTypeOperand"] = ReifiedTypeOperand.IsNull ? null : JsonValue.Create(ReifiedTypeOperand.Value);
+        if (ErasedTypeOperand.IsPresent) result["erasedTypeOperand"] = ErasedTypeOperand.IsNull ? null : TypeNode.Write(ErasedTypeOperand.Value);
         if (E.IsPresent) result["e"] = E.IsNull ? null : ((BirGraphValue)E.Value).ToDom(projected);
         if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (KotlinTypeWitness.IsPresent) result["kotlinTypeWitness"] = KotlinTypeWitness.IsNull ? null : ((BirGraphValue)KotlinTypeWitness.Value).ToDom(projected);
