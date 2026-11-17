@@ -1,32 +1,8 @@
-// #370: turning a member this pass RESOLVED into the one scalar reference CIR carries.
-//
-// Everything here answers a single question — "which declaration is this, exactly?" — and answers it once,
-// so that no later layer re-combines pieces of an identity. Re-combining candidates is member selection, and
-// that decision is settled here, against the compile-reference universe, or it is not settled at all.
-//
-// EVERY NAME IN HERE IS THE TARGET'S OWN. The bir2cir-internal `resolvedMemberParams` fact spells a type
-// the way the rest of the document does — arity backtick stripped, `+` nesting flattened to `.`, delegates
-// rewritten as Kotlin function types, `System.Nullable`1` collapsed to a nullability wrapper. That is the
-// right vocabulary for a document about a Kotlin program, and the wrong one for an identity, because it is
-// LOSSY in exactly the places identity lives:
-//
-//   * `Outer`1+Inner` loses its nested half — stripping at the first backtick leaves plain `Outer`, a name
-//     that either resolves to a different type or to none. This is not hypothetical; it was in the corpus.
-//   * `Ns.Outer+Inner` and a genuine `Ns.Outer.Inner` become the same string.
-//   * A pointer degrades to the FQN "System.Int32*", every array to a vector, custom modifiers vanish — each
-//     one a way for two distinct members to look like one.
-//
-// So a reference spells every type — the declaring head, every parameter, the return, every generic argument
-// and every custom modifier — as the target's VERBATIM metadata FullName, with `ptr`, array `rank` and
-// in-position `mod` intact. The one spelling that is not verbatim is the void return, which names a type
-// that can appear nowhere else in a signature and therefore makes no member ambiguous.
-//
-// `MemberSigOf` remains the internal projection used while selecting the declaration; it never crosses the CIR
-// boundary and therefore cannot become a second consumer-visible identity.
-//
-// The DECLARER, not the receiver, is what gets named. A member the receiver merely inherits is anchored on
-// the type that declares it, with the receiver's type arguments projected along the declaration edge — which
-// is why the reference needs no base walk, interface fan-out or most-derived rule downstream.
+// Binding selects the declaration; this unit states its exact physical identity.
+// Preserve metadata FullName, nesting, pointer/array shape and custom modifiers,
+// rather than the lossy Kotlin-facing descriptor used during selection.
+// Name the declarer, not the receiver, and project receiver arguments along the
+// declaration edge here so ilemit only links the stated reference.
 
 using System.Reflection;
 using DotKt.Bir;
