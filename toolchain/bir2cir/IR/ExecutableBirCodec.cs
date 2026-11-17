@@ -29,6 +29,16 @@ static class ExecutableBirCodec
     internal static bool SameInline(BirInlinePayload left, BirInlinePayload right) => ReferenceEquals(left, right)
         || EncodeInline(Codec, left).AsSpan().SequenceEqual(EncodeInline(Codec, right));
 
+    internal static bool SameDefaults(IReadOnlyDictionary<int, IBirExpression> first,
+        IReadOnlyDictionary<int, IBirExpression> second)
+    {
+        if (first.Count != second.Count) return false;
+        foreach (var (position, expression) in first)
+            if (!second.TryGetValue(position, out var other) || !ReferenceEquals(expression, other)
+                && !EncodeExpression(Codec, expression).AsSpan().SequenceEqual(EncodeExpression(Codec, other))) return false;
+        return true;
+    }
+
     internal static void SelfTest()
     {
         var text = new TypeNode.Fqn("kotlin.String");

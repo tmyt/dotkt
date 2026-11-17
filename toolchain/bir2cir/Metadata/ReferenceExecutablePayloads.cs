@@ -63,7 +63,7 @@ sealed class ReferenceExecutablePayloads
                 var name = key.Method + "|" + key.ParamCount;
                 if (ambiguousDefaults.Contains(name)) continue;
                 if (input.KotlinDefaultsConflicted.Contains(key)
-                    || ownerlessDefaults.TryGetValue(name, out var previous) && !SameDefaults(previous, captured))
+                    || ownerlessDefaults.TryGetValue(name, out var previous) && !ExecutableBirCodec.SameDefaults(previous, captured))
                 {
                     ownerlessDefaults.Remove(name);
                     ambiguousDefaults.Add(name);
@@ -73,7 +73,7 @@ sealed class ReferenceExecutablePayloads
             foreach (var (id, source) in input.KotlinDefaultsByDeclarationId)
             {
                 var captured = CaptureDefaults(source);
-                if (!defaultsById.TryAdd(id, captured) && !SameDefaults(defaultsById[id], captured))
+                if (!defaultsById.TryAdd(id, captured) && !ExecutableBirCodec.SameDefaults(defaultsById[id], captured))
                     conflictingDefaultIds.Add(id);
             }
             foreach (var (key, payloads) in input.InlinePayloads)
@@ -149,16 +149,4 @@ sealed class ReferenceExecutablePayloads
     static IReadOnlyList<BirInlinePayload> CloneInline(IReadOnlyList<BirInlinePayload> payloads) =>
         payloads?.Select(payload => (BirInlinePayload)payload.DeepClone()).ToArray();
 
-    // Scan conflict recording and the captured catalog use the same exact
-    // executable comparison; neither interprets Kotlin expressions or bodies.
-    internal static bool SameDefaults(IReadOnlyDictionary<int, IBirExpression> first,
-        IReadOnlyDictionary<int, IBirExpression> second)
-    {
-        if (first.Count != second.Count) return false;
-        foreach (var (position, expression) in first)
-            if (!second.TryGetValue(position, out var other) || !ReferenceEquals(expression, other)
-                && !ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, expression).AsSpan().SequenceEqual(
-                    ExecutableBirCodec.EncodeExpression(ExecutableBirCodec.Codec, other))) return false;
-        return true;
-    }
 }

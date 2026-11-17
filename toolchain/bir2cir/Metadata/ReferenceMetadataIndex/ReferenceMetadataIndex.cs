@@ -1067,7 +1067,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 selected = defaults;
                 continue;
             }
-            if (defaults == null || !ReferenceExecutablePayloads.SameDefaults(selected, defaults))
+            if (defaults == null || !ExecutableBirCodec.SameDefaults(selected, defaults))
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{owner}.{method}' (arity {paramCount}) — " +
                     "several implemented interface declarations match that class surface but their defaults disagree; " +
@@ -7531,7 +7531,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         Put(new DefaultKey(ownerFqn, name, ps.Length, SigKeyOf(ps, relaxed: true), Relaxed: true), defaults);
         if (metadata.KotlinDefaults.TryGetValue(arityKey, out var prior))
         {
-            if (!ReferenceExecutablePayloads.SameDefaults(prior, defaults)) metadata.KotlinDefaultsConflicted.Add(arityKey);
+            if (!ExecutableBirCodec.SameDefaults(prior, defaults)) metadata.KotlinDefaultsConflicted.Add(arityKey);
             return;
         }
         metadata.KotlinDefaults[arityKey] = defaults;
@@ -7542,7 +7542,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             // refuses too rather than serving the last writer.
             if (metadata.KotlinDefaults.TryGetValue(key, out var had))
             {
-                if (!ReferenceExecutablePayloads.SameDefaults(had, d)) metadata.KotlinDefaultsConflicted.Add(key);
+                if (!ExecutableBirCodec.SameDefaults(had, d)) metadata.KotlinDefaultsConflicted.Add(key);
                 return;
             }
             metadata.KotlinDefaults[key] = d;

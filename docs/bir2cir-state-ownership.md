@@ -222,12 +222,17 @@ The owner retains no scan input or update capability. Its managed facts live
 with the compilation's reference index; there is no reflection resource to close
 or changing local-membership input to invalidate.
 
+The scan records remain available to other metadata readers, so capture retains
+a private template copy in addition to the decoded inputs. Memoization avoids
+per-view copies, not that second catalog. Removing the input storage requires
+an explicit scan-publication handoff, not clearing another owner's containers.
+
 Queries return independent maps/graphs for the existing splice/admission owners.
 Neither changing a scan input after capture nor materializing one lookup result
 can modify another index or lookup view. Default signature/relaxed/arity ordering,
 constructor separation, conflict handling and stdlib ownerless candidates retain
-their existing policies. Scan conflict recording and query comparison share one
-pure codec-based equality helper; this catalog does not interpret expressions,
+their existing policies. Scan conflict recording and query comparison share
+`ExecutableBirCodec`'s pure equality helper; this catalog does not interpret expressions,
 select overloads from bodies, or reconstruct declaration identities.
 
 The local `TypedInlineBirIndex` source snapshots and exact reflected optional
