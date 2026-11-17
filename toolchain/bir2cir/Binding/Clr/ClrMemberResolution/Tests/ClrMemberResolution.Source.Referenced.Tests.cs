@@ -85,7 +85,7 @@ static partial class ClrMemberResolution
             var root = File(call, item, generic, direct, bound, registration, stale, selectedLocal, exact, unselected);
             var methods = root.Methods.Value; var body = methods[0].Body.Value; var callArguments = call.Args.Value;
             var saved = new byte[] { 1, 2, 4 }; methods[0].InlineBir = saved;
-            ResolveReferencedStaticCalls(root, refs, locals, canonical, ids, signatures, "Consumer.kt");
+            ResolveReferencedStaticCalls(root, refs, locals, canonical, ids, signatures.Read, signatures.ReleaseMarkers, "Consumer.kt");
             Require(call.MemberRef.Value.Name.Value == "Concat", "canonical runtime owner did not bind Concat");
             Require(call.MemberRef.Value.ParameterTypes.Value.SequenceEqual(new TypeNode[] { text, text }),
                 "source snapshot selected unexpected MemberRef parameters: " + string.Join(", ", call.MemberRef.Value.ParameterTypes.Value.AsEnumerable()));
@@ -99,7 +99,7 @@ static partial class ClrMemberResolution
             // Resolve the independently owned clone after the original file
             // released its token. Shared source facts outlive either file.
             clone.Sig = new TypeNode[] { declarationObject, declarationObject };
-            ResolveReferencedStaticCalls(File(clone), refs, locals, canonical, ids, signatures, "Clone.kt");
+            ResolveReferencedStaticCalls(File(clone), refs, locals, canonical, ids, signatures.Read, signatures.ReleaseMarkers, "Clone.kt");
             Require(clone.MemberRef.Value.ParameterTypes.Value.SequenceEqual(new TypeNode[] { text, text })
                 && !clone.DotktKotlinSigId.IsPresent, "a cross-file clone lost the source overload after file release");
             Require(item.MemberRef.Value.DeclaringType.Value == receiver.Sty.Value
@@ -157,7 +157,7 @@ static partial class ClrMemberResolution
                 && selectedConstrained.DeclarationId.Value == selectedPropertyId
                 && inheritedSelection.DeclarationId.Value == selectedPropertyId,
                 "selected constrained property retained its semantic role or lost its scalar-resolution identity");
-            ResolveReferencedStaticCalls(selectedRoot, refs, locals, canonical, ids, signatures, "Selected.kt");
+            ResolveReferencedStaticCalls(selectedRoot, refs, locals, canonical, ids, signatures.Read, signatures.ReleaseMarkers, "Selected.kt");
             Require(selectedConstrained.MemberRef.Value.Name.Value == "get_Item"
                 && selectedConstrained.MemberRef.Value.DeclaringType.Value == interfaceType
                 && selectedConstrained.MemberRef.Value.ReturnType.Value == new TypeNode.Tv("type", 0)
@@ -179,7 +179,7 @@ static partial class ClrMemberResolution
                     && !property.Prop.IsPresent && property.Virtual.Value == !property.Super.Value
                     && property.MemberRef.Value.DeclaringType.Value == interfaceType,
                     "source property association changed its selected physical accessor or super dispatch");
-            ResolveReferencedStaticCalls(File(sibling), refs, locals, canonical, ids, signatures, "Sibling.kt");
+            ResolveReferencedStaticCalls(File(sibling), refs, locals, canonical, ids, signatures.Read, signatures.ReleaseMarkers, "Sibling.kt");
             Require(!sibling.DotktKotlinSigId.IsPresent && signatures.Read(sibling) == null,
                 "a sibling file lost its own snapshot lifetime");
             Console.WriteLine("[source final referenced calls] shared exact selection, snapshots, current owners, delegate slots and physical frames: OK");

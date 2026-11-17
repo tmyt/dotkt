@@ -27,9 +27,9 @@ The graph is ordered, but callbacks and process-wide fields currently hide
 some of its edges. The following dependency-ordered slices keep intermediate
 contracts usable; this issue is not complete after the first slice.
 
-1. Give preserved source call signatures a compilation owner. Capture,
-   cold-call extension, query and release must not depend on a resolver's
-   process-wide table or on another file's cleanup order.
+1. Preserved source call signatures have a compilation owner. Capture,
+   cold-call extension, query and release are explicit operations with no
+   process table or sibling-file cleanup dependency (implemented below).
 2. Separate reference loading/facts from lookup-cache and reflection lifetime
    ownership. Local-emission shadowing is a changing compilation input, not
    reference metadata; its dependent view must be invalidated by its owner.
@@ -75,11 +75,11 @@ backreference through which an analysis can invoke arbitrary orchestration.
 
 ## CLR member resolution family
 
-All mutable static items in this family at the inventory baseline:
+The resolution path's state and its current ownership:
 
 | State | Writers / readers | Lifetime and problem | Required boundary |
 |---|---|---|---|
-| `KotlinSigSnapshots`, `_nextKotlinSigSnapshotId` | Source capture allocates; suspend cold-call projection extends; referenced-call planner reads; per-root cleanup removes rows | Process lifetime, no module owner/reset; a cloned token can outlive another root's cleanup | Compilation-scoped source-call signature owner with explicit producer/query/release operations |
+| `ReferencedCallSignatures.snapshots`, `nextId`, `disposed` | Module source capture allocates; cold-call capability extends; referenced graph reader queries copies; root cleanup removes markers only | Compilation lifetime, independent from another module and each root's marker cleanup | Private catalog; only capture, projection, query/release and disposal operations; no selector reads the table |
 | `_refs` | Native, referenced, inherited, interface, attribute, delegate, well-known and MemberRef entry points assign it; scalar matchers/renderers read it | Ambient last-call reference universe, including calls made before the final binding pass | Explicit reference queries passed to exact selection / rendering; no dependency on another entry point's initialization |
 | `_localTypes` | Native, declaration, referenced and delegate entry points replace it | Per invocation facts stored process-wide | Pass-owned local physical identity input, not reference metadata |
 | `_externalCanonicalTypes`, `_localDeclarationIds` | Referenced entry assigns; planner consumes | Per invocation, process-held sets | Referenced selection inputs; not shared mutation rights |
@@ -101,7 +101,7 @@ new declarations for the existing admission obligations.
 
 ### Implemented: compilation-owned call signatures
 
-`ReferencedCallSignatures` now owns the first row above. `LoadBirFiles` creates
+`ReferencedCallSignatures` owns the first row above. `LoadBirFiles` creates
 and disposes it in one invocation, including exceptional exit. Its only inputs
 are current call descriptors at the pre-erasure source clock and the explicit
 completion type supplied by cold lowering. It has no reference-index or
@@ -114,7 +114,9 @@ declaration-mutation capability.
   catalog, other CLR binding services, or arbitrary graph mutation rights.
 - `Read` returns a deep copy to the graph reader. The referenced-call planner
   receives that source vector as data and no longer reads a global table.
-  Calls created without a snapshot still use their explicit current descriptor.
+  The graph reader/writer receives only read and marker-release callbacks, not
+  capture, cold projection or module disposal authority. Calls created without
+  a snapshot still use their explicit current descriptor.
 - `ReleaseMarkers` removes tokens only from the processed root. Snapshot rows
   remain valid for independently owned clones in sibling roots until module
   disposal. It does not release another file's shared row.
@@ -189,9 +191,38 @@ types and declaration projections rather than mutating an unrelated pass.
 
 `SourceSignatures`, physical parameter/source-link maps, reference queries and
 carrier-owner facts are external authorities passed into that context. Cold
-call signature projection currently reaches back into CLR resolution's static
-catalog; it must instead receive exactly that projection capability. Do not
-turn the context into a container for the full pipeline.
+call signature projection receives only the module owner's projection callback,
+not a CLR resolver or the source call catalog. Do not turn the context into a
+container for the full pipeline.
+
+## Adjacent pass dependencies, not completed ownership extractions
+
+The inventory above targets the named large families and their handoffs, not
+every mutable field in the compiler. The four ordered work areas are not a
+claim that those families have no stateful neighbors. The following inspected
+incoming/outgoing dependencies remain relevant when replacing ambient inputs;
+they are not all part of the first call-signature slice.
+
+| Adjacent owner / state | Current producer, consumers and lifetime dependency |
+|---|---|
+| `MemberCallSubstitution`: `_localTopLevelFns`, `_attributeTopLevelOwner`, `_typesWithDeclaredIterator`, `_iteratorTypeDefinitions`, `_localPropertyAccessors`, `_localPropertyOwners`, `_isValue`, `_representations`, `_localFactories`, `_localDeclarationIds` | Source `Apply` replaces invocation inputs and derives iterator/property views; substitution readers consume them and write current calls. Inputs come from module inventory, representation policy and physical property preparation. A narrowed exact-binding unit must receive those facts explicitly, not read this neighbor's ambient state |
+| `ForeignStarProjectionBinding`: `_reservedNames`, `_closedViewHints`, `_dependentLocalTypes`, `_localExistentialOwners`, `_localClrAliases`, `_nextTemp`, `_nextDelegateAdapter`, `_bindProjectedHelpers`, `_projectValueType`, `UsedRuntimeFallback` | `ApplyAll` initializes module binding/usage, `ApplyLate` intentionally continues usage/adapter numbering while refreshing current-root hints/names/locals. Projection callback and aliases are set by the initial entry/`ContinueWithProjection`. Adapter birth invokes explicit admission callbacks; late binding currently depends on earlier initialization |
+| `CapturedGenericInvocation`: `_next`, `_parameterWitnesses`, `_methodWitnessFrames` | `PreserveSourceFacts` resets all three before capture; witness preparation and later physical binding consume continuing declaration facts. Source preservation, witness capture and final physical binding are separate pipeline clocks; reset order is currently process-global |
+| `ClosureSynthesis._pendingCaptureRefusals` | Owning ordinary/materialized synthesis records heap-capture verdicts; `AssertSurvivingCapturesLegal` queries actual surviving classes after suspend pruning. No module reset/release is present. This is deferred storage-legality state, not permission to reclassify captures in an unrelated consumer |
+| `NullableTvErasureCallRealign`: `_isValue`, `_refs`, `_sourceApplicationOrder` | Inherited/source-use entry points set invocation inputs, and scalar binding helpers read them. Prepared declaration views and producer transitions remain the authority; narrowing must not reintroduce a competing nullable-signature catalog |
+| `StringCharSequenceBridge`: `_adapterEmitted`, `_fired`, `_refs`, `_retLambdas`, `_delegateAdapterCounter`, `_counter` | Source entry sets per-file inputs/usage; initial and materialized adapters share assembly-level emission and numbering state. Carrier/suspend producers call the materialized-return boundary. Graph birth still owes closure/declaration admission; this state is not immutable shared vocabulary |
+| `ContinuationErasure`: `_continuationTypeNames`, `_resultTypeNames`, `_physicalTypeNames` | Source preservation and erasure set physical-name inputs through `SetTypeNames`; recursive protocol projection reads them. These are reference-universe inputs stored process-wide, not independent semantic authority |
+| `InlineBirStash.Current` / `InlineBirIndex` | Pipeline `Reset` creates an executable-publication index before per-file lowering, then `Stash` populates candidate/ownerless/identity dictionaries. Inline splicing reads frozen rows and materializes independent graphs; reference payload queries are a distinct authority. Current lifetime depends on reset, not an explicit compilation owner |
+
+Temporary allocators outside these families also exist: range/sequence/for-in
+lowering, unsafe accessors, alias constructor expansion, enum entries/values,
+primitive operators, CLR flags, lexical clone IDs, CharSequence string lowering,
+prepared suspend default frames, repeat/precondition/protected-region lowering,
+default/inline splicing, call evaluation and physical-operand normalization.
+Their naming/label scopes must be inventoried before claiming whole-pipeline
+independent invocation or deterministic replay. They are not immutable shared
+facts, but their presence is not a new language/runtime bug and does not by
+itself authorize changing these unrelated passes in this first PR.
 
 `Program.cs` owns stage ordering, module/file clocks and handoff, not matching,
 representation or storage policy. Preserve child-before-parent binding,

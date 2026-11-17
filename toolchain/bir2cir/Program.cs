@@ -1013,7 +1013,8 @@ sealed class Pipeline
             if (appBuild)
                 ClrMemberResolution.ResolveReferencedStaticCalls(source, refs,
                     physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
-                    physicalPreparation.Declarations.DeclarationIds, callSignatures, OutputNameFor(inputsWithSources[sourcePosition].Path));
+                    physicalPreparation.Declarations.DeclarationIds, callSignatures.Read, callSignatures.ReleaseMarkers,
+                    OutputNameFor(inputsWithSources[sourcePosition].Path));
 
             // Record source identity and NRT before stripping reference-nullable
             // wrappers. Nullable Unit retains its distinct value-returning ABI.
@@ -1089,7 +1090,8 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++)
             ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
-                physicalPreparation.Declarations.DeclarationIds, callSignatures, OutputNameFor(inputsWithSources[index].Path));
+                physicalPreparation.Declarations.DeclarationIds, callSignatures.Read, callSignatures.ReleaseMarkers,
+                OutputNameFor(inputsWithSources[index].Path));
 
         // Complete collection surfaces module-wide before any consumer snapshots
         // their final interface graph. Helper signatures use the pre-birth
@@ -1129,7 +1131,8 @@ sealed class Pipeline
         for (var index = 0; index < captured.Length; index++)
             ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
-                physicalPreparation.Declarations.DeclarationIds, callSignatures, OutputNameFor(inputsWithSources[index].Path));
+                physicalPreparation.Declarations.DeclarationIds, callSignatures.Read, callSignatures.ReleaseMarkers,
+                OutputNameFor(inputsWithSources[index].Path));
         if (!referenceBuild)
             foreach (var source in captured) ExactExternalDeclarationIdentity.Apply(source, refs);
 
