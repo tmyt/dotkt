@@ -186,7 +186,7 @@ static partial class UnsafeAccessorLowering
         {
             var referenced = context.References.UnsafeAccessorConstructor(owner, id);
             if (referenced.IsPublic) return access;
-            signature = referenced.GetParameters().Select(ReferenceMetadataIndex.DeclarationSignatureSlot).ToArray();
+            signature = referenced.GetParameters().Select(context.References.DeclarationSignatureSlot).ToArray();
         }
         var frame = SourceOwnerParameters(host, ownerParameters, owner, context.References);
         var key = $"{caller.Name}|ctor|{owner.Name}|" + string.Join(";", signature.Select(SourceTypeKey)) + "|declaration:" + id;
