@@ -67,7 +67,7 @@ static partial class ClrMemberResolution
         if (invoke.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one");
-        return MemberRefOf(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
+        return ClrMemberReferences.MemberRefOf(_refs, _localTypes, invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
             ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 
@@ -98,7 +98,7 @@ static partial class ClrMemberResolution
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
                 + $"{ctors.Count} two-argument candidate(s)");
-        return MemberRefOf(win, MemberRefNode.Kinds.Ctor, open,
+        return ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open,
             delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 

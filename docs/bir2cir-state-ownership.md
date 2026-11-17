@@ -101,6 +101,15 @@ new type descriptors, borrowed within the index lifetime. Binding entry points
 still own call/slot graph updates and pass their current facts; removing their
 remaining ambient invocation state is a separate boundary, not claimed here.
 
+`ClrMemberReferences` constructs exact method/field identities and physical
+declaring/signature types from selected reflection declarations and explicit
+reference/local-type facts. It has no fields, graph writer, resource ownership
+or resolver backreference. Selection and dispatch policy stay with binding.
+Existing binding entry points still supply their current facts; the two scalar
+forwarders for current external callers remain pending that input extraction,
+not a claim that ambient binding state is gone. No new compatibility path or
+internal-mutation guarantee is introduced.
+
 `PhysicalDelegateDeclarations` owns adapter declaration construction and its two
 identity allocators. The pipeline creates one instance for construction and final
 value-flow lowering. It receives the existing selected plan, reference queries
@@ -268,7 +277,7 @@ and declaration admission remain with their existing producers, not this catalog
 Existing default/inline collision and runtime producer/consumer tests remain
 the behavior coverage for this extraction; the artificial scan-input mutation
 fixture is removed. Other ingested facts, ambient CLR
-resolver inputs/allocators and carrier capabilities still need their own work.
+resolver inputs and carrier capabilities still need their own work.
 
 ## Suspend and orchestration boundaries
 

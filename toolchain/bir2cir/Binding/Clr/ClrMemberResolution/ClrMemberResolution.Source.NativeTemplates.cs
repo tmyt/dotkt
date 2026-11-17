@@ -222,5 +222,5 @@ static partial class ClrMemberResolution
     }
 
     static BirMemberReference NativeReference(MethodBase selected, string kind, Type owner, TypeNode[] arguments)
-        => BirMemberReference.FromPhysical(MemberRefOf(selected, kind, owner, arguments));
+        => BirMemberReference.FromPhysical(ClrMemberReferences.MemberRefOf(_refs, _localTypes, selected, kind, owner, arguments));
 }

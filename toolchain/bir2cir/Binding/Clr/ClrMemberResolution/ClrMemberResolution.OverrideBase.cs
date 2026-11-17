@@ -30,7 +30,7 @@ static partial class ClrMemberResolution
             .Where(method => method.Name == name && method.IsVirtual && method.GetParameters().Length == arguments.Count)); } catch { }
         var selected = PickOverrideBase(candidates, arguments, result, open, owner.Args,
             $"override base={owner.Name}.{name}({DescArgs(arguments)}):{result}");
-        return MemberRefOf(selected, MemberRefNode.Kinds.Method, open, owner.Args);
+        return ClrMemberReferences.MemberRefOf(_refs, _localTypes, selected, MemberRefNode.Kinds.Method, open, owner.Args);
     }
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what
     // "override" means), so this is a STRUCTURAL identity match — NOT the call side's arg-applicability (which would let

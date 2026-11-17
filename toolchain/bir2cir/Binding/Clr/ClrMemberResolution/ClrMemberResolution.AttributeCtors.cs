@@ -80,6 +80,6 @@ static partial class ClrMemberResolution
         // marker could not be encoded. (`PickUnique` throws, which is right where a MEMBER is being called and
         // wrong here, and the difference is the whole reason this uses the quiet form.)
         var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, ctors, argNodes, attrFqn.Args);
-        return win == null ? null : MemberRefOf(win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
+        return win == null ? null : ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
     }
 }

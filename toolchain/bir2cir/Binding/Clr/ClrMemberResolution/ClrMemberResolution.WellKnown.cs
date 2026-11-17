@@ -66,7 +66,7 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = MemberRefOf(win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
+            table[role] = ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
         {
@@ -83,7 +83,7 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = MemberRefOf(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
+            table[role] = ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         }
         root.WellKnownRefs = PhysicalMemberTable.Create(table);
     }
@@ -167,7 +167,7 @@ static partial class ClrMemberResolution
             var selectionArgs = declaringArgs;
             if (selectionOwnerArgs != null)
             {
-                var selectionOwner = DeclaringTypeRef(method, open, selectionOwnerArgs) as TypeNode.Fqn;
+                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(_refs, _localTypes, method, open, selectionOwnerArgs) as TypeNode.Fqn;
                 selectionArgs = selectionOwner?.Args ?? Array.Empty<TypeNode>();
             }
             var selectionParameters = reference.ParameterTypes
@@ -256,7 +256,7 @@ static partial class ClrMemberResolution
                 .ToList();
             var declaration = ClrDeclarationMatching.TryPickUnique(_refs, candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
             if (declaration == null) continue;
-            var reference = MemberRefOf(declaration, MemberRefNode.Kinds.Method, open,
+            var reference = ClrMemberReferences.MemberRefOf(_refs, _localTypes, declaration, MemberRefNode.Kinds.Method, open,
                 spec.Args ?? Array.Empty<TypeNode>());
             answers.Add(new(declaration, reference, spec.Args ?? Array.Empty<TypeNode>()));
         }

@@ -38,13 +38,13 @@ static partial class ClrMemberResolution
         {
             var target = RetargetedInterfaceOwner(open, accessor, ownerFqn);
             return new(target, "accessor", accessor.Name,
-                MemberRefOf(accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
+                ClrMemberReferences.MemberRefOf(_refs, _localTypes, accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
                 isStatic ? null : Dispatch(accessor, open, superCall), NativeDeclaredReturn(accessor.ReturnType),
                 write ? SubstOwnerParams(accessor.GetParameters()[^1].ParameterType,
                     (target as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()) : null);
         }
         if (FindFieldMember(open, name, flags) is { } field)
-            return new(ownerFqn, "field", null, FieldRefOf(field, open, ownerFqn.Args), null,
+            return new(ownerFqn, "field", null, ClrMemberReferences.FieldRefOf(_refs, _localTypes, field, open, ownerFqn.Args), null,
                 NativeDeclaredReturn(field.FieldType),
                 write ? SubstOwnerParams(field.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()) : null);
         throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")})");
@@ -67,13 +67,13 @@ static partial class ClrMemberResolution
                 throw new InvalidOperationException(
                     $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");
-            return direct == null ? null : new(ownerFqn, null, null, FieldRefOf(direct, open, ownerFqn.Args), null,
+            return direct == null ? null : new(ownerFqn, null, null, ClrMemberReferences.FieldRefOf(_refs, _localTypes, direct, open, ownerFqn.Args), null,
                 NativeDeclaredReturn(direct.FieldType),
                 write ? SubstOwnerParams(direct.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()) : null);
         }
         var target = RetargetedInterfaceOwner(open, accessor, ownerFqn);
         return new(target, "accessor", accessor.Name,
-            MemberRefOf(accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
+            ClrMemberReferences.MemberRefOf(_refs, _localTypes, accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
             Dispatch(accessor, open, false), NativeDeclaredReturn(accessor.ReturnType),
             write ? SubstOwnerParams(accessor.GetParameters()[^1].ParameterType,
                 (target as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()) : null);
@@ -90,7 +90,7 @@ static partial class ClrMemberResolution
         var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
         var accessor = FindEventAccessor(open, name, add, flags) ?? throw new InvalidOperationException(
             $"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
-        var reference = MemberRefOf(accessor, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
+        var reference = ClrMemberReferences.MemberRefOf(_refs, _localTypes, accessor, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         var handler = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(reference.ParameterTypes[0],
             ((TypeNode.Fqn)reference.DeclaringType).Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
         return new(RetargetedInterfaceOwner(open, accessor, ownerFqn), null, accessor.Name, reference,
@@ -123,8 +123,8 @@ static partial class ClrMemberResolution
             | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
         var field = open.GetField(name, flags)
             ?? throw new InvalidOperationException($"UnsafeAccessor field '{owner.Name}.{name}' has no referenced FieldDef");
-        var declaration = OpenFieldDeclarationOf(field);
-        return new(FieldRefOf(field, open, owner.Args), declaration.DeclaringType, declaration.IsPublic);
+        var declaration = ClrMemberReferences.OpenFieldDeclarationOf(field);
+        return new(ClrMemberReferences.FieldRefOf(_refs, _localTypes, field, open, owner.Args), declaration.DeclaringType, declaration.IsPublic);
     }
 
     // ---- property get / set --------------------------------------------------------------------
