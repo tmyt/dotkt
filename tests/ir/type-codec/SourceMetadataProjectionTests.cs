@@ -1,6 +1,7 @@
 extern alias projection;
 using System.Reflection;
 using System.Text;
+using Google.Protobuf;
 using P = projection::DotKt.Bir;
 using KType = projection::DotKt.Klib.Metadata.Type;
 using KValue = projection::DotKt.Klib.Metadata.Annotation.Types.Argument.Types.Value;
@@ -18,6 +19,23 @@ internal static class SourceMetadataProjectionTests
             P.SourceMetadataJson.Read, P.SourceMetadataMessagePack.Read);
         if (((P.SourceAnnotationValue.StringValue)restored.Annotations.Single().Arguments.Single().Value).Value != expected)
             throw new Exception("dll2klib binary codec changed source UTF-16 units");
+        var tool = typeof(P.SourceTypeAlias).Assembly;
+        var namesType = tool.GetType("NameTable", true)!;
+        var names = Activator.CreateInstance(namesType, true)!;
+        var value = tool.GetType("KotlinTypeAliasMetadata", true)!.GetMethod("Value", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var projected = (KValue)value.Invoke(null, [source.Annotations.Single().Arguments.Single().Value, names])!;
+        var table = (projection::DotKt.Klib.Metadata.StringTable)namesType.GetProperty("Strings")!.GetValue(names)!;
+        var fragment = new projection::DotKt.Klib.Metadata.PackageFragment { Strings = table };
+        var fragmentType = tool.GetType("Fragment", true)!;
+        var fragments = Array.CreateInstance(fragmentType, 1);
+        fragments.SetValue(Activator.CreateInstance(fragmentType, ["sample", fragment]), 0);
+        var encode = tool.GetType("KlibStringTables", true)!.GetMethod("EncodeIfNeeded", BindingFlags.Static | BindingFlags.NonPublic)!;
+        if (!(bool)encode.Invoke(null, [fragments])!) throw new Exception("UTF-16 table codec was not selected");
+        var saved = projection::DotKt.Klib.Metadata.PackageFragment.Parser.ParseFrom(fragment.ToByteArray());
+        var units = Convert.FromBase64String(saved.Strings.String[projected.StringValue]);
+        var actual = new string(Enumerable.Range(0, units.Length / 2)
+            .Select(index => (char)(units[index * 2] | units[index * 2 + 1] << 8)).ToArray());
+        if (actual != expected) throw new Exception("serialized KLIB table changed source UTF-16 units");
     }
     // Inspect the production DLL-to-KLIB projection and actual protobuf facts. The
     // two tools link separate model copies; the external alias preserves that boundary.

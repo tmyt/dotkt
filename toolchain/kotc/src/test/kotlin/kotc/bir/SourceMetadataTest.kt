@@ -1,16 +1,49 @@
 package kotc.bir
 
 import kotc.backend.TypeAliasDeclarations
+import kotc.pipeline.clrKlibNameResolver
+import org.jetbrains.kotlin.library.KotlinLibrary
 import org.jetbrains.kotlin.metadata.ProtoBuf
 import org.jetbrains.kotlin.metadata.deserialization.Flags
 import org.jetbrains.kotlin.metadata.deserialization.NameResolverImpl
 import org.jetbrains.kotlin.metadata.deserialization.TypeTable
+import java.lang.reflect.Proxy
+import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class SourceMetadataTest {
     private val text = "quote\"\\\n\u0001κ😀"
     private val floatBits = 0xffc00017L.toInt()
+
+    @Test
+    fun declaredKlibStringTableCodecRestoresAnnotationCodeUnits() {
+        val cases = listOf("" to "", "\ud800" to "ANg=", "\udc00" to "ANw=",
+            "😀" to "😀", "\u0000" to "\u0000", "κ" to "κ", "\ufffd" to "\ufffd", "ANg=" to "ANg=")
+        fun library(codec: String?) = Proxy.newProxyInstance(KotlinLibrary::class.java.classLoader,
+            arrayOf(KotlinLibrary::class.java)) { _, method, _ ->
+            check(method.name == "getManifestProperties")
+            Properties().apply { if (codec != null) setProperty("dotkt_string_table_codec", codec) }
+        } as KotlinLibrary
+        fun fragment(strings: List<String>) = ProtoBuf.PackageFragment.newBuilder()
+            .setStrings(ProtoBuf.StringTable.newBuilder().addAllString(strings))
+            .setQualifiedNames(ProtoBuf.QualifiedNameTable.newBuilder().addAllQualifiedName(listOf(
+                ProtoBuf.QualifiedNameTable.QualifiedName.newBuilder().setShortName(0)
+                    .setKind(ProtoBuf.QualifiedNameTable.QualifiedName.Kind.PACKAGE).build(),
+                ProtoBuf.QualifiedNameTable.QualifiedName.newBuilder().setShortName(1).setParentQualifiedName(0)
+                    .setKind(ProtoBuf.QualifiedNameTable.QualifiedName.Kind.CLASS).build(),
+            )))
+            .setPackage(ProtoBuf.Package.getDefaultInstance()).build()
+        val table = fragment(listOf("sample", "Owner") + cases.map { it.second } + "3,4")
+        val saved = ProtoBuf.PackageFragment.parseFrom(table.toByteArray())
+        val names = clrKlibNameResolver(library("utf16le-base64-indexed"), saved)
+        assertEquals("sample/Owner", names.getQualifiedClassName(1))
+        cases.forEachIndexed { index, (expected, _) -> assertEquals(expected, names.getString(index + 2)) }
+        val ordinary = fragment(listOf("sample", "Owner", "κ😀\u0000"))
+        val ordinaryNames = clrKlibNameResolver(library(null), ProtoBuf.PackageFragment.parseFrom(ordinary.toByteArray()))
+        assertEquals("κ😀\u0000", ordinaryNames.getString(2))
+        assertEquals("sample/Owner", ordinaryNames.getQualifiedClassName(1))
+    }
 
     @Test
     fun literalTextCodecsKeepEveryCodeUnit() {

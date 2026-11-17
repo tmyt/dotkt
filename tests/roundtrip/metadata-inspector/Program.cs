@@ -175,9 +175,9 @@ if (args.Length == 2 && args[0] == "--inherited-callable-visibility")
     return;
 }
 
-if (args.Length == 3 && args[0] == "--typealias-declarations")
+if (args.Length is 3 or 4 && args[0] == "--typealias-declarations")
 {
-    TypeAliasMetadataInspector.Verify(args[1], args[2]);
+    TypeAliasMetadataInspector.Verify(args[1], args[2], args.Length == 4 ? args[3] : null);
     Console.WriteLine("assembly typealias carriers and standard KLIB declarations: OK");
     return;
 }
