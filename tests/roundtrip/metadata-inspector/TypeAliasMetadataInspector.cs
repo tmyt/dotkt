@@ -12,7 +12,7 @@ internal static class TypeAliasMetadataInspector
 {
     const string Carrier = "DotKt.Runtime.CompilerServices.KotlinTypeAliasAttribute";
 
-    public static void Verify(string dllPath, string klibPath)
+    public static void Verify(string dllPath, string klibPath, string? consumerPath = null)
     {
         using var stream = File.OpenRead(dllPath);
         using var pe = new PEReader(stream);
@@ -20,25 +20,8 @@ internal static class TypeAliasMetadataInspector
         var declarations = new List<JsonDocument>();
         try
         {
-            foreach (var handle in md.GetAssemblyDefinition().GetCustomAttributes())
-            {
-                var attribute = md.GetCustomAttribute(handle);
-                if (attribute.Constructor.Kind != HandleKind.MethodDefinition) continue;
-                var ctor = md.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor);
-                var owner = md.GetTypeDefinition(ctor.GetDeclaringType());
-                if (md.GetString(owner.Namespace) + "." + md.GetString(owner.Name) != Carrier) continue;
-                VerifyCarrierDefinition(md, owner);
-                Require(md.GetString(ctor.Name) == ".ctor", "carrier constructor is not a .ctor");
-                var blob = md.GetBlobReader(attribute.Value);
-                Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == BirCarrier.MessagePackV1, "wrong carrier envelope");
-                var length = blob.ReadInt32();
-                Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid carrier byte[] length");
-                var source = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, blob.ReadBytes(length),
-                    SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
-                // Test-only inspection: compare semantic facts with saved KLIB metadata.
+            foreach (var source in ReadDeclarations(md))
                 declarations.Add(JsonDocument.Parse(BirCarrier.EncodeBody(BirCarrier.JsonV1, source, SourceMetadataJson.Write)));
-                Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected carrier named arguments");
-            }
 
             using var archive = ZipFile.OpenRead(klibPath);
             var fragments = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
@@ -116,6 +99,18 @@ internal static class TypeAliasMetadataInspector
                     "type-use annotation UTF-16 units changed");
                 Require(regular.Strings.String[Alias("Utf16Values").TypeParameter.Single().TypeParameterAnnotation
                     .Single().Argument.Single().Value.StringValue] == "\udc00", "parameter annotation UTF-16 units changed");
+                if (consumerPath != null)
+                {
+                    using var consumerStream = File.OpenRead(consumerPath);
+                    using var consumer = new PEReader(consumerStream);
+                    var imported = ReadDeclarations(consumer.GetMetadataReader()).Single(alias =>
+                        alias.PackageName == "roundtriptests.aliases" && alias.Name == "ImportedUtf16Text");
+                    var importedValue = imported.ExpandedType.Annotations.Single(annotation =>
+                        annotation.Classifier.PackageName == "roundtrip.aliases" && annotation.Classifier.Name == "AliasTextMark")
+                        .Arguments.Single(argument => argument.Name == "value").Value;
+                    Require(importedValue is SourceAnnotationValue.StringValue { Value: "\ud800" },
+                        "consumer metadata lost the imported annotation's original UTF-16 unit");
+                }
                 Require(!md.TypeDefinitions.Select(md.GetTypeDefinition).Any(type =>
                     md.GetString(type.Namespace) == "roundtrip.aliases" && md.GetString(type.Name) == "TypeAliasesKt"),
                     "alias-only file acquired a CLR facade");
@@ -136,6 +131,28 @@ internal static class TypeAliasMetadataInspector
             }
         }
         finally { foreach (var declaration in declarations) declaration.Dispose(); }
+    }
+
+    static IEnumerable<SourceTypeAlias> ReadDeclarations(MetadataReader md)
+    {
+        foreach (var handle in md.GetAssemblyDefinition().GetCustomAttributes())
+        {
+            var attribute = md.GetCustomAttribute(handle);
+            if (attribute.Constructor.Kind != HandleKind.MethodDefinition) continue;
+            var ctor = md.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor);
+            var owner = md.GetTypeDefinition(ctor.GetDeclaringType());
+            if (md.GetString(owner.Namespace) + "." + md.GetString(owner.Name) != Carrier) continue;
+            VerifyCarrierDefinition(md, owner);
+            Require(md.GetString(ctor.Name) == ".ctor", "carrier constructor is not a .ctor");
+            var blob = md.GetBlobReader(attribute.Value);
+            Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == BirCarrier.MessagePackV1, "wrong carrier envelope");
+            var length = blob.ReadInt32();
+            Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid carrier byte[] length");
+            var source = BirCarrier.DecodeBody(BirCarrier.MessagePackV1, blob.ReadBytes(length),
+                SourceMetadataJson.Read, SourceMetadataMessagePack.Read);
+            Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected carrier named arguments");
+            yield return source;
+        }
     }
 
     static void VerifyCarrierDefinition(MetadataReader md, TypeDefinition carrier)
