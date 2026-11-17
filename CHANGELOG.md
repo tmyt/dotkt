@@ -8,6 +8,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Keep opaque generic values in mutable local-function captures until a typed
   consumer requires conversion, preserving exact native ref locations and aliases.
 
+- Compute declaration identities in their own generic frame, independent of caller substitutions.
+
 - Preserve every UTF-16 code unit in typealias annotation Strings across DLL-to-KLIB imports.
 
 - Preserve source-erased checks for non-reified type-parameter casts without

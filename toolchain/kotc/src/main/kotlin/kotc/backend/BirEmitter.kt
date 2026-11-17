@@ -135,8 +135,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		declarationIds.getOrPut(fn) {
-			(if (ownsInheritedAbstractDeclaration(fn)) null else carriedDeclarationId(fn)) ?: computeDeclarationId(fn, companionReceiverType(fn)
-				?: companionExtensionReceiverType(fn)?.let { birType(it) })
+			(if (ownsInheritedAbstractDeclaration(fn)) null else carriedDeclarationId(fn)) ?: inMemberDeclarationFrame(fn) {
+				// Cache the declaration's signature, never its first caller's substituted view.
+				computeDeclarationId(fn, companionReceiverType(fn)
+					?: companionExtensionReceiverType(fn)?.let { birType(it) })
+			}
 		}
 
 	private fun carriedDeclarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
