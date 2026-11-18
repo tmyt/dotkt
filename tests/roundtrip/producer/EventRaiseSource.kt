@@ -5,6 +5,21 @@ import kotlin.clr.ClrEventPolicy
 import kotlin.clr.clrEvent
 import roundtrip.eventoverride.RecordingEventPolicy
 
+class WidePublisher {
+    val Notify: ClrEvent<(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Unit> by clrEvent()
+    val Query: ClrEvent<(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int> by clrEvent()
+
+    fun localRaiseTotal(): Int {
+        var total = 0
+        val token = Notify.subscribe { first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last -> total += first + last }
+        fun fire() { Notify(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) }
+        fire()
+        token.close()
+        fire()
+        return total
+    }
+}
+
 open class Publisher<A, B> {
     val Changed: ClrEvent<System.Action1<B>> by clrEvent()
 }
