@@ -93,7 +93,7 @@ static partial class FBoundStarProjectionErasure
 
         var surface = PrepareCarrierSurface(preparation, plan, refs, values);
         var projection = CarrierProjectionContext.ForSource(surface.Demand, refs);
-        var realization = new CarrierRealizationContext(surface, projection, refs, surface.Demand.ReservedNames);
+        var realization = new CarrierRealizationContext(surface, projection, refs);
         var constructionState = new SourceRewriteState(realization, (_, _) => null);
         var projectedMarker = new TypeNode.Fqn("Marker", new TypeNode[] { new TypeNode.Star() });
         var requiredConstruction = new TypeNode.Fqn("Owner", new TypeNode[] {

@@ -10,7 +10,7 @@ static partial class FBoundStarProjectionErasure
         var bindings = PrepareCurrentDeclarations(new[] { root }, values, out var preparation);
         var proofs = PrepareNativeProofs(bindings, references, values);
         var surface = PrepareCarrierSurface(preparation, proofs, references, values);
-        return new(surface, CarrierProjectionContext.ForSource(surface.Demand, references), references, surface.Demand.ReservedNames);
+        return new(surface, CarrierProjectionContext.ForSource(surface.Demand, references), references);
     }
 
     internal static void SynthesisSourceSelfTest()

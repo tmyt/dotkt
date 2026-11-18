@@ -92,7 +92,7 @@ static partial class OwnerConstrainedMethodLowering
             var demand = FBoundStarProjectionErasure.PrepareCarrierDemand(preparation, proofs, refs, values);
             var surface = new FBoundStarProjectionErasure.CarrierSurfacePreparation(demand, signatures);
             var context = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
-                FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(demand, refs), refs, demand.ReservedNames);
+                FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(demand, refs), refs);
             ConfigurePreparedMethodsSource(bindings, refs);
             ownerBound.TypeParams.Value[0].Constraints = new TypeNode[] { ownerVariable };
             ApplySource(context, FBoundStarProjectionErasure.ContainsOwnerTv, type => type, _ => null);

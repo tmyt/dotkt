@@ -19,7 +19,7 @@ static partial class FBoundStarProjectionErasure
         internal NativeProofPlan NativeProofs { get; }
         internal GenericRepresentationPolicy Values { get; }
         internal IReadOnlyDictionary<string, Owner> Owners => owners;
-        internal HashSet<string> ReservedNames => usedNames;
+        internal IReadOnlySet<string> ReservedNames => usedNames;
         internal IReadOnlyDictionary<string, (TypeNode.Fqn spec, bool isInterface)[]> BaseContracts { get; }
 
         internal CarrierDemandPlan(CurrentDeclarationPreparation preparation, NativeProofPlan nativeProofs,
@@ -61,6 +61,13 @@ static partial class FBoundStarProjectionErasure
                     runtime && field == "type" || field is "constraints" or ErasedInnerConstraintKey));
                 node.VisitChildren(MarkSource);
             }
+        }
+
+        internal string AllocateReferenceContractName(string name)
+        {
+            var allocated = name;
+            for (var suffix = 1; !usedNames.Add(allocated); suffix++) allocated = name + "$" + suffix;
+            return allocated;
         }
 
         // End the same source authority without exporting a second graph.
