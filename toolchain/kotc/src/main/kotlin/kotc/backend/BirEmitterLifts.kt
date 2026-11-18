@@ -1350,8 +1350,7 @@ internal fun BirEmitter.kPropertyStub(name: String): BirNew =
  * property in its bound/unbound forms — including generic and referenced-assembly accessors. A MEMBER extension
  * property with both dispatch and extension receivers (`KProperty2`) is a clean deferral. `@ClrField` member
  * references use the backing-field path below. The compiler-synthesized KProperty argument of a
- * delegate's getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
- * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
+ * delegate's getValue/setValue/provideDelegate needs only the metadata stub, selected by its IR origin.
  */
 internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 	if (node.origin == IrStatementOrigin.PROPERTY_REFERENCE_FOR_DELEGATE)

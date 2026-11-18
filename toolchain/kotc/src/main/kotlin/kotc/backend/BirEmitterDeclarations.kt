@@ -1545,12 +1545,12 @@ internal fun BirEmitter.sourceTopLevelAccessor(acc: IrSimpleFunction, propName: 
 	val extRecv = extensionReceiverParam(acc)
 	val extRecvName = extRecv?.let { extensionReceiverSlotName(acc) }
 	if (extRecv != null) selfSubst[extRecv] = BirLocal(extRecvName!!)
-	val savedDelegatedAccessor = activeDelegatedAccessor
-	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
+	val savedDelegateType = activeDelegateType
+	activeDelegateType = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }?.backingField?.type
 	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION, gated on the accessor's real IR visibility.
 	val bodyStmts = accessorBodyStmts(acc)
 	val body = preconditionChecks(acc) + bodyStmts
-	activeDelegatedAccessor = savedDelegatedAccessor
+	activeDelegateType = savedDelegateType
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { BirParameter(extRecvName!!, birType(it.type), mods = BirModifiers(isExtensionReceiver = true)) }
 	val ps = listOfNotNull(selfParam) + sourceParameters(acc.parameters)
@@ -1585,8 +1585,8 @@ internal fun BirEmitter.sourceAccessor(acc: IrSimpleFunction, propName: String, 
 	val extRecvName = extRecv?.let { extensionReceiverSlotName(acc) }
 	if (extRecv != null) selfSubst[extRecv] = BirLocal(extRecvName!!)
 	val selfParam = extRecv?.let { BirParameter(extRecvName!!, birType(it.type), mods = BirModifiers(isExtensionReceiver = true)) }
-	val savedDelegatedAccessor = activeDelegatedAccessor
-	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
+	val savedDelegateType = activeDelegateType
+	activeDelegateType = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }?.backingField?.type
 	// [isValueParameter], not `Regular`: `context(c: Ctx) val C.p get() = c.n` carries its context parameter as an
 	// ordinary slot here exactly as the top-level accessor path does, so the accessor's arity matches its call sites'.
 	// The `mods.context` marker rides with it for the cross-module restore ([KotlinContextParameter]). Kept as this
@@ -1607,7 +1607,7 @@ internal fun BirEmitter.sourceAccessor(acc: IrSimpleFunction, propName: String, 
 	// which a precondition can run, and its BIR body must remain empty all the way to ilemit.
 	val bodyStmts = if (isAbstract) emptyList() else accessorBodyStmts(acc)
 	val body = if (isAbstract) emptyList() else preconditionChecks(acc) + bodyStmts
-	activeDelegatedAccessor = savedDelegatedAccessor
+	activeDelegateType = savedDelegateType
 	activeSemanticOwner = savedSemanticOwner
 	activeSemanticOwnerDeclaration = savedSemanticDeclaration
 	if (extRecv != null) selfSubst.remove(extRecv)

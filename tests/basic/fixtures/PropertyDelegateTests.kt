@@ -32,6 +32,30 @@ class PropertyDelegateUpperDelegate(private var v: String) {
     operator fun setValue(thisRef: Any?, property: KProperty<*>, value: String) { v = value }
 }
 
+private interface PropertyDelegateState<out T> { val value: T }
+private class PropertyDelegateCell<T>(override var value: T) : PropertyDelegateState<T>
+@Suppress("NOTHING_TO_INLINE")
+private inline operator fun <T> PropertyDelegateState<T>.getValue(thisRef: Any?, property: KProperty<*>): T {
+    check(thisRef == null && property.name == "items")
+    return value
+}
+private class PropertyDelegateWriter {
+    var writes = 0
+    operator fun <T> PropertyDelegateCell<T>.setValue(thisRef: Any?, property: KProperty<*>, value: T) {
+        check(thisRef == null && property.name == "items")
+        writes++
+        this.value = value
+    }
+    fun exercise() {
+        val cell = PropertyDelegateCell(listOf("first"))
+        var items by cell
+        check(items.single() == "first")
+        var evaluations = 0
+        items = listOf((++evaluations).toString(), "second")
+        check(writes == 1 && evaluations == 1 && cell.value === items && items.size == 2)
+    }
+}
+
 // ---- il-lateinitref : callable reference to a PUBLIC lateinit var --------------------------------------------
 class PropertyDelegateLirBox { lateinit var name: String }
 
@@ -102,6 +126,7 @@ class PropertyDelegateTests {
         assertEquals("HI", upper)              // HI
         upper = "world"
         assertEquals("WORLD", upper)           // WORLD
+        PropertyDelegateWriter().exercise()
     }
 
     @TestAttribute

@@ -14,6 +14,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   within an assembly, including when a method or getter narrows its return type.
 - Inline collection operations such as `mapValues` can enumerate maps whose
   values contain star projections.
+- Local delegated properties can use extension `getValue` and `setValue`
+  operators, including generic operators declared on a supertype of the delegate.
 
 - Lambdas declared in an enum's companion object now compile and run without
   adding methods to the CLR enum itself.
