@@ -39,7 +39,12 @@ static partial class KotlinCollectionSlotSynthesis
             TypeParams = new[] { new BirTypeParameter { Name = "Element" } }, Methods = new[] { contains, all, indexed } };
         var originals = queryOwner.Methods.Value;
         var omitted = new BirClassDefinition { Name = "NoMethods", Kind = "class", Methods = OptionalField<BirFunctionDeclaration[]>.Null };
-        var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { queryOwner, omitted } };
+        BirInterfaceDefinition BooleanCarrier(string owner, params string[] members) => new() {
+            Name = owner, Kind = "interface", Methods = members.Select(member => new BirFunctionDeclaration {
+                Name = member, Ret = boolean, Abstract = true }).ToArray() };
+        var collectionCarrier = BooleanCarrier(CollectionDefaultSlots, "dotktContains", "dotktContainsAll");
+        var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { queryOwner, omitted, collectionCarrier,
+            BooleanCarrier(ListSlots, "dotktAddAllAt") } };
         var types = file.Types.Value;
         var publications = 0;
         ApplyAll(new[] { file }, refs, _ => false, null, (owner, appended) => {
@@ -104,7 +109,7 @@ static partial class KotlinCollectionSlotSynthesis
                 new BirTypeParameter { Name = "Outer" }, new BirTypeParameter { Name = "Element" } }, Methods = new[] { inheritedMethod } };
         var child = new BirClassDefinition { Name = "Child", Kind = "class", Base = new TypeNode.Fqn("Parent", new[] { text, integer }),
             Methods = Array.Empty<BirFunctionDeclaration>() };
-        ApplyAll(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] { child, baseType } } }, refs, _ => false, null);
+        ApplyAll(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] { child, baseType, collectionCarrier } } }, refs, _ => false, null);
         Require(child.Methods.Value.Length == 0 && baseType.Methods.Value.Length == 2,
             "a not-yet-visited local base no longer supplies its exact inherited slot");
 
@@ -112,7 +117,7 @@ static partial class KotlinCollectionSlotSynthesis
         var row = new SourceTarget(new TypeNode.Fqn("ReferenceOwner", new[] { text }), SelectedMethodHeader.FromSource(selected), true,
             selected.Overrides.Value, new TypeNode[] { new TypeNode.Tv("type", 0) }, "reference-exact-id", new TypeNode[] { new TypeNode.Nullable(text) });
         var closedBridge = SourceBridge(new SourceDefinition(queryOwner), Slots.Single(slot => slot.SlotMember == "dotktContains"), row,
-            new Dictionary<string, SourceDefinition>(), refs, null);
+            new Dictionary<string, SourceDefinition> { [CollectionDefaultSlots] = new(collectionCarrier) }, refs, null);
         var closedCall = Forward(closedBridge);
         var closedGuard = (BirConditional)((BirConditional)((BirReturn)closedBridge.Body.Value[0]).Value.Value).Cond.Value;
         Require(closedCall.CalleeParams.Value.Single() == new TypeNode.Tv("type", 0) && closedCall.DynRet.Value == boolean

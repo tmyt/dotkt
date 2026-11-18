@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Collection overrides that always throw can declare `Nothing` and still be
+  called through the Kotlin collection interface.
+
 - Named arguments in `this(...)` and `super(...)` constructor delegation now evaluate in Kotlin source order.
 - Kotlin callers in another assembly see a function's source signature and
   annotations when an IR compiler plugin adds hidden parameters.

@@ -181,6 +181,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    // These are the uniquely named methods of the compiler-owned collection slot interfaces.
+    internal TypeNode CollectionSlotReturn(string owner, string member) =>
+        _membersByOwner.TryGetValue(owner, out var members)
+            ? members.SingleOrDefault(method => !method.IsStatic && method.Name == member)?.ReturnTypeNode
+            : null;
+
     internal bool IsGenericScalarReturn(string id) =>
         _declarationById.TryGetValue(id, out var binding) && binding.KotlinReturnType is TypeNode.Tv
         && binding.ReturnTypeNode is TypeNode.Fqn { Name: "object" or "System.Object" };
