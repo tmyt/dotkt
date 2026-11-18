@@ -1855,7 +1855,9 @@ continuation genuinely IS `Continuation<Any>`, a resume result genuinely IS `Res
 
 `kotlin.Nothing` has no CLR analog — it is the type of an expression that never produces a value — so a
 `fun f(): Nothing` is emitted as a method returning `object`, with `[KotlinNothing]` on the return so a re-consuming
-DotKt module recovers the Kotlin type (§10). Nothing on the CLR side records "this never returns", which matters
+DotKt module recovers the Kotlin classifier (§10). The return slot's source type and nullability still
+distinguish `Nothing?` from `Nothing`: a consumer can override a `Nothing?` return and execution can
+continue after the call returns null. Nothing on the CLR side records "this never returns", which matters
 wherever such a call sits in a **value** position:
 
 ```kotlin

@@ -81,6 +81,7 @@ import roundtrip.suspendvalues.invokeWideSuspend23
 import roundtrip.suspendvalues.makeBlock
 import roundtrip.suspendvalues.storedBlock
 import roundtrip.suspendnothing.fail as suspendFail
+import roundtrip.suspendnothing.none as suspendNone
 
 private class ProtectedGenericCompanionConsumer : ProtectedGenericCompanionHost<Int>() {
     fun revealProtectedGenericCompanion(): Int = marker()
@@ -369,7 +370,11 @@ class RoundtripSurfaceTests {
 
     @TestAttribute
     fun suspendNothingReturnRoundTrips() {
-        val value: Int = runCrossModuleSuspend { if (true) 7 else suspendFail() }
+        val value: Int = runCrossModuleSuspend {
+            val result: Nothing? = suspendNone()
+            ClassicAssert.IsNull(result)
+            if (true) 7 else suspendFail()
+        }
         ClassicAssert.AreEqual(7, value)
     }
 
