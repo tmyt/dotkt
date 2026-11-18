@@ -21,6 +21,14 @@ internal static class CharSequenceSupertypeInspector
         var fragment = fragments.Single(fragment => Name(fragment, fragment.Package.PackageFqName) == Package);
         var character = Fqn("kotlin.CharSequence");
         var nullableCharacter = new JsonObject { ["t"] = "nullable", ["of"] = character.DeepClone() };
+        var reader = md.TypeDefinitions.Select(md.GetTypeDefinition).Single(type =>
+            md.GetString(type.Namespace) == Package && md.GetString(type.Name).Split('`')[0] == "TextReader");
+        var sourceParameter = reader.GetGenericParameters().Select(md.GetGenericParameter)
+            .Single(parameter => md.GetString(parameter.Name) == "T");
+        Require(sourceParameter.GetConstraints().Count == 0,
+            "native string witnesses cannot implement a CLR CharSequence constraint");
+        var importedReader = fragment.Class.Single(klass => Name(fragment, klass.FqName) == Package + ".TextReader");
+        VerifyType(fragment, importedReader.TypeParameter.Single().UpperBound.Single(), nullableCharacter, false);
         foreach (var (typeName, edge, isBase) in new[] {
             ("Text", Fqn(Package + ".Slot", character.DeepClone()), false),
             ("NullableText", Fqn(Package + ".Slot", nullableCharacter), false),

@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Generic `T : CharSequence` calls accept native strings even in assemblies with
+  a custom CharSequence implementation, without losing the Kotlin upper bound.
+
 - Locals introduced by a Kotlin default argument from another DLL no longer overwrite
   caller storage when the default is evaluated.
 - Kotlin events with function handlers taking 17–22 arguments now use the same

@@ -37,6 +37,7 @@ class CharSequenceSupertypeTests {
         check(base.value.toString() == "base")
         check(DerivedText().value.toString() == "base")
         check(DerivedText("argument").value.toString() == "argument")
+        check(TextReader("four").lengthOrZero() == 4 && TextReader<String?>(null).lengthOrZero() == 0)
     }
 
     @TestAttribute

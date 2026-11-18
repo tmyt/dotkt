@@ -7,6 +7,23 @@ static partial class StringCharSequenceBridge
     internal sealed record SourceBridgeResult(IReadOnlyList<BirClassDefinition> AppendedTypes,
         IReadOnlyList<ClosureSynthesis.MaterializedOccurrence> DelegateAdapters);
 
+    // A Kotlin CharSequence witness can be either a CLR string or an implementer of
+    // the Kotlin interface. Neither is a valid CLR constraint on their union.
+    internal static BirFileDeclaration ProjectGenericBounds(BirFileDeclaration file) =>
+        (BirFileDeclaration)SourceConstraintErasure.Apply(file, ProjectBounds, includeEmptyBounds: false);
+
+    static (TypeNode[] Retained, bool Changed) ProjectBounds(TypeNode[] bounds)
+    {
+        var physical = bounds.Where(bound => !IsGenericCharSequenceBound(bound)).ToArray();
+        return (physical, physical.Length != bounds.Length);
+    }
+
+    internal static bool IsGenericCharSequenceBound(TypeNode bound) => bound switch {
+        TypeNode.Fqn { Name: "kotlin.CharSequence" or CharSeq } => true,
+        TypeNode.Nullable optional => IsGenericCharSequenceBound(optional.Of),
+        _ => false,
+    };
+
     internal static IReadOnlyList<BirClassDefinition> ApplyMaterializedReturns(
         BirFileDeclaration file, BirFunctionDeclaration method)
     {
@@ -133,37 +150,51 @@ static partial class StringCharSequenceBridge
     {
         switch (node)
         {
+            case BirNewSuspendLambda suspend when suspend.TypeParams.HasValue:
+                // An inline default may have materialized a donor frame after the
+                // original declarations were projected. These are physical helper slots.
+                foreach (var parameter in suspend.TypeParams.Value)
+                    if (parameter.Constraints.OrDefault() is { } bounds && ProjectBounds(bounds) is (var retained, true))
+                        parameter.Constraints = retained;
+                break;
+            case BirArraySet set when IsScalarCharSequence(set.Elem.OrDefault()) && set.Value.HasValue:
+                set.Value = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(set.Value.Value, env, set.Elem.Value));
+                break;
+            case BirNewArray array when IsScalarCharSequence(array.Elem.OrDefault()) && array.Elems.HasValue:
+                for (var i = 0; i < array.Elems.Value.Length; i++)
+                    array.Elems.Value[i] = SourceCoerceCharSeqArg(array.Elems.Value[i], env, array.Elem.Value);
+                break;
             case BirCallStatic call:
                 SourceWrapCallArgs(call, env, materialized); break;
             case BirCallInstance call:
                 if (call.OwnerType.OrDefault() is TypeNode.Fqn { Name: CharSeq } && call.Recv.HasValue)
-                    call.Recv = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(call.Recv.Value, env, true));
+                    call.Recv = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(call.Recv.Value, env, call.OwnerType.Value));
                 SourceWrapCallArgs(call, env, materialized); break;
             case BirConditional conditional:
                 if (conditional.Type.OrDefault() is TypeNode.Fqn { Name: CharSeq }
                     or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } })
-                    SourceCoerceCharSeqArg(conditional, env, conditional.Type.Value is TypeNode.Fqn);
+                    SourceCoerceCharSeqArg(conditional, env, conditional.Type.Value);
                 break;
             case BirDelegateInvoke invoke:
                 if (invoke.FuncType.OrDefault() is TypeNode.Fn function && invoke.Args.HasValue
                     && invoke.Args.Value.Length == function.DelegateParams.Length)
                     for (var index = 0; index < invoke.Args.Value.Length; index++)
                         if (IsCharSeqT(function.DelegateParams[index]) && invoke.Args.Value[index] is { } argument)
-                            invoke.Args.Value[index] = SourceCoerceCharSeqArg(argument, env, function.DelegateParams[index] is TypeNode.Fqn);
+                            invoke.Args.Value[index] = SourceCoerceCharSeqArg(argument, env, function.DelegateParams[index]);
                 break;
             case BirNewDelegate or BirNewClosure:
                 SourceSyncDelegateFuncRet(node); break;
             case BirNew construction:
                 SourceWrapNewCtorArgs(construction, env); break;
             case BirVariable variable when variable.Type.HasValue && IsCharSeqT(variable.Type.Value) && variable.Init.HasValue:
-                variable.Init = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(variable.Init.Value, env, variable.Type.Value is TypeNode.Fqn));
+                variable.Init = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(variable.Init.Value, env, variable.Type.Value));
                 break;
             case BirSetLocal store when store.Name.HasValue && store.Value.HasValue
                 && env.Vars.TryGetValue(store.Name.Value, out var target) && IsCharSeqT(target):
-                store.Value = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(store.Value.Value, env, target is TypeNode.Fqn));
+                store.Value = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(store.Value.Value, env, target));
                 break;
             case BirReturn statement when IsCharSeqT(env.RetType) && statement.Value.HasValue:
-                statement.Value = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(statement.Value.Value, env, env.RetType is TypeNode.Fqn));
+                statement.Value = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(statement.Value.Value, env, env.RetType));
                 break;
             case BirCast cast:
                 return SourceWrapCast(cast, env);
@@ -181,7 +212,7 @@ static partial class StringCharSequenceBridge
         {
             var type = SubstCallTvs(constructor.DelegationSig.Value[index], ownerArgs, Array.Empty<TypeNode>());
             if (IsCharSeqT(type) && arguments[index] is { } argument)
-                arguments[index] = SourceCoerceCharSeqArg(argument, env, type is TypeNode.Fqn);
+                arguments[index] = SourceCoerceCharSeqArg(argument, env, type);
         }
     }
 
@@ -205,7 +236,7 @@ static partial class StringCharSequenceBridge
             var target = SourceSpecializeCallType(open, call);
             if (IsCharSeqT(target))
             {
-                arguments[index] = SourceCoerceCharSeqArg(argument, env, target is TypeNode.Fqn);
+                arguments[index] = SourceCoerceCharSeqArg(argument, env, target);
                 continue;
             }
             // Test the open return before specializing, just as the existing
@@ -270,10 +301,13 @@ static partial class StringCharSequenceBridge
     // Nullable slots otherwise keep a conditional adapter/null result, with a
     // single spill for values which cannot be reread. Conditional value arms
     // are converted independently; an existing CharSequence view is unchanged.
-    static IBirExpression SourceCoerceCharSeqArg(IBirExpression value, SourceBridgeEnv env, bool nonNullSlot)
+    static IBirExpression SourceCoerceCharSeqArg(IBirExpression value, SourceBridgeEnv env, TypeNode target)
     {
-        var conversion = SelectCharSequenceConversion(BirGraphStaticType.Surface(value, env.Vars),
-            nonNullSlot, SourceIsNotNullAssertion(value), value is BirConditional);
+        var source = BirGraphStaticType.Surface(value, env.Vars);
+        if (IsScalarCharSequence(target) && source is (TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv }))
+            return SourceRestoreErasedCharSequence(value, target);
+        var conversion = SelectCharSequenceConversion(source,
+            target is TypeNode.Fqn, SourceIsNotNullAssertion(value), value is BirConditional);
         if (conversion == CharSequenceConversion.String) return SourceWrapAdapter(value);
         if (conversion == CharSequenceConversion.StringBuilder)
             return SourceWrapAdapter(new BirCallStatic { Owner = new TypeNode.Fqn("kotlin.LibraryKt"), Method = "toString",
@@ -282,8 +316,8 @@ static partial class StringCharSequenceBridge
             return SourceWrapAdapterNullable(value, env);
         if (conversion == CharSequenceConversion.Branches && value is BirConditional conditional)
         {
-            if (conditional.Then.HasValue) conditional.Then = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Then.Value, env, nonNullSlot));
-            if (conditional.Else.HasValue) conditional.Else = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Else.Value, env, nonNullSlot));
+            if (conditional.Then.HasValue) conditional.Then = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Then.Value, env, target));
+            if (conditional.Else.HasValue) conditional.Else = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Else.Value, env, target));
         }
         return value;
     }
