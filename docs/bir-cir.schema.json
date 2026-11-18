@@ -560,7 +560,8 @@
       "type": "object", "x-dotkt-model": { "name": "BirInheritedImplementation", "domain": "birCoreValues", "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string" }, "arity": { "type": "integer" },
-        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "sig": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "sig": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "declarationId": { "type": "string" }
       },
       "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
     },
@@ -2610,7 +2611,7 @@
               "ret": { "$ref": "#/$defs/type" },
               "implementation": {
                 "type": "object",
-                "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "enum": ["getter", "setter"] }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
+                "properties": { "declarationId": { "type": "string", "minLength": 1 }, "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "enum": ["getter", "setter"] }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
                 "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
               }
             },
@@ -2669,7 +2670,7 @@
               "ret": { "$ref": "#/$defs/type" },
               "implementation": {
                 "type": "object",
-                "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "const": "method" }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
+                "properties": { "declarationId": { "type": "string", "minLength": 1 }, "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "const": "method" }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
                 "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
               }
             },
@@ -2776,6 +2777,7 @@
           "type": "object",
           "$comment": "BIR-only concrete Kotlin declaration selected by frontend fake-override resolution. Presence means this fake override inherits an implementation; bir2cir consumes the fact directly instead of inspecting ancestor bodies or CLR metadata.",
           "properties": {
+            "declarationId": { "type": "string", "minLength": 1 },
             "owner": { "$ref": "#/$defs/type" },
             "member": { "type": "string" },
             "kind": { "enum": ["method", "getter", "setter"] },

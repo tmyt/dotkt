@@ -509,8 +509,10 @@ sealed partial class Emitter
             }
             Type Close(Type modifier) => ifaceType.IsGenericType
                 ? SubstituteIfaceArgs(modifier, ifaceType.GetGenericArguments()) : modifier;
-            return ModifiersEqual(required, parameter.GetRequiredCustomModifiers().Select(Close).ToArray())
-                && ModifiersEqual(optional, parameter.GetOptionalCustomModifiers().Select(Close).ToArray())
+            // A MethodImpl descriptor uses ordinary CIR types (including primitive shorthands)
+            // for its modifiers as well as its payload; a scalar memberRef uses metadata names.
+            return ModifiersEqual(required, parameter.GetRequiredCustomModifiers().Select(Close).ToArray(), MapType)
+                && ModifiersEqual(optional, parameter.GetOptionalCustomModifiers().Select(Close).ToArray(), MapType)
                 && GenericParamMatches(described, value, ownerArgs: null);
         }
         foreach (var method in ti.Def.DeclaredMethods)

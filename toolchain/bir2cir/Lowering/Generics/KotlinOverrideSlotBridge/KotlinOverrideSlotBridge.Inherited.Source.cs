@@ -96,7 +96,7 @@ static partial class KotlinOverrideSlotBridge
 
     sealed record InheritedFact(SelectedMethodHeader Header, TypeNode ImplementationOwner, string ImplementationMember,
         int ImplementationArity, BirTypeParameter[] ImplementationParameters, SourceBoundsSnapshot ImplementationBounds,
-        BirGraphValue Source);
+        BirGraphValue Source, string DeclarationId);
 
     static InheritedFact InheritedSourceFact(BirGraphValue fact)
     {
@@ -125,7 +125,7 @@ static partial class KotlinOverrideSlotBridge
         }
         return implementation == null ? null : new(header, implementation.Owner.OrDefault(), implementation.Member.OrDefault(),
             implementation.Arity.HasValue ? implementation.Arity.Value : -1, implementation.TypeParams.OrDefault(),
-            implementation.MethodTypeParameterBoundsPre.OrDefault(), fact);
+            implementation.MethodTypeParameterBoundsPre.OrDefault(), fact, implementation.DeclarationId.OrDefault());
         static SelectedParameterHeader[] DefaultParameters(TypeNode[] types) => types.Select((type, index) =>
             new SelectedParameterHeader { Name = "p" + index, Type = type }).ToArray();
     }
@@ -237,7 +237,7 @@ static partial class KotlinOverrideSlotBridge
                     {
                         if (!refs.TrySelectedOverrideDeclarationByShape(spec.Name, member, accessor, arity, factParams, args,
                             MethodTypeParameterShapeKey(fact.ImplementationParameters, args, refs.PhysicalConstraintType),
-                            true, out source, false, null)) continue;
+                            true, out source, false, fact.DeclarationId)) continue;
                         logical = SupertypeGraph.SubstOwnerTvs(source.Return, args);
                     }
                     else
@@ -248,9 +248,10 @@ static partial class KotlinOverrideSlotBridge
                         var semanticParameters = SemanticParameters(fact.Header.TypeParams.OrDefault(), fact.Header.MethodTypeParameterBoundsPre.OrDefault()?.Bounds, null);
                         var found = accessor != null
                             ? refs.TrySelectedSourceOverrideDeclaration(spec.Name, member, fact.Header.TypeParams.OrEmpty().Length,
-                                declarationParams, args, semanticParameters, selectedArgs, false, out source, accessor)
+                                declarationParams, args, semanticParameters, selectedArgs, false, out source, accessor, fact.DeclarationId)
                             : refs.TrySelectedSourceMethodDeclaration(spec.Name, member, fact.Header.TypeParams.OrEmpty().Length,
-                                declarationParams, factReturn, args, semanticParameters, selectedArgs, out source);
+                                declarationParams, factReturn, args, semanticParameters, selectedArgs, out source,
+                                selectedDeclarationId: fact.DeclarationId);
                         if (!found) continue;
                     }
                     Publish(null, source.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),

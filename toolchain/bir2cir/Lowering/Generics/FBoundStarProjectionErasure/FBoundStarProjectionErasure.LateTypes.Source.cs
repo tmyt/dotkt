@@ -34,11 +34,13 @@ static partial class FBoundStarProjectionErasure
     }
 
     internal static CurrentPhysicalTypeView RewriteLateTypesSource(IReadOnlyList<BirFileDeclaration> roots,
-        CarrierRealizationContext realization, AliasDeclarationTransitions aliases = null)
+        CarrierRealizationContext realization, AliasDeclarationTransitions aliases = null,
+        IReadOnlySet<BirMethodImpl> selectedSlotOwners = null)
     {
         var current = RefreshCurrentPhysicalTypesSource(roots, realization);
         var projection = CarrierProjectionContext.ForCurrentSource(realization, current, aliases);
-        var state = new SourceRewriteState(realization, (_, _) => null, current, projection);
+        var state = new SourceRewriteState(realization, (_, _) => null, current, projection)
+            { SelectedSlotOwners = selectedSlotOwners };
         NormalizeRedundantProjections(roots, realization.References);
         foreach (var root in roots)
             RewriteSource(new BirGraphSlot(() => root, replacement => {

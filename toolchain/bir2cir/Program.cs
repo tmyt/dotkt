@@ -882,15 +882,19 @@ sealed class Pipeline
         // Compare completed suspend signatures against the existing carrier ABI.
         // This current physical view never re-captures source eligibility/demand.
         FBoundStarProjectionErasure.RewriteLateTypesSource(captured, carrierRealization, aliasTransitions);
+        // These descriptors are selected from the already-projected parent edges.
+        // The next pass may project value slots copied into a bridge, not re-close its parent.
+        var selectedSlotOwners = new HashSet<BirMethodImpl>(ReferenceEqualityComparer.Instance);
         KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
             valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
                 if (method != null) suspendTransitions.PublishMethods(file, owner, new[] { method });
                 if (descriptor != null) currentDeclarations.GetSource(descriptor);
+                if (descriptor is BirMethodImpl slot) selectedSlotOwners.Add(slot);
             });
         // Project star-bearing slots copied by final bridges through the same ABI.
         var finalCarrierTypes = FBoundStarProjectionErasure.RewriteLateTypesSource(
-            captured, carrierRealization, aliasTransitions);
+            captured, carrierRealization, aliasTransitions, selectedSlotOwners);
 
         // A bridge is a new declaration. Rehoming a lifted method below is an
         // owning-edge MOVE of the same declaration, never a birth/retirement.

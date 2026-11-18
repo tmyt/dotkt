@@ -22,7 +22,7 @@ static partial class InheritedClassInterfaceBridge
             MethodTypeParameterBoundsPre = new SourceBoundsSnapshot(new Dictionary<int, TypeNode[]> { [0] = new TypeNode[] { text } }),
             InheritedImplementation = new BirInheritedImplementation {
                 Owner = new TypeNode.Fqn("Base"), Member = "read", Sig = new TypeNode[] { methodVariable },
-                TypeParams = sourceParameters,
+                TypeParams = sourceParameters, DeclarationId = "source-read",
             },
             Overrides = new[] {
                 new BirOverride { Owner = new TypeNode.Fqn("Base"), Member = "read", DeclarationId = "source-read" },

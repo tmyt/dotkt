@@ -417,7 +417,7 @@ sealed partial class Emitter
         return TypeRefEquals(declared, actual);
     }
 
-    bool ModifiersEqual(List<TypeNode> declared, Type[] actual)
+    bool ModifiersEqual(List<TypeNode> declared, Type[] actual, Func<string, Type> resolveLeaf = null)
     {
         if (declared.Count != actual.Length) return false;
         // Reflection's two lists are SETS, so membership is what can be compared; order between them is not a
@@ -425,21 +425,21 @@ sealed partial class Emitter
         var remaining = actual.ToList();
         foreach (var want in declared)
         {
-            int index = remaining.FindIndex(a => TypeRefEquals(want, a));
+            int index = remaining.FindIndex(a => TypeRefEquals(want, a, resolveLeaf));
             if (index < 0) return false;
             remaining.RemoveAt(index);
         }
         return true;
     }
 
-    bool TypeRefEquals(TypeNode declared, Type actual)
+    bool TypeRefEquals(TypeNode declared, Type actual, Func<string, Type> resolveLeaf = null)
     {
         switch (declared)
         {
             case TypeNode.ByRef byRef:
-                return actual.IsByRef && TypeRefEquals(byRef.Of, actual.GetElementType());
+                return actual.IsByRef && TypeRefEquals(byRef.Of, actual.GetElementType(), resolveLeaf);
             case TypeNode.Ptr pointer:
-                return actual.IsPointer && TypeRefEquals(pointer.Of, actual.GetElementType());
+                return actual.IsPointer && TypeRefEquals(pointer.Of, actual.GetElementType(), resolveLeaf);
             case TypeNode.Array array:
             {
                 if (!actual.IsArray) return false;
@@ -447,7 +447,7 @@ sealed partial class Emitter
                 int rank; try { rank = actual.GetArrayRank(); } catch { rank = 1; }
                 // `T[]` and `T[*]` are different types; the reference says which by whether it states a rank.
                 if (array.SzArray != sz || (!array.SzArray && array.Rank != rank)) return false;
-                return TypeRefEquals(array.Elem, actual.GetElementType());
+                return TypeRefEquals(array.Elem, actual.GetElementType(), resolveLeaf);
             }
             case TypeNode.Tv variable:
                 if (!actual.IsGenericParameter) return false;
@@ -457,7 +457,7 @@ sealed partial class Emitter
             case TypeNode.Nullable nullable:
                 return actual.IsGenericType && !actual.IsGenericTypeDefinition
                     && actual.GetGenericTypeDefinition()?.FullName == "System.Nullable`1"
-                    && TypeRefEquals(nullable.Of, actual.GetGenericArguments()[0]);
+                    && TypeRefEquals(nullable.Of, actual.GetGenericArguments()[0], resolveLeaf);
             case TypeNode.Fqn named:
             {
                 if (named.Args is { Length: > 0 })
@@ -468,10 +468,10 @@ sealed partial class Emitter
                     var arguments = actual.GetGenericArguments();
                     if (arguments.Length != named.Args.Length) return false;
                     for (int i = 0; i < arguments.Length; i++)
-                        if (!TypeRefEquals(named.Args[i], arguments[i])) return false;
+                        if (!TypeRefEquals(named.Args[i], arguments[i], resolveLeaf)) return false;
                     return true;
                 }
-                return NameEquals(named.Name, actual);
+                return NameEquals(named.Name, actual, resolveLeaf);
             }
             default:
                 throw new NotSupportedException(
@@ -483,7 +483,7 @@ sealed partial class Emitter
     // pinned to a stated assembly. That asymmetry is deliberate: a leaf's scope is whatever the universe
     // resolves it to, exactly as a TypeRef in real metadata resolves, and pinning leaves would make a
     // reference miss whenever a contract and its implementation disagree about which assembly owns a name.
-    bool NameEquals(string name, Type actual)
+    bool NameEquals(string name, Type actual, Func<string, Type> resolveLeaf = null)
     {
         if (actual == null) return false;
         // `void` is the ONE name inside a reference that is not the target's own spelling — the document's
@@ -496,7 +496,7 @@ sealed partial class Emitter
         // Accepting on the name alone would route around that refusal and let a member whose parameter comes
         // from one assembly match a reference meaning the other.
         Type resolved;
-        try { resolved = _target.ResolveType(name); } catch { return false; }
+        try { resolved = resolveLeaf == null ? _target.ResolveType(name) : resolveLeaf(name); } catch { return false; }
         return ReferenceEquals(resolved, actual) || resolved == actual;
     }
 

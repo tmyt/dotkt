@@ -2,6 +2,11 @@ package roundtrip.inheritedsuspendcovariance
 
 import kotlin.coroutines.*
 
+open class OverloadedBase {
+    suspend fun <M> pick(x: M): String = "generic"
+    suspend fun <M> pick(x: String): String = x
+}
+
 open class Value(val text: String)
 class Narrow(text: String) : Value(text)
 class Gate {

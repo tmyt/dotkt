@@ -8399,8 +8399,9 @@ internal static class BirGraphMessagePack
         OptionalField<int> field3 = default;
         OptionalField<BirTypeParameter[]> field4 = default;
         OptionalField<TypeNode[]> field5 = default;
-        OptionalField<SourceTypeFacts> field6 = default;
-        OptionalField<SourceBoundsSnapshot> field7 = default;
+        OptionalField<string> field6 = default;
+        OptionalField<SourceTypeFacts> field7 = default;
+        OptionalField<SourceBoundsSnapshot> field8 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -8429,13 +8430,17 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 5);
                     field5 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
-                case "kotlinSupertypesPre":
+                case "declarationId":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "kotlinSupertypesPre":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "methodTypeParameterBoundsPre":
-                    Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, 1UL << 8);
+                    field8 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -8449,15 +8454,16 @@ internal static class BirGraphMessagePack
             Arity = field3,
             TypeParams = field4,
             Sig = field5,
-            KotlinSupertypesPre = field6,
-            MethodTypeParameterBoundsPre = field7,
+            DeclarationId = field6,
+            KotlinSupertypesPre = field7,
+            MethodTypeParameterBoundsPre = field8,
         };
     }
 
     internal static void WriteBirInheritedImplementation(ref MessagePackWriter writer, BirInheritedImplementation value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0));
         if (value.Owner.IsPresent)
         {
             writer.Write("owner");
@@ -8520,6 +8526,15 @@ internal static class BirGraphMessagePack
                 {
                     CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.DeclarationId.IsPresent)
+        {
+            writer.Write("declarationId");
+            if (value.DeclarationId.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.DeclarationId.Value);
             }
         }
         if (value.KotlinSupertypesPre.IsPresent)

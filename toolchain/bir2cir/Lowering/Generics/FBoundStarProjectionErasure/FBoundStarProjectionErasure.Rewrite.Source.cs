@@ -148,6 +148,9 @@ static partial class FBoundStarProjectionErasure
         if (!typesOnly) RewriteSourceRuntimeClassifier(node, scope.ThisType, state);
         var positions = new Dictionary<string, int>(StringComparer.Ordinal);
         node.RewriteOwnFieldsInPlace((field, _, type) => {
+            // A selected MethodImpl names the exact constructed parent, not a value to erase.
+            if (field == "owner" && node is BirMethodImpl slotOwner && state.SelectedSlotOwners?.Contains(slotOwner) == true)
+                return type;
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
             var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases);

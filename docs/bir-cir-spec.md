@@ -542,7 +542,10 @@ Fake-override resolution remains a frontend decision. kotc records a concrete se
 fake override as `inheritedImplementation`, and records each default property accessor inherited by a class in
 `inheritedDefaultAccessors` together with its class-frame Kotlin signature. These selected identities include the
 target declaration's method `typeParams`, because equal name/arity/parameter/return shapes may still denote distinct
-frontend declarations when their generic constraints differ. The ordinary-function twin is
+frontend declarations when their generic constraints differ. When the implementation has a Kotlin
+`declarationId`, it names the selected declaration independently of how its argument types are
+represented at the use site. Raw CLR methods without a Kotlin ID retain their exact signature lookup.
+The ordinary-function twin is
 `inheritedDefaultMethods`; it covers a DIM whose physical CLR name collides with an unrelated virtual class method. bir2cir consumes those facts when eliding
 the non-declaration and, only if the CLR shape collides with an unrelated ordinary virtual method, allocating a class-level
 MethodImpl bridge. It may resolve the stated Kotlin declaration to a CLR slot, but must not rediscover whether a

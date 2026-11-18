@@ -1345,7 +1345,7 @@ internal object BirMessagePack {
 
     private fun writeBirInheritedImplementation(value: BirInheritedImplementation, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(5 + (if (value.sig == null) 0 else 1))
+        packer.packMapHeader(5 + (if (value.sig == null) 0 else 1) + (if (value.declarationId == null) 0 else 1))
         packer.packString("owner")
         writeType(value.owner, packer, depth + 1)
         packer.packString("member")
@@ -1367,6 +1367,10 @@ internal object BirMessagePack {
             for (item0 in child) {
                 writeType(item0, packer, depth + 1 + 1)
             }
+        }
+        value.declarationId?.let { child ->
+            packer.packString("declarationId")
+            MessagePackText.write(packer, child)
         }
     }
 
