@@ -24,3 +24,7 @@ dotnet build App.ktproj --nologo
 # The metadata and runtime checks alone cannot distinguish compiling against the .NET 10 ref pack.
 grep -F '/ref/net11.0/System.Runtime.dll' obj/Debug/net11.0/dotkt-bir2cir.rsp >/dev/null
 dotnet bin/Debug/net11.0/App.dll
+if dotnet msbuild App.ktproj -t:DotKtValidateTargetFramework -p:TargetFramework=net9.0 > unsupported.log 2>&1; then
+    echo 'Unexpectedly accepted net9.0' >&2; exit 1
+fi
+grep -F 'DOTKTSDK001' unsupported.log

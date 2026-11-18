@@ -143,22 +143,24 @@ fail() { # <name> <reason> [detail]
 # Strip the compiler's own chatter from a run's stdout so the assert compares only program output.
 run_out() { grep -vE 'kotlin/clr:|duplicate source root' || true; }
 
-# run_project <dir> <stderr-logfile> [timeout] — build+run a packaged project in <dir>; echo its noise-filtered program
+# run_project <dir> <stderr-logfile> [timeout] [CLI working directory] — build+run a packaged project; echo its noise-filtered program
 # stdout; RETURN the run's exit status (0 iff build AND execution succeeded). Build/restore output is kept out of
 # the captured program stdout: on a clean GitHub runner NuGet can print certificate and package-install messages
 # to stdout even at quiet verbosity. Status and stdout are captured independently (issue #163), so a project
 # which prints the expected text and THEN throws / returns non-zero remains rejected.
 run_project() { # <dir> <stderr-logfile> [timeout]
-	local dir="$1" log="$2" run_timeout="${3:-}" build_log="${2%.err}.build.log"
-	if ! (cd "$dir" && dotnet build -v q --nologo >"$build_log" 2>&1); then
+	local dir="$1" log="$2" run_timeout="${3:-}" cli_dir="${4:-$1}" build_log="${2%.err}.build.log"
+	local -a build_project=() run_project_args=()
+	if [[ "$dir" != "$cli_dir" ]]; then build_project=("$dir"); run_project_args=(--project "$dir"); fi
+	if ! (cd "$cli_dir" && dotnet build "${build_project[@]}" -v q --nologo >"$build_log" 2>&1); then
 		cp "$build_log" "$log"
 		return 1
 	fi
 	local rc=0 raw
 	if [[ -n "$run_timeout" ]]; then
-		raw="$(cd "$dir" && timeout "$run_timeout" dotnet run --no-build --no-restore -v q 2>"$log")" || rc=$?
+		raw="$(cd "$cli_dir" && timeout "$run_timeout" dotnet run "${run_project_args[@]}" --no-build --no-restore -v q 2>"$log")" || rc=$?
 	else
-		raw="$(cd "$dir" && dotnet run --no-build --no-restore -v q 2>"$log")" || rc=$?
+		raw="$(cd "$cli_dir" && dotnet run "${run_project_args[@]}" --no-build --no-restore -v q 2>"$log")" || rc=$?
 	fi
 	printf '%s' "$raw" | run_out
 	return $rc
@@ -1301,7 +1303,7 @@ package mpp.greeter
 fun main() { println(Greeter().say()) }
 EOF
 	local expected="Hello from the CLR actual (packaged MPP SDK)" actual rc=0
-	actual="$(run_project "$d" "$d/run.err")" || rc=$?
+	actual="$(run_project "$d" "$d/run.err" "" "$WS/sdk10-cli")" || rc=$?
 	if (( rc != 0 )); then fail mpp "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
 	elif [[ "$actual" == "$expected" ]]; then pass mpp
 	else fail mpp "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
@@ -1366,7 +1368,7 @@ case_mpp_template() {
 		fail mpp-template "scaffolded global.json does not pin both SDKs to $VER" "$(cat "$proj/global.json" 2>/dev/null)"; return
 	fi
 	local expected="Hello, World, from a DotKt multiplatform app on .NET!" actual rc=0
-	actual="$(run_project "$proj" "$proj/run.err")" || rc=$?
+	actual="$(run_project "$proj" "$proj/run.err" "" "$WS/sdk10-cli")" || rc=$?
 	if (( rc != 0 )); then fail mpp-template "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$proj/run.err" 2>/dev/null)")"
 	elif [[ "$actual" == "$expected" ]]; then pass mpp-template
 	else fail mpp-template "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
@@ -1473,6 +1475,10 @@ case_multitarget_klib_references
 case_library
 case_csharp_consumer
 case_coroutine_cross_module
+# MPP's project-level global.json supplies package pins, not a .NET CLI version. Select the
+# .NET 10 SDK from the invoking directory without modifying (or supplying pins for) the project.
+mkdir -p "$WS/sdk10-cli"
+printf '%s\n' '{"sdk":{"version":"10.0.100","rollForward":"latestFeature"}}' > "$WS/sdk10-cli/global.json"
 case_mpp
 case_template
 case_mpp_template

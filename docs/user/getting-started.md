@@ -12,7 +12,8 @@ Next steps after this page:
 
 ## 1. Prerequisites
 
-- Use the **.NET 10 SDK** for `net10.0`, or the **.NET 11 SDK** for `net11.0`.
+- Use the **.NET 10 SDK** for `net10.0`. Starting with **DotKt 0.9.27**, you can also
+  use the **.NET 11 SDK** to target `net11.0`.
   Both target families support platform qualifiers such as `-windows`. For either target,
   the compiler tools need a **.NET 10 runtime (10.0.12 or later in the 10.0 line)** on the
   build machine (`dotnet --list-runtimes`). A `net11.0` app itself runs on .NET 11.
