@@ -138,7 +138,7 @@ static partial class FBoundStarProjectionErasure
     // These scalar policies are also the authority for genuine late DOM type
     // rewriting. DOM and owning readers supply facts, not alternate decisions.
     internal static bool BoundTypeSlot(TypeSlotFacts facts, string field) =>
-        facts.PhysicalSignature && (facts.Kind == "callInstance" && field is "sig" or "calleeParams" or "ret" or "dynRet" or "sty"
+        facts.PhysicalSignature && (facts.Kind == "callInstance" && field is "ownerType" or "sig" or "calleeParams" or "ret" or "dynRet" or "sty"
             || facts.Kind == "cast" && field == "type" || facts.Kind is "nullableWrap" or "nullableValue" && field == "elem")
         || facts.Kind == null && facts.HasParameters && field is "params" or "ret" && facts.NativeMethodSignature
         || facts.DeclarationDescriptor && field is "params" or "ret" && facts.NativeDescriptorOwner

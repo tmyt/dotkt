@@ -29,6 +29,8 @@ private fun verify(gate: Gate, expected: String, action: suspend () -> Value) {
     gate.resume(Narrow("value"))
     assertEquals(expected, completion.outcome!!.getOrThrow().text)
 }
+private interface StringPicker { suspend fun <M> pick(x: String): String }
+private class SelectedPicker : OverloadedBase(), StringPicker
 class InheritedSuspendCovarianceTests {
     @TestAttribute
     fun inheritedNumericResultBoxesAfterSuspension() {
@@ -49,6 +51,11 @@ class InheritedSuspendCovarianceTests {
     }
     @TestAttribute
     fun inheritedMethodFrameAdaptsResult() {
+        val picker: StringPicker = SelectedPicker()
+        val picked = Completion<String>()
+        val select: suspend () -> String = { picker.pick<Int>("selected") }
+        select.startCoroutine(picked)
+        assertEquals("selected", picked.outcome!!.getOrThrow())
         fun verifyMethod(slot: MethodFactory) {
             val completion = Completion<Any?>()
             val action: suspend () -> Any? = {

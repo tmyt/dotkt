@@ -882,6 +882,8 @@ sealed class Pipeline
         // Compare completed suspend signatures against the existing carrier ABI.
         // This current physical view never re-captures source eligibility/demand.
         FBoundStarProjectionErasure.RewriteLateTypesSource(captured, carrierRealization, aliasTransitions);
+        // These descriptors are selected from the already-projected parent edges.
+        // The next pass may project value slots copied into a bridge, not re-close its parent.
         var selectedSlotOwners = new HashSet<BirMethodImpl>(ReferenceEqualityComparer.Instance);
         KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,

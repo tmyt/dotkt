@@ -60,9 +60,7 @@ static partial class InheritedClassInterfaceBridge
                         : refs.IsInterfaceType(new TypeNode.Fqn(type.Name))))
                     .ToList();
                 if (interfaceEdges.Count == 0) continue;
-                var selectedEdge = overrides.FirstOrDefault(edge =>
-                    edge.Owner.OrDefault() is TypeNode.Fqn type && type.Name == ownerName && edge.Member.OrDefault() == member);
-                var declarationId = selectedEdge?.DeclarationId.OrDefault();
+                var declarationId = selected.DeclarationId.OrDefault();
                 var selectedSignature = selected.Sig.OrDefault()
                     ?? throw new InvalidOperationException("selected inherited suspend implementation has no signature");
                 var methodArity = selected.TypeParams.OrEmpty().Length;
@@ -79,7 +77,8 @@ static partial class InheritedClassInterfaceBridge
                     : refs.TrySelectedSourceOverrideDeclaration(ownerName, member, methodArity,
                         parameters.Select(p => p.Type.OrDefault()).ToArray(),
                         owners[0].Args ?? Array.Empty<TypeNode>(), selected.TypeParams.OrDefault(),
-                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target)
+                        owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target,
+                        selectedDeclarationId: declarationId)
                         ? target.IsVirtual
                         : throw new InvalidOperationException($"selected inherited suspend declaration '{ownerName}.{member}' is unresolved");
                 if (targetIsVirtual) continue;

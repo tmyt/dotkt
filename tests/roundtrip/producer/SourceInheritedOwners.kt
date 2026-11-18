@@ -21,3 +21,6 @@ interface DefaultRoot<T> { val answer: Int get() = 47 }
 interface DefaultMid<T> : DefaultRoot<T>
 interface DefaultLeaf : DefaultMid<Int?>
 class DefaultLeafImpl : DefaultLeaf
+
+open class ForwardRoot<T> { fun ping(): String = "ping" }
+open class ForwardMiddle<T>(val saved: T) : ForwardRoot<T>()

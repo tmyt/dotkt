@@ -2,6 +2,9 @@ package roundtrip.sourceowner
 
 import NUnit.Framework.TestAttribute
 
+private class Key<T>(val value: T)
+private interface Pinger { fun ping(): String }
+private class Receiver(key: Key<String>) : ForwardMiddle<Key<String>>(key), Pinger
 private fun <T> readDerived(value: Derived<Int, T>): T? = value.cell.value
 private fun <T> readContract(value: ContractDerived<Int, T>): T? = value.box.value
 
@@ -22,6 +25,8 @@ class SourceInheritedOwnerTests {
 
     @TestAttribute
     fun genericReceiversPreserveInheritedClassAndInterfaceArguments() {
+        val pinger: Pinger = Receiver(Key("key"))
+        check(pinger.ping() == "ping")
         val leaf: Leaf = LeafImpl(43)
         check(leaf.item.value == 43)
         val defaultLeaf: DefaultLeaf = DefaultLeafImpl()
