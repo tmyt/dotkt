@@ -103,8 +103,6 @@ static partial class FaithfulHints
 
     public static TypeNode Unwrap(TypeNode t) => t is TypeNode.Nullable n ? n.Of : t;
 
-    public static bool IsNullable(TypeNode t) => t is TypeNode.Nullable;
-
     // True iff the hint is the bare (non-null) primitive Fqn `name`. A nullable/reference operand fails because boxed
     // Double structural equality uses total order only when BOTH sides are statically non-null Double.
     public static bool IsNonNullFqn(TypeNode t, string name) => t is TypeNode.Fqn f && f.Name == name;

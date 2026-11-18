@@ -41,7 +41,9 @@ static partial class FaithfulHintRecognition
         if (site == RenderSite.Print && FaithfulHints.IsStarProjectedColl(surface)) return new(Renderer.Element);
         if (FaithfulHints.ClassifyColl(value) is { } collection)
             return new(Renderer.Collection, collection.kind, collection.args);
-        return site == RenderSite.Concat && FaithfulHints.IsNullable(value) ? new(Renderer.Nullable) : default;
+        // An open T can carry null without a nullable wrapper in the source type.
+        return site == RenderSite.Concat && value is (TypeNode.Nullable or TypeNode.Tv or TypeNode.Oblivious)
+            ? new(Renderer.Nullable) : default;
     }
 
     static IBirExpression Render(IBirExpression operand, Rendering rendering) => rendering.Kind switch {
