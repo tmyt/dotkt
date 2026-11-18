@@ -28,6 +28,8 @@ import System.IComparable1
 import System.Collections.Generic.IComparer
 import System.Collections.Generic.List
 import SlotTableInterop.IOverloaded
+import SlotTableInterop.IEntrySlot
+import SlotTableInterop.EntrySlotBase
 import SlotTableInterop.ConstraintBase
 import SlotTableInterop.ConstraintLeaf
 import SlotTableInterop.IConstrainedDefault
@@ -66,6 +68,12 @@ interface BclInterfaceImplementationConstrainedDefault : IConstrainedDefault<Con
 }
 
 class BclInterfaceImplementationConstrainedDefaultImpl : BclInterfaceImplementationConstrainedDefault
+
+private interface NamedEntrySlot : IEntrySlot<MutableMap.MutableEntry<String, Int>> {
+    @kotlin.clr.ClrName("Clash")
+    override fun Take(value: MutableMap.MutableEntry<String, Int>): Int = 1
+}
+private class EntrySlotCollision : EntrySlotBase<MutableMap.MutableEntry<String, Int>>(), NamedEntrySlot
 
 class BclInterfaceImplementationReturnDerived : IReturnDerived {
     override fun Read(): String = "derived-return"
@@ -141,5 +149,14 @@ class BclInterfaceImplementationTests {
         val base: IReturnBase = value
         assertEquals("derived-return", derived.Read())
         assertEquals("derived-return", base.Read())
+    }
+
+    @TestAttribute
+    fun inheritedDefaultBridgeKeepsTheNativeSlotParameter() {
+        val child = EntrySlotCollision()
+        val slot: IEntrySlot<MutableMap.MutableEntry<String, Int>> = child
+        val entry = mutableMapOf("key" to 1).entries.iterator().next()
+        assertEquals(1, slot.Take(entry))
+        assertEquals(2, child.Clash(entry))
     }
 }

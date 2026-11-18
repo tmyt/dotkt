@@ -30,6 +30,10 @@ interface ReferencedCovariantRoot<T> {
 
 interface ReferencedCovariantSlot : ReferencedCovariantRoot<ReferencedCovariantValue>
 
+abstract class EntrySource {
+    abstract fun entry(): MutableMap.MutableEntry<String, Int>
+}
+
 // Both declarations lower to the same broad signature. A downstream covariant DIM may use one exact bridge body for
 // both MethodImpl rows; the consumer fixture pins that CoreCLR-valid inherited-interface shape.
 interface ReferencedRedeclaredCovariantRoot {

@@ -93,6 +93,9 @@ static partial class KotlinOverrideSlotBridge
             Attrs = Array.Empty<BirAttribute>(), Generated = true, PhysicalSlotBridge = true,
             ClrInterfaceImpls = Array.Empty<BirMethodImpl>(), ClrBaseImpls = Array.Empty<BirMethodImpl>(),
         };
+        // A final physical bridge implements the selected signature. Keep both the
+        // entry point and its forwarding conversions in that frame, including DIM repairs.
+        if (physicalImplementation) method._physicalDeclarationSignature = true;
         if (owner.Kind.OrDefault() == "interface") method.ClrInterfaceSlotBridge = true;
         if (unitValueReturn) method.DotktValueReturn = true;
         if (suspend)
