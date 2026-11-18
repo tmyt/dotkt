@@ -6,6 +6,8 @@ import kotc.bir.SourceAnnotation
 import kotc.bir.SourceAnnotationArgument
 import kotc.bir.SourceAnnotationValue
 import kotc.bir.SourceClassifier
+import kotc.bir.SourceCallable
+import kotc.bir.SourceValueParameter
 import kotc.bir.SourceType
 import kotc.bir.SourceTypeAlias
 import kotc.bir.SourceTypeArgument
@@ -92,20 +94,47 @@ internal object TypeAliasDeclarations {
                 ownerPath = ownerPath,
                 name = names.getString(alias.name),
                 visibility = Flags.VISIBILITY.get(alias.flags).name.lowercase(),
-                typeParameters = alias.typeParameterList.map { parameter ->
-                    SourceTypeParameter(
-                        id = parameter.id,
-                        name = names.getString(parameter.name),
-                        variance = parameter.variance.name.lowercase(),
-                        bounds = (parameter.upperBoundList + parameter.upperBoundIdList.map { types[it] })
-                            .map { type(it, types) },
-                        annotations = (0 until parameter.getExtensionCount(KlibMetadataProtoBuf.typeParameterAnnotation))
-                            .map { annotation(parameter.getExtension(KlibMetadataProtoBuf.typeParameterAnnotation, it)) },
-                    )
-                },
+                typeParameters = alias.typeParameterList.map { typeParameter(it, types) },
                 underlyingType = type(if (alias.hasUnderlyingType()) alias.underlyingType else types[alias.underlyingTypeId], types),
                 expandedType = type(if (alias.hasExpandedType()) alias.expandedType else types[alias.expandedTypeId], types),
                 annotations = alias.annotationList.map(::annotation),
+            )
+        }
+
+        private fun typeParameter(parameter: ProtoBuf.TypeParameter, types: TypeTable) = SourceTypeParameter(
+            id = parameter.id, name = names.getString(parameter.name), variance = parameter.variance.name.lowercase(),
+            bounds = (parameter.upperBoundList + parameter.upperBoundIdList.map { types[it] }).map { type(it, types) },
+            annotations = parameter.annotationList.ifEmpty { parameter.getExtension(KlibMetadataProtoBuf.typeParameterAnnotation) }.map(::annotation),
+        )
+
+        fun callable(id: String, function: ProtoBuf.Function, types: TypeTable): SourceCallable {
+            parameterIds = function.typeParameterList.associate { names.getString(it.name) to it.id }
+            fun value(parameter: ProtoBuf.ValueParameter) = SourceValueParameter(
+                name = names.getString(parameter.name), flags = parameter.flags,
+                type = type(if (parameter.hasType()) parameter.type else types[parameter.typeId], types),
+                varargElementType = when {
+                    parameter.hasVarargElementType() -> type(parameter.varargElementType, types)
+                    parameter.hasVarargElementTypeId() -> type(types[parameter.varargElementTypeId], types)
+                    else -> null
+                },
+                annotations = parameter.annotationList.ifEmpty { parameter.getExtension(KlibMetadataProtoBuf.parameterAnnotation) }.map(::annotation),
+            )
+            return SourceCallable(
+                declarationId = id, name = names.getString(function.name), flags = function.flags,
+                typeParameters = function.typeParameterList.map { typeParameter(it, types) },
+                reifiedParameters = function.typeParameterList.filter { it.reified }.map { it.id },
+                receiverType = when {
+                    function.hasReceiverType() -> type(function.receiverType, types)
+                    function.hasReceiverTypeId() -> type(types[function.receiverTypeId], types)
+                    else -> null
+                },
+                contextParameters = function.contextParameterList.map(::value),
+                valueParameters = function.valueParameterList.map(::value),
+                returnType = type(if (function.hasReturnType()) function.returnType else types[function.returnTypeId], types),
+                annotations = function.annotationList.ifEmpty { function.getExtension(KlibMetadataProtoBuf.functionAnnotation) }.map(::annotation),
+                receiverAnnotations = function.extensionReceiverAnnotationList.ifEmpty {
+                    function.getExtension(KlibMetadataProtoBuf.functionExtensionReceiverAnnotation)
+                }.map(::annotation),
             )
         }
 
@@ -125,8 +154,9 @@ internal object TypeAliasDeclarations {
                     }
                 }
             }
-            val annotations = (0 until source.getExtensionCount(KlibMetadataProtoBuf.typeAnnotation))
-                .map { annotation(source.getExtension(KlibMetadataProtoBuf.typeAnnotation, it)) }
+            val annotations = source.annotationList.ifEmpty {
+                source.getExtension(KlibMetadataProtoBuf.typeAnnotation)
+            }.map(::annotation)
             val outerType = if (source.hasOuterType() || source.hasOuterTypeId())
                 type(if (source.hasOuterType()) source.outerType else types[source.outerTypeId], types) else null
             val abbreviatedType = if (source.hasAbbreviatedType() || source.hasAbbreviatedTypeId())

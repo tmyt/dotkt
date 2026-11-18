@@ -9,6 +9,8 @@ public static class SourceMetadataJson
     public static SourceTypeAlias Read(ref Utf8JsonReader reader) => ReadSourceTypeAlias(ref reader);
     public static SourceTypeAlias[] ReadAliases(ref Utf8JsonReader reader) => ReadArray(ref reader, ReadSourceTypeAlias);
     public static void Write(Utf8JsonWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(writer, value);
+    public static SourceCallable ReadCallable(ref Utf8JsonReader reader) => ReadSourceCallable(ref reader);
+    public static void Write(Utf8JsonWriter writer, SourceCallable value) => WriteSourceCallable(writer, value);
 
     private static SourceTypeAlias ReadSourceTypeAlias(ref Utf8JsonReader reader)
     {
@@ -96,6 +98,209 @@ public static class SourceMetadataJson
         WriteSourceType(writer, value.UnderlyingType);
         writer.WritePropertyName("expandedType");
         WriteSourceType(writer, value.ExpandedType);
+        writer.WritePropertyName("annotations");
+        writer.WriteStartArray();
+        foreach (var item in value.Annotations)
+        {
+            WriteSourceAnnotation(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static SourceCallable ReadSourceCallable(ref Utf8JsonReader reader)
+    {
+        Require(ref reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        string? declarationId = default;
+        string? name = default;
+        int flags = default;
+        SourceTypeParameter[]? typeParameters = default;
+        int[]? reifiedParameters = default;
+        SourceValueParameter[]? contextParameters = default;
+        SourceValueParameter[]? valueParameters = default;
+        SourceType? returnType = default;
+        SourceAnnotation[]? annotations = default;
+        SourceAnnotation[]? receiverAnnotations = default;
+        SourceType? receiverType = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(ref reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "declarationId":
+                    Seen(ref seen, 1UL);
+                    declarationId = ReadString(ref reader);
+                    break;
+                case "name":
+                    Seen(ref seen, 2UL);
+                    name = ReadString(ref reader);
+                    break;
+                case "flags":
+                    Seen(ref seen, 4UL);
+                    flags = ReadInt32(ref reader);
+                    break;
+                case "typeParameters":
+                    Seen(ref seen, 8UL);
+                    typeParameters = ReadArray(ref reader, ReadSourceTypeParameter);
+                    break;
+                case "reifiedParameters":
+                    Seen(ref seen, 16UL);
+                    reifiedParameters = ReadArray(ref reader, ReadInt32);
+                    break;
+                case "receiverType":
+                    Seen(ref seen, 32UL);
+                    receiverType = ReadSourceType(ref reader);
+                    break;
+                case "contextParameters":
+                    Seen(ref seen, 64UL);
+                    contextParameters = ReadArray(ref reader, ReadSourceValueParameter);
+                    break;
+                case "valueParameters":
+                    Seen(ref seen, 128UL);
+                    valueParameters = ReadArray(ref reader, ReadSourceValueParameter);
+                    break;
+                case "returnType":
+                    Seen(ref seen, 256UL);
+                    returnType = ReadSourceType(ref reader);
+                    break;
+                case "annotations":
+                    Seen(ref seen, 512UL);
+                    annotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "receiverAnnotations":
+                    Seen(ref seen, 1024UL);
+                    receiverAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        Require(ref reader, JsonTokenType.EndObject);
+        if ((seen & 2015UL) != 2015UL) throw new FormatException();
+        return new SourceCallable(declarationId!, name!, flags, typeParameters!, reifiedParameters!, contextParameters!, valueParameters!, returnType!, annotations!, receiverAnnotations!, receiverType);
+    }
+
+    private static void WriteSourceCallable(Utf8JsonWriter writer, SourceCallable value)
+    {
+        writer.WriteStartObject();
+        writer.WritePropertyName("declarationId");
+        writer.WriteStringValue(value.DeclarationId);
+        writer.WritePropertyName("name");
+        writer.WriteStringValue(value.Name);
+        writer.WritePropertyName("flags");
+        writer.WriteNumberValue(value.Flags);
+        writer.WritePropertyName("typeParameters");
+        writer.WriteStartArray();
+        foreach (var item in value.TypeParameters)
+        {
+            WriteSourceTypeParameter(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WritePropertyName("reifiedParameters");
+        writer.WriteStartArray();
+        foreach (var item in value.ReifiedParameters)
+        {
+            writer.WriteNumberValue(item);
+        }
+        writer.WriteEndArray();
+        if (value.ReceiverType is { } receiverType)
+        {
+            writer.WritePropertyName("receiverType");
+            WriteSourceType(writer, receiverType);
+        }
+        writer.WritePropertyName("contextParameters");
+        writer.WriteStartArray();
+        foreach (var item in value.ContextParameters)
+        {
+            WriteSourceValueParameter(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WritePropertyName("valueParameters");
+        writer.WriteStartArray();
+        foreach (var item in value.ValueParameters)
+        {
+            WriteSourceValueParameter(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WritePropertyName("returnType");
+        WriteSourceType(writer, value.ReturnType);
+        writer.WritePropertyName("annotations");
+        writer.WriteStartArray();
+        foreach (var item in value.Annotations)
+        {
+            WriteSourceAnnotation(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WritePropertyName("receiverAnnotations");
+        writer.WriteStartArray();
+        foreach (var item in value.ReceiverAnnotations)
+        {
+            WriteSourceAnnotation(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static SourceValueParameter ReadSourceValueParameter(ref Utf8JsonReader reader)
+    {
+        Require(ref reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        string? name = default;
+        int flags = default;
+        SourceType? type = default;
+        SourceAnnotation[]? annotations = default;
+        SourceType? varargElementType = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(ref reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "name":
+                    Seen(ref seen, 1UL);
+                    name = ReadString(ref reader);
+                    break;
+                case "flags":
+                    Seen(ref seen, 2UL);
+                    flags = ReadInt32(ref reader);
+                    break;
+                case "type":
+                    Seen(ref seen, 4UL);
+                    type = ReadSourceType(ref reader);
+                    break;
+                case "varargElementType":
+                    Seen(ref seen, 8UL);
+                    varargElementType = ReadSourceType(ref reader);
+                    break;
+                case "annotations":
+                    Seen(ref seen, 16UL);
+                    annotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        Require(ref reader, JsonTokenType.EndObject);
+        if ((seen & 23UL) != 23UL) throw new FormatException();
+        return new SourceValueParameter(name!, flags, type!, annotations!, varargElementType);
+    }
+
+    private static void WriteSourceValueParameter(Utf8JsonWriter writer, SourceValueParameter value)
+    {
+        writer.WriteStartObject();
+        writer.WritePropertyName("name");
+        writer.WriteStringValue(value.Name);
+        writer.WritePropertyName("flags");
+        writer.WriteNumberValue(value.Flags);
+        writer.WritePropertyName("type");
+        WriteSourceType(writer, value.Type);
+        if (value.VarargElementType is { } varargElementType)
+        {
+            writer.WritePropertyName("varargElementType");
+            WriteSourceType(writer, varargElementType);
+        }
         writer.WritePropertyName("annotations");
         writer.WriteStartArray();
         foreach (var item in value.Annotations)

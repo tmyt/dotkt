@@ -9,7 +9,8 @@ data class BirFileDeclaration(
     val properties: List<BirPropertyDeclaration>,
     val types: List<BirTypeDeclaration>,
     val refTypes: List<BirRefTypeDeclaration>,
-    val typeAliases: List<SourceTypeAlias>
+    val typeAliases: List<SourceTypeAlias>,
+    val sourceCallables: List<SourceCallable>? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -60,6 +61,15 @@ data class BirFileDeclaration(
             item0.writeJson(output)
         }
         output.append(']')
+        sourceCallables?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"sourceCallables\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
         output.append('}')
     }
 }

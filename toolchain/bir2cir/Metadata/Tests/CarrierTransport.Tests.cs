@@ -79,7 +79,7 @@ static class CarrierTransportTests
 
         // Only explicit compiler carrier declarations receive an emission policy.
         // Their exact selected codec and content must travel together in CIR.
-        foreach (var name in new[] { "KotlinInlineAttribute", "KotlinDefaultAttribute", "KotlinTypeAliasAttribute",
+        foreach (var name in new[] { "KotlinInlineAttribute", "KotlinDefaultAttribute", "KotlinTypeAliasAttribute", "KotlinSourceCallableAttribute",
                      "KotlinConstructorAdapterAttribute", "KotlinTypeAttribute", "KotlinNullableGenericAttribute",
                      "KotlinCollectionIdentityAttribute", "KotlinSuspendFunctionTypeAttribute", "KotlinSuspendResultAttribute" })
         {

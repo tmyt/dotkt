@@ -2,18 +2,22 @@
 
 
 def validate_aliases(value, path, report):
+    validate_source_declarations("typeAliases", value, path, report)
+
+
+def validate_source_declarations(kind, value, path, report):
     def error(where, message):
         report(where, message)
 
     def shape(node, where, required, optional=()):
         if not isinstance(node, dict) or set(node) - set(required) - set(optional) or set(required) - set(node):
-            error(where, "malformed current Kotlin typealias metadata object")
+            error(where, "malformed Kotlin source metadata object")
             return False
         return True
 
     def sequence(node, where, visit):
         if not isinstance(node, list):
-            error(where, "expected an array in typealias declaration metadata")
+            error(where, "expected an array in source declaration metadata")
             return
         for index, child in enumerate(node):
             visit(child, f"{where}[{index}]")
@@ -92,19 +96,25 @@ def validate_aliases(value, path, report):
             integer(node[key], where + "/" + key)
 
     def declaration(node, where):
-        if not shape(node, where, ("packageName", "ownerPath", "name", "visibility", "typeParameters",
-                                   "underlyingType", "expandedType", "annotations")):
+        is_alias = kind == "typeAliases"
+        if is_alias:
+            if not shape(node, where, ("packageName", "ownerPath", "name", "visibility", "typeParameters",
+                                       "underlyingType", "expandedType", "annotations")):
+                return
+            classifier({key: node[key] for key in ("packageName", "ownerPath", "name")}, where)
+            if node["visibility"] not in ("public", "protected", "internal", "private", "private_to_this", "local"):
+                error(where + "/visibility", "unknown Kotlin declaration visibility")
+        elif not shape(node, where, ("declarationId", "name", "flags", "typeParameters", "reifiedParameters",
+                                     "contextParameters", "valueParameters", "returnType", "annotations",
+                                     "receiverAnnotations"), ("receiverType",)):
             return
-        classifier({key: node[key] for key in ("packageName", "ownerPath", "name")}, where)
-        if node["visibility"] not in ("public", "protected", "internal", "private", "private_to_this", "local"):
-            error(where + "/visibility", "unknown Kotlin declaration visibility")
         parameters = node["typeParameters"]
         if not isinstance(parameters, list):
             error(where + "/typeParameters", "expected a parameter declaration array")
             return
         ids = [parameter.get("id") for parameter in parameters if isinstance(parameter, dict)]
         if any(type(index) is not int or index < 0 for index in ids) or len(set(ids)) != len(parameters):
-            error(where + "/typeParameters", "alias parameter IDs must be unique declaration-local integers")
+            error(where + "/typeParameters", "parameter IDs must be unique declaration-local integers")
             return
 
         def type_node(child, p):
@@ -117,8 +127,8 @@ def validate_aliases(value, path, report):
                 return
             if identity == "classifier":
                 classifier(child[identity], p + "/classifier")
-            elif type(child["id"]) is not int or child["id"] not in ids:
-                error(p + "/id", "parameter reference does not belong to this alias declaration")
+            elif type(child["id"]) is not int or child["id"] < 0 or (is_alias and child["id"] not in ids):
+                error(p + "/id", "parameter reference does not belong to the source declaration")
             for key in ("nullable", "suspend", "definitelyNotNull"):
                 boolean(child[key], p + "/" + key)
 
@@ -148,8 +158,30 @@ def validate_aliases(value, path, report):
                     error(p + "/variance", "unknown Kotlin parameter variance")
                 sequence(parameter["bounds"], p + "/bounds", type_node)
                 sequence(parameter["annotations"], p + "/annotations", annotation)
-        type_node(node["underlyingType"], where + "/underlyingType")
-        type_node(node["expandedType"], where + "/expandedType")
         sequence(node["annotations"], where + "/annotations", annotation)
+        if is_alias:
+            type_node(node["underlyingType"], where + "/underlyingType")
+            type_node(node["expandedType"], where + "/expandedType")
+            return
+
+        def value_parameter(parameter, p):
+            if shape(parameter, p, ("name", "flags", "type", "annotations"), ("varargElementType",)):
+                text(parameter["name"], p + "/name", True)
+                integer(parameter["flags"], p + "/flags")
+                type_node(parameter["type"], p + "/type")
+                if "varargElementType" in parameter:
+                    type_node(parameter["varargElementType"], p + "/varargElementType")
+                sequence(parameter["annotations"], p + "/annotations", annotation)
+
+        text(node["declarationId"], where + "/declarationId", True)
+        text(node["name"], where + "/name", True)
+        integer(node["flags"], where + "/flags")
+        sequence(node["reifiedParameters"], where + "/reifiedParameters", lambda n, p: integer(n, p, True))
+        type_node(node["returnType"], where + "/returnType")
+        if "receiverType" in node:
+            type_node(node["receiverType"], where + "/receiverType")
+        for key in ("valueParameters", "contextParameters"):
+            sequence(node[key], where + "/" + key, value_parameter)
+        sequence(node["receiverAnnotations"], where + "/receiverAnnotations", annotation)
 
     sequence(value, path, declaration)

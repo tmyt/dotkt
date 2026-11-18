@@ -71,6 +71,7 @@ static partial class RoundtripMetadata
     const string AKType         = Ns + "KotlinTypeAttribute";
     const string AKTypeVisibility = Ns + "KotlinTypeVisibilityAttribute";
     const string AKTypeAlias    = Ns + "KotlinTypeAliasAttribute";
+    const string AKSourceCallable = Ns + "KotlinSourceCallableAttribute";
     const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
     const string AKTypeParameterBounds = Ns + "KotlinTypeParameterBoundsAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
@@ -217,9 +218,12 @@ static partial class RoundtripMetadata
             Vis = "public", Params = parameters, BaseArgs = Array.Empty<ICirExpression>(),
             BaseCtorRef = baseConstructor, Body = [],
         };
+        CirTypeDeclaration AssemblySourceAttribute(string name) =>
+            SourceAttributeDefinition(name, refs, Ctor(Param("System.String"), Param(ByteArrayType())));
         var types = new CirTypeDeclaration[]
         {
-            TypeAliasAttributeDefinition(refs, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AssemblySourceAttribute(AKTypeAlias),
+            AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
@@ -262,7 +266,8 @@ static partial class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
-        if (runtimeOnly) types = new[] { TypeAliasAttributeDefinition(refs, Ctor(Param("System.String"), Param(ByteArrayType()))),
+        if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias),
+            AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKData, Ctor()),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
@@ -275,7 +280,7 @@ static partial class RoundtripMetadata
         };
     }
 
-    static CirTypeDeclaration TypeAliasAttributeDefinition(ReferenceMetadataIndex refs, CirConstructor constructor)
+    static CirTypeDeclaration SourceAttributeDefinition(string name, ReferenceMetadataIndex refs, CirConstructor constructor)
     {
         var usage = new AttributeApplication(new TypeNode.Fqn("System.AttributeUsageAttribute"),
             [new TypeNode.Fqn("System.AttributeTargets")], [new AttributeArgument.Int32Value(1)],
@@ -283,7 +288,7 @@ static partial class RoundtripMetadata
                 new NamedAttributeArgument("property", "AllowMultiple", new TypeNode.Fqn("System.Boolean"), new AttributeArgument.BooleanValue(true)),
                 new NamedAttributeArgument("property", "Inherited", new TypeNode.Fqn("System.Boolean"), new AttributeArgument.BooleanValue(false)),
             ]);
-        return AttrClass(AKTypeAlias, constructor) with {
+        return AttrClass(name, constructor) with {
             Attrs = new[] { ClrMemberResolution.ResolveAttributeCtor(null, usage, refs) },
         };
     }

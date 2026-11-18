@@ -8,12 +8,16 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
           "namespace DotKt.Bir;", "", "public static class SourceMetadataMessagePack", "{",
           "    public static SourceTypeAlias Read(ref MessagePackReader reader) => ReadSourceTypeAlias(ref reader);",
           "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(ref writer, value, 0);",
-          "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value, int depth) => WriteSourceTypeAlias(ref writer, value, depth);", ""]
+          "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value, int depth) => WriteSourceTypeAlias(ref writer, value, depth);",
+          "    public static SourceCallable ReadCallable(ref MessagePackReader reader) => ReadSourceCallable(ref reader);",
+          "    public static void Write(ref MessagePackWriter writer, SourceCallable value) => WriteSourceCallable(ref writer, value, 0);",
+          "    public static void Write(ref MessagePackWriter writer, SourceCallable value, int depth) => WriteSourceCallable(ref writer, value, depth);", ""]
     kt = [header, "package kotc.bir", "", "import org.msgpack.core.MessagePack", "import org.msgpack.core.MessagePacker", "",
           "internal object SourceMetadataMessagePack {",
           "    fun encode(value: SourceTypeAlias): ByteArray = MessagePack.newDefaultBufferPacker().use { packer ->",
           "        write(value, packer)", "        packer.toByteArray()", "    }",
           "    fun write(value: SourceTypeAlias, packer: MessagePacker, depth: Int = 0) = writeSourceTypeAlias(value, packer, depth)",
+          "    fun write(value: SourceCallable, packer: MessagePacker, depth: Int = 0) = writeSourceCallable(value, packer, depth)",
           "    private fun checkDepth(depth: Int) { require(depth < 1024) { \"BIR nesting exceeds 1024\" } }", ""]
 
     def target(shape):
@@ -25,7 +29,8 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
             return f'Read{definition["x-dotkt-model"]["name"]}(ref reader)' if "x-dotkt-model" in definition else cs_read(definition)
         if shape.get("type") == "array":
             item = shape["items"]
-            method = "Read" + target(item)["x-dotkt-model"]["name"] if "$ref" in item else "ReadText"
+            method = ("Read" + target(item)["x-dotkt-model"]["name"] if "$ref" in item else
+                      {"string": "ReadText", "integer": "static (ref MessagePackReader item) => item.ReadInt32()"}[item["type"]])
             return f"ReadArray(ref reader, {method})"
         return {"string": "ReadText(ref reader)", "int": "reader.ReadInt32()", "long": "reader.ReadInt64()",
                 "bool": "reader.ReadBoolean()"}[cs_type(shape)]

@@ -7,6 +7,10 @@ explicit; this model does not fabricate defaults or infer missing semantic facts
 import copy
 import json
 
+# Opaque to physical lowering; the source model owns their structural equality and codecs.
+source_records = {"birSourceTypeAlias": "SourceTypeAlias", "birSourceCallable": "SourceCallable"}
+source_readers = {"birSourceTypeAlias": "Read", "birSourceCallable": "ReadCallable"}
+
 
 def base(field):
     if isinstance(field.get("type"), list):
@@ -34,7 +38,7 @@ def csharp_type(field, shapes):
         return "TypeNode"
     key = refkey(field)
     if key:
-        special = {"type": "TypeNode", "literalValue": "BirLiteral", "birSourceTypeAlias": "SourceTypeAlias",
+        special = {"type": "TypeNode", "literalValue": "BirLiteral", **source_records,
                    "birExpressionNode": "IBirExpression", "birStatementNode": "IBirStatement",
                    "birTypeDeclaration": "IBirTypeDeclaration", "loweringAttributeValue": "IBirAttributeValue"}
         return special[key] if key in special else shapes[key]["x-dotkt-model"]["name"]
@@ -231,7 +235,7 @@ def outputs(root, definitions):
         if key:
             if key == "type": return "TypeNode.ReadJson(ref reader)"
             if key == "literalValue": return "BirLiteral.ReadJson(ref reader)"
-            if key == "birSourceTypeAlias": return "SourceMetadataJson.Read(ref reader)"
+            if key in source_records: return f"SourceMetadataJson.{source_readers[key]}(ref reader)"
             return f"Read{cs(field).removeprefix('I')}(ref reader)"
         if field.get("type") == "array":
             item = field["items"]
@@ -254,7 +258,7 @@ def outputs(root, definitions):
         if key:
             if key == "type": expr = f"TypeNode.WriteJson(writer, {value});"
             elif key == "literalValue": expr = f"BirLiteral.WriteJson(writer, {value});"
-            elif key == "birSourceTypeAlias": expr = f"SourceMetadataJson.Write(writer, {value});"
+            elif key in source_records: expr = f"SourceMetadataJson.Write(writer, {value});"
             else: expr = f"((BirGraphValue){value}).WriteJson(writer);"
             return [indent + expr]
         if field.get("type") == "array":
@@ -279,7 +283,7 @@ def outputs(root, definitions):
         if key:
             if key == "type": return f"TypeNode.Write({value})"
             if key == "literalValue": return f"LiteralToDom({value})"
-            if key == "birSourceTypeAlias": return "throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\")"
+            if key in source_records: return "throw new InvalidOperationException(\"Extract source metadata before the temporary DOM boundary\")"
             return f"((BirGraphValue){value}).ToDom(projected)"
         if field.get("type") == "array":
             item = f"item{depth}"
@@ -291,7 +295,7 @@ def outputs(root, definitions):
     def is_child(field):
         field = base(field)
         if field.get("type") == "array": return is_child(field["items"])
-        return bool(refkey(field)) and refkey(field) not in {"type", "literalValue", "birSourceTypeAlias"}
+        return bool(refkey(field)) and refkey(field) not in {"type", "literalValue", *source_records}
 
     def rewrite(field, value, depth=0, callback="rewrite", prefix=""):
         field = base(field)
@@ -359,7 +363,7 @@ def outputs(root, definitions):
         if kind == "NullableRepresentationFrame": return f"EqualFrame({left}, {right})"
         if kind == "PhysicalMemberTable": return f"{left}.StructurallyEquals({right})"
         if kind == "SourceDeclarationSignature": return f"{left}.SameContent({right})"
-        if kind == "SourceTypeAlias": return f"SourceMetadataDataEquality.Equal({left}, {right})"
+        if kind in source_records.values(): return f"SourceMetadataDataEquality.Equal({left}, {right})"
         if is_child(field): return f"((BirGraphValue){left}).StructurallyEquals((BirGraphValue){right})"
         return f"EqualityComparer<{kind}>.Default.Equals({left}, {right})"
 
@@ -782,8 +786,8 @@ def outputs(root, definitions):
         if node: model += [f'        result["k"] = {json.dumps(tag)};']
         for field, value in fields:
             prop = member(field)
-            if refkey(value) == "birSourceTypeAlias" or refkey(value.get("items", {})) == "birSourceTypeAlias":
-                model += [f"        if ({prop}.IsPresent) throw new InvalidOperationException(\"Extract aliases before the temporary DOM boundary\");"]
+            if refkey(value) in source_records or refkey(value.get("items", {})) in source_records:
+                model += [f"        if ({prop}.IsPresent) throw new InvalidOperationException(\"Extract source metadata before the temporary DOM boundary\");"]
             else:
                 model += [f"        if ({prop}.IsPresent) result[{json.dumps(field)}] = {prop}.IsNull ? null : {dom(value, prop + '.Value')};"]
         model += ["        projected?.Invoke(this, result);", "        return result;", "    }", "}", ""]

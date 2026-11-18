@@ -5,6 +5,10 @@ namespace DotKt.Bir;
 
 public sealed record SourceTypeAlias(string PackageName, string[] OwnerPath, string Name, string Visibility, SourceTypeParameter[] TypeParameters, SourceType UnderlyingType, SourceType ExpandedType, SourceAnnotation[] Annotations);
 
+public sealed record SourceCallable(string DeclarationId, string Name, int Flags, SourceTypeParameter[] TypeParameters, int[] ReifiedParameters, SourceValueParameter[] ContextParameters, SourceValueParameter[] ValueParameters, SourceType ReturnType, SourceAnnotation[] Annotations, SourceAnnotation[] ReceiverAnnotations, SourceType? ReceiverType = null);
+
+public sealed record SourceValueParameter(string Name, int Flags, SourceType Type, SourceAnnotation[] Annotations, SourceType? VarargElementType = null);
+
 public sealed record SourceClassifier(string PackageName, string[] OwnerPath, string Name);
 
 public sealed record SourceTypeParameter(int Id, string Name, string Variance, SourceType[] Bounds, SourceAnnotation[] Annotations);
@@ -60,6 +64,30 @@ internal static class SourceMetadataDataEquality
             && Equal(left.UnderlyingType, right.UnderlyingType)
             && Equal(left.ExpandedType, right.ExpandedType)
             && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0));
+
+    internal static bool Equal(SourceCallable? left, SourceCallable? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && global::System.String.Equals(left.DeclarationId, right.DeclarationId, global::System.StringComparison.Ordinal)
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal)
+            && left.Flags == right.Flags
+            && ArrayEqual(left.TypeParameters, right.TypeParameters, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.ReifiedParameters, right.ReifiedParameters, (left0, right0) => left0 == right0)
+            && ArrayEqual(left.ContextParameters, right.ContextParameters, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.ValueParameters, right.ValueParameters, (left0, right0) => Equal(left0, right0))
+            && Equal(left.ReturnType, right.ReturnType)
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.ReceiverAnnotations, right.ReceiverAnnotations, (left0, right0) => Equal(left0, right0))
+            && Equal(left.ReceiverType, right.ReceiverType);
+
+    internal static bool Equal(SourceValueParameter? left, SourceValueParameter? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && global::System.String.Equals(left.Name, right.Name, global::System.StringComparison.Ordinal)
+            && left.Flags == right.Flags
+            && Equal(left.Type, right.Type)
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0))
+            && Equal(left.VarargElementType, right.VarargElementType);
 
     internal static bool Equal(SourceClassifier? left, SourceClassifier? right) =>
         global::System.Object.ReferenceEquals(left, right)

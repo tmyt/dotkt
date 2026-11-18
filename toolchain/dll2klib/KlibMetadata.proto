@@ -134,6 +134,7 @@ message Function {
   optional int32 flags = 9 [default = 6];
   repeated ValueParameter context_parameter = 13;
   repeated Annotation function_annotation = 170;
+  repeated Annotation function_extension_receiver_annotation = 171;
 }
 
 message Property {

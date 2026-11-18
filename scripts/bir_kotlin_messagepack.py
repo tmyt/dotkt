@@ -1,6 +1,6 @@
 """Source BIR MessagePack writer generated from the Kotlin producer profile."""
 import json
-from bir_lowering_models import base, is_nullable, refkey
+from bir_lowering_models import base, is_nullable, refkey, source_records
 
 
 def outputs(root, definitions):
@@ -14,7 +14,7 @@ def outputs(root, definitions):
              "        checkDepth(depth)", "        when (value) {",
              "            is TypeNode -> writeType(value, packer, depth)",
              "            is BirLiteral -> writeLiteral(value, packer, depth)",
-             "            is SourceTypeAlias -> SourceMetadataMessagePack.write(value, packer, depth)",
+             *[f"            is {name} -> SourceMetadataMessagePack.write(value, packer, depth)" for name in source_records.values()],
              "            is TypeParameterDeclaration -> writeTypeParameterDeclaration(value, packer, depth)"]
     for shape in shapes.values():
         name = shape["x-dotkt-model"]["name"]
@@ -29,7 +29,7 @@ def outputs(root, definitions):
             return [indent + f"MessagePackText.write(packer, {value}.toJson())"]
         key = refkey(field)
         if key:
-            if key == "birSourceTypeAlias": target = f"SourceMetadataMessagePack.write({value}, packer, {depth})"
+            if key in source_records: target = f"SourceMetadataMessagePack.write({value}, packer, {depth})"
             elif key == "type": target = f"writeType({value}, packer, {depth})"
             elif key == "literalValue": target = f"writeLiteral({value}, packer, {depth})"
             elif key == "sourceClassifier": target = f"writeTypeSourceClassifier({value}, packer, {depth})"

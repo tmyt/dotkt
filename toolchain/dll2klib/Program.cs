@@ -1514,7 +1514,7 @@ internal sealed partial class AssemblyScanner : IDisposable
     private readonly MetadataReader _md;
     private readonly string _definitionPath;
     private readonly MetadataAttributes _attrs;
-    private readonly KotlinTypeAliasMetadata _typeAliases;
+    private readonly KotlinSourceMetadata _sourceMetadata;
     private readonly SourceInterfaceViews _sourceViews;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
@@ -1552,7 +1552,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         _definitionPath = Path.GetFullPath(definitionPath);
         _md = md;
         _attrs = new MetadataAttributes(md);
-        _typeAliases = new KotlinTypeAliasMetadata(md, _attrs);
+        _sourceMetadata = new KotlinSourceMetadata(md, _attrs);
         _sourceViews = sourceViews;
         _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute",
@@ -1765,7 +1765,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
 
-        var packages = visible.Keys.Concat(_typeAliases.Packages).Distinct(StringComparer.Ordinal)
+        var packages = visible.Keys.Concat(_sourceMetadata.Packages).Distinct(StringComparer.Ordinal)
             .OrderBy(name => name, StringComparer.Ordinal).ToArray();
         var projected = new Fragment?[packages.Length];
         var failures = new Exception?[packages.Length];
@@ -1882,7 +1882,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             }
             RemoveShadowedComparisonViews(fragment.Package, names);
             MarkLowPriorityDelegateOverloads(fragment.Package.Function, names);
-            _typeAliases.Project(packageName, fragment, names);
+            _sourceMetadata.Project(packageName, fragment, names);
             fragment.Strings = names.Strings;
             fragment.QualifiedNames = names.QualifiedNames;
             if (fragment.Class.Count != 0 ||
@@ -2544,41 +2544,48 @@ internal sealed partial class AssemblyScanner : IDisposable
                     sig.ParameterTypes.Length == 1 &&
                     IsSelfType(sig.ParameterTypes[0], result.FqName);
                 if (isComparableSlot) kotlinFlags |= 2;
-                var function = new Function
+                var function = _sourceMetadata.Callable(declarationIdentity?.Id, names);
+                if (function == null)
                 {
-                    Name = names.String(sourceMethodName ?? (isComparableSlot ? "compareTo" : name)),
-                    Flags = Flags.Callable(method.Attributes, modalityForMethod,
-                        kotlinFlags,
-                        isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")),
-                    ReturnType = suspendResult is TypeNode logicalSuspendReturn
-                        ? signatures.FromTypeNode(logicalSuspendReturn)
-                        : declarationIdentity?.ReturnType is TypeNode semanticReturn
-                        ? signatures.FromTypeNode(semanticReturn)
-                        : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
-                    ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters,
-                        declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
-                };
-                function.Flags = CallableVisibility(methodHandle, function.Flags);
-                PromoteContextParameters(method, function);
-                ApplySourceFunctionPriority(function, kotlinFlags, names);
-                // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
-                // its declaring class, while ReadCSharpExtensions separately publishes the namespace-scoped Kotlin
-                // extension view. Do not turn this class member into a second extension declaration. DotKt member
-                // extensions carry a compiler-owned receiver-role marker and are still restored here.
-                PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
-                AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
-                    declarationIdentity?.SemanticReifiedTypeParameterIndices);
-                if ((method.Attributes & (MethodAttributes.Static | MethodAttributes.SpecialName)) ==
-                    (MethodAttributes.Static | MethodAttributes.SpecialName) &&
-                    (def.GetGenericParameters().Count != 0 || clrMethodName is "op_Equality" or "op_Inequality"))
-                    ProjectStaticOwnerParameters(handle, methodHandle, function, names, signatures, context);
-                ApplyPInvokeProjection(method, function, names);
+                    function = new Function
+                    {
+                        Name = names.String(sourceMethodName ?? (isComparableSlot ? "compareTo" : name)),
+                        Flags = Flags.Callable(method.Attributes, modalityForMethod,
+                            kotlinFlags,
+                            isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")),
+                        ReturnType = suspendResult is TypeNode logicalSuspendReturn
+                            ? signatures.FromTypeNode(logicalSuspendReturn)
+                            : declarationIdentity?.ReturnType is TypeNode semanticReturn
+                            ? signatures.FromTypeNode(semanticReturn)
+                            : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
+                        ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
+                            declarationIdentity?.Parameters,
+                            declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
+                    };
+                    function.Flags = CallableVisibility(methodHandle, function.Flags);
+                    PromoteContextParameters(method, function);
+                    ApplySourceFunctionPriority(function, kotlinFlags, names);
+                    // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
+                    // its declaring class, while ReadCSharpExtensions separately publishes the namespace-scoped Kotlin
+                    // extension view. Do not turn this class member into a second extension declaration. DotKt member
+                    // extensions carry a compiler-owned receiver-role marker and are still restored here.
+                    PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
+                    AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
+                        declarationIdentity?.SemanticReifiedTypeParameterIndices);
+                    if ((method.Attributes & (MethodAttributes.Static | MethodAttributes.SpecialName)) ==
+                        (MethodAttributes.Static | MethodAttributes.SpecialName) &&
+                        (def.GetGenericParameters().Count != 0 || clrMethodName is "op_Equality" or "op_Inequality"))
+                        ProjectStaticOwnerParameters(handle, methodHandle, function, names, signatures, context);
+                    ApplyPInvokeProjection(method, function, names);
+                }
                 // Ordinary members already carry their physical declaring class.
                 // Exact-target convenience views add their ClrExternal facts separately.
                 if (declarationIdentity is { } identity)
+                {
                     function.FunctionAnnotation.Add(
                         KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
+                    function.Flags |= 1;
+                }
                 result.Function.Add(function);
                 var projected = new ProjectedFunction(methodHandle, function, PhysicalParameterKeys(method, context));
                 projectedFunctions.Add(projected);
@@ -5105,40 +5112,44 @@ internal sealed partial class AssemblyScanner : IDisposable
             var signature = method.DecodeProjectedSignature(signatures, context);
             var kotlinFlags = _attrs.Int32(
                 entry.KotlinImplementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
-            var function = new Function
+            var function = _sourceMetadata.Callable(declarationIdentity?.Id, names);
+            if (function == null)
             {
-                Name = names.String(declarationIdentity?.Name ??
-                    _md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
-                Flags = (Flags.Callable(
-                    method.Attributes,
-                    CallableModality(method.Attributes),
-                    kotlinFlags,
-                    isInline: _attrs.Has(
-                        entry.KotlinImplementation,
-                        MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
-                    (1 << 18),
-                ReturnType = (kotlinFlags & 4) != 0
-                    ? ProjectReturn(
-                        entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context)
-                    : declarationIdentity?.ReturnType is TypeNode semanticReturn
-                        ? signatures.FromTypeNode(semanticReturn)
-                        : ProjectReturn(
-                            entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
-                ValueParameter = {
-                    Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters,
-                        declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0)
-                },
-                ReceiverType = CSharp14ExtensionReceiver(
-                    entry.ReceiverMarker, entry.BlockArity, names, signatures,
-                    eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
-            };
-            function.Flags = CallableVisibility(entry.KotlinImplementation, function.Flags);
-            PromoteContextParameters(method, function);
-            AddCSharp14MethodTypeParameters(
-                entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
-                declarationIdentity?.SemanticReifiedTypeParameterIndices);
-            ApplySourceFunctionPriority(function, kotlinFlags, names);
+                function = new Function
+                {
+                    Name = names.String(declarationIdentity?.Name ??
+                        _md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
+                    Flags = (Flags.Callable(
+                        method.Attributes,
+                        CallableModality(method.Attributes),
+                        kotlinFlags,
+                        isInline: _attrs.Has(
+                            entry.KotlinImplementation,
+                            MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
+                        (1 << 18),
+                    ReturnType = (kotlinFlags & 4) != 0
+                        ? ProjectReturn(
+                            entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context)
+                        : declarationIdentity?.ReturnType is TypeNode semanticReturn
+                            ? signatures.FromTypeNode(semanticReturn)
+                            : ProjectReturn(
+                                entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
+                    ValueParameter = {
+                        Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
+                            declarationIdentity?.Parameters,
+                            declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0)
+                    },
+                    ReceiverType = CSharp14ExtensionReceiver(
+                        entry.ReceiverMarker, entry.BlockArity, names, signatures,
+                        eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
+                };
+                function.Flags = CallableVisibility(entry.KotlinImplementation, function.Flags);
+                PromoteContextParameters(method, function);
+                AddCSharp14MethodTypeParameters(
+                    entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
+                    declarationIdentity?.SemanticReifiedTypeParameterIndices);
+                ApplySourceFunctionPriority(function, kotlinFlags, names);
+            }
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -5496,53 +5507,57 @@ internal sealed partial class AssemblyScanner : IDisposable
             var sourceMethodName = KotlinSourceMethodName(methodHandle);
             var kotlinFlags = _attrs.Int32(
                 methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
-            var function = new Function
+            var function = _sourceMetadata.Callable(declarationIdentity?.Id, names);
+            if (function == null)
             {
-                Name = names.String(companion?.Name ?? sourceMethodName ?? name),
-                Flags = Flags.Callable(method.Attributes, modality,
-                    kotlinFlags,
-                    isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18),
-                ReturnType = (kotlinFlags & 4) != 0
-                    ? ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context)
-                    : declarationIdentity?.ReturnType is TypeNode semanticReturn
-                        ? signatures.FromTypeNode(semanticReturn)
-                        : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
-                ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
-                    declarationIdentity?.Parameters,
-                    declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
-            };
-            function.Flags = CallableVisibility(methodHandle, function.Flags);
-            PromoteContextParameters(method, function);
-            // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
-            // of this facade; the trusted carrier holds the type it is associated with. Restoring it needs no new
-            // encoding — a static callable with a receiver IS the standard shape (`isStatic && receiverParameter`), so
-            // put the static flag back and take the receiver from the carrier instead of from a physical parameter,
-            // which a companion extension does not have.
-            if (companion is not null)
-            {
-                function.Flags |= 1 << 18;
-                function.ReceiverType = companion.Receiver;
-            }
-            else PromoteReceiver(methodHandle, method, function);
-            foreach (var gpHandle in SourceMethodParameters(methodHandle))
-            {
-                var gp = _md.GetGenericParameter(gpHandle);
-                var tp = new TypeParameter
+                function = new Function
                 {
-                    Id = 10000 + gp.Index,
-                    Name = names.String(_md.GetString(gp.Name)),
-                    Variance = TypeParameter.Types.Variance.Inv,
-                    Reified = declarationIdentity?.SemanticReifiedTypeParameterIndices.Contains(gp.Index) == true,
+                    Name = names.String(companion?.Name ?? sourceMethodName ?? name),
+                    Flags = Flags.Callable(method.Attributes, modality,
+                        kotlinFlags,
+                        isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18),
+                    ReturnType = (kotlinFlags & 4) != 0
+                        ? ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context)
+                        : declarationIdentity?.ReturnType is TypeNode semanticReturn
+                            ? signatures.FromTypeNode(semanticReturn)
+                            : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
+                    ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
+                        declarationIdentity?.Parameters,
+                        declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
                 };
-                foreach (var constraint in KotlinNominalConstraints(_md, gp))
+                function.Flags = CallableVisibility(methodHandle, function.Flags);
+                PromoteContextParameters(method, function);
+                // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
+                // of this facade; the trusted carrier holds the type it is associated with. Restoring it needs no new
+                // encoding — a static callable with a receiver IS the standard shape (`isStatic && receiverParameter`), so
+                // put the static flag back and take the receiver from the carrier instead of from a physical parameter,
+                // which a companion extension does not have.
+                if (companion is not null)
                 {
-                    tp.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+                    function.Flags |= 1 << 18;
+                    function.ReceiverType = companion.Receiver;
                 }
-                function.TypeParameter.Add(tp);
+                else PromoteReceiver(methodHandle, method, function);
+                foreach (var gpHandle in SourceMethodParameters(methodHandle))
+                {
+                    var gp = _md.GetGenericParameter(gpHandle);
+                    var tp = new TypeParameter
+                    {
+                        Id = 10000 + gp.Index,
+                        Name = names.String(_md.GetString(gp.Name)),
+                        Variance = TypeParameter.Types.Variance.Inv,
+                        Reified = declarationIdentity?.SemanticReifiedTypeParameterIndices.Contains(gp.Index) == true,
+                    };
+                    foreach (var constraint in KotlinNominalConstraints(_md, gp))
+                    {
+                        tp.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+                    }
+                    function.TypeParameter.Add(tp);
+                }
+                RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
+                ApplySourceFunctionPriority(function, kotlinFlags, names);
+                ApplyPInvokeProjection(method, function, names);
             }
-            RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
-            ApplySourceFunctionPriority(function, kotlinFlags, names);
-            ApplyPInvokeProjection(method, function, names);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
