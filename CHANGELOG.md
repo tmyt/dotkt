@@ -5,12 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Overriding an inherited abstract member across modules now binds the same
-  declaration as a call through the base class, including covariant map entries.
 - Specialized map interfaces can dispatch inherited Kotlin implementations even
   when their keys or values have nested generic arguments.
 - Internal overrides now use the same virtual-slot bridges as public overrides
   within an assembly, including when a method or getter narrows its return type.
+- A subclass of `AbstractMap` can narrow the return type of `entries` and
+  still be used through either the subclass or the base class.
 - Inline collection operations such as `mapValues` can enumerate maps whose
   values contain star projections.
 

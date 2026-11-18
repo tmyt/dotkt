@@ -135,7 +135,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun ownsSourceCallable(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 		fn.getPackageFragment() in sourceFragments && (fn !is IrSimpleFunction || !isInheritedSynthetic(fn))
 	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
-		fn is IrSimpleFunction && fn.isFakeOverride && fn.modality == Modality.ABSTRACT &&
+		fn is IrSimpleFunction && fn.modality == Modality.ABSTRACT && isInheritedSynthetic(fn) &&
 			(fn.parent as? IrClass)?.let { it.kind != ClassKind.INTERFACE && !isExternalNetType(it) } == true
 
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
