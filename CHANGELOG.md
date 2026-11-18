@@ -7,8 +7,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Specialized map interfaces can dispatch inherited Kotlin implementations even
   when their keys or values have nested generic arguments.
-- Overriding an internal abstract property with a narrower return type no
-  longer leaves its CLR getter unimplemented.
+- Internal overrides now use the same virtual-slot bridges as public overrides
+  within an assembly, including when a method or getter narrows its return type.
 - Inline collection operations such as `mapValues` can enumerate maps whose
   values contain star projections.
 
