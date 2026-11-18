@@ -53,6 +53,19 @@ fun constructorReturnUnitAsNullableAny(condition: Boolean): Any? {
     return 1
 }
 
+private class CtorTrace {
+    var events = ""
+    fun record(value: String): String { events += value; return value }
+}
+private open class OrderedCtorBase(trace: CtorTrace, val x: String, val y: String, val copy: String = x) {
+    init { trace.record("B") }
+}
+private class OrderedCtorChild : OrderedCtorBase {
+    private constructor(t: CtorTrace, left: String, right: String) :
+        super(y = t.record(right), x = t.record(left), trace = t) { t.record("S") }
+    constructor(t: CtorTrace) : this(right = t.record("y"), left = t.record("x"), t = t) { t.record("T") }
+}
+
 class ConstructorTests {
     @TestAttribute
     fun initBlocks() {
@@ -65,6 +78,10 @@ class ConstructorTests {
         assertEquals("hi=7", "${a.label}=${a.n}")       // hi=7
         val b = ConstructorLabeled("solo")
         assertEquals("solo=0", "${b.label}=${b.n}")     // solo=0 (secondary delegates with n=0)
+        val trace = CtorTrace()
+        val reordered = OrderedCtorChild(trace)
+        assertEquals("yxyxBST", trace.events)
+        assertEquals("x:y:x", "${reordered.x}:${reordered.y}:${reordered.copy}")
     }
 
     @TestAttribute
