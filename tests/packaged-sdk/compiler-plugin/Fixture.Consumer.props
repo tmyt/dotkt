@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <FixtureAnswer Condition="'$(FixtureAnswer)' == ''">from the package</FixtureAnswer>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(WithoutOption)' != 'true'">
+    <DotKtCompilerPluginOption Include="dotkt.fixture:answer" Value="$(FixtureAnswer)" />
+  </ItemGroup>
+</Project>

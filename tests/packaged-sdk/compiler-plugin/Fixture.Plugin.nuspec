@@ -1,0 +1,10 @@
+<package>
+  <metadata>
+    <id>Fixture.Plugin</id><version>1.0.0</version><authors>DotKt</authors>
+    <description>A JVM compiler plugin, not an application dependency.</description>
+  </metadata>
+  <files>
+    <file src="probe.jar" target="tools/compiler plugin.jar" />
+    <file src="Fixture.Plugin.props" target="buildTransitive" />
+  </files>
+</package>

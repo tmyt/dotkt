@@ -163,6 +163,37 @@ the debugger. Code inlined from another assembly does not carry the producer's s
 the consumer's PDB. This does not provide Kotlin local-variable inspection or expression evaluation,
 coroutine logical stepping, SourceLink, or Edit and Continue.
 
+### Kotlin compiler plugins
+
+Register a JVM compiler plugin in a Kotlin project:
+
+```xml
+<ItemGroup>
+  <DotKtCompilerPlugin Include="tools/my-plugin.jar" />
+  <DotKtCompilerPluginOption Include="com.example.plugin:mode" Value="full" />
+</ItemGroup>
+```
+
+This is equivalent to passing `-Xplugin=tools/my-plugin.jar -P plugin:com.example.plugin:mode=full`
+to `kotc`. FIR declarations and IR transformations run in the compiler JVM before DotKt
+emits BIR. Use trusted JARs built for the embedded Kotlin compiler version; a plugin that
+requires the Kotlin/JVM backend or a JVM runtime library is not automatically CLR-compatible.
+The JAR is a build input, not a runtime dependency of your application.
+
+A NuGet package can ship its JAR under `tools/` and register these items in
+`build/<PackageId>.props`. Use a path relative to the import, for example
+`Include="$(MSBuildThisFileDirectory)../tools/my-plugin.jar"`. Use
+`buildTransitive/<PackageId>.props` instead only when projects referencing the
+package indirectly should also execute that plugin. Requests for the same absolute JAR
+path are loaded once. Options retain declaration order and repetitions; each plugin
+decides which options may repeat. Changing or removing a registration, option, or
+JAR content invalidates Kotlin compilation.
+
+Visual Studio checks file timestamps before invoking MSBuild. If plugin tooling
+can replace a JAR while preserving its timestamp, set
+`<DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>` in the project
+so Build/F5 runs the same content check as `dotnet build`.
+
 ### Reference assemblies and native resources
 
 Starting with 0.9.20, set `ProduceReferenceAssembly=true` to also

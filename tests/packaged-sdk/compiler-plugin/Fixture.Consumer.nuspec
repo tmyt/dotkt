@@ -1,0 +1,8 @@
+<package>
+  <metadata>
+    <id>Fixture.Consumer</id><version>1.0.0</version><authors>DotKt</authors>
+    <description>Transitive plugin registration with direct-only defaults.</description>
+    <dependencies><dependency id="Fixture.Plugin" version="[1.0.0]" /></dependencies>
+  </metadata>
+  <files><file src="Fixture.Consumer.props" target="build" /></files>
+</package>

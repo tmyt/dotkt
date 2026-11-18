@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Register JVM-hosted Kotlin FIR and IR compiler plugins from projects or NuGet
+  build assets using `DotKtCompilerPlugin` and `DotKtCompilerPluginOption`.
+
 - Generic `T : CharSequence` calls accept native strings even in assemblies with
   a custom CharSequence implementation, without losing the Kotlin upper bound.
 

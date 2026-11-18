@@ -2,7 +2,9 @@ package kotc
 
 import kotc.pipeline.ClrCliPipeline
 import org.jetbrains.kotlin.cli.common.arguments.K2MetadataCompilerArguments
+import org.jetbrains.kotlin.cli.common.arguments.ArgumentParseErrors
 import org.jetbrains.kotlin.cli.common.arguments.parseCommandLineArguments
+import org.jetbrains.kotlin.cli.common.arguments.preprocessCommandLineArguments
 import org.jetbrains.kotlin.cli.common.messages.MessageRenderer
 import org.jetbrains.kotlin.cli.common.messages.PrintingMessageCollector
 import org.jetbrains.kotlin.config.Services
@@ -14,8 +16,29 @@ import org.jetbrains.kotlin.util.PerformanceManagerImpl
  * source roots, ...) and run the common metadata frontend against KLIB dependencies.
  */
 fun main(args: Array<String>) {
-	val normalizedArgs = args.filterNot { it == "-no-stdlib" }
+	val sdkPluginArgs = "-Xdotkt-plugin-arguments="
+	val (pluginFiles, cliArgs) = args.partition { it.startsWith(sdkPluginArgs) }
+	val normalizedArgs = cliArgs.filterNot { it == "-no-stdlib" }
 	val arguments = parseCommandLineArguments<K2MetadataCompilerArguments>(normalizedArgs)
+	// MSBuild already supplies individual items. Read their Kotlin-quoted argument
+	// file without applying the CLI's comma-list grammar a second time.
+	for (file in pluginFiles) {
+		val errors = lazy { ArgumentParseErrors() }
+		val tokens = preprocessCommandLineArguments(listOf("@" + file.removePrefix(sdkPluginArgs)), errors).iterator()
+		require(!errors.isInitialized() || errors.value.argfileErrors.isEmpty()) { errors.value.argfileErrors.joinToString() }
+		val jars = mutableListOf<String>()
+		val options = mutableListOf<String>()
+		while (tokens.hasNext()) {
+			val token = tokens.next()
+			when {
+				token.startsWith("-Xplugin=") -> jars += token.removePrefix("-Xplugin=")
+				token == "-P" -> options += tokens.next()
+				else -> error("Unexpected SDK plugin argument: $token")
+			}
+		}
+		arguments.pluginClasspaths += jars
+		arguments.pluginOptions += options
+	}
 	// CLR reference KLIBs represent CLR statics with Kotlin metadata's standard static-member flags. Ignore either
 	// user spelling after parsing (including spellings expanded from @argfiles): ClrMetadataConfigurationUpdater
 	// installs this as a CLR platform capability, not as a manually selected preview language feature.
