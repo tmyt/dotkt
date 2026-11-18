@@ -989,10 +989,15 @@ private fun erasedMutableCollectionMethod(receiver: Any, name: String, parameter
     return match ?: throw IllegalStateException("Missing ICollection member " + name)
 }
 
+// Inlining can erase a static collection view to System.Object. Only a view that
+// still carries its element argument can prefer one of the receiver's CLR faces.
+private fun preferredCollectionElement(view: StarProjectionType?): StarProjectionType? =
+    view?.getGenericArguments()?.singleOrNull()
+
 private fun erasedMutableListView(receiver: Any, sourceWitness: Any? = null): StarProjectionType? =
     findErasedProjectedView(receiver,
         "System.Collections.Generic.IList`1", "System.Collections.Generic.IList`1",
-        elementWitness = (sourceWitness as? StarProjectionType)?.getGenericArguments()?.get(0))
+        elementWitness = preferredCollectionElement(sourceWitness as? StarProjectionType))
 
 // bir2cir supplies trusted map-only class-alias storage definitions, exactly as for collection classifiers.
 // Cache those physical type tokens; do not infer Kotlin storage meaning from runtime CLR class names.
@@ -1145,7 +1150,7 @@ internal fun projectedListCountErased(receiver: Any): Int = projectedListViewCou
 private fun projectedListFamily(receiver: Any, preferred: StarProjectionType?): StarProjectionType? =
     findErasedProjectedView(receiver,
         "System.Collections.Generic.IReadOnlyList`1", "System.Collections.Generic.IList`1",
-        elementWitness = preferred?.getGenericArguments()?.get(0))
+        elementWitness = preferredCollectionElement(preferred))
 
 private fun projectedListViewCount(receiver: Any, preferred: StarProjectionType?): Int {
     val view = projectedListFamily(receiver, preferred)
@@ -1175,7 +1180,7 @@ internal fun projectedSetViewCount(receiver: Any, sourceWitness: Any?): Int {
 internal fun projectedSetFamily(receiver: Any, sourceWitness: Any?,
     failOnAmbiguity: Boolean = true): StarProjectionType? {
     // The operation supplies its static view preference. No originating view survives opaque value transport.
-    val element = if (sourceWitness == null) null else (sourceWitness as StarProjectionType).getGenericArguments()[0]
+    val element = preferredCollectionElement(sourceWitness as StarProjectionType?)
     return if (receiver is KotlinSetClassifier)
         findErasedProjectedView(receiver,
             "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1",
@@ -1203,7 +1208,7 @@ private fun projectedOperationFamily(receiver: Any, sourceWitness: Any?, family:
         else -> return null
     }
     return findErasedProjectedView(receiver, definition, definition,
-        excludeDictionaryStorage = family != 4, elementWitness = preferred?.getGenericArguments()?.get(0))
+        excludeDictionaryStorage = family != 4, elementWitness = preferredCollectionElement(preferred))
 }
 
 @PublishedApi
@@ -1282,7 +1287,7 @@ internal fun projectedViewEnumeratorErased(receiver: Any, preferredView: Any?, f
         else if (family == 3) projectedListFamily(receiver, preferred)
         else findErasedProjectedView(receiver,
             "System.Collections.Generic.IEnumerable`1", "System.Collections.Generic.IEnumerable`1",
-            excludeDictionaryStorage = true, elementWitness = preferred?.getGenericArguments()?.get(0))
+            excludeDictionaryStorage = true, elementWitness = preferredCollectionElement(preferred))
     if (view == null) return null
     if (family == 0 || family == 3) return projectedFamilyEnumerator(receiver, view)
     return try {
@@ -1296,7 +1301,7 @@ internal fun projectedViewEnumeratorErased(receiver: Any, preferredView: Any?, f
 private fun projectedCollectionFamily(receiver: Any, preferred: StarProjectionType?): StarProjectionType? =
     findErasedProjectedView(receiver,
         "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1",
-        excludeDictionaryStorage = true, elementWitness = preferred?.getGenericArguments()?.get(0))
+        excludeDictionaryStorage = true, elementWitness = preferredCollectionElement(preferred))
 
 @PublishedApi
 internal fun projectedViewCountErased(receiver: Any, preferredView: Any?, family: Int): Int {
