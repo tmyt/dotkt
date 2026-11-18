@@ -5,7 +5,7 @@ adapter is deleted with the last DOM pass; it is not a second internal IR or a
 transport codec. Source aliases never enter that remaining DOM graph.
 """
 import json
-from bir_lowering_models import base, compose_shapes, csharp_type, declaration_cases, is_nullable, refkey
+from bir_lowering_models import base, compose_shapes, csharp_type, declaration_cases, is_nullable, refkey, source_records
 
 
 def outputs(root, definitions):
@@ -28,7 +28,7 @@ def outputs(root, definitions):
         if key:
             if key == "type": return f"TypeNode.Read({value}) ?? throw new FormatException()"
             if key == "literalValue": return f"BirLiteral.Read({value})"
-            if key == "birSourceTypeAlias": return "throw new FormatException()"
+            if key in source_records: return "throw new FormatException()"
             return f"Read{cs(field).removeprefix('I')}({value}!)"
         if field.get("type") == "array":
             item = f"item{nesting}"
@@ -55,7 +55,7 @@ def outputs(root, definitions):
                   f"        return new {name}", "        {"]
         for key, field in fields:
             prop = key[:1].upper() + key[1:]
-            if refkey(field) == "birSourceTypeAlias" or refkey(field.get("items", {})) == "birSourceTypeAlias":
+            if refkey(field) in source_records or refkey(field.get("items", {})) in source_records:
                 # Neither the original ToDom nor this inverse boundary carries
                 # aliases. Their source ownership is outside the DOM graph.
                 expression = f"fields.ContainsKey({json.dumps(key)}) ? throw new FormatException() : default"

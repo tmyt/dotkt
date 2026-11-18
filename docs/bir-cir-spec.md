@@ -107,6 +107,14 @@ definition is internal, sealed, compiler-generated, and has assembly-only `Attri
 map of the structured declaration, not protobuf or a serialized KLIB. ilemit applies assembly attributes literally after their constructors
 are defined. Declaration metadata survives reference-body stripping.
 
+BIR roots may also carry `sourceCallables`. When an IR plugin changes a named function's
+signature, its Kotlin source parameters, result, type parameters and annotations come from FIR.
+The declaration ID, by contrast, identifies the transformed function. bir2cir consumes each
+record into a repeatable assembly-level `KotlinSourceCallableAttribute` using the same codec as
+an alias. dll2klib projects the source signature to the consumer frontend and retains the ID for
+physical call binding. The consumer's IR plugin is responsible for supplying its ABI arguments;
+neither dll2klib nor bir2cir infer them from parameter names.
+
 The declaration schema is [kotlin-typealias.schema.json](kotlin-typealias.schema.json).
 Each payload has `packageName`, `ownerPath` (empty for top-level aliases), `name`, `visibility`,
 `typeParameters`, `underlyingType`, `expandedType`, and `annotations`. Each parameter has an explicit

@@ -33,13 +33,13 @@ object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, 
 	postActions = setOf(CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
 	override fun executePhase(input: kotc.pipeline.ClrFir2IrPipelineArtifact): ClrBackendArtifact {
-		return emit(input.result, input.configuration, input.typeAliases)
+		return emit(input.result, input.configuration, input.typeAliases, input.pluginSources)
 	}
 }
 
 @OptIn(org.jetbrains.kotlin.config.MessageCollectorAccess::class)
 private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration,
-    typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>>): ClrBackendArtifact {
+    typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>>, pluginSources: PluginCallableSources?): ClrBackendArtifact {
 		val moduleFragment = result.irModuleFragment
 		val outputDir = configuration?.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)
 			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
@@ -71,7 +71,11 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			if (seen > 1) baseName = "${baseName}__$seen"
 			try {
 				val birFile = bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
-				if (birFile != null) kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"), birFile, format)
+				if (birFile != null) {
+					val sources = pluginSources?.collect(irFile, bir::declarationIdForPhysicalAllocation).orEmpty()
+					kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"),
+						if (sources.isEmpty()) birFile else birFile.copy(sourceCallables = sources), format)
+				}
 			} catch (e: Throwable) {
 				crashed = true
 				messageCollector?.report(

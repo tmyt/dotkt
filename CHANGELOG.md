@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Kotlin callers in another assembly see a function's source signature and
+  annotations when an IR compiler plugin adds hidden parameters.
+
 - Specialized map interfaces can dispatch inherited Kotlin implementations even
   when their keys or values have nested generic arguments.
 - Inline collection operations such as `mapValues` can enumerate maps whose

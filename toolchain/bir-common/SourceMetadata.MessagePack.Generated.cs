@@ -10,6 +10,9 @@ public static class SourceMetadataMessagePack
     public static SourceTypeAlias Read(ref MessagePackReader reader) => ReadSourceTypeAlias(ref reader);
     public static void Write(ref MessagePackWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(ref writer, value, 0);
     public static void Write(ref MessagePackWriter writer, SourceTypeAlias value, int depth) => WriteSourceTypeAlias(ref writer, value, depth);
+    public static SourceCallable ReadCallable(ref MessagePackReader reader) => ReadSourceCallable(ref reader);
+    public static void Write(ref MessagePackWriter writer, SourceCallable value) => WriteSourceCallable(ref writer, value, 0);
+    public static void Write(ref MessagePackWriter writer, SourceCallable value, int depth) => WriteSourceCallable(ref writer, value, depth);
 
     private static SourceTypeAlias ReadSourceTypeAlias(ref MessagePackReader reader)
     {
@@ -95,6 +98,203 @@ public static class SourceMetadataMessagePack
         WriteSourceType(ref writer, value.UnderlyingType, depth + 1);
         writer.Write("expandedType");
         WriteSourceType(ref writer, value.ExpandedType, depth + 1);
+        writer.Write("annotations");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.Annotations.Length);
+        foreach (var item in value.Annotations)
+        {
+            WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+    }
+
+    private static SourceCallable ReadSourceCallable(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        string? declarationId = default;
+        string? name = default;
+        int flags = default;
+        SourceTypeParameter[]? typeParameters = default;
+        int[]? reifiedParameters = default;
+        SourceValueParameter[]? contextParameters = default;
+        SourceValueParameter[]? valueParameters = default;
+        SourceType? returnType = default;
+        SourceAnnotation[]? annotations = default;
+        SourceAnnotation[]? receiverAnnotations = default;
+        SourceType? receiverType = default;
+        for (var i = 0; i < count; i++)
+        {
+            switch (ReadText(ref reader))
+            {
+                case "declarationId":
+                    Seen(ref seen, 1UL);
+                    declarationId = ReadText(ref reader);
+                    break;
+                case "name":
+                    Seen(ref seen, 2UL);
+                    name = ReadText(ref reader);
+                    break;
+                case "flags":
+                    Seen(ref seen, 4UL);
+                    flags = reader.ReadInt32();
+                    break;
+                case "typeParameters":
+                    Seen(ref seen, 8UL);
+                    typeParameters = ReadArray(ref reader, ReadSourceTypeParameter);
+                    break;
+                case "reifiedParameters":
+                    Seen(ref seen, 16UL);
+                    reifiedParameters = ReadArray(ref reader, static (ref MessagePackReader item) => item.ReadInt32());
+                    break;
+                case "receiverType":
+                    Seen(ref seen, 32UL);
+                    receiverType = ReadSourceType(ref reader);
+                    break;
+                case "contextParameters":
+                    Seen(ref seen, 64UL);
+                    contextParameters = ReadArray(ref reader, ReadSourceValueParameter);
+                    break;
+                case "valueParameters":
+                    Seen(ref seen, 128UL);
+                    valueParameters = ReadArray(ref reader, ReadSourceValueParameter);
+                    break;
+                case "returnType":
+                    Seen(ref seen, 256UL);
+                    returnType = ReadSourceType(ref reader);
+                    break;
+                case "annotations":
+                    Seen(ref seen, 512UL);
+                    annotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "receiverAnnotations":
+                    Seen(ref seen, 1024UL);
+                    receiverAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        if ((seen & 2015UL) != 2015UL) throw new FormatException();
+        reader.Depth--;
+        return new SourceCallable(declarationId!, name!, flags, typeParameters!, reifiedParameters!, contextParameters!, valueParameters!, returnType!, annotations!, receiverAnnotations!, receiverType);
+    }
+
+    private static void WriteSourceCallable(ref MessagePackWriter writer, SourceCallable value, int depth)
+    {
+        if (depth >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteMapHeader(10 + (value.ReceiverType is null ? 0 : 1));
+        writer.Write("declarationId");
+        IrMessagePack.WriteString(ref writer, value.DeclarationId);
+        writer.Write("name");
+        IrMessagePack.WriteString(ref writer, value.Name);
+        writer.Write("flags");
+        writer.Write(value.Flags);
+        writer.Write("typeParameters");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.TypeParameters.Length);
+        foreach (var item in value.TypeParameters)
+        {
+            WriteSourceTypeParameter(ref writer, item, depth + 2);
+        }
+        writer.Write("reifiedParameters");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.ReifiedParameters.Length);
+        foreach (var item in value.ReifiedParameters)
+        {
+            writer.Write(item);
+        }
+        if (value.ReceiverType is { } receiverType)
+        {
+            writer.Write("receiverType");
+            WriteSourceType(ref writer, receiverType, depth + 1);
+        }
+        writer.Write("contextParameters");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.ContextParameters.Length);
+        foreach (var item in value.ContextParameters)
+        {
+            WriteSourceValueParameter(ref writer, item, depth + 2);
+        }
+        writer.Write("valueParameters");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.ValueParameters.Length);
+        foreach (var item in value.ValueParameters)
+        {
+            WriteSourceValueParameter(ref writer, item, depth + 2);
+        }
+        writer.Write("returnType");
+        WriteSourceType(ref writer, value.ReturnType, depth + 1);
+        writer.Write("annotations");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.Annotations.Length);
+        foreach (var item in value.Annotations)
+        {
+            WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+        writer.Write("receiverAnnotations");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.ReceiverAnnotations.Length);
+        foreach (var item in value.ReceiverAnnotations)
+        {
+            WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+    }
+
+    private static SourceValueParameter ReadSourceValueParameter(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        string? name = default;
+        int flags = default;
+        SourceType? type = default;
+        SourceAnnotation[]? annotations = default;
+        SourceType? varargElementType = default;
+        for (var i = 0; i < count; i++)
+        {
+            switch (ReadText(ref reader))
+            {
+                case "name":
+                    Seen(ref seen, 1UL);
+                    name = ReadText(ref reader);
+                    break;
+                case "flags":
+                    Seen(ref seen, 2UL);
+                    flags = reader.ReadInt32();
+                    break;
+                case "type":
+                    Seen(ref seen, 4UL);
+                    type = ReadSourceType(ref reader);
+                    break;
+                case "varargElementType":
+                    Seen(ref seen, 8UL);
+                    varargElementType = ReadSourceType(ref reader);
+                    break;
+                case "annotations":
+                    Seen(ref seen, 16UL);
+                    annotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        if ((seen & 23UL) != 23UL) throw new FormatException();
+        reader.Depth--;
+        return new SourceValueParameter(name!, flags, type!, annotations!, varargElementType);
+    }
+
+    private static void WriteSourceValueParameter(ref MessagePackWriter writer, SourceValueParameter value, int depth)
+    {
+        if (depth >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteMapHeader(4 + (value.VarargElementType is null ? 0 : 1));
+        writer.Write("name");
+        IrMessagePack.WriteString(ref writer, value.Name);
+        writer.Write("flags");
+        writer.Write(value.Flags);
+        writer.Write("type");
+        WriteSourceType(ref writer, value.Type, depth + 1);
+        if (value.VarargElementType is { } varargElementType)
+        {
+            writer.Write("varargElementType");
+            WriteSourceType(ref writer, varargElementType, depth + 1);
+        }
         writer.Write("annotations");
         if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
         writer.WriteArrayHeader(value.Annotations.Length);

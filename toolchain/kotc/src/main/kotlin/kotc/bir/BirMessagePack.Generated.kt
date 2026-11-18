@@ -13,6 +13,7 @@ internal object BirMessagePack {
             is TypeNode -> writeType(value, packer, depth)
             is BirLiteral -> writeLiteral(value, packer, depth)
             is SourceTypeAlias -> SourceMetadataMessagePack.write(value, packer, depth)
+            is SourceCallable -> SourceMetadataMessagePack.write(value, packer, depth)
             is TypeParameterDeclaration -> writeTypeParameterDeclaration(value, packer, depth)
             is BirFileDeclaration -> writeBirFileDeclaration(value, packer, depth)
             is BirBinaryOperation -> writeBirBinaryOperation(value, packer, depth)
@@ -149,7 +150,7 @@ internal object BirMessagePack {
 
     private fun writeBirFileDeclaration(value: BirFileDeclaration, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(8)
+        packer.packMapHeader(8 + (if (value.sourceCallables == null) 0 else 1))
         packer.packString("fileClass")
         MessagePackText.write(packer, value.fileClass)
         packer.packString("hasMain")
@@ -189,6 +190,14 @@ internal object BirMessagePack {
         packer.packArrayHeader(value.typeAliases.size)
         for (item0 in value.typeAliases) {
             SourceMetadataMessagePack.write(item0, packer, depth + 1 + 1)
+        }
+        value.sourceCallables?.let { child ->
+            packer.packString("sourceCallables")
+            checkDepth(depth + 1)
+            packer.packArrayHeader(child.size)
+            for (item0 in child) {
+                SourceMetadataMessagePack.write(item0, packer, depth + 1 + 1)
+            }
         }
     }
 

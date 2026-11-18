@@ -655,7 +655,7 @@ sealed class Pipeline
             // a second abstract declaration. Preserve their selected source row
             // before retiring the exact fake override occurrence.
             InheritedDefaultFakeOverrideElision.Apply(source, RetireDeclaration);
-            RoundtripMetadata.FreezeTypeAliases(source);
+            RoundtripMetadata.FreezeSourceDeclarations(source);
         }
         // Finish every source-use pass before representation/name allocation
         // mutates declarations shared by the module's prepared authorities.

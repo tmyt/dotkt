@@ -16,7 +16,7 @@ static partial class RoundtripMetadata
         };
         var preceding = new BirAttribute { Attr = new TypeNode.Fqn("Example.Attribute") };
         var file = new BirFileDeclaration { FileClass = "AliasFile", TypeAliases = aliases, AssemblyAttrs = new[] { preceding } };
-        FreezeTypeAliases(file);
+        FreezeSourceDeclarations(file);
         if (file.TypeAliases.IsPresent || file.FileClass.Value != "AliasFile" || file.AssemblyAttrs.Value.Length != 3
             || !ReferenceEquals(file.AssemblyAttrs.Value[0], preceding))
             throw new InvalidOperationException("Alias freeze changed its owner, prior attributes, order or source-fact lifetime");
@@ -33,14 +33,14 @@ static partial class RoundtripMetadata
                 throw new InvalidOperationException("Alias freeze changed source facts or the existing shared payload encoding");
         }
         var frozen = file.AssemblyAttrs.Value;
-        FreezeTypeAliases(file);
+        FreezeSourceDeclarations(file);
         if (!ReferenceEquals(file.AssemblyAttrs.Value, frozen))
             throw new InvalidOperationException("Consumed aliases were frozen a second time");
         foreach (var presence in new[] { default(OptionalField<BirAttribute[]>), OptionalField<BirAttribute[]>.Null,
             OptionalField<BirAttribute[]>.Of(Array.Empty<BirAttribute>()) })
         {
             var empty = new BirFileDeclaration { TypeAliases = Array.Empty<SourceTypeAlias>(), AssemblyAttrs = presence };
-            FreezeTypeAliases(empty);
+            FreezeSourceDeclarations(empty);
             if (empty.TypeAliases.IsPresent || empty.AssemblyAttrs.IsPresent != presence.IsPresent
                 || empty.AssemblyAttrs.IsNull != presence.IsNull
                 || presence.HasValue && !ReferenceEquals(empty.AssemblyAttrs.Value, presence.Value))
