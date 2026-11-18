@@ -153,6 +153,14 @@ enum class CompanionSimple {
     companion { val first: String = "a" }
 }
 
+private enum class CompanionLambdaEnum {
+    A;
+    companion object Factory {
+        val create: () -> CompanionLambdaEnum = { A }
+        fun add(n: Int): () -> Int = { n + 1 }
+    }
+}
+
 // ---- companion-block properties whose storage IS the user-visible member --------------------------------------
 
 class CompanionFieldRouted {
@@ -325,6 +333,8 @@ class CompanionStaticTests {
 
     @TestAttribute
     fun realCompanionObjectStaysDistinctFromACompanionBlock() {
+        assertEquals(CompanionLambdaEnum.A, CompanionLambdaEnum.create())
+        assertEquals(42, CompanionLambdaEnum.Factory.add(41)())
         assertEquals("obj:real-companion", CompanionCounter.describe())
         assertEquals("real-companion", CompanionCounter.label)
         // A companion object is a singleton VALUE; the block's members have no instance at all.

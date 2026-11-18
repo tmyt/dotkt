@@ -696,9 +696,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		var parent: Any? = k.parent
 		while (parent != null) {
 			when (parent) {
-				is IrClass -> return if (parent.isCompanion)
-					(parent.parent as? IrClass)?.let(::typeName) ?: fileClass
-				else typeName(parent)
+				is IrClass -> return typeName(parent)
 				is IrFile -> return fileClassName(parent)
 				is IrDeclaration -> parent = parent.parent
 				else -> return fileClass
@@ -746,10 +744,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		var parent: Any? = declaration.parent
 		while (parent != null) {
 			when (parent) {
-				is IrClass -> {
-					val owner = if (parent.isCompanion) parent.parent as? IrClass else parent
-					return owner?.let(::typeName) ?: fileClass
-				}
+				is IrClass -> return typeName(parent)
 				is IrFile -> return fileClassName(parent)
 				is IrDeclaration -> parent = parent.parent
 				else -> return fileClass
@@ -765,8 +760,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		while (parent != null) {
 			when (parent) {
 				is IrClass -> {
-					val owner = if (parent.isCompanion) parent.parent as? IrClass else parent
-					return if (owner != null && typeName(owner) == semanticName) ownerSpec(owner, null)
+					return if (typeName(parent) == semanticName) ownerSpec(parent, null)
 					else TypeNode.Fqn(semanticName)
 				}
 				is IrFile -> return TypeNode.Fqn(semanticName)
