@@ -64,15 +64,15 @@ class Registrar : CompilerPluginRegistrar() {
                     }
                 // Replace a source call without moving its debug span. The cached FIR
                 // qualifier at that span belongs to Leaf.Method, not Middle.Method.
-                val top = moduleFragment.files.flatMap { it.declarations.filterIsInstance<IrSimpleFunction>() }
                 // Model plugins that supply class arguments only on the constructed result type.
-                top.single { it.name.asString() == "construct" }.acceptVoid(object : IrVisitorVoid() {
+                moduleFragment.acceptChildrenVoid(object : IrVisitorVoid() {
                     override fun visitElement(element: IrElement) = element.acceptChildrenVoid(this)
                     override fun visitConstructorCall(expression: IrConstructorCall) {
                         expression.typeArguments.fill(null)
                         expression.acceptChildrenVoid(this)
                     }
                 })
+                val top = moduleFragment.files.flatMap { it.declarations.filterIsInstance<IrSimpleFunction>() }
                 val original = top.singleOrNull { it.name.asString() == "original" } ?: return
                 fun method(function: IrSimpleFunction): IrCall {
                     lateinit var call: IrCall

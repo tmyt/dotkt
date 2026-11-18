@@ -26,7 +26,7 @@ jar cf fixture/probe.jar -C classes . -C "$src" META-INF
 bash tools/kotc/bin/kotc -classpath tools/kotlin-stdlib-clr-frontend.klib \
     -Xplugin=fixture/probe.jar -P 'plugin:dotkt.fixture:answer=from direct kotc' app/App.kt -d direct
 grep -Fq 'from direct kotc' direct/App.bir.json
-jq -e '[.. | objects | select(.k? == "new" and .type.name? == "fixture.Box")] |
+jq -e '[.. | objects | select(.k? == "new" and .type.name? == "fixture.Box" and .type.args[0].name? == "kotlin.String")] |
     length == 1 and .[0].argTypes == [{"t":"fqn","name":"kotlin.String"}]' direct/App.bir.json >/dev/null
 for pkg in Plugin Consumer; do dotnet pack "fixture/Fixture.$pkg.nuspec" -o feed; done
 # Keep the native reference fixed; only plugin registrations may invalidate the
