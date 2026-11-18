@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <FixturePluginPath Condition="'$(FixturePluginPath)' == ''">$(MSBuildThisFileDirectory)../tools/compiler plugin.jar</FixturePluginPath>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(WithoutPlugin)' != 'true'">
+    <DotKtCompilerPlugin Include="$(FixturePluginPath)" />
+  </ItemGroup>
+</Project>
