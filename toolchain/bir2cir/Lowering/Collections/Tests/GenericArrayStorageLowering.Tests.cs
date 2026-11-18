@@ -108,7 +108,7 @@ static partial class GenericArrayStorageLowering
                 var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(declarations, refs, values);
                 var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
                 var realization = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
-                    FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs, surface.Demand.ReservedNames);
+                    FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs);
                 FBoundStarProjectionErasure.RealizeCarriersSource(sources, realization,
                     Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null, (_, _) => { });
             }

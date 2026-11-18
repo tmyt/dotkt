@@ -44,7 +44,7 @@ static partial class OwnerConstrainedMethodLowering
         var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, refs, values);
         var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
         var context = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
-            FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs, surface.Demand.ReservedNames);
+            FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs);
         var originalCatalog = bindings.SourceLocalDeclarations;
         var originalCount = originalCatalog.Count;
         ConfigurePreparedMethodsSource(bindings, refs);
@@ -125,7 +125,7 @@ static partial class OwnerConstrainedMethodLowering
             var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, refs, values);
             var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
             return new(surface, FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs),
-                refs, surface.Demand.ReservedNames);
+                refs);
         }
         void Propagate(BirFileDeclaration root, FBoundStarProjectionErasure.CarrierRealizationContext context)
             => PropagateCapturedBoundsSource(context, new[] { root }, _ => false, type => type, _ => null);

@@ -186,7 +186,7 @@ static partial class AliasHelperHoist
         var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, nativeProofs, refs, policy);
         var realization = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
             FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs,
-            surface.Demand.ReservedNames, materializedType: (owner, type) => transitions.AdmitMaterializedTypes(owner, new[] { type }));
+            materializedType: (owner, type) => transitions.AdmitMaterializedTypes(owner, new[] { type }));
         FBoundStarProjectionErasure.RealizeCarriersSource(new[] { file }, realization,
             Array.Empty<SharedSyntheticSynthesis.CellStorage>(), (_, _) => null,
             (owner, types) => transitions.AdmitMaterializedTypes(owner, types));

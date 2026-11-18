@@ -791,7 +791,7 @@ sealed class Pipeline
         FBoundStarProjectionErasure.ProjectParameterDeclarations(captured, carrierProjection, scalarSlots.Parameters);
 
         var carrierRealization = new FBoundStarProjectionErasure.CarrierRealizationContext(
-            carrierSurface, carrierProjection, refs, carrierSurface.Demand.ReservedNames,
+            carrierSurface, carrierProjection, refs,
             (owner, appended) => pendingOverrideParameters.AdmitMaterializedMethods(owner, appended, currentDeclarations),
             (file, type) => {
                 aliasTransitions.AdmitMaterializedTypes(file, new[] { type });

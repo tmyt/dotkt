@@ -178,7 +178,7 @@ static partial class FBoundStarProjectionErasure
             var aliasProofs = PrepareNativeProofs(aliasBindings, references, aliasValues);
             var aliasSurface = PrepareCarrierSurface(aliasPreparation, aliasProofs, references, aliasValues);
             var aliasContext = new CarrierRealizationContext(aliasSurface,
-                CarrierProjectionContext.ForSource(aliasSurface.Demand, references, aliasLedger), references, aliasSurface.Demand.ReservedNames);
+                CarrierProjectionContext.ForSource(aliasSurface.Demand, references, aliasLedger), references);
             var aliasCurrent = CurrentPhysicalTypeView.Capture(new[] { aliasFile }, aliasBindings);
             var aliasProjection = CarrierProjectionContext.ForCurrentSource(aliasContext, aliasCurrent, aliasLedger);
             var referencedAlias = CarrierProjectionContext.ForReferencedValuesSource(aliasContext, aliasCurrent, aliasLedger);

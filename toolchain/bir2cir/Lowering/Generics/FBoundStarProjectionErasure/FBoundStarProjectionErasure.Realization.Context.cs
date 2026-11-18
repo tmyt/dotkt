@@ -82,18 +82,16 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlyDictionary<string, Owner> Owners => Demand.Owners;
         internal IReadOnlyDictionary<string, DeclarationBinding> SourceDefinitions => Bindings.SourceDefinitions;
         internal IReadOnlyDictionary<string, string> Aliases { get; }
-        internal HashSet<string> ReservedNames { get; }
         internal SourceCarrierDeclarations Declarations { get; } = new();
         readonly Action<IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> materializedMethods;
         readonly Action<BirFileDeclaration, IBirTypeDeclaration> materializedType;
 
         internal CarrierRealizationContext(CarrierSurfacePreparation surface, CarrierProjectionContext projection,
-            ReferenceMetadataIndex references, HashSet<string> reservedNames,
+            ReferenceMetadataIndex references,
             Action<IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> materializedMethods = null,
             Action<BirFileDeclaration, IBirTypeDeclaration> materializedType = null)
         {
             Surface = surface; Projection = projection; References = references;
-            ReservedNames = reservedNames;
             var aliases = new Dictionary<string, string>(references.Aliases, StringComparer.Ordinal);
             foreach (var alias in Preparation.LocalClrAliases) aliases[alias.Key] = alias.Value;
             Aliases = aliases;

@@ -86,7 +86,7 @@ static partial class OwnerConstrainedMethodLowering
             var proofs = FBoundStarProjectionErasure.PrepareNativeProofs(bindings, refs, values);
             var surface = FBoundStarProjectionErasure.PrepareCarrierSurface(preparation, proofs, refs, values);
             var context = new FBoundStarProjectionErasure.CarrierRealizationContext(surface,
-                FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs, surface.Demand.ReservedNames);
+                FBoundStarProjectionErasure.CarrierProjectionContext.ForSource(surface.Demand, refs), refs);
 
             foreach (var row in cases)
             {
