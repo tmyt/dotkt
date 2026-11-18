@@ -2331,9 +2331,15 @@ internal sealed partial class AssemblyScanner : IDisposable
             .Concat(def.GetProperties().SelectMany(propertyHandle =>
             {
                 var accessors = _md.GetPropertyDefinition(propertyHandle).GetAccessors();
-                return new[] { accessors.Getter, accessors.Setter }.Where(method => !method.IsNil);
+                return accessors.Others.Concat(new[] { accessors.Getter, accessors.Setter }).Where(method => !method.IsNil);
             }))
             .Concat(customPropertyAccessorMethods)
+            .Concat(def.GetEvents().SelectMany(eventHandle =>
+            {
+                var accessors = _md.GetEventDefinition(eventHandle).GetAccessors();
+                return accessors.Others.Concat(new[] { accessors.Adder, accessors.Remover, accessors.Raiser })
+                    .Where(method => !method.IsNil);
+            }))
             .ToHashSet();
         void AddProjectedInterfaces()
         {
@@ -2463,7 +2469,8 @@ internal sealed partial class AssemblyScanner : IDisposable
             var name = isClrDelegate ? "invoke" : declarationIdentity?.Name ?? clrMethodName;
             if (accessorMethods.Contains(methodHandle)) continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
-            var sig = method.DecodeProjectedSignature(signatures, context);
+            var nativeSignature = method.DecodeSignature(signatures.NativeProjectionProvider, context);
+            var sig = nativeSignature.Surface();
             if (name == ".ctor")
             {
                 if (isKotlinRichEnum) continue;
@@ -2511,7 +2518,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                     PhysicalParameterKeys(method, context)));
             }
             else if (!name.StartsWith('<') && ((method.Attributes & MethodAttributes.SpecialName) == 0 ||
-                IsExplicitOperatorMethod(clrMethodName, method.Attributes)))
+                IsExplicitOperatorMethod(clrMethodName, method.Attributes) && HasOperatorSurface(nativeSignature)))
             {
                 var modalityForMethod = isClrDelegate ? 2
                     : (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
@@ -2555,6 +2562,9 @@ internal sealed partial class AssemblyScanner : IDisposable
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
+                if ((method.Attributes & (MethodAttributes.Static | MethodAttributes.SpecialName)) ==
+                    (MethodAttributes.Static | MethodAttributes.SpecialName) && def.GetGenericParameters().Count != 0)
+                    ProjectStaticOwnerParameters(handle, methodHandle, function, names, signatures, context);
                 ApplyPInvokeProjection(method, function, names);
                 // Ordinary members already carry their physical declaring class.
                 // Exact-target convenience views add their ClrExternal facts separately.
@@ -2807,9 +2817,10 @@ internal sealed partial class AssemblyScanner : IDisposable
                 if (!IsPublicOrProtected(body.Attributes) && (bodyKotlinFlags & 4) != 0)
                     continue;
                 var accessor = InheritedAccessor(declarationReader, declarationHandle);
-                // Operators and other special-name slots do not become ordinary Kotlin functions. Property/indexer
-                // and event accessors are carried by their authoritative MethodSemantics association instead.
-                if (accessor is null && (declaration.Attributes & MethodAttributes.SpecialName) != 0)
+                // Ordinary instance operators, like ordinary interface methods, can
+                // be fulfilled by a private MethodImpl body.
+                if (accessor is { Kind: 0 } || accessor is null && (declaration.Attributes & MethodAttributes.SpecialName) != 0 &&
+                    !IsInheritedOperator(declarationReader, declarationHandle, declarationSignatures))
                     continue;
                 var associationKey = accessor is null
                     ? null
@@ -3439,10 +3450,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                     (declaration.Attributes & MethodAttributes.Static) != 0)
                     continue;
                 var accessor = InheritedAccessor(declarationReader, declarationHandle);
-                // Operators and other CLR special-name members are not ordinary
-                // inheritable Kotlin functions. Properties and events are handled
-                // from their authoritative MethodSemantics association below.
-                if (accessor is null && (declaration.Attributes & MethodAttributes.SpecialName) != 0)
+                if (accessor is { Kind: 0 } || accessor is null && (declaration.Attributes & MethodAttributes.SpecialName) != 0 &&
+                    !IsInheritedOperator(declarationReader, declarationHandle, declarationSignatures))
                     continue;
                 var slotKey = AssemblySimpleName(declarationReader) + ":" +
                     MetadataTokens.GetRowNumber(declarationHandle) + ":" +
@@ -3782,6 +3791,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 return (SimpleMethodName(reader.GetString(property.Name)), 1, propertyHandle);
             if (accessors.Setter == methodHandle)
                 return (SimpleMethodName(reader.GetString(property.Name)), 2, propertyHandle);
+            if (accessors.Others.Contains(methodHandle)) return ("", 0, propertyHandle);
         }
         foreach (var eventHandle in reader.GetTypeDefinition(owner).GetEvents())
         {
@@ -3791,6 +3801,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 return (SimpleMethodName(reader.GetString(@event.Name)), 3, eventHandle);
             if (accessors.Remover == methodHandle)
                 return (SimpleMethodName(reader.GetString(@event.Name)), 4, eventHandle);
+            if (accessors.Raiser == methodHandle || accessors.Others.Contains(methodHandle)) return ("", 0, eventHandle);
         }
         return null;
     }
@@ -4929,8 +4940,22 @@ internal sealed partial class AssemblyScanner : IDisposable
     // be exposed by this parameter-based Kotlin call surface.
     private static bool IsExplicitOperatorMethod(string name, MethodAttributes attributes) =>
         (attributes & MethodAttributes.RTSpecialName) == 0 &&
+        (attributes & (MethodAttributes.Static | MethodAttributes.Virtual)) != (MethodAttributes.Static | MethodAttributes.Virtual) &&
         name.StartsWith("op_", StringComparison.Ordinal) && name.Length > 3 &&
         name is not ("op_Implicit" or "op_Explicit" or "op_CheckedExplicit" or "op_CheckedImplicit");
+
+    // Kotlin's ordinary arrays cannot name a CLR general array. Importing it as a
+    // vector would publish the wrong overload, even when no vector overload exists.
+    private static bool HasOperatorSurface(MethodSignature<SignatureDecoder.SignatureType> signature) =>
+        !signature.ReturnType.ErasedArrayShape && !signature.ParameterTypes.Any(parameter => parameter.ErasedArrayShape);
+
+    private static bool IsInheritedOperator(MetadataReader reader, MethodDefinitionHandle handle, SignatureDecoder decoder)
+    {
+        var declaration = reader.GetMethodDefinition(handle);
+        return (declaration.Attributes & MethodAttributes.Static) == 0 &&
+            IsExplicitOperatorMethod(reader.GetString(declaration.Name), declaration.Attributes) &&
+            HasOperatorSurface(declaration.DecodeSignature(decoder.NativeProjectionProvider, InheritedContext(reader, handle, declaration)));
+    }
 
     private static readonly Dictionary<string, string> OperatorNames = new(StringComparer.Ordinal)
     {
@@ -5219,17 +5244,57 @@ internal sealed partial class AssemblyScanner : IDisposable
         return receiver;
     }
 
-    private static KType RebindCSharp14BlockParameters(KType source, int blockArity)
+    private static KType RebindCSharp14BlockParameters(KType source, int blockArity) =>
+        LiftOwnerParameters(source, blockArity, 0);
+
+    private static KType LiftOwnerParameters(KType source, int blockArity, int methodArity)
     {
         var result = source.Clone();
         if (result.HasTypeParameter && result.TypeParameter >= 0 && result.TypeParameter < blockArity)
-            result.TypeParameter = 10000 + result.TypeParameter;
+            result.TypeParameter = 10000 + methodArity + result.TypeParameter;
         for (var index = 0; index < result.Argument.Count; index++)
             if (result.Argument[index].Type is { } argument)
-                result.Argument[index].Type = RebindCSharp14BlockParameters(argument, blockArity);
+                result.Argument[index].Type = LiftOwnerParameters(argument, blockArity, methodArity);
         if (result.FlexibleUpperBound is { } upper)
-            result.FlexibleUpperBound = RebindCSharp14BlockParameters(upper, blockArity);
+            result.FlexibleUpperBound = LiftOwnerParameters(upper, blockArity, methodArity);
         return result;
+    }
+
+    // Kotlin static qualifiers do not bind class type parameters. Make the closed
+    // declaring type inferable from the operands (or explicit function type arguments).
+    private void ProjectStaticOwnerParameters(TypeDefinitionHandle owner, MethodDefinitionHandle method,
+        Function function, NameTable names, SignatureDecoder signatures, GenericContext context)
+    {
+        var parameters = _md.GetTypeDefinition(owner).GetGenericParameters();
+        var methodArity = function.TypeParameter.Count;
+        KType Lift(KType type) => LiftOwnerParameters(type, parameters.Count, methodArity);
+        function.ReturnType = Lift(function.ReturnType);
+        foreach (var p in function.ValueParameter)
+        {
+            p.Type = Lift(p.Type);
+            if (p.VarargElementType != null) p.VarargElementType = Lift(p.VarargElementType);
+        }
+        foreach (var p in function.TypeParameter)
+            for (var b = 0; b < p.UpperBound.Count; b++) p.UpperBound[b] = Lift(p.UpperBound[b]);
+        foreach (var handle in parameters)
+        {
+            var gp = _md.GetGenericParameter(handle);
+            var lifted = new TypeParameter { Id = 10000 + methodArity + gp.Index,
+                Name = names.String(_md.GetString(gp.Name)), Variance = TypeParameter.Types.Variance.Inv };
+            foreach (var constraint in KotlinNominalConstraints(_md, gp))
+                lifted.UpperBound.Add(Lift(signatures.DecodeEntity(constraint.Type, context, platform: false)));
+            function.TypeParameter.Add(lifted);
+        }
+        var binding = ClrExternalAnnotation(names, owner);
+        var target = new TypeNode.Fqn(ExactMetadataTypeName(owner), Enumerable.Range(methodArity, parameters.Count)
+            .Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray());
+        foreach (var (field, value) in new[] { ("memberOwner", TypeNode.ToJson(target)),
+            ("memberName", _md.GetString(_md.GetMethodDefinition(method).Name)) })
+            binding.Argument.Add(new Annotation.Types.Argument { NameId = names.String(field),
+                Value = new Annotation.Types.Argument.Types.Value { Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                    StringValue = names.String(value) } });
+        function.FunctionAnnotation.Add(binding);
+        function.Flags |= 1;
     }
 
     private void AddCSharp14MethodTypeParameters(

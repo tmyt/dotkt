@@ -1,7 +1,12 @@
 import ExplicitOperators.Counter
+import ExplicitOperators.Accumulator
+import ExplicitOperators.IAccumulator
 import ExplicitOperators.Ticket
 import NUnit.Framework.TestAttribute
+import System.ArraySegment
 import System.Data.SqlTypes.SqlInt32
+
+private class DerivedAccumulator : Accumulator()
 
 class ExplicitOperatorTests {
     @TestAttribute
@@ -24,5 +29,12 @@ class ExplicitOperatorTests {
         val ticket = Ticket(4)
         ticket.op_IncrementAssignment()
         check(ticket.Value == 5)
+        check(Ticket.op_BitwiseAnd(ticket, intArrayOf(1)) === ticket)
+        val receiver = DerivedAccumulator()
+        (receiver as IAccumulator).op_AdditionAssignment(7)
+        check(receiver.Total == 7)
+        val segment = Ticket.Segment(17)
+        check(ArraySegment.op_Equality(segment, segment))
+        check(!ArraySegment.op_Equality(segment, Ticket.Segment(17)))
     }
 }

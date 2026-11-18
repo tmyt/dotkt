@@ -12,7 +12,8 @@ internal sealed partial class SignatureDecoder
     NativeProjection? _nativeProjection;
     internal NativeProjection NativeProjectionProvider => _nativeProjection ??= new(this);
 
-    internal readonly record struct SignatureType(KType Surface, KType? Native = null, string? Unsupported = null)
+    internal readonly record struct SignatureType(KType Surface, KType? Native = null, string? Unsupported = null,
+        bool ErasedArrayShape = false)
     {
         internal KType Exact => Native ?? Surface;
     }
@@ -37,17 +38,18 @@ internal sealed partial class SignatureDecoder
                 ? Applied(FunctionPointerVocabulary.Arrays[shape.Rank], element.Exact)
                 : decoder.GetArrayType(element.Surface, shape), supported
                 ? Applied(FunctionPointerVocabulary.Arrays[shape.Rank], element.Exact) : null,
-                element.Unsupported ?? (supported ? null : "Unsupported bounded CLR array in function-pointer signature"));
+                element.Unsupported ?? (supported ? null : "Unsupported bounded CLR array in function-pointer signature"),
+                !supported || !ContainsPointer(element.Surface));
         }
         public SignatureType GetSZArrayType(SignatureType element) => new(
             decoder.GetSZArrayType(ContainsPointer(element.Surface) ? element.Exact : element.Surface),
-            element.Native is null ? null : decoder.GetSZArrayType(element.Exact), element.Unsupported);
+            element.Native is null ? null : decoder.GetSZArrayType(element.Exact), element.Unsupported, element.ErasedArrayShape);
         public SignatureType GetByReferenceType(SignatureType element) => new(
             decoder.GetByReferenceType(ContainsPointer(element.Surface) ? element.Exact : element.Surface),
-            element.Native is null ? null : decoder.GetByReferenceType(element.Exact), element.Unsupported);
+            element.Native is null ? null : decoder.GetByReferenceType(element.Exact), element.Unsupported, element.ErasedArrayShape);
         public SignatureType GetPointerType(SignatureType element) => new(
             decoder.GetPointerType(ContainsPointer(element.Surface) ? element.Exact : element.Surface),
-            element.Native is null ? null : decoder.GetPointerType(element.Exact), element.Unsupported);
+            element.Native is null ? null : decoder.GetPointerType(element.Exact), element.Unsupported, element.ErasedArrayShape);
         public SignatureType GetFunctionPointerType(MethodSignature<SignatureType> signature)
         {
             if (signature.ParameterTypes.Prepend(signature.ReturnType).FirstOrDefault(t => t.Unsupported != null).Unsupported is { } error)
@@ -70,15 +72,17 @@ internal sealed partial class SignatureDecoder
                 exact.Argument.Add(arguments.Select(argument => new KType.Types.Argument {
                     Projection = KType.Types.Argument.Types.Projection.Inv, Type = argument.Exact,
                 }));
-                return new(surface, exact, arguments.FirstOrDefault(t => t.Unsupported != null).Unsupported);
+                return new(surface, exact, arguments.FirstOrDefault(t => t.Unsupported != null).Unsupported,
+                    arguments.Any(t => t.ErasedArrayShape));
             }
             return new(surface, generic.Native is null && arguments.All(t => t.Native is null) ? null
                 : decoder.GetGenericInstantiation(generic.Exact, arguments.Select(t => t.Exact).ToImmutableArray()),
-                generic.Unsupported ?? arguments.FirstOrDefault(t => t.Unsupported != null).Unsupported);
+                generic.Unsupported ?? arguments.FirstOrDefault(t => t.Unsupported != null).Unsupported,
+                arguments.Any(t => t.ErasedArrayShape));
         }
         public SignatureType GetModifiedType(SignatureType modifier, SignatureType type, bool required) => new(
             type.Surface, Applied(required ? FunctionPointerVocabulary.Required : FunctionPointerVocabulary.Optional,
-                decoder.AsNonNull(modifier.Exact), type.Exact), type.Unsupported ?? modifier.Unsupported);
+                decoder.AsNonNull(modifier.Exact), type.Exact), type.Unsupported ?? modifier.Unsupported, type.ErasedArrayShape);
         public SignatureType GetPinnedType(SignatureType element) => element;
         bool ContainsPointer(KType type) => type.HasClassName && decoder._names.ClassName(type.ClassName) == FunctionPointerVocabulary.Pointer
             || type.Argument.Any(argument => argument.Type is { } nested && ContainsPointer(nested));
@@ -106,7 +110,7 @@ internal sealed partial class SignatureDecoder
 
 internal static class ProjectedSignatures
 {
-    static MethodSignature<KType> Surface(MethodSignature<SignatureDecoder.SignatureType> signature) => new(
+    internal static MethodSignature<KType> Surface(this MethodSignature<SignatureDecoder.SignatureType> signature) => new(
         signature.Header, signature.ReturnType.Surface, signature.RequiredParameterCount,
         signature.GenericParameterCount, signature.ParameterTypes.Select(t => t.Surface).ToImmutableArray());
 

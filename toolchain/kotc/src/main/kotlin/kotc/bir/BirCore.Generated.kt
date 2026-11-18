@@ -529,7 +529,8 @@ data class BirCallStatic(
     val memberOwnerTypeParams: List<TypeParameterDeclaration>? = null,
     val memberMethodTypeParams: List<TypeParameterDeclaration>? = null,
     val memberSignature: List<TypeNode>? = null,
-    val memberReturnType: TypeNode? = null
+    val memberReturnType: TypeNode? = null,
+    val externalMember: BirExternalMemberBinding? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"callStatic\"")
@@ -686,6 +687,10 @@ data class BirCallStatic(
         }
         memberReturnType?.let { value ->
             output.append(",\"memberReturnType\":")
+            value.writeJson(output)
+        }
+        externalMember?.let { value ->
+            output.append(",\"externalMember\":")
             value.writeJson(output)
         }
         output.append('}')

@@ -14,4 +14,14 @@ public sealed class Ticket(int value)
 {
     public int Value = value;
     public void operator ++() => Value++;
+    public static Ticket op_BitwiseAnd(Ticket ticket, int[] values) => ticket;
+    public static Ticket operator &(Ticket ticket, int[,] values) => new(-1);
+    public static System.ArraySegment<int> Segment(int value) => new(new[] { value });
+}
+
+public interface IAccumulator { void operator +=(int delta); }
+public class Accumulator : IAccumulator
+{
+    public int Total;
+    void IAccumulator.operator +=(int delta) => Total += delta;
 }
