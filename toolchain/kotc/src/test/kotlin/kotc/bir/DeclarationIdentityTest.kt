@@ -28,6 +28,7 @@ import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.defaultType
 import org.jetbrains.kotlin.ir.types.typeWith
+import org.jetbrains.kotlin.ir.util.createThisReceiverParameter
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
@@ -58,6 +59,7 @@ class DeclarationIdentityTest {
         val container = owner("Container")
         val t = parameter(container, "T", 0)
         container.typeParameters = listOf(t)
+        container.createThisReceiverParameter()
         val kotlinPkg = IrExternalPackageFragmentImpl(IrExternalPackageFragmentSymbolImpl(), FqName("kotlin"))
         val stringType = owner("String", kotlinPkg).symbol.typeWith()
         val unitType = owner("Unit", kotlinPkg).symbol.typeWith()
@@ -95,8 +97,28 @@ class DeclarationIdentityTest {
             assertEquals(TypeNode.Fqn("identitytest.CallerOnly"), emitter.typeArgSubst[t])
             assertEquals(TypeNode.Tv("method", 7), emitter.liftedTypeArgSubst["type" to 0])
             assertSame(defaults, emitter.defaultTypeFrame)
+            val source = BirEmitter(sourceFragments = setOf(pkg))
+            val own = source.declarationId(declaration)
+            assertNotEquals(expected, own)
+            assertEquals(own, source.declarationIdForPhysicalAllocation(declaration))
         }
+        val sourcePkg = IrExternalPackageFragmentImpl(IrExternalPackageFragmentSymbolImpl(), pkg.packageFqName)
+        fun generatedOverride(name: String) = IrFactoryImpl.buildFun { this.name = method.name; returnType = stringType }.apply {
+            parent = owner(name, sourcePkg).apply {
+                superTypes = listOf(container.symbol.typeWith(stringType))
+                createThisReceiverParameter()
+            }
+            overriddenSymbols = listOf(method.symbol)
+            annotations = method.annotations
+        }
+        val source = BirEmitter(sourceFragments = setOf(sourcePkg))
+        val first = generatedOverride("First")
+        val second = generatedOverride("Second")
+        assertEquals("carried-method", source.declarationIdForPhysicalAllocation(method))
+        assertNotEquals(source.declarationId(first), source.declarationId(second))
+        assertEquals(source.declarationId(first), source.declarationIdForPhysicalAllocation(first))
         method.isFakeOverride = true
+        assertEquals("carried-method", BirEmitter(sourceFragments = setOf(pkg)).declarationId(method))
         method.modality = Modality.ABSTRACT
         val ownObligation = BirEmitter().declarationId(method)
         assertNotEquals("carried-method", ownObligation)

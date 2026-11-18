@@ -19,6 +19,7 @@ import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrPackageFragment
 import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
@@ -72,6 +73,7 @@ import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
+import org.jetbrains.kotlin.ir.util.getPackageFragment
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -123,7 +125,8 @@ private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 ) + setOf("Managed", "Cdecl", "Stdcall", "Thiscall", "Fastcall", "Unmanaged", "Required", "Optional", "Value")
 	.map { "kotlin.clr.signature.$it" } + (1..32).map { "kotlin.clr.signature.Array$it" }
 
-class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
+class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null,
+    private val sourceFragments: Set<IrPackageFragment> = emptySet()) {
 
 	/** Frontend-authoritative callable identity. The JVM-oriented FIR2IR pipeline does not populate IdSignature for
 	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
@@ -147,9 +150,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val annotations: List<IrConstructorCall> = fn.annotations + property?.annotations.orEmpty()
 		val identity = annotations.singleOrNull {
 			it.type.classFqName?.asString() == "kotlin.clr.KotlinDeclarationIdentity"
-		}
+		} ?: return null
+		// Plugins can copy an overridden declaration's annotations. A real declaration
+		// in this compilation owns its identity; an inherited view can still carry it.
+		if (!(fn is IrSimpleFunction && fn.isFakeOverride) && fn.getPackageFragment() in sourceFragments) return null
 		val setter = property?.setter === fn
-		val identityArgument = identity?.let { regularArgs(it).getOrNull(if (setter) 1 else 0) }
+		val identityArgument = regularArgs(identity).getOrNull(if (setter) 1 else 0)
 		val direct = (identityArgument as? IrConst)
 			?.value
 			?.let { it as? String }
