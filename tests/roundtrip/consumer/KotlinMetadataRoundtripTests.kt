@@ -528,7 +528,8 @@ class KotlinApiShapeRoundtripTests {
         val source: NullSource = object : BaseNullSource() {
             override fun none(): Nothing? = null
         }
-        ClassicAssert.IsNull(source.none())
+        val result: Nothing? = source.none()
+        ClassicAssert.IsNull(result)
         ClassicAssert.AreEqual(7, pick(true, 7))                 // 7   generic pick, Nothing else-branch
         val y: String = if (true) "ok" else nothingretFail("x")             // String only if fail(): Nothing round-tripped
         ClassicAssert.AreEqual("ok", y)                          // ok
