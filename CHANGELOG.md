@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- String interpolation preserves Kotlin's `null` text for open generic values
+  and invokes conversions in template order, including across DLL boundaries.
+
 ## 0.9.27 (2026-11-18)
 
 - All five packages and both SDK defaults move to `0.9.27`. The embedded Kotlin
