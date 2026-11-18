@@ -23,7 +23,23 @@ class Redeclared(m: Map<Key<Any?>, Value<Any?>>) : Backed<Key<Any?>, Value<Any?>
     override fun containsKey(key: Key<Any?>): Boolean = super.containsKey(key)
 }
 
+private interface EntryView<out E> : Set<E>
+private class MapEntryView<E>(val source: Set<E>) : AbstractSet<E>(), EntryView<E> {
+    override val size get() = source.size
+    override fun iterator() = source.iterator()
+}
+private class NarrowMap<K, V>(source: Map<K, V>) : AbstractMap<K, V>() {
+    override val entries: EntryView<Map.Entry<K, V>> = MapEntryView(source.entries)
+}
+private fun <K, V> baseEntries(map: AbstractMap<K, V>): Set<Map.Entry<K, V>> = map.entries
+
 class InheritedMapSlotTests {
+    @TestAttribute fun inheritedAbstractGetterDispatchesToCovariantOverride() {
+        val map = NarrowMap(mapOf("key" to 7))
+        check(baseEntries(map) === map.entries)
+        check(map.entries.size == 1)
+    }
+
     @TestAttribute fun dispatchesInheritedAndRedeclaredSlotsThroughClosedInterface() {
         val key = Key<Any?> { "key" }
         val value: Value<Any?> = Cell<Any?>(7)

@@ -135,7 +135,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun ownsSourceCallable(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 		fn.getPackageFragment() in sourceFragments && (fn !is IrSimpleFunction || !isInheritedSynthetic(fn))
 	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
-		fn is IrSimpleFunction && fn.isFakeOverride && fn.modality == Modality.ABSTRACT &&
+		fn is IrSimpleFunction && fn.modality == Modality.ABSTRACT && isInheritedSynthetic(fn) &&
 			(fn.parent as? IrClass)?.let { it.kind != ClassKind.INTERFACE && !isExternalNetType(it) } == true
 
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
@@ -233,8 +233,14 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 				// therefore part of the declaration identity just as an ordinary extension-receiver parameter is.
 				companionReceiver?.let { append("|companionReceiver:"); it.writeJson(this) }
 				append('|').append(typeParamsJson(fn.typeParameters))
-				for (parameter in fn.parameters)
-					append('|').append(parameter.kind.name).append(':').append(birValueParameterType(parameter).toJson())
+				for (parameter in fn.parameters) {
+					// FIR2IR can copy the ancestor's dispatch receiver onto an inherited abstract
+					// declaration; KLIB reconstructs it with the declaring class as receiver.
+					val type = if (parameter.kind == IrParameterKind.DispatchReceiver && ownsInheritedAbstractDeclaration(fn))
+						birType((fn.parent as IrClass).defaultType)
+					else birValueParameterType(parameter)
+					append('|').append(parameter.kind.name).append(':').append(type.toJson())
+				}
 				append("|ret:").append(birType(fn.returnType).toJson())
 			}
 			val digest = MessageDigest.getInstance("SHA-256").digest(declaration.toByteArray(Charsets.UTF_8))

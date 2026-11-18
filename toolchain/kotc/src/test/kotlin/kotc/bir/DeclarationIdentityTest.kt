@@ -14,6 +14,7 @@ import org.jetbrains.kotlin.ir.builders.declarations.buildClass
 import org.jetbrains.kotlin.ir.builders.declarations.buildConstructor
 import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.builders.declarations.buildProperty
+import org.jetbrains.kotlin.ir.builders.declarations.buildReceiverParameter
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationParent
@@ -132,6 +133,16 @@ class DeclarationIdentityTest {
             name = method.name; returnType = stringType; origin = IrDeclarationOrigin.FAKE_OVERRIDE
         }.apply { parent = first.parent; annotations = method.annotations; isFakeOverride = false }
         assertEquals("carried-method", source.declarationId(materialized))
+        materialized.modality = Modality.ABSTRACT
+        val dispatch = materialized.buildReceiverParameter {
+            type = container.symbol.typeWith(stringType)
+        }
+        materialized.parameters = listOf(dispatch)
+        val producerId = requireNotNull(BirEmitter(sourceFragments = setOf(sourcePkg)).declarationIdForPhysicalAllocation(materialized))
+        assertNotEquals("carried-method", producerId)
+        materialized.isFakeOverride = true
+        dispatch.type = (materialized.parent as IrClass).symbol.typeWith()
+        assertEquals(producerId, BirEmitter().declarationIdForPhysicalAllocation(materialized))
         method.modality = Modality.ABSTRACT
         val ownObligation = BirEmitter().declarationId(method)
         assertNotEquals("carried-method", ownObligation)
