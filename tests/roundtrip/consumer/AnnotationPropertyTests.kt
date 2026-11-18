@@ -8,6 +8,7 @@ import roundtrip.annotationproperties.producedLabel
 import roundtrip.annotationproperties.producedArrays
 import roundtrip.annotationproperties.ImportedTags
 import roundtrip.annotationproperties.ImportedTypes
+import roundtrip.annotationproperties.CallbackMarker
 import roundtrip.annotationproperties.producedTags
 import roundtrip.annotationproperties.producedTypes
 import roundtrip.annotationproperties.ProducerDefaultLabel
@@ -22,6 +23,15 @@ private annotation class LabelArray(val code: Int = 7, vararg val labels: Import
 @NestedLabel @LabelArray private class UnencodableLabels
 
 class AnnotationPropertyRoundtripTests {
+    @CallbackMarker
+    private fun <@CallbackMarker T> invokeMarked(callback: @CallbackMarker () -> T): T = callback()
+
+    @TestAttribute
+    fun importedAnnotationRetainsItsKotlinTargets() {
+        val callback: @CallbackMarker () -> Int = { 17 }
+        assertEquals(17, invokeMarked(callback))
+    }
+
     @TestAttribute
     fun scalarAnnotationPropertiesSurviveDllImport() {
         assertEquals("producer", producedLabel().value)

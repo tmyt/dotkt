@@ -39,12 +39,19 @@ static partial class ClrMemberResolution
 
     static void ResolveAppliedAttribute(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirAttribute attr)
     {
-        if (!attr.AttrExternal.OrDefault() || attr.MemberRef.IsPresent) return;
+        if (attr.MemberRef.IsPresent) return;
         if (attr.Attr.OrDefault() is not TypeNode.Fqn attrFqn) return;
+        // Kotlin's target meta-annotation comes from the frontend stdlib KLIB,
+        // not a CLR projection. Bind its real stdlib constructor when imported.
+        if (!attr.AttrExternal.OrDefault() && (attrFqn.Name != "kotlin.annotation.Target"
+            || bindingLocalTypes?.Contains(attrFqn.Name) == true)) return;
         var assembly = attr.AttrAssembly.OrDefault();
         var arguments = attr.ArgTypes.OrEmpty();
         if (ResolveAppliedAttributeCtor(bindingLocalTypes, bindingReferences, attrFqn, assembly, arguments) is { } selected)
+        {
+            attr.AttrExternal = true;
             attr.MemberRef = BirMemberReference.FromPhysical(selected);
+        }
     }
 
     internal static AttributeApplication ResolveAttributeCtor(IReadOnlySet<string> bindingLocalTypes, AttributeApplication attribute, ReferenceMetadataIndex refs)

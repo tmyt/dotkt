@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- A Kotlin annotation imported from another assembly keeps its declared
+  `@Target` set, including type-use and type-parameter positions.
 - Inline collection operations such as `mapValues` can enumerate maps whose
   values contain star projections.
 

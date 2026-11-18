@@ -86,17 +86,18 @@ internal sealed class MetadataAttributes
     // enough for contracts such as [System.Flags]: an input assembly may define a same-FQN lookalike. The projection
     // layer resolves these handles through the selected reference universe before trusting the attribute.
     public IReadOnlyList<EntityHandle> AttributeTypes(EntityHandle owner, string name)
+        => Applications(owner, name).Select(application => application.Type).ToArray();
+
+    public IEnumerable<(EntityHandle Type, BlobHandle Value)> Applications(EntityHandle owner, string name)
     {
-        if (owner.IsNil) return Array.Empty<EntityHandle>();
-        var result = new List<EntityHandle>();
+        if (owner.IsNil) yield break;
         foreach (var handle in _md.GetCustomAttributes(owner))
         {
             var attribute = _md.GetCustomAttribute(handle);
             if (AttributeTypeName(attribute.Constructor) != name) continue;
             var type = AttributeType(attribute.Constructor);
-            if (!type.IsNil) result.Add(type);
+            if (!type.IsNil) yield return (type, attribute.Value);
         }
-        return result;
     }
 
     public byte? Byte(EntityHandle owner, string name, bool requireTrust = true) =>

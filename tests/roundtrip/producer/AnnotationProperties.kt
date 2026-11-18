@@ -6,6 +6,9 @@ annotation class ImportedArrays(val names: Array<String>, val counts: IntArray)
 annotation class ImportedTags(vararg val tags: String)
 annotation class ImportedTypes(val nested: ImportedLabel, val kind: DeprecationLevel)
 
+@Target(AnnotationTarget.TYPE, AnnotationTarget.TYPE_PARAMETER, AnnotationTarget.FUNCTION)
+annotation class CallbackMarker
+
 fun producedLabel(): ImportedLabel = ImportedLabel("producer", 17)
 fun producedArrays(): ImportedArrays = ImportedArrays(arrayOf("one", "two"), intArrayOf(7, 9))
 fun producedTags(): ImportedTags = ImportedTags("one", "two")

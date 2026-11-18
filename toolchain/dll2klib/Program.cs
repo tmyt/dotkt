@@ -2269,6 +2269,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 });
             }
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
+        if (isAnnotation && KotlinAnnotationTargets(handle, names) is { } target)
+            result.ClassAnnotation.Add(target);
         result.Flags |= 1;
         if (_sourceViews.View(_definitionPath, ExactMetadataTypeName(handle)) is { } sourceView)
             result.Supertype.Add(signatures.NamedType(sourceView));
