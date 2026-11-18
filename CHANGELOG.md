@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Locals introduced by a Kotlin default argument from another DLL no longer overwrite
+  caller storage when the default is evaluated.
 - Kotlin events with function handlers taking 17–22 arguments now use the same
   wide delegates as ordinary Kotlin functions, including across DLL boundaries.
 

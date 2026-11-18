@@ -32,7 +32,7 @@ sealed partial class InlineExpansion
         foreach (var root in roots) Apply(root);
     }
 
-    internal void PrefixLocalsJoint(string prefix, params BirGraphValue[] roots)
+    internal static void PrefixLocalsJoint(string prefix, params BirGraphValue[] roots)
     {
         var declared = new HashSet<string>(StringComparer.Ordinal);
         void Collect(BirGraphValue node)

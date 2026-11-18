@@ -40,7 +40,7 @@ sealed partial class InlineExpansion
             Stmts = new IBirStatement[] { outer, new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(nested) } },
             Result = OptionalField<IBirExpression>.Of(suspend),
         };
-        engine.PrefixLocalsJoint("clone$", region);
+        PrefixLocalsJoint("clone$", region);
         if (outer.Name.Value != "clone$x" || parameterRead.Name.Value != "x" || capturedRead.Name.Value != "clone$x"
             || suspend.Captures.Value[0].Name.Value != "clone$x" || suspendRead.Name.Value != "clone$x" || constructionRead.Name.Value != "clone$x")
             throw new InvalidOperationException("Inline local hygiene lost parameter shadowing or construction/capture agreement");
