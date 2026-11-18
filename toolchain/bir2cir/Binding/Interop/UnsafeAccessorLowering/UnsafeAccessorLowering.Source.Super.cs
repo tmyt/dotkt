@@ -33,7 +33,7 @@ static partial class UnsafeAccessorLowering
     }
     static BirGraphValue RewriteSourceSuper(BirGraphValue node, SourceMethodEdge edge, SourceHost caller, SourceAccessContext context)
     {
-        if (node is not BirCallInstance original || edge.Receiver is not BirGraphNode receiver
+        if (edge.Receiver is not BirGraphNode receiver
             || BirNodeType.Of(receiver) is not TypeNode.Fqn receiverType || edge.Owner is not TypeNode.Fqn targetOwner || edge.Method == null)
             throw new InvalidOperationException("Nested Kotlin super call is missing its receiver/target facts");
         var host = SourceEnclosingHost(caller, receiverType.Name, context.Hosts)
@@ -68,22 +68,31 @@ static partial class UnsafeAccessorLowering
             var parameters = signature.Select((type, index) => SourceParameter("arg" + index, type)).ToArray();
             // Copy only the call header. Original executable operands move to
             // the continuing outer call; the forwarder gets fresh this/locals.
-            var targetCall = original with {
-                Recv = OptionalField<IBirExpression>.Of(new BirThis()), OwnerType = CopySourceType(resolvedOwner),
-                Sig = CopySourceTypes(declarationSignature), Args = parameters.Select(p => (IBirExpression)SourceLocal(p.Name.Value)).ToArray(),
-                Ret = CopySourceType(result), DynRet = CopySourceType(result), Sty = CopySourceType(result),
-                TypeArgs = arity == 0 ? default : OptionalField<TypeNode[]>.Of(Enumerable.Range(0, arity)
-                    .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray()),
+            var self = OptionalField<IBirExpression>.Of(new BirThis());
+            var args = parameters.Select(p => (IBirExpression)SourceLocal(p.Name.Value)).ToArray();
+            var typeArgs = arity == 0 ? default : OptionalField<TypeNode[]>.Of(Enumerable.Range(0, arity)
+                .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray());
+            IBirExpression targetCall = node switch {
+                BirNativeInstance native => native with {
+                    Recv = self, Type = CopySourceType(resolvedOwner), Args = args, TypeArgs = typeArgs,
+                    Ret = CopySourceType(result), Sty = CopySourceType(result),
+                },
+                BirCallInstance original => original with {
+                    Recv = self, OwnerType = CopySourceType(resolvedOwner), Args = args, TypeArgs = typeArgs,
+                    Sig = CopySourceTypes(declarationSignature), Ret = CopySourceType(result),
+                    DynRet = CopySourceType(result), Sty = CopySourceType(result),
+                },
+                _ => throw new InvalidOperationException("Unsupported nested super call"),
             };
-            if (original.MemberRef.HasValue)
+            if (targetCall is BirCallInstance instance && instance.MemberRef.HasValue)
             {
-                var member = (BirMemberReference)original.MemberRef.Value.DeepClone();
+                var member = (BirMemberReference)instance.MemberRef.Value.DeepClone();
                 if (member.DeclaringType.OrDefault() is TypeNode.Fqn selected)
                     member.DeclaringType = selected with { Args = resolvedOwner.Args is { Length: > 0 }
                         ? ((TypeNode.Fqn)ClrMemberResolution.PhysicalInstanceView(null, context.References, resolvedOwner)).Args : null };
-                targetCall.MemberRef = member;
+                instance.MemberRef = member;
             }
-            DropSourceMemberFacts(targetCall);
+            DropSourceMemberFacts((BirGraphValue)targetCall);
             var forwarder = new BirFunctionDeclaration {
                 Name = name, Generated = true, Static = false, Override = false, Virtual = false,
                 Abstract = false, ObjectOverride = false, Vis = "private", Params = parameters,

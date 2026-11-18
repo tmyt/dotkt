@@ -11,6 +11,10 @@ static partial class UnsafeAccessorLowering
         IBirExpression Receiver, IBirExpression[] Arguments, TypeNode DynamicReturn, TypeNode Return, TypeNode Stamp,
         bool Static, bool Super, bool ExactBridge, string PropertyName, string PropertyKind, string Prop);
     static SourceMethodEdge SourceMethodEdgeOf(BirGraphValue node) => node switch {
+        BirNativeInstance c => new(c.Type.OrDefault(), c.Method.OrDefault(), null, null, null,
+            c._resolvedMethodTypeParams.OrDefault(), c.ResolvedMemberParams.OrDefault(), c.ResolvedMemberReturn.OrDefault(),
+            c.ArgTypes.OrDefault() ?? c.Sig.OrEmpty(), c.TypeArgs, c.Recv.OrDefault(), c.Args.OrEmpty(),
+            null, c.Ret.OrDefault(), c.Sty.OrDefault(), false, c.Super.OrDefault(), false, null, null, null),
         BirCallInstance c => new(c.OwnerType.OrDefault(), c.Method.OrDefault(), c.MemberVisibility.OrDefault(), c.DeclarationId.OrDefault(),
             c.MemberOwnerTypeParams.OrDefault(), c.MemberMethodTypeParams.OrDefault(), c.MemberSignature.OrDefault(), c.MemberReturnType.OrDefault(),
             c.Sig.OrDefault() ?? c.ShapeTypes.OrDefault() ?? c.ArgTypes.OrEmpty(), c.TypeArgs, c.Recv.OrDefault(), c.Args.OrEmpty(),

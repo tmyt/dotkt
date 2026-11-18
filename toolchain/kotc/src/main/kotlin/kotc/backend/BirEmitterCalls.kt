@@ -854,6 +854,13 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 	val identityTarget = if (selectedTarget.isFakeOverride && selectedId == null)
 		selectedTarget.resolveFakeOverride() else selectedTarget
 	val externalMember = clrExternalMember(selectedTarget) ?: identityTarget?.let { clrExternalMember(it) }
+	// A super call invokes the selected implementation, not the inherited fake declaration
+	// visible on its qualifier. Preserve that Kotlin owner alongside the declaration identity.
+	if (externalMember == null && rendered is BirCallInstance && rendered.superCall == true &&
+		rendered.anySlot == true && selectedTarget.isFakeOverride) {
+		val provider = selectedTarget.resolveFakeOverride()?.parent as? IrClass
+		if (provider != null) rendered = rendered.copy(ownerType = ownerSpec(provider, dispatchReceiver(call)?.type))
+	}
 	if (externalMember != null && rendered is BirCallStatic && rendered.method == selectedTarget.name.asString())
 		rendered = rendered.copy(externalMember = externalMember)
 	if (externalMember != null && rendered is BirCallInstance && rendered.method == selectedTarget.name.asString()) {

@@ -145,6 +145,8 @@ static partial class UnsafeAccessorLowering
         else if (node is BirEventRemove remove && remove.MemberVisibility.OrDefault() is "private" or "protected" or "internal")
             node = ClrMemberResolution.RestrictedEventCall(remove, context.References) ?? node;
         return node switch {
+            BirNativeInstance n when n.Super.OrDefault() && n.Recv.OrDefault() is not BirThis
+                => RewriteSourceSuper(n, SourceMethodEdgeOf(n), caller, context),
             BirCallInstance or BirCallStatic or BirConstrainedCall => RewriteSourceMethod(node, caller, context, inner),
             BirNewBoundDelegate bound => RewriteSourceBound(bound, caller, context, inner),
             BirNew construction => RewriteSourceConstructor(construction, caller, context),
