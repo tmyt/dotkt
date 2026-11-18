@@ -895,6 +895,8 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 	val identityTarget = if (selectedTarget.isFakeOverride && selectedId == null)
 		selectedTarget.resolveFakeOverride() else selectedTarget
 	val externalMember = clrExternalMember(selectedTarget) ?: identityTarget?.let { clrExternalMember(it) }
+	if (externalMember != null && rendered is BirCallStatic && rendered.method == selectedTarget.name.asString())
+		rendered = rendered.copy(externalMember = externalMember)
 	if (externalMember != null && rendered is BirCallInstance && rendered.method == selectedTarget.name.asString()) {
 		val receiver = dispatchReceiver(call) ?: error("Selected external instance member has no receiver")
 		rendered = rendered.copy(ownerType = externalMemberDeclarationOwner(

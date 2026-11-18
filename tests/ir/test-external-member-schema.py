@@ -44,7 +44,12 @@ for value in (None, [], "binding", dict(call["externalMember"], extra=True),
     malformed = dict(call, externalMember=value)
     assert errors(malformed), malformed
 assert errors(call, "cir"), "foreign declaration binding must be consumed before CIR"
-assert errors(dict(call, k="callStatic")), "binding is only declared on the instance-call schema"
+static_owner = {"t": "fqn", "name": "System.ArraySegment`1", "args": [{"t": "tv", "scope": "method", "i": 0}]}
+static_call = {"k": "callStatic", "method": "op_Equality", "args": [],
+               "externalMember": {"owner": json.dumps(static_owner), "member": "op_Equality"}}
+assert not errors(static_call), errors(static_call)
+assert errors(static_call, "cir"), "static binding must also be consumed before CIR"
+assert errors({"k": "local", "name": "x", "externalMember": call["externalMember"]}), "binding requires a member call"
 ordinary = copy.deepcopy(call)
 del ordinary["externalMember"]
 ordinary["ownerType"] = json.dumps(owner)
