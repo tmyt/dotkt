@@ -39,20 +39,11 @@ actual IL offsets. The external Portable PDB and implementation DLL carry matchi
 Reference images do not have PDBs, and exported executable metadata carriers do not copy the
 producer's visible source positions into another module.
 
-## Imported String constants
-
-The standard KLIB UTF-8 string table cannot store unpaired UTF-16 surrogates. For such a CLR literal
-String, `dll2klib` retains the property's ordinary `const` flags and writes its code units as an array
-of character values in the compile-time constant payload, with `dotkt_utf16_constants=1` in the
-reference KLIB manifest. All scalar-valid Strings continue to use the standard string table.
-`kotc` restores an ordinary FIR String literal before evaluation. Class members use the KLIB
-constant deserialization extension; top-level declarations use their already-deserialized const
-symbol in the exact owning KLIB, because Kotlin's package loader does not use that extension.
-The `dotkt_utf16_package_constants=1` manifest entry limits package scanning to KLIBs that
-actually contain encoded top-level constants.
-No source-visible annotation, runtime getter or DLL reread is involved.
-
 ## Imported source-metadata Strings
+
+Class and package String constants use ordinary KLIB `STRING` values and
+refer to the fragment's string table. Kotlin's constant evaluator reads them
+from metadata without a runtime getter or a DLL reread.
 
 Typealias annotation Strings are retained in structured DLL metadata, not native
 CLR SerString. At DLL-to-KLIB serialization, tables needing unpaired UTF-16 units
@@ -63,8 +54,7 @@ Normal values and all existing source indexes remain unchanged.
 The metadata-provider adapter restores the table before constructing Kotlin's
 standard declaration/annotation deserializers. App and native/stdlib sessions
 retain the original library order, visibility, forward declarations and source
-metadata. Independent KLIB readers must use `clrKlibNameResolver`, including the
-existing constant preloader. The index row is transport data, never a source
+metadata. The index row is transport data, never a source
 string, and restoration must precede semantic use. This does not change Kotlin
 String types or the native CLR custom-attribute SerString limitation. See
 [the KLIB representation contract](design-dll2klib.md#klib-representation).
