@@ -280,6 +280,8 @@ class MapsTests {
         assertTrue(plain.containsKey("b"))              // True
         assertFalse(plain.containsKey("z"))             // False
         assertEquals("{a=10, b=20, c=30}", plain.mapValues { it.value * 10 }.toString())  // {a=10, b=20, c=30}
+        val projected: Map<String, List<*>> = mapOf("a" to listOf(1))
+        assertEquals(listOf(1), projected.mapValues { it.value }["a"])
         val mm = mutableMapOf("x" to 1, "y" to 2)
         assertEquals(2, mm.size)                        // 2
         assertTrue(mm.containsKey("x"))                 // True

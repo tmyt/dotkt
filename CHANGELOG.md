@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Inline collection operations such as `mapValues` can enumerate maps whose
+  values contain star projections.
+
 - Lambdas declared in an enum's companion object now compile and run without
   adding methods to the CLR enum itself.
 - Applied Kotlin annotations preserve omitted constructor arguments, including

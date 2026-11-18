@@ -289,6 +289,8 @@ class CollectionsTests {
 
         assertEquals(3, xs.getOrElse(2) { -1 })                       // 3
         assertEquals(-99, xs.getOrElse(99) { it * -1 })               // -99
+        val nested: List<List<*>> = listOf(listOf(1))
+        assertEquals(listOf(1), nested.getOrElse(0) { emptyList<Int>() })
     }
 
     @TestAttribute
