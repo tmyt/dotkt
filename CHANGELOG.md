@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Kotlin events with function handlers taking 17–22 arguments now use the same
+  wide delegates as ordinary Kotlin functions, including across DLL boundaries.
+
 ## 0.9.26 (2026-11-18)
 
 ### Release highlights
