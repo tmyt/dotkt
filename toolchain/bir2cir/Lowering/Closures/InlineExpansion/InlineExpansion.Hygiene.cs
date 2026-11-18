@@ -32,14 +32,21 @@ sealed partial class InlineExpansion
         foreach (var root in roots) Apply(root);
     }
 
-    internal void PrefixLocalsJoint(string prefix, params BirGraphValue[] roots)
+    internal static void PrefixLocalsJoint(string prefix, params BirGraphValue[] roots)
     {
         var declared = new HashSet<string>(StringComparer.Ordinal);
         void Collect(BirGraphValue node)
         {
-            if (node == null || node is IBirExecutablePayload or BirNewSuspendLambda) return;
+            if (node == null || node is IBirExecutablePayload or BirLocalFunction) return;
+            if (node is BirNewSuspendLambda suspend)
+            {
+                // Construction operands execute in this frame; invokeSuspend has its own.
+                foreach (var value in suspend.CapValues.OrEmpty()) Collect((BirGraphValue)value);
+                return;
+            }
             if (node is BirInlineLambda lambda)
             {
+                foreach (var capture in lambda.Captures.OrEmpty()) Collect((BirGraphValue)capture.Value.OrDefault());
                 foreach (var statement in lambda.Body.OrEmpty()) Collect((BirGraphValue)statement);
                 if (lambda.Result.HasValue) Collect((BirGraphValue)lambda.Result.Value);
                 return;
@@ -60,6 +67,16 @@ sealed partial class InlineExpansion
         void Prefix(BirGraphValue node, HashSet<string> names)
         {
             if (node == null || node is IBirExecutablePayload || names.Count == 0) return;
+            if (node is BirLocalFunction { Decl.HasValue: true } local)
+            {
+                var method = local.Decl.Value;
+                var inner = method.Params.OrEmpty().Select(p => p.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
+                CollectDeclaredLocals(BodyGraph(method.Body), inner);
+                var captured = new HashSet<string>(names, StringComparer.Ordinal);
+                captured.ExceptWith(inner);
+                foreach (var statement in method.Body.OrEmpty()) Prefix((BirGraphValue)statement, captured);
+                return;
+            }
             if (node is BirNewSuspendLambda suspend)
             {
                 var inner = SuspendLambdaInnerScope(suspend);
@@ -93,6 +110,8 @@ sealed partial class InlineExpansion
                 case BirVariable { Name.HasValue: true } value: value.Name = Rename(value.Name.Value); break;
                 case BirLocal { Name.HasValue: true } value: value.Name = Rename(value.Name.Value); break;
                 case BirSetLocal { Name.HasValue: true } value: value.Name = Rename(value.Name.Value); break;
+                case BirByRefLoad { Local.HasValue: true } value: value.Local = Rename(value.Local.Value); break;
+                case BirByRefStore { Local.HasValue: true } value: value.Local = Rename(value.Local.Value); break;
                 case BirForIn { Var.HasValue: true } value: value.Var = Rename(value.Var.Value); break;
                 case BirForArray { Var.HasValue: true } value: value.Var = Rename(value.Var.Value); break;
                 case BirRepeat { Var.HasValue: true } value: value.Var = Rename(value.Var.Value); break;

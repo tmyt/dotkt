@@ -48,6 +48,7 @@ import roundtrip.defaultarguments.InheritedMiddle
 import roundtrip.defaultarguments.InheritedLeaf
 import roundtrip.defaultarguments.InheritedMappedLeaf
 import roundtrip.defaultarguments.readReference
+import roundtrip.defaultarguments.bumpReference
 import roundtrip.defaultarguments.referenceDefault
 import roundtrip.defaultarguments.erasedInlineObject
 import roundtrip.defaultarguments.erasedNullableInlineObject
@@ -432,6 +433,8 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(12, readReference(kotlin.clr.byref(value), 6))
         ClassicAssert.AreEqual(12, readReference(kotlin.clr.byref(value)))
         ClassicAssert.AreEqual(6, value)
+        ClassicAssert.AreEqual(76, bumpReference(kotlin.clr.byref(value)))
+        ClassicAssert.AreEqual(7, value)
         var text = "imported"
         ClassicAssert.AreEqual("imported", referenceDefault(kotlin.clr.byref(text)))
         var nullable: Int? = null

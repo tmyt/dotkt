@@ -79,6 +79,9 @@ static partial class DefaultArgSplice
     static IBirExpression SubstituteTokens(IBirExpression source, IBirExpression dispatch, IBirExpression extension,
         IBirExpression enclosing, IReadOnlyList<IBirExpression> arguments)
     {
+        // Slot identities are unique within the producing module, not across it and the caller.
+        // Rehome only the cloned payload's bindings, before inserting any caller-owned operands.
+        InlineExpansion.PrefixLocalsJoint($"__dflt${FreshDefaultIdentity()}$", (BirGraphValue)source);
         BirGraphValue Rewrite(BirGraphValue node)
         {
             if (node is BirDefaultReceiver receiver)

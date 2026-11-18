@@ -9,6 +9,27 @@ static partial class DefaultArgSplice
 {
     internal static void SourcePreparationSelfTest()
     {
+        // The two independently compiled modules both allocated the same local slot.
+        const string slot = "dotkt$local0";
+        var callerSlot = new BirLocal { Name = slot, Sty = new TypeNode.Fqn("Counter") };
+        var payload = new BirValueBlock {
+            Stmts = new IBirStatement[] { new BirVariable { Name = slot, Type = callerSlot.Sty,
+                Init = OptionalField<IBirExpression>.Of(new BirDefaultParameter { Idx = 0 }) } },
+            Result = OptionalField<IBirExpression>.Of(new BirLocal { Name = slot, Sty = callerSlot.Sty }),
+        };
+        string SplicedSlot()
+        {
+            var copy = (BirValueBlock)SpliceOne(payload, null, null, null, new[] { callerSlot }, new(), "Caller",
+                "Caller", null, null, "bump", 1);
+            var local = (BirVariable)copy.Stmts.Value.Single();
+            if (((BirLocal)local.Init.Value).Name.Value != slot || local.Name.Value == slot
+                || ((BirLocal)copy.Result.Value).Name.Value != local.Name.Value)
+                throw new InvalidOperationException("Spliced default conflated caller and payload local bindings");
+            return local.Name.Value;
+        }
+        if (SplicedSlot() == SplicedSlot() || ((BirVariable)payload.Stmts.Value[0]).Name.Value != slot)
+            throw new InvalidOperationException("Repeated default splices shared storage or mutated the producer");
+
         var variable = new TypeNode.Tv("method", 0);
         var unit = new TypeNode.Fqn("kotlin.Unit");
         var function = new TypeNode.Fn(false, variable, Array.Empty<TypeNode>());

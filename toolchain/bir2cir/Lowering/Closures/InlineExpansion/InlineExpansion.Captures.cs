@@ -20,7 +20,7 @@ sealed partial class InlineExpansion
 
     internal static void CollectDeclaredLocals(BirGraphValue node, HashSet<string> names)
     {
-        if (node == null || node is BirInlineLambda or BirNewClosure or BirNewDelegate or BirNewSuspendLambda or BirNewSam) return;
+        if (node == null || node is BirLocalFunction or BirInlineLambda or BirNewClosure or BirNewDelegate or BirNewSuspendLambda or BirNewSam) return;
         var name = node switch {
             BirVariable value => value.Name.OrDefault(), BirForArray value => value.Var.OrDefault(),
             BirForIn value => value.Var.OrDefault(), BirRepeat value => value.Var.OrDefault(),

@@ -14,6 +14,7 @@ fun kinds(tag: String, n: Long = 5L, r: Double = 1.5, ch: Char = 'z', note: Stri
 class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($x,$y)" }
 
 fun readReference(value: kotlin.clr.ClrRef<Int>, extra: Int = value.value): Int = value.value + extra
+fun bumpReference(value: kotlin.clr.ClrRef<Int>, previous: Int = value.value++): Int = value.value * 10 + previous
 fun <T> referenceDefault(value: kotlin.clr.ClrRef<T>, extra: T = value.value): T = extra
 
 @Suppress("UNCHECKED_CAST")
