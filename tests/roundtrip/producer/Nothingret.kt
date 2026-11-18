@@ -7,6 +7,9 @@ package roundtrip.nothingret
 fun fail(msg: String): Nothing = throw RuntimeException(msg)
 fun <T> pick(cond: Boolean, x: T): T = if (cond) x else fail("no")
 
+interface NullSource { fun none(): Nothing? }
+open class BaseNullSource : NullSource { override fun none(): Nothing? = null }
+
 class Boom {
     companion object { fun boom(): Nothing = throw RuntimeException("boom") }   // companion-static Nothing (#135)
 }

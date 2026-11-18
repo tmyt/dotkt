@@ -68,6 +68,8 @@ import roundtrip.money.Money
 import roundtrip.genop.Arr
 import roundtrip.nothingret.pick
 import roundtrip.nothingret.Boom
+import roundtrip.nothingret.BaseNullSource
+import roundtrip.nothingret.NullSource
 import roundtrip.nothingret.fail as nothingretFail
 import roundtrip.covariantreference.ReferencedCovariantRoot
 import roundtrip.covariantreference.ReferencedCovariantSlot
@@ -523,6 +525,10 @@ class KotlinApiShapeRoundtripTests {
     // roundtrip-nothing-return (#133): a Nothing return round-trips through a generic fn + a bare if/else.
     @TestAttribute
     fun nothingReturnGeneric() {
+        val source: NullSource = object : BaseNullSource() {
+            override fun none(): Nothing? = null
+        }
+        ClassicAssert.IsNull(source.none())
         ClassicAssert.AreEqual(7, pick(true, 7))                 // 7   generic pick, Nothing else-branch
         val y: String = if (true) "ok" else nothingretFail("x")             // String only if fail(): Nothing round-tripped
         ClassicAssert.AreEqual("ok", y)                          // ok

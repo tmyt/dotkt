@@ -6839,8 +6839,9 @@ internal sealed partial class AssemblyScanner : IDisposable
         var attrs = signatures.Attributes;
         var returnHandle = method.GetParameters()
             .FirstOrDefault(h => reader.GetParameter(h).SequenceNumber == 0);
+        // The marker identifies the classifier, not whether the Kotlin return type was nullable.
         if (attrs.Has(returnHandle, MetadataAttributes.DotKtNs + "KotlinNothingAttribute"))
-            return signatures.NamedType("kotlin.Nothing");
+            physical = signatures.NamedType("kotlin.Nothing");
         // A CLR ref return is consumed as a Kotlin value by default. The
         // explicit byref(call()) marker retains lvalue identity at the call
         // site; advertising ClrRef<T> as the ordinary return type instead
