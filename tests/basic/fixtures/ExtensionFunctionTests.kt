@@ -31,7 +31,7 @@ class ExtensionRefBox<T>(var value: T)
 private interface ExtensionPropertyScope {
     var <T> ExtensionRefBox<T>.current: T
 }
-private object ExtensionPropertyScopeImpl : ExtensionPropertyScope {
+private class ExtensionPropertyScopeImpl<A>(val tag: A) : ExtensionPropertyScope {
     override var <T> ExtensionRefBox<T>.current: T
         get() = value
         set(newValue) { value = newValue }
@@ -65,13 +65,20 @@ class ExtensionFunctionTests {
         assertEquals(1, 3.sign)                        // 1
         assertEquals(0, 0.sign)                        // 0
 
-        val scope: ExtensionPropertyScope = ExtensionPropertyScopeImpl
+        val concrete = ExtensionPropertyScopeImpl("tag")
+        val scope: ExtensionPropertyScope = concrete
         with(scope) {
             assertEquals(42, ExtensionRefBox(42).current)
             val box = ExtensionRefBox<String?>("before")
             assertEquals("before", box.current)
             box.current = null
             assertEquals(null, box.value)
+        }
+        with(concrete) {
+            val box = ExtensionRefBox<Int?>(null)
+            box.current = 42
+            assertEquals(42, box.current)
+            assertEquals("tag", tag)
         }
     }
 
