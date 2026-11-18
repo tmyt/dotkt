@@ -171,7 +171,31 @@ ordinary .NET platform rules and remain the application's responsibility.
   (a `when` needs an `else` — .NET enums are open). An enum carrying the exact CLR `[Flags]` attribute also exposes
   typed `or`, `and`, `xor`, `inv`, and `in` operations without leaving its enum type.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
-  (`==` deliberately routes to `Equals`, the Kotlin semantics.)
+- For two statically non-null operands, Kotlin `==` and `!=` can select the
+  corresponding imported Boolean CLR operator from either operand type. Each
+  operator is selected independently by overload resolution: `a != b` need not
+  mean `!(a == b)`. Equally applicable declarations are ambiguous. A native
+  comparison is not a type test and cannot smart-cast the other operand.
+  With no applicable native operator, or with a nullable operand (including
+  a platform type that may be null), Kotlin equality is unchanged. A null check
+  may first narrow a variable to its non-null type. Static types matter: two
+  operands widened to `Any` or to an unconstrained `T` use ordinary equality.
+  A non-null type parameter's upper bound can supply an operator, as can a base
+  CLR class for a Kotlin subclass. Subject-based `when (a) { b -> … }` still
+  uses Kotlin equality. Explicit `equals`, identity (`===`), hashing and collection lookup are unaffected.
+- Import the declaring CLR namespace (for example, `import MyLibrary.*`) to use
+  logical negation (`!x`), ones' complement (`x.inv()`), and the infix
+  `and`, `or`, `xor`, `shl`, `shr` and `ushr` views of native operators.
+  The same namespace import brings the comparison adapters below into scope.
+  These are low-priority extensions: a Kotlin member keeps its usual precedence,
+  and `left and right` works even if only the right-hand type declares the CLR operator.
+- A real `compareTo` (including CLR `IComparable<T>`) takes precedence. Otherwise
+  an imported Boolean `<` / `>` pair supplies `compareTo`: test `<` first, then
+  `>` if needed. If only the `<=` / `>=` pair applies, both are tested once in
+  that order. The adapter returns −1, 0 or 1; two equal Boolean results in the
+  non-strict pair yield 0, as does an unordered strict result. Both direct
+  `compareTo` and Kotlin relational syntax use this ordering. It does not add
+  `Comparable<T>` conformance or preserve every individual native predicate.
 - A non-conversion CLR operator is also callable by its exact method name. For example,
   `SqlInt32.op_Equality(a, b)` returns a `SqlBoolean`, including SQL null. Call static
   operators on the declaring type and mutating instance operators on the receiver.

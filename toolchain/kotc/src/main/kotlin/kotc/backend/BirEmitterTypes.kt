@@ -590,7 +590,8 @@ internal fun BirEmitter.clrExternalMember(
 	// when sourceView was not supplied; compacting them would change the target.
 	val owner = argument("memberOwner") ?: return null
 	val member = argument("memberName") ?: return null
-	return if (owner.isEmpty() && member.isEmpty()) null else kotc.bir.BirExternalMemberBinding(owner, member)
+	return if (owner.isEmpty() && member.isEmpty()) null else kotc.bir.BirExternalMemberBinding(
+		owner, member, argument("pairedMember")?.takeIf { it.isNotEmpty() })
 }
 
 /** The selected Kotlin declaration's constructed frame, not its fake override's receiver frame. */

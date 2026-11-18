@@ -453,11 +453,15 @@ internal object BirMessagePack {
 
     private fun writeBirExternalMemberBinding(value: BirExternalMemberBinding, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(2)
+        packer.packMapHeader(2 + (if (value.pairedMember == null) 0 else 1))
         packer.packString("owner")
         MessagePackText.write(packer, value.owner)
         packer.packString("member")
         MessagePackText.write(packer, value.member)
+        value.pairedMember?.let { child ->
+            packer.packString("pairedMember")
+            MessagePackText.write(packer, child)
+        }
     }
 
     private fun writeBirCallBinding(value: BirCallBinding, packer: MessagePacker, depth: Int) {

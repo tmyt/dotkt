@@ -4676,6 +4676,7 @@ internal sealed record BirExternalMemberBinding : BirGraphValue
 {
     public OptionalField<SourceDeclarationType> Owner { get; set; }
     public OptionalField<string> Member { get; set; }
+    public OptionalField<string> PairedMember { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
     }
@@ -4697,6 +4698,7 @@ internal sealed record BirExternalMemberBinding : BirGraphValue
     public override void VisitStringFields(Action<string> visit)
     {
         if (Member.HasValue) { visit((string)Member.Value); }
+        if (PairedMember.HasValue) { visit((string)PairedMember.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -4759,12 +4761,14 @@ internal sealed record BirExternalMemberBinding : BirGraphValue
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirExternalMemberBinding value
             && EqualField(Owner, value.Owner, (left, right) => EqualityComparer<SourceDeclarationType>.Default.Equals(left, right))
-            && EqualField(Member, value.Member, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
+            && EqualField(Member, value.Member, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(PairedMember, value.PairedMember, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
         WriteOptional(writer, "owner", Owner, (writer, value) => { SourceDeclarationType.Write(writer, value); });
         WriteOptional(writer, "member", Member, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "pairedMember", PairedMember, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -4772,6 +4776,7 @@ internal sealed record BirExternalMemberBinding : BirGraphValue
         var result = new JsonObject();
         if (Owner.IsPresent) result["owner"] = Owner.IsNull ? null : SourceDeclarationType.ToDom(Owner.Value);
         if (Member.IsPresent) result["member"] = Member.IsNull ? null : JsonValue.Create(Member.Value);
+        if (PairedMember.IsPresent) result["pairedMember"] = PairedMember.IsNull ? null : JsonValue.Create(PairedMember.Value);
         projected?.Invoke(this, result);
         return result;
     }

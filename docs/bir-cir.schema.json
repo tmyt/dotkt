@@ -307,7 +307,8 @@
       "type": "object", "x-dotkt-model": { "name": "BirExternalMemberBinding", "domain": "birCoreValues" },
       "properties": {
         "owner": { "type": "string", "x-dotkt-csharp-type": "SourceDeclarationType", "x-dotkt-csharp-codec": "SourceDeclarationType", "x-dotkt-json-content": "#/$defs/type", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "$comment": "Canonical TypeNode text from trusted projection metadata, forwarded unchanged by kotc and decoded once by the BIR boundary into an immutable declaration-frame TypeNode." },
-        "member": { "type": "string" }
+        "member": { "type": "string" },
+        "pairedMember": { "type": "string", "description": "Second native operator selected for this comparison view; same declaring frame and operand signature." }
       },
       "required": ["owner", "member"], "additionalProperties": false
     },

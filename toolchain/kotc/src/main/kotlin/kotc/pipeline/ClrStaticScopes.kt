@@ -156,7 +156,8 @@ fun FirSession.buildClrFirFromKtFiles(files: Collection<KtFile>) = (firProvider 
 	register(org.jetbrains.kotlin.fir.FirVisibilityChecker::class, ClrStaticVisibilityChecker)
 	register(org.jetbrains.kotlin.fir.resolve.calls.overloads.ConeCallConflictResolverFactory::class, ClrStaticConflictResolverFactory)
 	val builder = PsiRawFirBuilder(this, ClrStaticScopeProvider(provider.kotlinScopeProvider))
-	files.map { builder.buildFirFile(it).also(provider::recordFile) }
+	val equality = NativeEquality()
+	files.map { builder.buildFirFile(it).also(equality::prepare).also(provider::recordFile) }
 }
 
 /** A static use references its resolved declaration, not an instance override on the written qualifier. */

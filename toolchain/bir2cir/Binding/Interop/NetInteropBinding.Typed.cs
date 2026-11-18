@@ -6,11 +6,14 @@ static partial class NetInteropBinding
 {
     internal static BirFileDeclaration Apply(BirFileDeclaration file, ReferenceMetadataIndex references)
     {
+        int comparisonSite = 0;
         BirGraphValue Walk(BirGraphValue node)
         {
             if (node == null || node is IBirExecutablePayload) return node;
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
             var result = node switch {
+                BirCallStatic call when call.ExternalMember.OrDefault()?.PairedMember.HasValue == true
+                    => LowerProjectedComparison(call, references, ++comparisonSite),
                 BirCallStatic call when !call.ClrAwaitBridge.OrDefault() => LowerCall(new(call), references),
                 BirCallInstance call when !call.ClrAwaitBridge.OrDefault() => LowerCall(new(call), references),
                 BirFieldGet field => LowerField(field, field.OwnerType, field.Name, field.Recv, default,

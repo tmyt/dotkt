@@ -1852,7 +1852,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                     def,
                     names,
                     signatures,
-                    semanticClassName: semanticName is null ? null : SemanticClassName(handle, names, semanticName));
+                    semanticClassName: semanticName is null ? null : SemanticClassName(handle, names, semanticName),
+                    operatorPackage: fragment.Package);
                 MergeGenericStaticCarrier(handle, klass, names, signatures);
                 fragment.Class.Add(klass);
                 fragment.ClassName.Add(klass.FqName);
@@ -1879,6 +1880,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                         semanticParent.NestedClassName.Add(names.String(childName));
                 }
             }
+            RemoveShadowedComparisonViews(fragment.Package, names);
             MarkLowPriorityDelegateOverloads(fragment.Package.Function, names);
             _typeAliases.Project(packageName, fragment, names);
             fragment.Strings = names.Strings;
@@ -2200,8 +2202,10 @@ internal sealed partial class AssemblyScanner : IDisposable
         NameTable names,
         SignatureDecoder signatures,
         int? semanticClassName = null,
-        int? semanticKind = null)
+        int? semanticKind = null,
+        Package? operatorPackage = null)
     {
+        if (operatorPackage != null && !CanPublishNamespaceOperators(handle)) operatorPackage = null;
         var metadataName = _md.GetString(def.Name);
         var metadataNamespace = _md.GetString(def.Namespace);
         var kotlinName = KotlinDefinitionPath(handle).Chain[^1];
@@ -2449,6 +2453,7 @@ internal sealed partial class AssemblyScanner : IDisposable
 
         var projectedFunctions = new List<ProjectedFunction>();
         var projectedConstructors = new List<ProjectedConstructor>();
+        List<ProjectedFunction>? comparisons = null;
         foreach (var methodHandle in def.GetMethods())
         {
             var method = _md.GetMethodDefinition(methodHandle);
@@ -2563,7 +2568,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
                 if ((method.Attributes & (MethodAttributes.Static | MethodAttributes.SpecialName)) ==
-                    (MethodAttributes.Static | MethodAttributes.SpecialName) && def.GetGenericParameters().Count != 0)
+                    (MethodAttributes.Static | MethodAttributes.SpecialName) &&
+                    (def.GetGenericParameters().Count != 0 || clrMethodName is "op_Equality" or "op_Inequality"))
                     ProjectStaticOwnerParameters(handle, methodHandle, function, names, signatures, context);
                 ApplyPInvokeProjection(method, function, names);
                 // Ordinary members already carry their physical declaring class.
@@ -2572,10 +2578,24 @@ internal sealed partial class AssemblyScanner : IDisposable
                     function.FunctionAnnotation.Add(
                         KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
                 result.Function.Add(function);
-                projectedFunctions.Add(new ProjectedFunction(
-                    methodHandle,
-                    function,
-                    PhysicalParameterKeys(method, context)));
+                var projected = new ProjectedFunction(methodHandle, function, PhysicalParameterKeys(method, context));
+                projectedFunctions.Add(projected);
+                if (operatorPackage != null && !_attrs.IsDotKtAssembly &&
+                    (method.Attributes & (MethodAttributes.MemberAccessMask | MethodAttributes.Static |
+                        MethodAttributes.SpecialName)) == (MethodAttributes.Public | MethodAttributes.Static |
+                        MethodAttributes.SpecialName) && IsExplicitOperatorMethod(clrMethodName, method.Attributes))
+                {
+                    if (clrMethodName is "op_LessThan" or "op_GreaterThan" or "op_LessThanOrEqual" or "op_GreaterThanOrEqual")
+                    {
+                        if (function.ValueParameter.Count == 2 && IsNamed(function.ReturnType, "kotlin.Boolean", names) &&
+                            !function.ReturnType.Nullable)
+                            (comparisons ??= []).Add(projected);
+                    }
+                    else if (clrMethodName is "op_Equality" or "op_Inequality")
+                        SetOperatorFact(function, names, "operatorRole", clrMethodName == "op_Equality" ? "equals" : "notEquals");
+                    else AddOperatorExtension(handle, methodHandle, clrMethodName, function, operatorPackage, names,
+                        signatures, context);
+                }
             }
         }
         if (!_attrs.IsDotKtAssembly)
@@ -2583,6 +2603,8 @@ internal sealed partial class AssemblyScanner : IDisposable
             AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names);
             AddNrtParamsOverloadBridges(projectedFunctions, result.Function, names);
         }
+        if (comparisons != null)
+            AddComparisonExtensions(handle, comparisons, operatorPackage!, names, signatures, typeContext);
         AddMemberAwaitBridges(handle, def, result, names, signatures, typeContext);
         foreach (var methodHandle in def.GetMethods())
         {
@@ -5286,7 +5308,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             function.TypeParameter.Add(lifted);
         }
         var binding = ClrExternalAnnotation(names, owner);
-        var target = new TypeNode.Fqn(ExactMetadataTypeName(owner), Enumerable.Range(methodArity, parameters.Count)
+        var target = new TypeNode.Fqn(ExactMetadataTypeName(owner), parameters.Count == 0 ? null : Enumerable.Range(methodArity, parameters.Count)
             .Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray());
         foreach (var (field, value) in new[] { ("memberOwner", TypeNode.ToJson(target)),
             ("memberName", _md.GetString(_md.GetMethodDefinition(method).Name)) })
@@ -5351,7 +5373,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                     "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
                     requireTrust: false))
                 continue;
-            var child = ReadClass(childHandle, childDef, names, signatures);
+            var child = ReadClass(childHandle, childDef, names, signatures, operatorPackage: fragment.Package);
             MergeGenericStaticCarrier(childHandle, child, names, signatures);
             parent.NestedClassName.Add(names.String(KotlinDefinitionPath(childHandle).Chain[^1]));
             fragment.Class.Add(child);
