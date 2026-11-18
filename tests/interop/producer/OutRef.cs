@@ -2,6 +2,9 @@
 // from Kotlin via byref / value-copy / live-ref. Own namespace (OutRef) — the case's original `namespace P`
 // collided with netattr/selfref once they share this single producer assembly.
 namespace OutRef {
+    public class RefConstructor {
+        public RefConstructor(int value, ref int slot) { slot += value; }
+    }
     public class NativeBase {
         public NativeBase(int value) { Value = value; }
         public int Value { get; }

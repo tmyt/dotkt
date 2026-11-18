@@ -61,7 +61,7 @@ private open class OrderedCtorBase(trace: CtorTrace, val x: String, val y: Strin
     init { trace.record("B") }
 }
 private class OrderedCtorChild : OrderedCtorBase {
-    private constructor(t: CtorTrace, left: String, right: String) :
+    private constructor(padding: Int = 0, t: CtorTrace, left: String, right: String) :
         super(y = t.record(right), x = t.record(left), trace = t) { t.record("S") }
     constructor(t: CtorTrace) : this(right = t.record("y"), left = t.record("x"), t = t) { t.record("T") }
 }

@@ -93,10 +93,12 @@ internal class CallPlan(private val e: BirEmitter) {
 	 *  reaches it through the ordinary `expr()` and renders the same read. Re-binding the same node is a no-op. */
 	fun bindValue(node: IrExpression, phase: String, role: String): BirExpression {
 		e.planReads[node]?.let { return it }
-		val type = e.birType(node.type)
 		// `expr(node)` FIRST: it may itself install a nested plan, whose bindings belong to that inner call.
 		val rendered = e.expr(node)
-		val ref = bind(phase, "value", e.isStableValue(node), type, role, rendered)
+		// A reordered argument may already read a binding of this very plan. Its formal slot and
+		// default readers must read the original binding directly, not a second, apparently stable alias.
+		val ref = if (rendered is BirBindingReference && bindings.any { it.id == rendered.id }) rendered
+			else bind(phase, "value", e.isStableValue(node), e.birType(node.type), role, rendered)
 		e.planReads[node] = ref
 		registered.add(node)
 		return ref
