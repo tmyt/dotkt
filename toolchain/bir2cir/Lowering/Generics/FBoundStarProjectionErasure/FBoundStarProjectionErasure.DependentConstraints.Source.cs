@@ -8,7 +8,7 @@ static partial class FBoundStarProjectionErasure
     // has been captured and before its body is rewritten. Do not hoist this to
     // module preparation: native proof queries consume the live constraints.
     internal static void ProjectDependentTypeConstraintsSource(IBirTypeDeclaration declaration,
-        CarrierRealizationContext context)
+        CarrierProjectionContext context)
     {
         var frame = NullableRepresentationViews.TypeFacts((BirGraphValue)declaration)?.NullableFrame;
         var parameters = declaration.TypeParams.OrEmpty();
@@ -18,10 +18,10 @@ static partial class FBoundStarProjectionErasure
             if (!parameter.Constraints.HasValue) continue;
             parameter.Constraints = parameter.Constraints.Value.Select(bound =>
                 OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "type", index, frame, context.References)
-                    && PhysicalBoundClassifier(bound, context.Projection) is { } classifier
+                    && PhysicalBoundClassifier(bound, context) is { } classifier
                         ? classifier : bound).ToArray();
             var proofs = context.NativeProofs.Bounds(
-                context.Bindings.GetCapturedSource((BirGraphValue)declaration), index);
+                context.Preparation.Bindings.GetCapturedSource((BirGraphValue)declaration), index);
             parameter.Constraints = parameter.Constraints.Value.Concat(proofs.Select(BirGraphValue.CopyType)).Distinct().ToArray();
         }
     }

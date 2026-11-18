@@ -24,7 +24,7 @@ static partial class FBoundStarProjectionErasure
         var role = setter ? "set" : "get";
         if (state.Owners.TryGetValue(owner.Name, out var local))
         {
-            if (!state.Realization.Declarations.Slots(local).Values.Any(row =>
+            if (!state.Declarations.Slots(local).Values.Any(row =>
                 row.Declaration.PropertyAssociation.OrDefault() == local.Name + ":field:" + name
                 && KotlinPropertyAccessors.TryIdentity(row.Declaration, out var property, out var accessor)
                 && property == name && accessor == role)) return node;
@@ -54,7 +54,7 @@ static partial class FBoundStarProjectionErasure
         if (field.Name.OrDefault() is not string name || field.OwnerType.OrDefault() is not TypeNode.Fqn { Args: { } } owner) return node;
         (Owner Owner, SourceSlot Slot)? canonical = null;
         if (state.Owners.TryGetValue(owner.Name, out var start) && start.Needed)
-            canonical = FindDeclaringSourceOwner(start, name, "get", 0, 0, Array.Empty<TypeNode>(), null, state.Realization);
+            canonical = FindDeclaringSourceOwner(start, name, "get", 0, 0, Array.Empty<TypeNode>(), null, state.Demand, state.Declarations);
         var exact = canonical is { } local && local.Owner.Name == owner.Name
             && IsCanonicalSourceFieldGetter(local.Slot.Declaration, owner.Name, name);
         var generatedExact = generatedEquals && canonical is { } equality && equality.Owner.Name == owner.Name

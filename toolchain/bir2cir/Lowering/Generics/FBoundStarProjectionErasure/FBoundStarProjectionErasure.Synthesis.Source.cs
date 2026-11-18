@@ -75,7 +75,7 @@ static partial class FBoundStarProjectionErasure
                 }
                 else DeclarationSignatureIdentity.RecordSelectedImplementationSlot(method, slot);
             }
-            foreach (var (declaringName, method) in InheritedConcreteBaseMethodsSource(owner, context))
+            foreach (var (declaringName, method) in InheritedConcreteBaseMethodsSource(owner, context.Demand))
             {
                 if (method.TypeParams.OrEmpty().Any(parameter => parameter.Constraints.OrEmpty().Any(ContainsOwnerTv))) continue;
                 var declaring = (IBirTypeDeclaration)context.SourceDefinitions[declaringName].Source;
@@ -162,13 +162,13 @@ static partial class FBoundStarProjectionErasure
         + "$" + method.Name.OrDefault() + "$" + owner.Methods.OrEmpty().TakeWhile(candidate => !ReferenceEquals(candidate, method)).Count();
 
     static IEnumerable<(string Name, BirFunctionDeclaration Method)> InheritedConcreteBaseMethodsSource(Owner owner,
-        CarrierRealizationContext context)
+        CarrierDemandPlan context)
     {
-        var next = context.Definition(owner).Base.OrDefault() as TypeNode.Fqn;
+        var next = ((IBirTypeDeclaration)owner.DefinitionBinding.Source).Base.OrDefault() as TypeNode.Fqn;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         while (next != null && seen.Add(next.Name))
         {
-            if (context.Owners.ContainsKey(next.Name) || !context.SourceDefinitions.TryGetValue(next.Name, out var source)) yield break;
+            if (context.Owners.ContainsKey(next.Name) || !context.Preparation.Bindings.SourceDefinitions.TryGetValue(next.Name, out var source)) yield break;
             var definition = (IBirTypeDeclaration)source.Source;
             foreach (var method in definition.Methods.OrEmpty())
                 if (!method.Static.OrDefault() && method.Vis.OrDefault() != "private") yield return (next.Name, method);
