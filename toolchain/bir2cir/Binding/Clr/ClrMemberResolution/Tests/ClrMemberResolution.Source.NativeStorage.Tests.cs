@@ -16,13 +16,10 @@ static partial class ClrMemberResolution
             try { action(); } catch (InvalidOperationException) { return; }
             throw new InvalidOperationException("Native storage binding accepted a missing or ambiguous declaration");
         }
-        var priorLocals = _localTypes;
-        try
         {
             var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
-            void Resolve(BirGraphValue node) => Apply(node, references, _localTypes);
             var localTypes = new HashSet<string>(StringComparer.Ordinal);
-            _localTypes = localTypes;
+            void Resolve(BirGraphValue node) => Apply(node, references, localTypes);
             var text = Type("System.String"); var integer = Type("System.Int32"); var foreignVoid = Type("System.Void");
             var list = Type("System.Collections.Generic.IReadOnlyList", text);
             var receiver = new BirLocal { Name = "actual", Sty = list };
@@ -150,7 +147,6 @@ static partial class ClrMemberResolution
                 BindingFlags.Public | BindingFlags.Instance));
             Console.WriteLine("[native storage binding] self-test OK (properties, fields, events, exact overrides, presence and owning operands)");
         }
-        finally { _localTypes = priorLocals; }
     }
 }
 

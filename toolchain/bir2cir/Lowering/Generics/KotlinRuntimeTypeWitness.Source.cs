@@ -25,7 +25,7 @@ static partial class KotlinRuntimeTypeWitness
                 Type = new TypeNode.Fqn(owner), Method = method, Recv = OptionalField<IBirExpression>.Of(CopyExpression(receiver)),
                 Args = arguments, ArgTypes = parameters.Select(parameter => (TypeNode)new TypeNode.Fqn(parameter)).ToArray(),
                 Ret = new TypeNode.Fqn(result), Dispatch = "callvirt",
-                MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.ArrayStorageMethodOf(refs, method, parameters, owner, false)),
+                MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.ArrayStorageMethodOf(null, refs, method, parameters, owner, false)),
             };
             var typeType = new TypeNode.Fqn("System.Type");
             // An opaque foreign construction uses its open definition, not

@@ -47,7 +47,7 @@ static partial class ClrMemberResolution
             if (signature == null || independent == null || ReferenceEquals(signature, independent)
                 || !ReferenceEquals(signature.Return, scanned.SignatureReturn)
                 || !ReferenceEquals(signature.Return, first.DeclarationSignatureSlot(method.ReturnParameter))
-                || !ReferenceEquals(signature.Return, DeclaredMethodReturn(first, method)))
+                || !ReferenceEquals(signature.Return, DeclaredMethodReturn(null, first, method)))
                 throw new InvalidOperationException("Scan and CLR binding must share their compilation's native decoder");
             first.Dispose();
             if (!ReferenceEquals(independent, second.NativeMethodSignature(secondMethod)))

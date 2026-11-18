@@ -49,7 +49,7 @@ static partial class UnsafeAccessorLowering
         var isPublic = false;
         if (target == null && context.References != null)
         {
-            selected = ClrMemberResolution.ResolveFieldForUnsafeAccessor(context.References, owner, edge.Name, isStatic,
+            selected = ClrMemberResolution.ResolveFieldForUnsafeAccessor(null, context.References, owner, edge.Name, isStatic,
                 out BirTypeParameter[] referencedParameters, out isPublic);
             if (selected != null)
             {

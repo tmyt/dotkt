@@ -80,7 +80,7 @@ static partial class UnsafeAccessorLowering
                 var member = (BirMemberReference)original.MemberRef.Value.DeepClone();
                 if (member.DeclaringType.OrDefault() is TypeNode.Fqn selected)
                     member.DeclaringType = selected with { Args = resolvedOwner.Args is { Length: > 0 }
-                        ? ((TypeNode.Fqn)ClrMemberResolution.PhysicalInstanceView(context.References, resolvedOwner)).Args : null };
+                        ? ((TypeNode.Fqn)ClrMemberResolution.PhysicalInstanceView(null, context.References, resolvedOwner)).Args : null };
                 targetCall.MemberRef = member;
             }
             DropSourceMemberFacts(targetCall);

@@ -9,7 +9,7 @@ static partial class ClrMemberResolution
     internal static void Apply(BirGraphValue root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes)
     {
-        _localTypes = localTypes ?? new HashSet<string>();
+        localTypes = localTypes ?? new HashSet<string>();
         var declarations = new List<string>();
         Walk(root);
 
@@ -26,10 +26,10 @@ static partial class ClrMemberResolution
                 });
                 try
                 {
-                    if (node is BirFunctionDeclaration declaration) ResolveNativeOverrideSource(refs, declaration);
-                    ResolveNativeCallsSource(refs, node);
-                    ResolveNativeStorageSource(refs, node);
-                    ResolveNativeTemplatesSource(refs, node);
+                    if (node is BirFunctionDeclaration declaration) ResolveNativeOverrideSource(localTypes, refs, declaration);
+                    ResolveNativeCallsSource(localTypes, refs, node);
+                    ResolveNativeStorageSource(localTypes, refs, node);
+                    ResolveNativeTemplatesSource(localTypes, refs, node);
                 }
                 catch (InvalidOperationException error)
                 {

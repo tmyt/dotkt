@@ -135,7 +135,7 @@ static partial class TypedEscapingFinally
             var owner = references.ResolveRefType(ownerType.Name);
             var target = owner.GetMethods(BindingFlags.Public | BindingFlags.Static).Single(method => method.Name == "Capture"
                 && method.GetParameters().Length == 1 && method.GetParameters()[0].ParameterType.FullName == "System.Exception");
-            call.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(references, target, "method", owner, null));
+            call.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, target, "method", owner, null));
         }
         return call;
     }
@@ -151,7 +151,7 @@ static partial class TypedEscapingFinally
             var target = owner.GetMethods(BindingFlags.Public | BindingFlags.Instance).Single(method => method.Name == "Throw"
                 && method.GetParameters().Length == 0);
             call.Dispatch = "callvirt";
-            call.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(references, target, "method", owner, null));
+            call.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, target, "method", owner, null));
         }
         return new BirBlock { Body = new IBirStatement[] {
             new BirExpressionStatement { Expr = call }, new BirThrow { Value = Null(new TypeNode.Fqn("System.Exception")) },

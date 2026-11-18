@@ -10,14 +10,14 @@ static partial class ClrMemberResolution
     public static void MaterializeDelegateSlots(PhysicalDelegateDeclarations declarations, BirFileDeclaration document, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes, IReadOnlyDictionary<string, string> localCarriers = null)
     {
-        _localTypes = localTypes ?? new HashSet<string>();
-        var adapters = new TypedPhysicalDelegateAdapter(refs, () => UnitSingletonRead(refs), declarations);
+        localTypes = localTypes ?? new HashSet<string>();
+        var adapters = new TypedPhysicalDelegateAdapter(localTypes, refs, () => UnitSingletonRead(localTypes, refs), declarations);
         var pending = new List<BirGraphSlot>();
         Collect(document);
         foreach (var slot in pending)
         {
             var original = slot.Read();
-            var replacement = Materialize(original, document, refs, adapters, localCarriers);
+            var replacement = Materialize(localTypes, original, document, refs, adapters, localCarriers);
             if (!ReferenceEquals(original, replacement)) slot.Replace(replacement);
         }
 
@@ -33,7 +33,7 @@ static partial class ClrMemberResolution
         }
     }
 
-    static BirGraphValue Materialize(BirGraphValue value, BirFileDeclaration document,
+    static BirGraphValue Materialize(IReadOnlySet<string> bindingLocalTypes, BirGraphValue value, BirFileDeclaration document,
         ReferenceMetadataIndex refs, TypedPhysicalDelegateAdapter adapters, IReadOnlyDictionary<string, string> localCarriers)
     {
         if (value is BirSamConversion conversion)
@@ -64,7 +64,7 @@ static partial class ClrMemberResolution
         // Only the constructor binding follows this retarget operation. Target
         // method/Invoke facts already selected for the natural callable stay intact.
         construction.SetType(target);
-        construction.SetConstructor(BirMemberReference.FromPhysical(DelegateConstructorReference(refs, target)));
+        construction.SetConstructor(BirMemberReference.FromPhysical(DelegateConstructorReference(bindingLocalTypes, refs, target)));
         return value;
 
         BirNewClosure Adapt(IBirExpression captured, TypeNode.Fqn slot, DelegateAdapterPlan plan, bool alwaysArguments)
@@ -73,7 +73,7 @@ static partial class ClrMemberResolution
             var closure = new BirNewClosure {
                 ClosureType = new TypeNode.Fqn(name), Method = "invoke",
                 Captures = new[] { captured }, FuncType = slot,
-                DelegateCtorRef = BirMemberReference.FromPhysical(DelegateConstructorReference(refs, slot)),
+                DelegateCtorRef = BirMemberReference.FromPhysical(DelegateConstructorReference(bindingLocalTypes, refs, slot)),
             };
             if (alwaysArguments || plan.Parameters != null || plan.Arguments.Length != 0)
                 closure.TypeArgs = plan.Arguments.ToArray();

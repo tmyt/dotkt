@@ -24,11 +24,11 @@ static partial class ClrMemberResolution
     /// Resolve every applied EXTERNAL attribute's constructor and stamp it. Runs over the whole document
     /// because an attribute rides on any declaration — a type, a member, a parameter, a return.
     /// </summary>
-    public static void ResolveAttributeCtors(BirFileDeclaration root, ReferenceMetadataIndex refs, string file)
+    public static void ResolveAttributeCtors(IReadOnlySet<string> bindingLocalTypes, BirFileDeclaration root, ReferenceMetadataIndex refs, string file)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
         TypedAttributeBinding.Visit(root, attribute => {
-            ResolveAppliedAttribute(refs, attribute);
+            ResolveAppliedAttribute(bindingLocalTypes, refs, attribute);
             // This lane follows the owning frontier. The earlier DOM crossing
             // check can no longer inspect a constructor first selected here.
             if (attribute.MemberRef.HasValue)
@@ -37,25 +37,25 @@ static partial class ClrMemberResolution
         });
     }
 
-    static void ResolveAppliedAttribute(ReferenceMetadataIndex bindingReferences, BirAttribute attr)
+    static void ResolveAppliedAttribute(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirAttribute attr)
     {
         if (!attr.AttrExternal.OrDefault() || attr.MemberRef.IsPresent) return;
         if (attr.Attr.OrDefault() is not TypeNode.Fqn attrFqn) return;
         var assembly = attr.AttrAssembly.OrDefault();
         var arguments = attr.ArgTypes.OrEmpty();
-        if (ResolveAppliedAttributeCtor(bindingReferences, attrFqn, assembly, arguments) is { } selected)
+        if (ResolveAppliedAttributeCtor(bindingLocalTypes, bindingReferences, attrFqn, assembly, arguments) is { } selected)
             attr.MemberRef = BirMemberReference.FromPhysical(selected);
     }
 
-    internal static AttributeApplication ResolveAttributeCtor(AttributeApplication attribute, ReferenceMetadataIndex refs)
+    internal static AttributeApplication ResolveAttributeCtor(IReadOnlySet<string> bindingLocalTypes, AttributeApplication attribute, ReferenceMetadataIndex refs)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
         if (attribute.AttrExternal != true || attribute.MemberRef != null || attribute.Attr is not TypeNode.Fqn type)
             return attribute;
-        return attribute with { MemberRef = ResolveAppliedAttributeCtor(refs, type, attribute.AttrAssembly, attribute.ArgTypes) };
+        return attribute with { MemberRef = ResolveAppliedAttributeCtor(bindingLocalTypes, refs, type, attribute.AttrAssembly, attribute.ArgTypes) };
     }
 
-    static MemberRefNode ResolveAppliedAttributeCtor(ReferenceMetadataIndex bindingReferences, TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments)
+    static MemberRefNode ResolveAppliedAttributeCtor(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments)
     {
         // The exact declaring scope when one is stated: a compiler-synthesized attribute can share its FQN with
         // a private lookalike, which is why that key exists at all.
@@ -79,6 +79,6 @@ static partial class ClrMemberResolution
         // marker could not be encoded. (`PickUnique` throws, which is right where a MEMBER is being called and
         // wrong here, and the difference is the whole reason this uses the quiet form.)
         var win = ClrDeclarationMatching.TryPickUniqueCtor(bindingReferences, ctors, argNodes, attrFqn.Args);
-        return win == null ? null : ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
+        return win == null ? null : ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
     }
 }

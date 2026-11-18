@@ -40,7 +40,7 @@ static partial class TypedAttributeBinding
             } },
         };
         var selected = attributes.Select(attribute => attribute.MemberRef.Value).ToArray();
-        Apply(root, ReferenceMetadataIndex.Build(Array.Empty<string>()), "attributes");
+        Apply(null, root, ReferenceMetadataIndex.Build(Array.Empty<string>()), "attributes");
         for (var index = 0; index < attributes.Count; index++)
             if (attributes[index].AttrClr.IsPresent || !attributes[index].AttrExternal.OrDefault()
                 || !ReferenceEquals(attributes[index].MemberRef.Value, selected[index]))
@@ -65,7 +65,7 @@ static partial class TypedAttributeBinding
         crossingAttribute.MemberRef.Value.ParameterTypes = new TypeNode[] { new TypeNode.Array(nullable) };
         try
         {
-            Apply(new BirFileDeclaration { AssemblyAttrs = new[] { crossingAttribute } },
+            Apply(null, new BirFileDeclaration { AssemblyAttrs = new[] { crossingAttribute } },
                 ReferenceMetadataIndex.Build(Array.Empty<string>()), "attributes");
         }
         catch (InvalidOperationException exception) when (exception.Message.Contains("parameter 0", StringComparison.Ordinal))

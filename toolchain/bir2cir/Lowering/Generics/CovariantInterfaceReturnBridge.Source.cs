@@ -191,7 +191,7 @@ static partial class CovariantInterfaceReturnBridge
                         descriptorMember = intrinsic;
                     var comparable = slotParameters.Select(type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases,
                         isValue, refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames)).ToArray();
-                    if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(refs, descriptorOwner, descriptorMember, arity,
+                    if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(null, refs, descriptorOwner, descriptorMember, arity,
                             comparable, declarationParameters == null ? null : KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                                 declarationParameters, physicalArguments), out descriptorOwner, out descriptorMember,
                             out slotParameters, out slotReturn)) continue;

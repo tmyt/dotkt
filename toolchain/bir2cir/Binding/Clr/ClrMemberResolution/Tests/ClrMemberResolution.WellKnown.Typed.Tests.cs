@@ -15,7 +15,7 @@ static partial class ClrMemberResolution
             };
             var methods = new[] { method };
             var root = new BirFileDeclaration { FileClass = "WellKnown", Methods = methods };
-            ResolveWellKnown(root, references);
+            ResolveWellKnown(null, root, references);
             var table = root.WellKnownRefs.Value;
             var roles = new[] {
                 "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode", "Object.Equals",

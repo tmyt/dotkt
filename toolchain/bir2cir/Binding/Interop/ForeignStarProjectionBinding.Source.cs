@@ -319,7 +319,7 @@ static partial class ForeignStarProjectionBinding
             var directOwner = ExactMutableViewDispatch.CloseDeclaring((TypeNode.Fqn)selected.DeclaringView, nativeView.Args);
             return SourceExactViewCall(receiver, arguments, nativeView, family,
                 selected.ReturnsVoid ? new TypeNode.Fqn("kotlin.Unit") : projected,
-                (recv, args) => ClrMemberResolution.ExactInstanceCall(refs, selected.Method, directOwner, recv, args),
+                (recv, args) => ClrMemberResolution.ExactInstanceCall(null, refs, selected.Method, directOwner, recv, args),
                 (recv, args) => {
                     var fallback = Fallback(recv, args);
                     return selected.ReturnsVoid || IsObjectish(projected) ? fallback : SourceCast(projected, fallback);

@@ -5,10 +5,10 @@ using DotKt.Bir.Lowering;
 // metadata, not further live declarations for this physical binding pass.
 static partial class TypedAttributeBinding
 {
-    internal static void Apply(BirFileDeclaration root, ReferenceMetadataIndex references, string file)
+    internal static void Apply(IReadOnlySet<string> localTypes, BirFileDeclaration root, ReferenceMetadataIndex references, string file)
     {
         AttrExternalNormalize.Apply(root);
-        ClrMemberResolution.ResolveAttributeCtors(root, references, file);
+        ClrMemberResolution.ResolveAttributeCtors(localTypes, root, references, file);
     }
 
     internal static void Visit(BirGraphValue root, Action<BirAttribute> visit)

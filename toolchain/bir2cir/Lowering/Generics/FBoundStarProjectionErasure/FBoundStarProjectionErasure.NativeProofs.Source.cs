@@ -77,9 +77,9 @@ static partial class FBoundStarProjectionErasure
                         && declarations.SourceLocalDeclarations.TryGetValue((selectedOwner.Name, identity), out var local)
                             ? local : methods.GetValueOrDefault(identity ?? "");
                     var required = node switch {
-                        BirGenericStatic call => ReadRows(ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(call, references),
+                        BirGenericStatic call => ReadRows(ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, call, references),
                             false, physicalDeclaration: true),
-                        BirGenericInstance call => ReadRows(ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(call, references),
+                        BirGenericInstance call => ReadRows(ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, call, references),
                             false, physicalDeclaration: true),
                         _ => selected != null ? Rows(selected) : MethodRows(identity),
                     };
@@ -118,7 +118,7 @@ static partial class FBoundStarProjectionErasure
                 {
                     if (edge.Owner.OrDefault() is not TypeNode.Fqn selectedOwner
                         || values.IsBindingAlias(selectedOwner.Name) || values.OwnsValueSlots(selectedOwner.Name)) continue;
-                    var selected = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(selectedOwner,
+                    var selected = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, selectedOwner,
                         edge.Member.OrDefault(), parameters.Length, true,
                         method.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray(), references,
                         parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>());

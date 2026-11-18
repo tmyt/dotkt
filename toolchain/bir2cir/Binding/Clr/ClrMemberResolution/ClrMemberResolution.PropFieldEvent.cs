@@ -25,7 +25,7 @@ static partial class ClrMemberResolution
     static TypeNode NativeDeclaredReturn(ReferenceMetadataIndex bindingReferences, Type type) => type == null || type == typeof(void)
         ? new TypeNode.Fqn("void") : ClrDeclarationMatching.MemberSigOf(bindingReferences, type);
 
-    static NativeStorageSelection SelectNativePropertyStorage(ReferenceMetadataIndex bindingReferences, TypeNode owner, string name,
+    static NativeStorageSelection SelectNativePropertyStorage(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode owner, string name,
         bool write, bool isStatic, bool superCall)
     {
         if (owner is not TypeNode.Fqn ownerFqn)
@@ -38,23 +38,23 @@ static partial class ClrMemberResolution
         {
             var target = RetargetedInterfaceOwner(bindingReferences, open, accessor, ownerFqn);
             return new(target, "accessor", accessor.Name,
-                ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
+                ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
                 isStatic ? null : Dispatch(accessor, open, superCall), NativeDeclaredReturn(bindingReferences, accessor.ReturnType),
                 write ? SubstOwnerParams(bindingReferences, accessor.GetParameters()[^1].ParameterType,
                     (target as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()) : null);
         }
         if (FindFieldMember(open, name, flags) is { } field)
-            return new(ownerFqn, "field", null, ClrMemberReferences.FieldRefOf(bindingReferences, _localTypes, field, open, ownerFqn.Args), null,
+            return new(ownerFqn, "field", null, ClrMemberReferences.FieldRefOf(bindingReferences, bindingLocalTypes, field, open, ownerFqn.Args), null,
                 NativeDeclaredReturn(bindingReferences, field.FieldType),
                 write ? SubstOwnerParams(bindingReferences, field.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()) : null);
         throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")})");
     }
 
-    static NativeStorageSelection SelectNativeFieldStorage(ReferenceMetadataIndex bindingReferences, TypeNode owner, string name, bool write)
+    static NativeStorageSelection SelectNativeFieldStorage(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode owner, string name, bool write)
     {
         // Same-emission storage wins over a stale reference twin, even when the
         // earlier reference assembly exposes an inaccessible backing field.
-        if (owner is not TypeNode.Fqn ownerFqn || _localTypes.Contains(ownerFqn.Name)) return null;
+        if (owner is not TypeNode.Fqn ownerFqn || bindingLocalTypes.Contains(ownerFqn.Name)) return null;
         var open = ResolveOwnerType(ownerFqn, refs: bindingReferences);
         if (open == null || name == null) return null;
         var accessor = FindPropAccessor(open, name, write, BindingFlags.Public | BindingFlags.Instance);
@@ -67,30 +67,30 @@ static partial class ClrMemberResolution
                 throw new InvalidOperationException(
                     $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");
-            return direct == null ? null : new(ownerFqn, null, null, ClrMemberReferences.FieldRefOf(bindingReferences, _localTypes, direct, open, ownerFqn.Args), null,
+            return direct == null ? null : new(ownerFqn, null, null, ClrMemberReferences.FieldRefOf(bindingReferences, bindingLocalTypes, direct, open, ownerFqn.Args), null,
                 NativeDeclaredReturn(bindingReferences, direct.FieldType),
                 write ? SubstOwnerParams(bindingReferences, direct.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()) : null);
         }
         var target = RetargetedInterfaceOwner(bindingReferences, open, accessor, ownerFqn);
         return new(target, "accessor", accessor.Name,
-            ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
+            ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, accessor, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args),
             Dispatch(accessor, open, false), NativeDeclaredReturn(bindingReferences, accessor.ReturnType),
             write ? SubstOwnerParams(bindingReferences, accessor.GetParameters()[^1].ParameterType,
                 (target as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()) : null);
     }
 
-    static NativeStorageSelection SelectNativeEventStorage(ReferenceMetadataIndex bindingReferences, TypeNode owner, string name, bool isStatic, bool add)
+    static NativeStorageSelection SelectNativeEventStorage(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode owner, string name, bool isStatic, bool add)
     {
         if (owner is not TypeNode.Fqn ownerFqn)
             throw new InvalidOperationException($"bir2cir: clrEvent owner is not a .NET FQN slot ({TypeNode.ToJson(owner)})");
-        if (_localTypes.Contains(ownerFqn.Name))
+        if (bindingLocalTypes.Contains(ownerFqn.Name))
             throw new InvalidOperationException($"bir2cir: local clrEvent '{ownerFqn.Name}' reached final member resolution without an exact accessor binding");
         var open = ResolveOwnerType(ownerFqn, refs: bindingReferences) ?? throw new InvalidOperationException(
             $"bir2cir: clrEvent owner '{ownerFqn.Name}' does not resolve to a .NET type");
         var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
         var accessor = FindEventAccessor(open, name, add, flags) ?? throw new InvalidOperationException(
             $"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
-        var reference = ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, accessor, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
+        var reference = ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, accessor, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         var handler = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(reference.ParameterTypes[0],
             ((TypeNode.Fqn)reference.DeclaringType).Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
         return new(RetargetedInterfaceOwner(bindingReferences, open, accessor, ownerFqn), null, accessor.Name, reference,
@@ -100,11 +100,11 @@ static partial class ClrMemberResolution
 
     // UnsafeAccessor binds a field on its declaring TypeDef, unlike ordinary inherited
     // field lookup. Reuse the exact MemberRef projection, including constructed bases.
-    internal static MemberRefNode ResolveFieldForUnsafeAccessor(ReferenceMetadataIndex refs,
+    internal static MemberRefNode ResolveFieldForUnsafeAccessor(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs,
         TypeNode.Fqn owner, string name, bool isStatic, out BirTypeParameter[] ownerParameters, out bool isPublic)
     {
         ownerParameters = null;
-        var selected = SelectUnsafeAccessorField(refs, owner, name, isStatic);
+        var selected = SelectUnsafeAccessorField(bindingLocalTypes, refs, owner, name, isStatic);
         isPublic = selected?.IsPublic ?? false;
         if (selected == null) return null;
         ownerParameters = selected.DeclaringType.GetGenericArguments()
@@ -113,7 +113,7 @@ static partial class ClrMemberResolution
     }
 
     sealed record UnsafeFieldSelection(MemberRefNode Reference, Type DeclaringType, bool IsPublic);
-    static UnsafeFieldSelection SelectUnsafeAccessorField(ReferenceMetadataIndex refs,
+    static UnsafeFieldSelection SelectUnsafeAccessorField(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs,
         TypeNode.Fqn owner, string name, bool isStatic)
     {
         var open = ResolveOwnerType(owner, refs: refs);
@@ -123,7 +123,7 @@ static partial class ClrMemberResolution
         var field = open.GetField(name, flags)
             ?? throw new InvalidOperationException($"UnsafeAccessor field '{owner.Name}.{name}' has no referenced FieldDef");
         var declaration = ClrMemberReferences.OpenFieldDeclarationOf(field);
-        return new(ClrMemberReferences.FieldRefOf(refs, _localTypes, field, open, owner.Args), declaration.DeclaringType, declaration.IsPublic);
+        return new(ClrMemberReferences.FieldRefOf(refs, bindingLocalTypes, field, open, owner.Args), declaration.DeclaringType, declaration.IsPublic);
     }
 
     // ---- property get / set --------------------------------------------------------------------

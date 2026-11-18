@@ -1081,10 +1081,10 @@ sealed class Pipeline
 
         // These selections consume the complete physical declarations, after
         // collision allocation, without creating another source inventory.
-        ClrMemberResolution.ResolveLocalConstructors(refs, captured);
+        ClrMemberResolution.ResolveLocalConstructors(physicalPreparation.EmittedLocalTypes, refs, captured);
         ClrMemberResolution.ResolvePhysicalLocalDelegateTargets(captured, refs,
             localCarriers: localExistentialOwners);
-        ClrMemberResolution.ResolveInheritedExternalCalls(captured, refs);
+        ClrMemberResolution.ResolveInheritedExternalCalls(physicalPreparation.EmittedLocalTypes, captured, refs);
         for (var index = 0; index < captured.Length; index++)
             ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
@@ -1125,7 +1125,7 @@ sealed class Pipeline
             .Except(physicalPreparation.ExternalCanonicalTypes, StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal));
         // Newly authored bridge bodies need the same inherited/static selection
         // after every root has reached its final collection representation.
-        ClrMemberResolution.ResolveInheritedExternalCalls(captured, refs);
+        ClrMemberResolution.ResolveInheritedExternalCalls(physicalPreparation.EmittedLocalTypes, captured, refs);
         for (var index = 0; index < captured.Length; index++)
             ClrMemberResolution.ResolveReferencedStaticCalls(captured[index], refs,
                 physicalPreparation.EmittedLocalTypes, physicalPreparation.ExternalCanonicalTypes,
@@ -1278,7 +1278,7 @@ sealed class Pipeline
             ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(root);
         // Fixed BCL operands depend only on the reference universe. Author their
         // complete physical role table directly on the continuing typed roots.
-        foreach (var root in physicalDocuments) ClrMemberResolution.ResolveWellKnown(root, refs);
+        foreach (var root in physicalDocuments) ClrMemberResolution.ResolveWellKnown(emittedLocalTypes, root, refs);
         // Exact member resolution selected each MethodDef's CLR-only generic
         // constraints. Consume those facts on the same owning typed occurrences
         // before interface/delegate materialization; retain the prepared local
@@ -1296,7 +1296,7 @@ sealed class Pipeline
         }
         // Interface obligations resolve against the complete final declaration
         // graph, using the same owning records as the following consumers.
-        ClrMemberResolution.ResolveInterfaceSlots(physicalDocuments, refs);
+        ClrMemberResolution.ResolveInterfaceSlots(emittedLocalTypes, physicalDocuments, refs);
         var delegateDeclarations = new PhysicalDelegateDeclarations();
         foreach (var (root, file) in physicalRoots)
         {
@@ -1315,7 +1315,7 @@ sealed class Pipeline
         ForeignNullableGenericCrossing.CheckImplementedSlots(physicalRoots, refs);
         // Consume CLR attribute origin and select each external constructor from
         // its declaration, retaining the shared foreign-parameter validation.
-        foreach (var (root, file) in physicalRoots) TypedAttributeBinding.Apply(root, refs, file);
+        foreach (var (root, file) in physicalRoots) TypedAttributeBinding.Apply(emittedLocalTypes, root, refs, file);
         // Native import lowering owns the MethodDef/ImplMap descriptor. Attribute
         // identity and generic-crossing validation remain authoritative.
         foreach (var root in physicalDocuments) PInvokeLowering.Apply(root, refs, localBasicEnums);
@@ -1325,8 +1325,8 @@ sealed class Pipeline
         // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
         // build retains declaration types and only consumes semantic comparisons in executable constructor remnants.
         var physicalExistentialOwners = localExistentialOwners.Values.ToHashSet(StringComparer.Ordinal);
-        TypedPhysicalValueCoercion.ApplyAll(delegateDeclarations, localExistentialOwners, physicalDocuments,
-            () => ClrMemberResolution.UnitSingletonRead(refs), isValueFqn, referenceBuild: _options.RefBuild,
+        TypedPhysicalValueCoercion.ApplyAll(emittedLocalTypes, delegateDeclarations, localExistentialOwners, physicalDocuments,
+            () => ClrMemberResolution.UnitSingletonRead(emittedLocalTypes, refs), isValueFqn, referenceBuild: _options.RefBuild,
             isReferenceOwner: owner => refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
                 is { IsClass: true, IsValueType: false } native
                 && native.FullName is not ("System.Object" or "System.ValueType" or "System.Enum"),

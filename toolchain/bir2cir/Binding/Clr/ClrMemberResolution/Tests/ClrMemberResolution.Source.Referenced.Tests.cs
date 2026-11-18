@@ -8,7 +8,6 @@ static partial class ClrMemberResolution
     {
         static void Require(bool value, string reason)
         { if (!value) throw new InvalidOperationException("Source final referenced calls: " + reason); }
-        var previousLocals = _localTypes;
         var refs = ReferenceMetadataIndex.ReferencedSourceTestIndex(out var selectedPropertyId);
         var text = new TypeNode.Fqn("System.String"); var obj = new TypeNode.Fqn("System.Object");
         var integer = new TypeNode.Fqn("System.Int32"); var unit = new TypeNode.Fqn("void");
@@ -38,7 +37,6 @@ static partial class ClrMemberResolution
                 new BirConstant { Type = text, Value = new BirLiteral.TextLiteral("left") },
                 new BirConstant { Type = text, Value = new BirLiteral.TextLiteral("right") } } };
         using var signatures = new ReferencedCallSignatures();
-        try
         {
             var call = Concat();
             signatures.Capture(call);
@@ -73,7 +71,7 @@ static partial class ClrMemberResolution
             var selectedLocal = new BirCallStatic { Owner = text, Method = "local", DeclarationId = "local-method",
                 Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() };
             var concat = typeof(string).GetMethod("Concat", new[] { typeof(object), typeof(object) })!;
-            var exact = ExactStaticCall(refs, concat, text, new IBirExpression[] {
+            var exact = ExactStaticCall(null, refs, concat, text, new IBirExpression[] {
                 new BirConstant { Type = obj, Value = new BirLiteral.NullLiteral() },
                 new BirConstant { Type = obj, Value = new BirLiteral.NullLiteral() } });
             var exactMember = exact.MemberRef.Value; var exactSignature = exact.Sig.Value;
@@ -182,10 +180,6 @@ static partial class ClrMemberResolution
             Require(!sibling.DotktKotlinSigId.IsPresent && signatures.Read(sibling) == null,
                 "a sibling file lost its own snapshot lifetime");
             Console.WriteLine("[source final referenced calls] shared exact selection, snapshots, current owners, delegate slots and physical frames: OK");
-        }
-        finally
-        {
-            _localTypes = previousLocals;
         }
     }
 }

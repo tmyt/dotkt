@@ -33,7 +33,7 @@ static partial class ClrMemberResolution
                         Pos = new BirDeclarationPosition { F = "Inherited.kt", L = 7 } },
                 },
             };
-            void Resolve(BirFileDeclaration file) => ResolveInheritedExternalCalls(new[] { file }, refs);
+            void Resolve(BirFileDeclaration file) => ResolveInheritedExternalCalls(null, new[] { file }, refs);
 
             var owner = ListOwner();
             var call = Call(new TypeNode.Fqn("LocalList", new TypeNode[] { text }), "get_Item", text, integer);
@@ -70,7 +70,7 @@ static partial class ClrMemberResolution
                 Params = new[] { new BirParameter { Type = integer } }, Static = false } };
             var last = ListOwner();
             var current = Call(new TypeNode.Fqn("LocalList", new TypeNode[] { text }), "get_Item", text, integer);
-            ResolveInheritedExternalCalls(new[] { File(current, first), new BirFileDeclaration { Types = new IBirTypeDeclaration[] { last } } }, refs);
+            ResolveInheritedExternalCalls(null, new[] { File(current, first), new BirFileDeclaration { Types = new IBirTypeDeclaration[] { last } } }, refs);
             Require(current.MemberRef.HasValue, "current last-wins physical method rows were replaced by early membership");
             last.Methods = first.Methods;
             var fresh = Call(new TypeNode.Fqn("LocalList", new TypeNode[] { text }), "get_Item", text, integer);

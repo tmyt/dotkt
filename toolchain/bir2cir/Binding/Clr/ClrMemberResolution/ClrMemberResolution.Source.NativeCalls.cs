@@ -10,24 +10,24 @@ static partial class ClrMemberResolution
     sealed record NativeCallSelection(MethodInfo Declaration, BirMemberReference Reference,
         string Dispatch, TypeNode Return);
 
-    static void ResolveNativeCallsSource(ReferenceMetadataIndex bindingReferences, BirGraphValue node)
+    static void ResolveNativeCallsSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node)
     {
         switch (node)
         {
             case BirNew construction:
                 if (construction.Type.OrDefault() is TypeNode.Fqn referenced
-                    && !_localTypes.Contains(referenced.Name) && ResolveOwnerType(referenced, refs: bindingReferences) != null)
-                    ResolveNativeConstructorSource(bindingReferences, construction, referenced, construction.ArgTypes.OrDefault(),
+                    && !bindingLocalTypes.Contains(referenced.Name) && ResolveOwnerType(referenced, refs: bindingReferences) != null)
+                    ResolveNativeConstructorSource(bindingLocalTypes, bindingReferences, construction, referenced, construction.ArgTypes.OrDefault(),
                         construction.Args.OrDefault(), construction.MemberSignature.OrDefault(),
                         construction.ConstructorDeclarationId.OrDefault());
                 break;
             case BirNewClr construction:
                 if (construction.Type.OrDefault() is TypeNode.Fqn owner)
-                    ResolveNativeConstructorSource(bindingReferences, construction, owner, construction.ArgTypes.OrDefault(),
+                    ResolveNativeConstructorSource(bindingLocalTypes, bindingReferences, construction, owner, construction.ArgTypes.OrDefault(),
                         construction.Args.OrDefault(), construction.MemberSignature.OrDefault(), null);
                 break;
             case BirNativeStatic call:
-                ResolvePlainNativeCallSource(bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
+                ResolvePlainNativeCallSource(bindingLocalTypes, bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
                     call.ArgTypes.OrDefault(), call.ResolvedMemberParams.OrDefault(), false, false,
                     call.TypeArgs.OrEmpty().Length != 0, call.Args.OrDefault());
                 break;
@@ -37,32 +37,32 @@ static partial class ClrMemberResolution
                 call.ArgTypes = default; call.ResolvedMemberParams = default;
                 break;
             case BirNativeInstance call:
-                ResolvePlainNativeCallSource(bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
+                ResolvePlainNativeCallSource(bindingLocalTypes, bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
                     call.ArgTypes.OrDefault(), call.ResolvedMemberParams.OrDefault(), true, call.Super.OrDefault(),
                     call.TypeArgs.OrEmpty().Length != 0, call.Args.OrDefault());
                 break;
             case BirGenericStatic call:
-                ResolveGenericNativeCallSource(bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
+                ResolveGenericNativeCallSource(bindingLocalTypes, bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
                     call.ResolvedMemberParams.OrDefault(), call.Args.OrDefault(), false, false,
                     call.MemberRef.HasValue, call.ResolvedMemberReturn.IsPresent);
                 break;
             case BirGenericInstance call:
-                ResolveGenericNativeCallSource(bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
+                ResolveGenericNativeCallSource(bindingLocalTypes, bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
                     call.ResolvedMemberParams.OrDefault(), call.Args.OrDefault(), true, call.Super.OrDefault(),
                     call.MemberRef.HasValue, call.ResolvedMemberReturn.IsPresent);
                 break;
             case BirBoundClrDelegate construction:
                 // This actual kind has no argTypes input. Do not substitute its
                 // function/caller signature for the old reader's empty vector.
-                ResolveNativeDelegateSource(bindingReferences, construction, construction.ClrType.OrDefault(),
+                ResolveNativeDelegateSource(bindingLocalTypes, bindingReferences, construction, construction.ClrType.OrDefault(),
                     construction.Method.OrDefault(), null, true);
                 break;
             case BirClrStaticDelegate construction:
-                ResolveNativeDelegateSource(bindingReferences, construction, construction.ClrType.OrDefault(),
+                ResolveNativeDelegateSource(bindingLocalTypes, bindingReferences, construction, construction.ClrType.OrDefault(),
                     construction.Method.OrDefault(), construction.ArgTypes.OrDefault(), false);
                 break;
             case BirConstrainedCall call:
-                ResolveConstrainedNativeCallSource(bindingReferences, call);
+                ResolveConstrainedNativeCallSource(bindingLocalTypes, bindingReferences, call);
                 break;
         }
     }
@@ -70,7 +70,7 @@ static partial class ClrMemberResolution
     static List<TypeNode> NativeArgumentTypes(TypeNode[] arguments)
         => arguments?.Where(type => type != null).ToList() ?? new List<TypeNode>();
 
-    static void ResolveNativeConstructorSource(ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode.Fqn owner,
+    static void ResolveNativeConstructorSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode.Fqn owner,
         TypeNode[] argumentTypes, IBirExpression[] arguments, TypeNode[] selectedSignature, string identity)
     {
         var open = ResolveOwnerType(owner, refs: bindingReferences)
@@ -92,8 +92,8 @@ static partial class ClrMemberResolution
             $"newClr owner={TypeNode.ToJson(owner)} ({DescArgs(signature)})");
 
         CoerceNativeConstructorViews(bindingReferences, arguments, selected.GetParameters(), signature, ownerArguments);
-        var reference = BirMemberReference.FromPhysical(ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, selected, MemberRefNode.Kinds.Ctor, open, ownerArguments));
-        StampNativeDelegateArgumentTargets(bindingReferences, arguments, Array.Empty<TypeNode>(), selected,
+        var reference = BirMemberReference.FromPhysical(ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, selected, MemberRefNode.Kinds.Ctor, open, ownerArguments));
+        StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, Array.Empty<TypeNode>(), selected,
             ownerArguments ?? Array.Empty<TypeNode>());
         switch (node)
         {
@@ -126,18 +126,18 @@ static partial class ClrMemberResolution
         }
     }
 
-    static NativeCallSelection NativeMethodSelection(ReferenceMetadataIndex bindingReferences, MethodInfo declaration, Type open,
+    static NativeCallSelection NativeMethodSelection(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, MethodInfo declaration, Type open,
         TypeNode[] ownerArguments, string dispatch)
     {
         // The selected override owns crossing/generic facts. A constrained
         // instruction instead names its virtual root slot, never the body.
         var target = dispatch == "constrained" ? ConstrainedSlot(declaration, open) : declaration;
         return new(declaration, BirMemberReference.FromPhysical(
-            ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, target, MemberRefNode.Kinds.Method, open, ownerArguments)), dispatch,
+            ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, target, MemberRefNode.Kinds.Method, open, ownerArguments)), dispatch,
             NativeDeclaredReturn(bindingReferences, declaration.ReturnType));
     }
 
-    static void ResolvePlainNativeCallSource(ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode ownerType, string name,
+    static void ResolvePlainNativeCallSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode ownerType, string name,
         TypeNode[] argumentTypes, TypeNode[] selectedSignature, bool instance, bool superCall,
         bool hasTypeArguments, IBirExpression[] arguments)
     {
@@ -166,12 +166,12 @@ static partial class ClrMemberResolution
         if (!hasTypeArguments) candidates = candidates.Where(method => !method.IsGenericMethodDefinition).ToList();
         var context = $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(owner)} .{name}({DescArgs(signature)})";
         var selected = selectedSignature != null
-            ? ClrDeclarationMatching.TryPickDeclared(bindingReferences, _localTypes, candidates, selectedSignature.ToList(), open)
+            ? ClrDeclarationMatching.TryPickDeclared(bindingReferences, bindingLocalTypes, candidates, selectedSignature.ToList(), open)
                 ?? throw new InvalidOperationException($"bir2cir: selected declaration {context} has no unique open signature")
             : ClrDeclarationMatching.PickUnique(bindingReferences, candidates, method => method.GetParameters(), signature, owner.Args, context);
-        var plan = NativeMethodSelection(bindingReferences, selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
+        var plan = NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
         WriteNativeMethodSelection(node, plan);
-        StampNativeDelegateArgumentTargets(bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
         switch (node)
         {
             case BirNativeStatic call: call.ArgTypes = default; call.ResolvedMemberParams = default; break;
@@ -180,7 +180,7 @@ static partial class ClrMemberResolution
         }
     }
 
-    static void ResolveGenericNativeCallSource(ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode ownerType, string name,
+    static void ResolveGenericNativeCallSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode ownerType, string name,
         TypeNode[] signature, IBirExpression[] arguments, bool instance, bool superCall,
         bool hasReference, bool returnPresent)
     {
@@ -200,15 +200,15 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException($"bir2cir: generic external call '{owner.Name}.{name}<{arity}>' carries no usable frontend-resolved parameter vector");
         // Match the selected OPEN declaration, never close its type TVs before
         // choosing between overloads. A unique name/arity alone is not evidence.
-        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(bindingReferences, _localTypes, open, name, arity, instance, signature.ToList())
+        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(bindingReferences, bindingLocalTypes, open, name, arity, instance, signature.ToList())
             ?? throw new InvalidOperationException($"bir2cir: generic external call '{owner.Name}.{name}<{arity}>' has no unique declaration matching its frontend-resolved parameter vector in the reference set");
-        var plan = NativeMethodSelection(bindingReferences, selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
+        var plan = NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
         WriteNativeMethodSelection(node, plan);
         if (node is BirGenericInstance call)
         {
             call.Dispatch = plan.Dispatch; call.ReceiverMode = open.IsValueType ? "address" : "value";
         }
-        StampNativeDelegateArgumentTargets(bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
         ClearNativeGenericDescriptor(node);
     }
 
@@ -218,7 +218,7 @@ static partial class ClrMemberResolution
         else if (node is BirGenericInstance instance) instance.ResolvedMemberParams = default;
     }
 
-    static void ResolveNativeDelegateSource(ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode ownerType, string name,
+    static void ResolveNativeDelegateSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode ownerType, string name,
         TypeNode[] argumentTypes, bool instance)
     {
         if (ownerType is not TypeNode.Fqn owner) return;
@@ -234,11 +234,11 @@ static partial class ClrMemberResolution
         var selected = ClrDeclarationMatching.PickUnique(bindingReferences, candidates, method => method.GetParameters(), signature, owner.Args,
             $"{kind} owner={TypeNode.ToJson(owner)} .{name}({DescArgs(signature)})");
         // ldftn names the selected declaration, not a constrained call target.
-        WriteNativeMethodSelection(node, NativeMethodSelection(bindingReferences, selected, open, owner.Args, null));
+        WriteNativeMethodSelection(node, NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args, null));
         if (node is BirClrStaticDelegate stat) stat.ArgTypes = default;
     }
 
-    static void ResolveConstrainedNativeCallSource(ReferenceMetadataIndex bindingReferences, BirConstrainedCall call)
+    static void ResolveConstrainedNativeCallSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirConstrainedCall call)
     {
         call.Super = default;
         // ContainsKey in the original input includes explicit null.
@@ -254,13 +254,13 @@ static partial class ClrMemberResolution
             .Where(method => method.Name == name && method.GetParameters().Length == call.Args.Value.Length
                 && (method.IsGenericMethodDefinition ? method.GetGenericArguments().Length == arity : arity == 0)).ToList();
         var selected = call.ResolvedMemberParams.HasValue
-            ? ClrDeclarationMatching.TryPickDeclared(bindingReferences, _localTypes, candidates, call.ResolvedMemberParams.Value.ToList(), open)
+            ? ClrDeclarationMatching.TryPickDeclared(bindingReferences, bindingLocalTypes, candidates, call.ResolvedMemberParams.Value.ToList(), open)
             : !call.Sig.HasValue ? (candidates.Count == 1 ? candidates[0] : null)
                 : ClrDeclarationMatching.TryPickUnique(bindingReferences, candidates, call.Sig.Value.ToList(), owner.Args ?? Array.Empty<TypeNode>());
         if (selected == null) throw new InvalidOperationException(
             $"bir2cir: constrained call '{owner.Name}.{name}' does not resolve to one declared signature");
-        WriteNativeMethodSelection(call, NativeMethodSelection(bindingReferences, selected, open, owner.Args ?? Array.Empty<TypeNode>(), null));
-        StampNativeDelegateArgumentTargets(bindingReferences, call.Args.Value, call.TypeArgs.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        WriteNativeMethodSelection(call, NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args ?? Array.Empty<TypeNode>(), null));
+        StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, call.Args.Value, call.TypeArgs.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
         call.ResolvedMemberParams = default;
     }
 

@@ -27,7 +27,7 @@ static partial class ExactMutableViewDispatch
         }, args);
         // The guard, cache key and exact MemberRef must agree on the complete physical view.
         // In particular, nested opaque Kotlin values are not a different native construction witness here.
-        view = ClrMemberResolution.PhysicalInstanceView(refs, (TypeNode.Fqn)projectValue(view));
+        view = ClrMemberResolution.PhysicalInstanceView(null, refs, (TypeNode.Fqn)projectValue(view));
         return IsInvariant(view, refs);
     }
 

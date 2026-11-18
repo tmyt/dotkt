@@ -11,7 +11,7 @@ sealed class PhysicalDelegateDeclarations
 
     internal string FreshValueTemporary() => $"dotkt$unitDelegateValue{nextValue++}";
 
-    internal BirClassDefinition CreateAdapter(string scope, ClrMemberResolution.DelegateAdapterPlan plan,
+    internal BirClassDefinition CreateAdapter(IReadOnlySet<string> localTypes, string scope, ClrMemberResolution.DelegateAdapterPlan plan,
         ReferenceMetadataIndex references, Func<IBirExpression> unitValue)
     {
         var name = $"dotkt${scope}$UnitDelegateAdapter{nextAdapter++}";
@@ -27,7 +27,7 @@ sealed class PhysicalDelegateDeclarations
             Recv = new BirFieldGet { OwnerType = self, Recv = new BirThis(), Name = "d" },
             Args = arguments,
             InvokeRef = BirMemberReference.FromPhysical(
-                ClrMemberResolution.DelegateInvokeReference(references, plan.Frame)),
+                ClrMemberResolution.DelegateInvokeReference(localTypes, references, plan.Frame)),
         };
         IBirStatement[] body;
         if (plan.Parameters == null)

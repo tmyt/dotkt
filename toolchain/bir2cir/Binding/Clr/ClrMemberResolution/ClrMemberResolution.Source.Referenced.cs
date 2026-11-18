@@ -9,7 +9,7 @@ static partial class ClrMemberResolution
         IReadOnlySet<string> localDeclarationIds, Func<BirCallStatic, TypeNode[]> readSourceSignature,
         Action<BirGraphValue> releaseSourceSignatures, string file = null)
     {
-        _localTypes = localTypes ?? new HashSet<string>();
+        localTypes = localTypes ?? new HashSet<string>();
         externalCanonicalTypes ??= new HashSet<string>();
         localDeclarationIds ??= new HashSet<string>();
         void Walk(BirGraphValue node, string context)
@@ -19,8 +19,8 @@ static partial class ClrMemberResolution
             node.VisitOwnChildSlots((_, _, slot) => Walk(slot.Value, childContext));
             var input = ReadSourceReferencedCall(node, readSourceSignature);
             if (input != null)
-                WriteSourceReferencedCall(refs, node, PlanReferencedCall(input, context, refs,
-                    _localTypes, externalCanonicalTypes, localDeclarationIds));
+                WriteSourceReferencedCall(localTypes, refs, node, PlanReferencedCall(input, context, refs,
+                    localTypes, externalCanonicalTypes, localDeclarationIds));
         }
         Walk(root, file ?? "<unknown>");
         releaseSourceSignatures(root);
@@ -60,7 +60,7 @@ static partial class ClrMemberResolution
         _ => null,
     };
 
-    static void WriteSourceReferencedCall(ReferenceMetadataIndex bindingReferences, BirGraphValue node, ReferencedCallPlan plan)
+    static void WriteSourceReferencedCall(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node, ReferencedCallPlan plan)
     {
         if (plan.PropertySelected)
             switch (node)
@@ -102,13 +102,13 @@ static partial class ClrMemberResolution
                 call.Sig = signature; call.MemberRef = reference; call._resolvedMethodTypeParams = parameters;
                 call.ArgTypes = default;
                 if (plan.IdentityBound) call.DotktDeclarationIdentityBound = true;
-                StampSourceReferencedDelegateTargets(bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
+                StampSourceReferencedDelegateTargets(bindingLocalTypes, bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
                 break;
             case BirCallInstance call:
                 call.Sig = signature; call.MemberRef = reference; call._resolvedMethodTypeParams = parameters;
                 call.ArgTypes = default;
                 if (plan.IdentityBound) call.DotktDeclarationIdentityBound = true;
-                StampSourceReferencedDelegateTargets(bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
+                StampSourceReferencedDelegateTargets(bindingLocalTypes, bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
                 break;
             case BirConstrainedCall call:
                 call.Sig = signature; call.MemberRef = reference; call._resolvedMethodTypeParams = parameters;
@@ -116,7 +116,7 @@ static partial class ClrMemberResolution
                 if (plan.IdentityBound) call.DotktDeclarationIdentityBound = true;
                 if (plan.StampReturn) call.ResolvedMemberReturn = plan.Declaration.ReturnType == typeof(void)
                     ? new TypeNode.Fqn("void") : ClrDeclarationMatching.MemberSigOf(bindingReferences, plan.Declaration.ReturnType);
-                StampSourceReferencedDelegateTargets(bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
+                StampSourceReferencedDelegateTargets(bindingLocalTypes, bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
                 break;
             case BirNewDelegate call:
                 call.Sig = signature; call.MemberRef = reference; call._resolvedMethodTypeParams = parameters;
@@ -130,9 +130,9 @@ static partial class ClrMemberResolution
         }
     }
 
-    static void StampSourceReferencedDelegateTargets(ReferenceMetadataIndex bindingReferences, IBirExpression[] arguments, TypeNode[] methodArguments,
+    static void StampSourceReferencedDelegateTargets(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, IBirExpression[] arguments, TypeNode[] methodArguments,
         ReferencedCallPlan plan)
-        => StampNativeDelegateArgumentTargets(bindingReferences, arguments, methodArguments,
+        => StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, methodArguments,
             plan.Declaration, plan.DelegateOwnerArguments);
 
 }

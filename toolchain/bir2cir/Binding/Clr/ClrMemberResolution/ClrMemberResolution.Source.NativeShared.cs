@@ -7,7 +7,7 @@ static partial class ClrMemberResolution
 {
     // The selected declaration supplies the slots; these writers neither search
     // again nor change the caller's owning argument occurrences.
-    internal static void StampNativeDelegateArgumentTargets(ReferenceMetadataIndex bindingReferences, IBirExpression[] arguments,
+    internal static void StampNativeDelegateArgumentTargets(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, IBirExpression[] arguments,
         TypeNode[] methodArguments, MethodBase target, TypeNode[] ownerArguments)
     {
         if (arguments == null || !CanCloseNativeDelegateArguments(target, methodArguments)) return;
@@ -15,8 +15,8 @@ static partial class ClrMemberResolution
         if (arguments.Length != parameters.Length) return;
         for (var index = 0; index < arguments.Length; index++)
             if (arguments[index] is BirGraphValue argument)
-                MarkDelegateSlot(argument, CloseDelegateArgumentSlot(ClrDeclarationMatching.RefTypeOf(bindingReferences, _localTypes, parameters[index].ParameterType),
-                    ownerArguments, methodArguments), bindingReferences, _localTypes);
+                MarkDelegateSlot(argument, CloseDelegateArgumentSlot(ClrDeclarationMatching.RefTypeOf(bindingReferences, bindingLocalTypes, parameters[index].ParameterType),
+                    ownerArguments, methodArguments), bindingReferences, bindingLocalTypes);
     }
 
     static bool CanCloseNativeDelegateArguments(MethodBase target, TypeNode[] arguments)

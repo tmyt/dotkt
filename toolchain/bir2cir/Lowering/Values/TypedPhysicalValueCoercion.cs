@@ -15,7 +15,7 @@ static class TypedPhysicalValueCoercion
     static OptionalField<IBirExpression> Field(IBirExpression expression) => OptionalField<IBirExpression>.Of(expression);
     static TypeNode[] OwnerArgs(BirMemberReference member) => (member?.DeclaringType.OrDefault() as TypeNode.Fqn)?.Args ?? [];
 
-    internal static void ApplyAll(PhysicalDelegateDeclarations declarations, IReadOnlyDictionary<string, string> localCarriers,
+    internal static void ApplyAll(IReadOnlySet<string> localTypes, PhysicalDelegateDeclarations declarations, IReadOnlyDictionary<string, string> localCarriers,
         IReadOnlyList<BirFileDeclaration> roots, Func<IBirExpression> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
         Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
@@ -27,7 +27,7 @@ static class TypedPhysicalValueCoercion
             IsExistentialOwner = isExistentialOwner ?? (_ => false),
             IsNativeReference = isNativeReference ?? (_ => false),
             ReferencedCarrier = referencedCarrier, References = references, LocalCarriers = localCarriers,
-            DelegateAdapters = new TypedPhysicalDelegateAdapter(references, unitValue, declarations),
+            DelegateAdapters = new TypedPhysicalDelegateAdapter(localTypes, references, unitValue, declarations),
         };
         foreach (var root in roots)
         {
@@ -970,7 +970,7 @@ static class TypedPhysicalValueCoercion
             delegateReceivers.Add((Graph(bound), receiver, declaringType));
         }
         var root = new BirFileDeclaration { FileClass = "PhysicalValues", Methods = methods.ToArray() };
-        ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { root }, () => new BirConstant { Type = new TypeNode.Fqn("kotlin.Unit"), Value = new BirLiteral.NullLiteral() }, _ => false);
+        ApplyAll(null, new PhysicalDelegateDeclarations(), null, new[] { root }, () => new BirConstant { Type = new TypeNode.Fqn("kotlin.Unit"), Value = new BirLiteral.NullLiteral() }, _ => false);
         if (branch.Type.OrDefault() != target || branch.Then.OrDefault() is not BirCast { Type.HasValue: true } first
             || first.Type.Value != target || !ReferenceEquals(first.E.OrDefault(), value)
             || branch.Else.OrDefault() is not BirCast)
@@ -1008,7 +1008,7 @@ static class TypedPhysicalValueCoercion
             var method = new BirFunctionDeclaration { Name = "storeBound", Ret = genericSlot,
                 Params = new[] { new BirParameter { Name = "input", Type = erased } },
                 Body = new IBirStatement[] { storage, returnedBound } };
-            ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { new BirFileDeclaration { Methods = new[] { method } } },
+            ApplyAll(null, new PhysicalDelegateDeclarations(), null, new[] { new BirFileDeclaration { Methods = new[] { method } } },
                 () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
             if (storage.Init.Value is not BirCast { Type.HasValue: true, E.HasValue: true } stored
                 || stored.Type.Value != genericSlot || !ReferenceEquals(stored.E.Value, input)
@@ -1033,7 +1033,7 @@ static class TypedPhysicalValueCoercion
                 new BirFunctionDeclaration { Name = "widen", Ret = baseType,
                     Params = new[] { new BirParameter { Name = "input", Type = derivedType } },
                     Body = new IBirStatement[] { returnBase } } } };
-        ApplyAll(new PhysicalDelegateDeclarations(), null, new[] { references }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
+        ApplyAll(null, new PhysicalDelegateDeclarations(), null, new[] { references }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false);
         if (narrowed.Init.Value is not BirCast { Type.HasValue: true } narrowedValue || narrowedValue.Type.Value != derivedType
             || consumeDerived.Args.Value[0] is not BirCast { Type.HasValue: true } argument || argument.Type.Value != derivedType
             || returnDerived.Value.Value is not BirCast { Type.HasValue: true } returnedDerived || returnedDerived.Type.Value != derivedType

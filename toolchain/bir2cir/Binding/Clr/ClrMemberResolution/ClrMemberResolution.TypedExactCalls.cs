@@ -5,10 +5,10 @@ using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
-    internal static BirCallStatic ExactStaticCall(ReferenceMetadataIndex refs, MethodInfo method,
+    internal static BirCallStatic ExactStaticCall(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, IReadOnlyList<IBirExpression> arguments)
     {
-        var plan = PlanExactDispatch(refs, method, declaringOwner, isStatic: true);
+        var plan = PlanExactDispatch(bindingLocalTypes, refs, method, declaringOwner, isStatic: true);
         var call = new BirCallStatic {
             Owner = BirGraphValue.CopyType(plan.Reference.DeclaringType), Method = plan.Name, Virtual = false,
             Sig = plan.Reference.ParameterTypes.Select(BirGraphValue.CopyType).ToArray(),
@@ -25,10 +25,10 @@ static partial class ClrMemberResolution
         return call;
     }
 
-    internal static BirCallInstance ExactInstanceCall(ReferenceMetadataIndex refs, MethodInfo method,
+    internal static BirCallInstance ExactInstanceCall(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs, MethodInfo method,
         TypeNode.Fqn declaringOwner, IBirExpression receiver, IReadOnlyList<IBirExpression> arguments)
     {
-        var plan = PlanExactDispatch(refs, method, declaringOwner, isStatic: false);
+        var plan = PlanExactDispatch(bindingLocalTypes, refs, method, declaringOwner, isStatic: false);
         var call = new BirCallInstance {
             OwnerType = BirGraphValue.CopyType(plan.Reference.DeclaringType), Method = plan.Name, Virtual = true,
             Recv = OptionalField<IBirExpression>.Of(plan.Visibility == "protected" && receiver is BirThis

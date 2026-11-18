@@ -250,8 +250,8 @@ static partial class ClrEventImplBinding
         {
             var method = ReferencedRaise(owner, name, refs);
             call = method.IsStatic
-                ? ClrMemberResolution.ExactStaticCall(refs, method, owner, arguments)
-                : ClrMemberResolution.ExactInstanceCall(refs, method, owner, raise.Recv.OrDefault(), arguments);
+                ? ClrMemberResolution.ExactStaticCall(null, refs, method, owner, arguments)
+                : ClrMemberResolution.ExactInstanceCall(null, refs, method, owner, raise.Recv.OrDefault(), arguments);
         }
         // Kotlin super access is an instance declaration access. Restore the
         // original derived this instead of the exact binder's base cast.

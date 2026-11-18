@@ -61,30 +61,30 @@ static partial class ClrMemberResolution
         // constructed owner edge before comparing it with the already-constructed descriptor: a Base<T,U> that
         // declares M(T) and M(U) must become distinguishable when reached through Base<Int32,String>.
         var matches = ClrDeclarationMatching.MostDerived(candidates.Where(candidate =>
-            ExternalMethodImplSlotMatches(bindingReferences, candidate, open, ownerSpec.Args, parameters, ret)).ToList());
+            ExternalMethodImplSlotMatches(localTypes, bindingReferences, candidate, open, ownerSpec.Args, parameters, ret)).ToList());
         var description = $"external base MethodImpl={ownerSpec.Name}.{name}({DescArgs(parameters)}):{ret}";
         if (matches.Count == 0) throw ClrDeclarationMatching.NoMatch(description, candidates);
         if (matches.Count > 1) throw ClrDeclarationMatching.Malformed(description, matches);
         var winner = matches[0];
-        var reference = ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, winner, MemberRefNode.Kinds.Method, open,
+        var reference = ClrMemberReferences.MemberRefOf(bindingReferences, localTypes, winner, MemberRefNode.Kinds.Method, open,
             ownerSpec.Args ?? Array.Empty<TypeNode>());
         descriptor.MemberRef = BirMemberReference.FromPhysical(reference with { Name = name });
         descriptor.ReferenceMember = default;
     }
 
-    static bool ExternalMethodImplSlotMatches(ReferenceMetadataIndex bindingReferences, MethodInfo candidate, Type open, TypeNode[] ownerArgs,
+    static bool ExternalMethodImplSlotMatches(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, MethodInfo candidate, Type open, TypeNode[] ownerArgs,
         IReadOnlyList<TypeNode> parameters, TypeNode ret)
     {
         // Reflection may express an inherited member in the receiver's frame.
         // Substitute the declaration's own signature through the declaring edge once.
         candidate = (MethodInfo)ClrMemberReferences.OpenDeclarationOf(candidate);
-        var declarer = ClrMemberReferences.DeclaringTypeRef(bindingReferences, _localTypes, candidate, open, ownerArgs ?? Array.Empty<TypeNode>()) as TypeNode.Fqn;
+        var declarer = ClrMemberReferences.DeclaringTypeRef(bindingReferences, bindingLocalTypes, candidate, open, ownerArgs ?? Array.Empty<TypeNode>()) as TypeNode.Fqn;
         var declaringArgs = declarer?.Args ?? Array.Empty<TypeNode>();
-        var candidateParameters = ClrMemberReferences.RefParamsOf(bindingReferences, _localTypes, candidate)
+        var candidateParameters = ClrMemberReferences.RefParamsOf(bindingReferences, bindingLocalTypes, candidate)
             .Select(type => MethodImplComparisonType(
                 SupertypeGraph.SubstOwnerTvs(type, declaringArgs))).ToArray();
         var candidateReturn = MethodImplComparisonType(
-            SupertypeGraph.SubstOwnerTvs(ClrMemberReferences.RefReturnOf(bindingReferences, _localTypes, candidate), declaringArgs));
+            SupertypeGraph.SubstOwnerTvs(ClrMemberReferences.RefReturnOf(bindingReferences, bindingLocalTypes, candidate), declaringArgs));
         var descriptorParameters = parameters.Select(MethodImplComparisonType).ToArray();
         var descriptorReturn = MethodImplComparisonType(ret);
         return candidateParameters.Length == parameters.Count
