@@ -193,9 +193,8 @@ public actual val Double.absoluteValue: Double get() = abs(this)
 public actual val Double.sign: Double get() = sign(this)
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.CopySign")
-public actual fun Double.withSign(sign: Double): Double = TODO("clr binding should be implemented")
+public actual fun Double.withSign(sign: Double): Double =
+    Double.fromBits((toRawBits() and Long.MAX_VALUE) or (sign.toRawBits() and Long.MIN_VALUE))
 
 @SinceKotlin("1.2")
 public actual fun Double.withSign(sign: Int): Double = withSign(sign.toDouble())
@@ -203,24 +202,25 @@ public actual fun Double.withSign(sign: Int): Double = withSign(sign.toDouble())
 @SinceKotlin("1.2")
 public actual val Double.ulp: Double
     get() = when {
-        isNaN() -> Double.NaN
-        isInfinite() -> Double.POSITIVE_INFINITY
-        this == Double.MAX_VALUE || this == -Double.MAX_VALUE -> 2.0.pow(971)
-        else -> {
-            val d = absoluteValue
-            d.nextUp() - d
-        }
+        this < 0 -> (-this).ulp
+        this.isNaN() || this == Double.POSITIVE_INFINITY -> this
+        this == Double.MAX_VALUE -> this - this.nextDown()
+        else -> this.nextUp() - this
     }
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.BitIncrement")
-public actual fun Double.nextUp(): Double = TODO("clr binding should be implemented")
+public actual fun Double.nextUp(): Double = when {
+    this.isNaN() || this == Double.POSITIVE_INFINITY -> this
+    this == 0.0 -> Double.MIN_VALUE
+    else -> Double.fromBits(this.toRawBits() + if (this > 0) 1 else -1)
+}
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.Math.BitDecrement")
-public actual fun Double.nextDown(): Double = TODO("clr binding should be implemented")
+public actual fun Double.nextDown(): Double = when {
+    this.isNaN() || this == Double.NEGATIVE_INFINITY -> this
+    this == 0.0 -> -Double.MIN_VALUE
+    else -> Double.fromBits(this.toRawBits() + if (this > 0) -1 else 1)
+}
 
 @SinceKotlin("1.2")
 @InlineOnly
@@ -436,12 +436,42 @@ public actual val Float.absoluteValue: Float get() = abs(this)
 public actual val Float.sign: Float get() = sign(this)
 
 @SinceKotlin("1.2")
-@InlineOnly
-@kotlin.clr.ClrIntrinsic("System.MathF.CopySign")
-public actual fun Float.withSign(sign: Float): Float = TODO("clr binding should be implemented")
+public actual fun Float.withSign(sign: Float): Float =
+    Float.fromBits((toRawBits() and Int.MAX_VALUE) or (sign.toRawBits() and Int.MIN_VALUE))
 
 @SinceKotlin("1.2")
 public actual fun Float.withSign(sign: Int): Float = withSign(sign.toFloat())
+
+@SinceKotlin("1.2")
+public val Float.ulp: Float
+    get() = when {
+        this < 0 -> (-this).ulp
+        this.isNaN() || this == Float.POSITIVE_INFINITY -> this
+        this == Float.MAX_VALUE -> this - this.nextDown()
+        else -> this.nextUp() - this
+    }
+
+@SinceKotlin("1.2")
+public fun Float.nextUp(): Float = when {
+    this.isNaN() || this == Float.POSITIVE_INFINITY -> this
+    this == 0.0f -> Float.MIN_VALUE
+    else -> Float.fromBits(this.toRawBits() + if (this > 0) 1 else -1)
+}
+
+@SinceKotlin("1.2")
+public fun Float.nextDown(): Float = when {
+    this.isNaN() || this == Float.NEGATIVE_INFINITY -> this
+    this == 0.0f -> -Float.MIN_VALUE
+    else -> Float.fromBits(this.toRawBits() + if (this > 0) -1 else 1)
+}
+
+@SinceKotlin("1.2")
+public fun Float.nextTowards(to: Float): Float = when {
+    this.isNaN() || to.isNaN() -> Float.NaN
+    this == to -> to
+    this < to -> this.nextUp()
+    else -> this.nextDown()
+}
 
 // Float rounds through Double (#103): Float->Double is lossless, so Double.roundToInt (floor(x+0.5)) is EXACT for
 // every float input and matches Kotlin/JVM (which defines Float.roundToLong = toDouble().roundToLong()), while

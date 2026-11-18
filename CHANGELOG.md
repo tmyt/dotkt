@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- `Float` and `Double` now use Kotlin bit-defined neighbors, ULP spacing, and
+  sign copying. The CLR stdlib also exposes `Float.nextUp`, `nextDown`,
+  `nextTowards`, and `ulp` without widening to double precision.
 - String interpolation preserves Kotlin's `null` text for open generic values
   and invokes conversions in template order, including across DLL boundaries.
 
