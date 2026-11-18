@@ -4,6 +4,7 @@ package kotc.bir
 
 import kotc.backend.BirEmitter
 import kotc.backend.DefaultTypeFrame
+import kotc.backend.clrExternalOwner
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
@@ -119,6 +120,7 @@ class DeclarationIdentityTest {
             annotations = listOf(identity("imported-top-level", ""), carrier("ClrExternal", "Host", "Host"))
         }
         assertEquals(source.declarationId(copied), source.declarationIdForPhysicalAllocation(copied))
+        assertEquals(null, source.clrExternalOwner(copied))
         val first = generatedOverride("First")
         val second = generatedOverride("Second")
         assertEquals("carried-method", source.declarationIdForPhysicalAllocation(method))

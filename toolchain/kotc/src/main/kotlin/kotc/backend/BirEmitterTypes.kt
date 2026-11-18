@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -570,6 +571,9 @@ private fun BirEmitter.clrExternalAnnotation(
 	val host = (decl as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: decl
 	return host.annotations.firstOrNull {
 		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
+	}?.takeUnless {
+		val callable = (decl as? IrFunction) ?: (decl as? IrProperty)?.getter
+		callable != null && ownsSourceCallable(callable)
 	}
 }
 

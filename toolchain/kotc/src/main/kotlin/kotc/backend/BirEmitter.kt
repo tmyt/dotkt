@@ -132,7 +132,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
 	 * itself. Calls read the selected IrSymbol through this identity map; bir2cir never reconstructs it after erasure. */
 	private val declarationIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
-	private fun ownsSourceCallable(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
+	internal fun ownsSourceCallable(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 		fn.getPackageFragment() in sourceFragments && (fn !is IrSimpleFunction || !isInheritedSynthetic(fn))
 	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 		fn is IrSimpleFunction && fn.isFakeOverride && fn.modality == Modality.ABSTRACT &&
@@ -172,8 +172,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun declarationIdForPhysicalAllocation(
 		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
 	): String? {
-		val projectedClrOwner = (clrExternalOwner(fn) ?: (fn.parent as? IrClass)?.let { clrExternalOwner(it) })
-			?.takeUnless { ownsSourceCallable(fn) }
+		val projectedClrOwner = clrExternalOwner(fn) ?: (fn.parent as? IrClass)?.let { clrExternalOwner(it) }
 		if (fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) {
 			val carried = carriedDeclarationId(fn)
 			// A source/KLIB Kotlin declaration has a stable Kotlin identity even when its frontend KLIB predates the
