@@ -3139,14 +3139,15 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     internal bool TrySelectedSourceMethodDeclaration(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
         BirTypeParameter[] selectedTypeParams, TypeNode[] selectedOwnerTypeArguments,
-        out ReferencedMethodDeclaration declaration, string propertyAccessor = null)
+        out ReferencedMethodDeclaration declaration, string propertyAccessor = null, string selectedDeclarationId = null)
         => TrySelectedMethodDeclarationByShape(ownerFqn, sourceMember, methodArity, signature, resolvedReturn,
             ownerTypeArguments, KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(selectedTypeParams, selectedOwnerTypeArguments),
-            out declaration, propertyAccessor);
+            out declaration, propertyAccessor, selectedDeclarationId);
 
     bool TrySelectedMethodDeclarationByShape(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode resolvedReturn, TypeNode[] ownerTypeArguments,
-        string selectedShape, out ReferencedMethodDeclaration declaration, string propertyAccessor)
+        string selectedShape, out ReferencedMethodDeclaration declaration, string propertyAccessor,
+        string selectedDeclarationId = null)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
@@ -3160,7 +3161,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 && (member.NullableFrame?.SourceArity ?? member.MethodArity) == methodArity
                 && KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                     member.SemanticMethodTypeParams ?? member.MethodTypeParams, sourceOwnerArguments) == selectedShape
-                && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true)
+                // The selected Kotlin declaration is independent of the CLR carrier at this use site.
+                && (selectedDeclarationId is not null ? member.DeclarationId == selectedDeclarationId
+                    : MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments, kotlinParameters: true))
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();
         if (matches.Count != 1) return false;

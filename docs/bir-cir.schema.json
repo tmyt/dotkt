@@ -560,7 +560,8 @@
       "type": "object", "x-dotkt-model": { "name": "BirInheritedImplementation", "domain": "birCoreValues", "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" } } },
       "properties": {
         "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string" }, "arity": { "type": "integer" },
-        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "sig": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "sig": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "declarationId": { "type": "string" }
       },
       "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
     },

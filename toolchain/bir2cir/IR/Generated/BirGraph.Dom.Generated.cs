@@ -1632,6 +1632,7 @@ internal static class BirGraphDom
                 case "arity": break;
                 case "typeParams": break;
                 case "sig": break;
+                case "declarationId": break;
                 case "kotlinSupertypesPre": break;
                 case "methodTypeParameterBoundsPre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirInheritedImplementation at {source.GetPath()}");
@@ -1644,6 +1645,7 @@ internal static class BirGraphDom
             Arity = Field<int>(fields, "arity", value => value!.GetValue<int>()),
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             Sig = Field<TypeNode[]>(fields, "sig", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             KotlinSupertypesPre = Field<SourceTypeFacts>(fields, "kotlinSupertypesPre", value => SourceTypeFacts.ReadFrozenText(value!.GetValue<string>())),
             MethodTypeParameterBoundsPre = Field<SourceBoundsSnapshot>(fields, "methodTypeParameterBoundsPre", value => SourceBoundsSnapshot.ReadFrozenText(value!.GetValue<string>())),
         };

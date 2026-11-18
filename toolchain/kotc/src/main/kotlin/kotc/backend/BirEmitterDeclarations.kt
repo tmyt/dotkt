@@ -313,7 +313,8 @@ private fun BirEmitter.inheritedImplementation(fn: IrSimpleFunction): BirInherit
 		else -> "setter"
 	}
 	return BirInheritedImplementation(TypeNode.Fqn(owner), member, kind, target.typeParameters.size,
-		typeParameterDeclarations(target.typeParameters), sig = overloadSignature(target))
+		typeParams = typeParameterDeclarations(target.typeParameters), sig = overloadSignature(target),
+		declarationId = declarationIdForPhysicalAllocation(target))
 }
 
 /**
@@ -334,7 +335,8 @@ private fun BirEmitter.sourceInheritedDefaultAccessor(property: IrProperty, acce
 		.map { birValueParameterType(it) }
 	val ret = if (kind == "get") birType(accessor.returnType) else TypeNode.Fqn("kotlin.Unit")
 	val implementation = BirInheritedImplementation(TypeNode.Fqn(targetOwnerName), targetProperty.name.asString(), targetKind,
-		target.typeParameters.size, typeParameterDeclarations(target.typeParameters))
+		target.typeParameters.size, typeParams = typeParameterDeclarations(target.typeParameters),
+		declarationId = declarationIdForPhysicalAllocation(target))
 	return BirInheritedDefaultAccessor(property.name.asString(), kind, parameterTypes, ret, implementation,
 		overrides = overrideDeclarations(accessor))
 }
@@ -350,7 +352,8 @@ private fun BirEmitter.sourceInheritedDefaultMethod(fn: IrSimpleFunction): BirIn
 	val parameterTypes = (listOfNotNull(extRecv) + fn.parameters.filter { isValueParameter(it) })
 		.map { birValueParameterType(it) }
 	val implementation = BirInheritedImplementation(TypeNode.Fqn(targetOwnerName), target.name.asString(), "method",
-		target.typeParameters.size, typeParameterDeclarations(target.typeParameters))
+		target.typeParameters.size, typeParams = typeParameterDeclarations(target.typeParameters),
+		declarationId = declarationIdForPhysicalAllocation(target))
 	return BirInheritedDefaultMethod(fn.name.asString(), parameterTypes, birType(fn.returnType), implementation,
 		overrides = overrideDeclarations(fn))
 }

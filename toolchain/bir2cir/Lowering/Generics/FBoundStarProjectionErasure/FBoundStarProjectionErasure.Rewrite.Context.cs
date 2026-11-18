@@ -7,6 +7,7 @@ static partial class FBoundStarProjectionErasure
     internal sealed class SourceRewriteState
     {
         internal CarrierDemandPlan Demand { get; }
+        internal IReadOnlySet<BirMethodImpl> SelectedSlotOwners { get; init; }
         internal SourceCarrierDeclarations Declarations { get; }
         internal CarrierProjectionContext Projection { get; }
         internal ReferenceMetadataIndex References { get; }
