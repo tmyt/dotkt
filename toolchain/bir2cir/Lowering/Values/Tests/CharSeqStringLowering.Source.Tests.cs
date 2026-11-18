@@ -70,8 +70,8 @@ static partial class CharSeqStringLowering
             && ReferenceEquals(parameters[0], declarationParameter) && ReferenceEquals(type.Fields.Value[0], field),
             "file/declaration/parameter/field ownership must survive in place");
         Require(NullableString(declarationParameter.Type.Value) && NullableString(method.Ret.Value)
-            && NullableString(field.Type.Value) && StringType(method.TypeParams.Value[0].Constraints.Value[0]),
-            "declaration slots and own generic constraints must collapse together");
+            && NullableString(field.Type.Value) && method.TypeParams.Value[0].Constraints.Value[0] == cs,
+            "value-slot collapse must not choose a physical generic constraint");
         Require(NullableString(localRead.Sty.Value) && refinedRead.Sty.Value == cs && NullableString(fieldRead.Sty.Value)
             && StringType(blockRead.Sty.Value) && outsideRead.Sty.Value == cs && shadowInitializer.Sty.Value == cs
             && StringType(shadowedRead.Sty.Value) && ReferenceEquals(nullableAlias.Init.Value, nullableRead)

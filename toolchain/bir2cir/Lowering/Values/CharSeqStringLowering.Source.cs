@@ -207,7 +207,6 @@ static partial class CharSeqStringLowering
             var named = SourceRecordName(node).HasValue;
             node.RewriteOwnTypeFieldsInPlace((field, _, type) =>
                 (field == "ret" || field == "type" && named) && IsCharSeqT(type) ? LowerTokT(type) : type);
-            LowerSourceConstraints(node);
             node.VisitOwnChildSlots((field, _, slot) => {
                 if (field != "params") return;
                 switch (slot.Value)
@@ -222,9 +221,6 @@ static partial class CharSeqStringLowering
         }
         switch (node)
         {
-            case BirNewSuspendLambda:
-                LowerSourceConstraints(node);
-                break;
             case BirVariable variable when IsCharSeqT(variable.Type.OrDefault()):
                 var nullable = variable.Type.Value is TypeNode.Nullable;
                 variable.Type = LowerTokT(variable.Type.Value);
@@ -252,14 +248,6 @@ static partial class CharSeqStringLowering
         }
         return node;
     }
-
-    static void LowerSourceConstraints(BirGraphValue node)
-        => node.VisitOwnChildSlots((field, _, slot) => {
-            if (field != "typeParams" || slot.Value is not BirTypeParameter { Constraints.HasValue: true } parameter) return;
-            var constraints = parameter.Constraints.Value;
-            for (var index = 0; index < constraints.Length; index++)
-                if (IsCharSeqT(constraints[index])) constraints[index] = LowerTokT(constraints[index]);
-        });
 
     static void LowerLocalCall(BirCallStatic call, SourceEnv env, IReadOnlySet<string> localFns)
     {

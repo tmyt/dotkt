@@ -10,11 +10,19 @@ static partial class StringCharSequenceBridge
     // A Kotlin CharSequence witness can be either a CLR string or an implementer of
     // the Kotlin interface. Neither is a valid CLR constraint on their union.
     internal static BirFileDeclaration ProjectGenericBounds(BirFileDeclaration file) =>
-        (BirFileDeclaration)SourceConstraintErasure.Apply(file, bounds => {
-            var physical = bounds.Where(bound => bound is not TypeNode.Fqn { Name: "kotlin.CharSequence" }
-                and not TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.CharSequence" } }).ToArray();
-            return (physical, physical.Length != bounds.Length);
-        }, includeEmptyBounds: false);
+        (BirFileDeclaration)SourceConstraintErasure.Apply(file, ProjectBounds, includeEmptyBounds: false);
+
+    static (TypeNode[] Retained, bool Changed) ProjectBounds(TypeNode[] bounds)
+    {
+        var physical = bounds.Where(bound => !IsGenericCharSequenceBound(bound)).ToArray();
+        return (physical, physical.Length != bounds.Length);
+    }
+
+    internal static bool IsGenericCharSequenceBound(TypeNode bound) => bound switch {
+        TypeNode.Fqn { Name: "kotlin.CharSequence" or CharSeq } => true,
+        TypeNode.Nullable optional => IsGenericCharSequenceBound(optional.Of),
+        _ => false,
+    };
 
     internal static IReadOnlyList<BirClassDefinition> ApplyMaterializedReturns(
         BirFileDeclaration file, BirFunctionDeclaration method)
@@ -142,6 +150,20 @@ static partial class StringCharSequenceBridge
     {
         switch (node)
         {
+            case BirNewSuspendLambda suspend when suspend.TypeParams.HasValue:
+                // An inline default may have materialized a donor frame after the
+                // original declarations were projected. These are physical helper slots.
+                foreach (var parameter in suspend.TypeParams.Value)
+                    if (parameter.Constraints.OrDefault() is { } bounds && ProjectBounds(bounds) is (var retained, true))
+                        parameter.Constraints = retained;
+                break;
+            case BirArraySet set when IsScalarCharSequence(set.Elem.OrDefault()) && set.Value.HasValue:
+                set.Value = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(set.Value.Value, env, set.Elem.Value));
+                break;
+            case BirNewArray array when IsScalarCharSequence(array.Elem.OrDefault()) && array.Elems.HasValue:
+                for (var i = 0; i < array.Elems.Value.Length; i++)
+                    array.Elems.Value[i] = SourceCoerceCharSeqArg(array.Elems.Value[i], env, array.Elem.Value);
+                break;
             case BirCallStatic call:
                 SourceWrapCallArgs(call, env, materialized); break;
             case BirCallInstance call:

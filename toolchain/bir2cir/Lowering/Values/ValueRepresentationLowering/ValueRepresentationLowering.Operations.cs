@@ -104,7 +104,7 @@ sealed partial class ValueRepresentationLowering
         }
         BirGraphValue BindOperation(BirGraphValue node, OperationLexicalContext lexical)
         {
-            NonReifiedCastErasure.RewriteOperation(node);
+            node = NonReifiedCastErasure.ProjectOperation(node, refs);
             if (!bindValues) return node;
             if (node is BirCallInstance call)
             {
