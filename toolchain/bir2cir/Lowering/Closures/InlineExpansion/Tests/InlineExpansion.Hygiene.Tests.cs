@@ -45,6 +45,21 @@ sealed partial class InlineExpansion
             || suspend.Captures.Value[0].Name.Value != "clone$x" || suspendRead.Name.Value != "clone$x" || constructionRead.Name.Value != "clone$x")
             throw new InvalidOperationException("Inline local hygiene lost parameter shadowing or construction/capture agreement");
 
+        // The ref slot is created inside a capture operand; a nested method parameter is a different binding.
+        var address = new BirVariable { Name = "address" };
+        var load = new BirByRefLoad { Local = "address" };
+        var store = new BirByRefStore { Local = "address", Value = load };
+        var shadow = new BirLocal { Name = "address" };
+        var helper = new BirLocalFunction { Decl = new BirFunctionDeclaration {
+            Params = new[] { new BirParameter { Name = "address" } },
+            Body = new IBirStatement[] { new BirReturn { Value = shadow } },
+        } };
+        var operand = new BirValueBlock { Stmts = new IBirStatement[] { address, helper }, Result = store };
+        PrefixLocalsJoint("site$", new BirNewSuspendLambda { CapValues = new IBirExpression[] { operand } });
+        if (address.Name.Value != "site$address" || load.Local.Value != address.Name.Value
+            || store.Local.Value != address.Name.Value || shadow.Name.Value != "address")
+            throw new InvalidOperationException("Local rebinding lost a capture operand, ref edge or helper parameter");
+
         var transfer = new BirReturnExpression { Value = OptionalField<IBirExpression>.Of(new BirConstant {
             Type = integer, Value = new BirLiteral.IntegerLiteral(7),
         }) };
