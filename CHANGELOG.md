@@ -9,6 +9,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   wide delegates as ordinary Kotlin functions, including across DLL boundaries.
 - The packaged SDK supports `net11.0` and platform-qualified .NET 11 targets alongside
   .NET 10. Compiler tools still run on .NET 10.
+- CLR slot binding distinguishes nested interfaces with the same flattened generic
+  arity, including interfaces inherited through a non-generic base class.
 
 ## 0.9.26 (2026-11-18)
 

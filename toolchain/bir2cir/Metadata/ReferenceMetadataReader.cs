@@ -149,6 +149,11 @@ static class ReferenceMetadataReader
         return new TypeNode.Fqn(ExactPhysicalMetadataName(definition), view.Args);
     }
 
+    // Total arity disambiguates a top-level hierarchy edge, not a nested one:
+    // Outer<T>.Face<U> and Outer.Face<T,U> have the same flattened signature.
+    static TypeNode.Fqn HierarchyView(Type type) => type?.IsNested == true
+        ? ExactDeclaringView(type) : DeclarationTypeNode(type) as TypeNode.Fqn;
+
     internal static string CompanionExtensionKey(string owner, string receiverJson, string kind, string sourceName)
     {
         if (owner == null || receiverJson == null || kind == null || sourceName == null) return "";
@@ -497,8 +502,8 @@ static class ReferenceMetadataReader
                     var semanticTypeShape = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
-                        DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
-                        type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
+                        HierarchyView(type.BaseType),
+                        type.GetInterfaces().Select(HierarchyView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
                     metadata.TypeShapes[typeDeclarationIdentity] = semanticTypeShape;
                     // Inheritance edges are declaration identities just like member owners. The exact index retains
                     // the reflected TypeDef spelling so current-format override markers traverse a physical graph
