@@ -1,6 +1,7 @@
 package inheritedcovariantlocal
 
 import NUnit.Framework.TestAttribute
+import System.Reflection.BindingFlags
 
 interface Sink<in T> { fun send(value: T) }
 interface Channel<T> : Sink<T> { val last: T }
@@ -34,7 +35,7 @@ class FactoryLeaf : FactoryMiddle() {
 }
 
 abstract class ClassFactoryBase {
-    abstract val item: Value
+    internal abstract val item: Value
     abstract fun make(): Value?
     abstract fun <T> makeFrom(seed: T, text: String): Value
 }
@@ -54,7 +55,7 @@ class ClassFactoryLeaf : ClassFactory() {
     override fun make(): Narrow? = Narrow("class leaf method")
 }
 
-private abstract class BoundReturnBase { abstract fun value(): Value }
+private abstract class BoundReturnBase { internal open fun value(): Value = Value("base") }
 private class BoundReturn<T : Value>(private val item: T) : BoundReturnBase() { override fun value(): T = item }
 private abstract class BoxedReturnBase { abstract fun value(): Comparable<Int> }
 private class BoxedReturn : BoxedReturnBase() { override fun value(): Int = 7 }
@@ -120,6 +121,14 @@ class InheritedCovariantSlotTests {
         check(leaf.item.text == "leaf getter")
         check(leaf.make().text == "leaf method")
         val concrete = ClassFactory()
+        val declared = BindingFlags.Instance or BindingFlags.DeclaredOnly or BindingFlags.NonPublic or BindingFlags.Public
+        val instance: Any = concrete
+        val narrow = (instance as System.Object).GetType().BaseType!!
+        val baseGetter = narrow.BaseType!!.GetProperty("item", declared)!!.GetGetMethod(true)!!
+        check(baseGetter.IsAssembly)
+        val getters = narrow.GetProperties(declared).filter { it.Name == "item" }.map { it.GetGetMethod(true)!! }
+        check(getters.single { it.ReturnType == baseGetter.ReturnType }.IsPrivate)
+        check(getters.single { it.ReturnType != baseGetter.ReturnType }.IsAssembly)
         val classBase: ClassFactoryBase = concrete
         check(classBase.item.text == "class getter" && classBase.make()?.text == "class method")
         check(classBase.makeFrom(7, "class generic").text == "class generic")
