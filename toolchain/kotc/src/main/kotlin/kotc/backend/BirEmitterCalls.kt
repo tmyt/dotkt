@@ -450,21 +450,16 @@ internal fun BirEmitter.callSiteSubstitutor(
 	val enclosingTps = ownerClass?.let { innerSemanticEnclosingTypeParams(it) }.orEmpty()
 	val semanticOwnerTps = ownerTps + enclosingTps
 	if (callee is IrConstructor) {
-		// A constructed inner type carries Kotlin's semantic argument order [own..., enclosing...]. The enclosing
-		// parameters are re-declared on the emitted inner CLR type, so they belong to the constructor's type frame just
-		// as much as its own parameters do. Closing only ownerTps left an outer T open inside a default such as
-		// `class O<T>(val v:T) { inner class I(val x:T = v) }`, even though the call's type was already I<Int>.
-		// Delegating/enum constructor calls have Unit type and continue through the established typeArguments path below.
-		val constructedArgs = (call.type as? IrSimpleType)?.arguments
-		if (enclosingTps.isNotEmpty() && constructedArgs?.size == semanticOwnerTps.size) {
+		// A construction's result supplies the owner's complete Kotlin frame [own..., enclosing...],
+		// even when an IR plugin does not repeat the arguments on the call.
+		val result = (call as? IrConstructorCall)?.type as? IrSimpleType
+		val constructedArgs = result?.takeIf { it.classifier == ownerClass?.symbol && it.arguments.size == semanticOwnerTps.size }?.arguments
+		if (enclosingTps.isNotEmpty() && constructedArgs != null) {
 			semanticOwnerTps.forEach { params.add(it.symbol) }
 			args.addAll(constructedArgs)
 		}
-		// For the remaining constructor shapes, the call's type arguments close the class's own parameters. They ride
-		// the call node for EVERY shape, whereas `call.type` only names the construction for a `new`: a `: super(…)`
-		// delegation and an enum-entry call are statements whose type is `Unit`, and reading the owner frame from there
-		// left the base class's type variables unsubstituted in the DERIVED class's frame.
-		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) }
+		// Delegating and enum-entry calls have no constructed result; use their explicit arguments.
+		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) ?: constructedArgs?.get(it) }
 		if (params.isEmpty() && ownerTps.isNotEmpty() && ta.all { it != null }) {
 			ownerTps.forEach { params.add(it.symbol) }
 			ta.forEach { args.add(it!!) }

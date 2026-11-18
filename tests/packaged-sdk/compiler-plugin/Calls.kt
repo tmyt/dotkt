@@ -6,6 +6,7 @@ import InheritedStatics.Middle
 fun original(): String = Leaf.Method()
 fun replacement(): String = Middle.Method()
 fun main() {
+    check(construct()().value == "closed")
     check(original() == "middle method")
     println(answer())
 }
