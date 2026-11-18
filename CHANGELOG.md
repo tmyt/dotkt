@@ -5,6 +5,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.27 (2026-11-18)
+
+- All five packages and both SDK defaults move to `0.9.27`. The embedded Kotlin
+  compiler and upstream common standard-library baseline remain **2.4.21**.
+- Event raise arity is validated before emitting CIR. KLIB reading uses indexed
+  package membership and preserves string constants through a single codec.
+
+### Changes
+
 - Imported CLR operators support Kotlin negation, bitwise operations, shifts,
   ordered comparisons, and statically selected Boolean equality and inequality.
 
