@@ -20,6 +20,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   operators, including generic operators declared on a supertype of the delegate.
 - `super.toString()` reaches the inherited implementation even when the direct
   Kotlin superclass does not declare an override.
+- A generic subclass can occupy a class-bounded Kotlin type argument, including
+  a star-projected element stored in a collection imported from another DLL.
 
 - Lambdas declared in an enum's companion object now compile and run without
   adding methods to the CLR enum itself.

@@ -10,3 +10,22 @@ class ReferencedIntBoundSink : ReferencedBoundSink<Int?> {
 class ReferencedAnyBoundSink : ReferencedBoundSink<Any?> {
     override fun accept(x: Any?): String = "a:" + (x?.toString() ?: "none")
 }
+
+abstract class PendingItem
+class ResultItem<T>(val result: T) : PendingItem()
+
+class ItemSlot<A : PendingItem> {
+    var item: A? = null
+}
+
+class PendingItems<A : PendingItem> {
+    private val items = ArrayList<A>()
+    fun put(item: A) { items.add(item) }
+    fun get(index: Int): A = items[index]
+}
+
+fun localItemResult(): Long {
+    val slot = ItemSlot<ResultItem<Long>>()
+    slot.item = ResultItem(17L)
+    return slot.item!!.result
+}

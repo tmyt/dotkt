@@ -112,6 +112,37 @@ static partial class FBoundStarProjectionErasure
             return FBoundStarProjectionErasure.ProjectOrdinaryParameter(type, this);
         }
 
+        internal TypeNode ClassConstrainedArgument(TypeNode.Fqn owner, int index, TypeNode source, TypeNode projected)
+        {
+            if (StripSourceNullability(source) is not TypeNode.Fqn { Args.Length: > 0 } application
+                || !TryExistentialCarrier(application.Name, out var carrier)
+                || StripSourceNullability(projected) is not TypeNode.Fqn p
+                || p.Name != carrier && !ContainsExistentialProjection(application)) return projected;
+            return SharedClassWitness(owner, index, application) ?? projected;
+        }
+
+        internal TypeNode.Fqn SharedClassWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application)
+        {
+            var parameters = Preparation.Bindings.SourceDefinitions.TryGetValue(owner.Name, out var local)
+                ? TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray()
+                : References.PhysicalOwnerTypeParametersInPhysicalFrame(owner.Name);
+            if (parameters == null || index >= parameters.Length || parameters[index].SpecialConstraints.OrEmpty()
+                .Any(special => special != "class")) return null;
+            var bounds = parameters[index].Constraints.OrEmpty();
+            if (!bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound)
+                && (Preparation.SourceSupertypes.TryGetValue(bound.Name, out var def) ? def.Kind == "class"
+                    : References.ResolveRefType(bound.Name, bound.Args?.Length ?? 0)?.IsClass == true))) return null;
+
+            // A nominal Kotlin value interface cannot witness a CLR class bound. Use a real
+            // shared base of the possible constructions only if it proves every constraint.
+            foreach (var (ancestor, isInterface) in SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = application },
+                Preparation.SourceSupertypes, References).Skip(1))
+                if (!isInterface && !ContainsExistentialProjection(ancestor)
+                    && bounds.All(bound => IsObjectish(bound) || bound is TypeNode.Fqn required && SupertypeGraph.Reaches(
+                        ancestor, required, Preparation.SourceSupertypes, References))) return ancestor;
+            return null;
+        }
+
         internal bool IsCapturedInner(TypeNode type)
         {
             RequireSourceClock();

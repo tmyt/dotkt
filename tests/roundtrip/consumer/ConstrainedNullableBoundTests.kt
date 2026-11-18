@@ -6,11 +6,26 @@ import NUnit.Framework.Legacy.ClassicAssert
 import roundtrip.constrainedbound.ReferencedAnyBoundSink
 import roundtrip.constrainedbound.ReferencedBoundSink
 import roundtrip.constrainedbound.ReferencedIntBoundSink
+import roundtrip.constrainedbound.PendingItems
+import roundtrip.constrainedbound.ResultItem
+import roundtrip.constrainedbound.localItemResult
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
 
 class ConstrainedNullableBoundTests {
+    @TestAttribute
+    fun constructedAndStarredSubclassesSatisfyTheClassBound() {
+        check(localItemResult() == 17L)
+        val queue = PendingItems<ResultItem<*>>()
+        val numeric = ResultItem(42L)
+        val text = ResultItem("text")
+        queue.put(numeric)
+        queue.put(text)
+        check(queue.get(0) === numeric && queue.get(0).result == 42L)
+        check(queue.get(1) === text && queue.get(1).result == "text")
+    }
+
     @TestAttribute
     fun constrainedCallUsesReferencedSubstitutedErasedParameterSlot() {
         ClassicAssert.AreEqual("i:2", useReferencedNullableValueBound(ReferencedIntBoundSink()))
