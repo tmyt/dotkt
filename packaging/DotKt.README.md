@@ -16,7 +16,9 @@ the real thing) and replaces only the backend, lowering Kotlin IR → CIL that r
 
 ## Getting started
 
-Use .NET SDK 10 and Java 21 or newer to build. Configure the workspace's NuGet sources as shown
+Use the .NET 10 SDK for `net10.0` or the .NET 11 SDK for `net11.0`. Both builds require Java 21
+or newer and the .NET 10 runtime (10.0.12 or later in the 10.0 line) for the compiler tools.
+Configure the workspace's NuGet sources as shown
 in the [Getting started guide](https://github.com/tmyt/dotkt/blob/main/docs/user/getting-started.md#2-install).
 Then replace `<version>` with this package's version; an unpinned install skips pre-releases.
 

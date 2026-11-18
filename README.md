@@ -93,7 +93,8 @@ limitations, are tracked exclusively in [GitHub Issues](https://github.com/tmyt/
 
 ## Quick start (repo)
 
-Prereqs: the repo's Gradle auto-provisions a JDK; you need the **.NET SDK 10**.
+Prereqs: the repo's Gradle auto-provisions a JDK; building the toolchain requires the
+**.NET 10 SDK**. Install the **.NET 11 SDK** alongside it to run the packaged-SDK gate in `make verify`.
 
 ```bash
 make help                          # all targets
