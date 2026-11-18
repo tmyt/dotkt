@@ -623,23 +623,11 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// anonymous-object class is made generic over. Parallel to liftedTypeArgNames; the construction site (blockExpr)
 	// renders each through birType so the enclosing-scope `tv` (method/type) is emitted structurally.
 	internal val liftedTypeArgParams = java.util.IdentityHashMap<IrClass, List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>>()
-	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
-	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
+	// Local accessors are projected at their call sites, including their lexical type dependencies.
 	internal val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
-	// The member/top-level delegated-property accessor whose generated IR body is currently being projected.
-	// Access sites call the emitted CLR accessor; only its body lowers the Kotlin delegate convention. The context is
-	// needed for the one @InlineOnly convention member (`kotlin.Lazy.getValue`) that has no runtime declaration.
-	internal var activeDelegatedAccessor: IrProperty? = null
-
-	/**
-	 * A LOCAL delegated-property access whose rendering was inlined to the delegate member. A local property has no
-	 * CLR accessor, so its synthetic accessor visibility does not describe the emitted call. Member and top-level
-	 * delegated properties instead emit real get_/set_ methods and never set this marker.
-	 */
-	internal var delegateInlinedAccess: Pair<
-		org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
-		org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility?,
-	>? = null
+	// The delegate type while projecting a generated accessor body. Lazy.getValue is
+	// @InlineOnly; unlike ordinary convention calls it has no runtime declaration.
+	internal var activeDelegateType: IrType? = null
 	// The `buf` parameter of an active `stackBuffer { buf -> … }` block -> its stack allocation (ptr local + length
 	// local + element type), so `buf[i]`/`buf[i]=v`/`buf.size` rewrite to stack ops while the block is spliced.
 	internal class StackBufInfo(val ptrName: String, val lenName: String, val elemT: TypeNode)
@@ -1013,7 +1001,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear(); refTypeByVariable.clear()
 		refTypeParameterIds.clear()
-		localFunctionOwnerByVariable.clear(); localFunctionIds.clear()
+		localFunctionOwnerByVariable.clear(); localFunctionIds.clear(); localDelegates.clear()
 		propertyAssociations.clear(); propertyAssociationCounter = 0
 		indexLocalFunctionOwnership(file)
 		// Compile-time kotlin.clr intrinsics are consumed at their call sites and have no physical CLR method.

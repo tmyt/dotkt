@@ -52,6 +52,7 @@ import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
 import org.jetbrains.kotlin.ir.expressions.IrFunctionExpression
 import org.jetbrains.kotlin.ir.expressions.IrPropertyReference
+import org.jetbrains.kotlin.ir.expressions.IrLocalDelegatedPropertyReference
 import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrGetClass
 import org.jetbrains.kotlin.ir.declarations.IrLocalDelegatedProperty
@@ -113,12 +114,8 @@ internal fun BirEmitter.expr(node: IrExpression): BirExpression {
 	}
 	val (plan, s) = withCallPlan(node) {
 		val rendered = exprInner(node)
-		// A LOCAL delegated access renders as the delegate member (there is no CLR property accessor), so the local
-		// accessor's visibility is not this node's fact. Stamp the actual operator target when one exists.
-		val inlined = delegateInlinedAccess?.takeIf { it.first === node }
-		val withMember = if (inlined != null)
-			inlined.second?.let { memberVisibilityStamped(it, rendered) } ?: rendered
-		else memberVisibilityStamped(node, rendered)
+		// A local delegate accessor is spliced. Its body already carries the operator's visibility.
+		val withMember = if (node is IrCall && node.symbol.owner in localDelegates) rendered else memberVisibilityStamped(node, rendered)
 		styStamped(node, withMember)
 	}
 	return plan.wrap(s, birType(node.type))
@@ -662,9 +659,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 	is IrCall -> call(node)
 	// A callable reference to a property (`::x`/`obj::p`/`Type::p`) -> a lifted class implementing the real
 	// stdlib KProperty0/KMutableProperty0/KProperty1/KMutableProperty1 interface (#70); see `propertyRef`. The
-	// compiler-synthesized KProperty argument of a delegate's getValue/setValue is a separate, cheaper path
-	// (`kPropertyStub`, materialized directly at the delegate call sites — never reaching this dispatch).
+	// compiler-generated metadata argument of a delegate convention uses a name-only KProperty instead.
 	is IrPropertyReference -> propertyRef(node)
+	is IrLocalDelegatedPropertyReference -> kPropertyStub(node.symbol.owner.name.asString())
 	is IrFunctionExpression -> lambda(node)
 	// A callable reference `::foo` -> a delegate bound to the referenced function (same Func/Action as a lambda).
 	is IrFunctionReference -> functionRef(node)

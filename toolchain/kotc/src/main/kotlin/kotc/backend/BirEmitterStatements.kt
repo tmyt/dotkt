@@ -149,13 +149,8 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): List<B
 		BirVariable(name = localSlotName(node), type = birType(node.type),
 			init = init?.let { BirField.Value(it) } ?: BirField.Null, outer = true.takeIf { exactOuter })
 	})
-	// `val x by <delegate>` declared INSIDE a function (IrLocalDelegatedProperty): emit the delegate as a
-	// local var; its getter/setter calls (`<get-x>`) are rewritten to delegate access in call() (localDelegates).
-	is IrLocalDelegatedProperty -> {
-		localDelegates[node.getter] = node
-		node.setter?.let { localDelegates[it] = node }
-		stmt(node.delegate!!)
-	}
+	// Only the delegate has local storage; call sites project the accessor bodies.
+	is IrLocalDelegatedProperty -> stmt(node.delegate!!)
 	// A ref-cell var write `x = e` -> `x.v = e` (through the shared heap cell, via the capture field inside a closure).
 	is IrSetValue -> listOf(if (isRefCell(node.symbol.owner))
 		BirSetField(refType(node.symbol.owner), refBase(node.symbol.owner), "v", expr(node.value))

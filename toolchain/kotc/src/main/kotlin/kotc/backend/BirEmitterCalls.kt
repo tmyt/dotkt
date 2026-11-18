@@ -791,49 +791,6 @@ internal fun BirEmitter.propRefDispatchReceiver(node: IrPropertyReference): IrEx
 internal fun isVirtualInstanceCall(call: IrCall, callee: IrSimpleFunction): Boolean =
 	call.superQualifierSymbol == null && (callee.modality != Modality.FINAL || callee.overriddenSymbols.isNotEmpty())
 
-/**
- * The declared provider owner of a delegated property's resolved `getValue`/`setValue` call.
- *
- * Whether the type came from this module or a referenced assembly does not change the Kotlin call: kotc carries the
- * delegate value's resolved Kotlin type, including its constructed type arguments, and bir2cir decides how that owner
- * is represented on the CLR. This one rule is shared by local, top-level, and member delegated properties. Stdlib
- * convention delegates are handled by their dedicated paths (lazy) or by the resolved top-level extension fallback
- * (Map); the Read(Write)Property interfaces are genuine member providers.
- */
-private fun BirEmitter.delegatedProviderOwner(
-	delegateType: IrType,
-	access: IrCall? = null,
-	accessor: IrSimpleFunction? = null,
-): TypeNode? {
-	// A member property declared in `Host<T>` is accessed through a constructed `Host<String>` receiver. Its
-	// backing-field type is still written in Host's declaration frame (`Provider<T>`), so close that frame before
-	// carrying the provider owner into the caller. A top-level/local property has no owner frame and stays unchanged.
-	val closedType =
-		if (access != null && accessor != null)
-			callSiteSubstitutor(access, accessor)?.substitute(delegateType) ?: delegateType
-		else delegateType
-	if (closedType.classifierOrNull?.owner !is IrClass) return null
-	val fq = closedType.classFqName?.asString()
-	val isPropertyInterface =
-		fq == "kotlin.properties.ReadWriteProperty" || fq == "kotlin.properties.ReadOnlyProperty"
-	val isStdlibConvention = fq == "kotlin" || fq?.startsWith("kotlin.") == true
-	if (!isPropertyInterface && isStdlibConvention) return null
-	return birType(closedType)
-}
-
-/** The property accessor is only the frontend wrapper around the convention call. Its body carries the operator
- * declaration FIR actually selected (`Provider.getValue/setValue`), whose complete parameter vector is the member
- * descriptor BIR must preserve. */
-private fun delegatedOperatorTarget(accessor: IrSimpleFunction): IrSimpleFunction? {
-	val statements = (accessor.body as? IrBlockBody)?.statements.orEmpty()
-	return statements.mapNotNull { statement ->
-		(statement as? IrReturn)?.value as? IrCall ?: statement as? IrCall
-	}.singleOrNull()?.symbol?.owner
-}
-
-private fun BirEmitter.delegatedOperatorSignature(accessor: IrSimpleFunction): List<TypeNode>? =
-	overloadSignature(delegatedOperatorTarget(accessor) ?: accessor)
-
 internal fun TypeNode.containsStarProjection(): Boolean = when (this) {
 	TypeNode.Star -> true
 	is TypeNode.Projection -> true
@@ -863,6 +820,7 @@ private fun BirEmitter.projectedMemberExtensionPropertyAccess(call: IrCall):
 }
 
 internal fun BirEmitter.call(call: IrCall): BirExpression {
+	localDelegates[call.symbol.owner]?.let { return localDelegateAccess(call, it) }
 	var rendered = callWithoutDeclarationIdentity(call)
 	// A dedicated semantic lowering may deliberately materialize a different physical declaration while retaining
 	// the source spelling (rich-enum `values()` is the canonical example). Such a lowering explicitly consumes the
@@ -887,11 +845,7 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 	// dll2klib-projected CLR static appears as a fake override on the semantic class, but its trusted identity
 	// annotation is the exact selected MethodDef and there need not be an overridden-symbol edge to resolve. Prefer
 	// that carried identity; resolve an ordinary fake override only when the view itself has no physical identity.
-	// A local delegated property has no emitted accessor: callWithoutDeclarationIdentity rewrites it to the exact
-	// getValue/setValue operator selected by FIR. Use that operator as the semantic target too; attaching the synthetic
-	// local accessor's identity would either miss the method-name guard or retarget the generated call incorrectly.
-	val selectedTarget = (delegateInlinedAccess?.takeIf { it.first === call }?.second as? IrSimpleFunction)
-		?: call.symbol.owner
+	val selectedTarget = call.symbol.owner
 	// Enum-class API declarations synthesized by FIR are consumed inside callWithoutDeclarationIdentity. Their
 	// physical methods are authored later by bir2cir rather than emitted from these IrFunctions, so there is no
 	// frontend declaration identity to carry into physical allocation. In particular, rich-enum `values()` keeps
@@ -990,7 +944,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// accessor body already contains the resolved getValue/setValue call, so ordinary call emission is sufficient.
 	// `Lazy.getValue` alone is @InlineOnly and has no runtime declaration: lower that call, here in the accessor body,
 	// to the real Lazy.value getter. Access sites still call the property getter and never see the delegate implementation.
-	if (activeDelegatedAccessor?.backingField?.type?.classFqName?.asString() == "kotlin.Lazy" &&
+	if (activeDelegateType?.classFqName?.asString() == "kotlin.Lazy" &&
 		callee.fqNameWhenAvailable?.asString() == "kotlin.getValue") {
 		val delegate = extensionReceiver(call)
 		if (delegate != null) {
@@ -1098,46 +1052,6 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			property.getter -> kotc.bir.BirByRefLoad(ptr = pointer, elem = refType.of)
 			property.setter -> kotc.bir.BirByRefStore(ptr = pointer, elem = refType.of, value = expr(regularArgs(call).single()))
 			else -> invariantBroken(call, "an unknown ClrRef.value accessor reached BIR emission")
-		}
-	}
-	// A `<get-x>`/`<set-x>` call for a LOCAL delegated property -> access on the delegate local (thisRef=null,
-	// no enclosing instance). `by lazy`: the local's `.Value`; custom delegate: getValue/setValue(null, KProperty).
-	localDelegates[callee]?.let { ldp ->
-		val dvar = ldp.delegate!!
-		val dname = localSlotName(dvar)
-		val dlocal = BirLocal(dname)
-		val elem = birType(ldp.getter.returnType)
-		// A `ClrRef<T>` delegate (byref local): getValue/setValue inline to ldobj/stobj through the managed pointer.
-		if (birType(dvar.type) is TypeNode.ByRef)
-			return if (callee === ldp.setter)
-				kotc.bir.BirByRefStore(local = dname, elem = elem, value = expr(regularArgs(call).first()))
-			else kotc.bir.BirByRefLoad(local = dname, elem = elem)
-		// `by lazy` (local): the delegate is a real `kotlin.Lazy<T>` (the stdlib `UnsafeLazyImpl`). Its accessor is
-		// the InlineOnly `Lazy<T>.getValue(…) = value` operator, whose stdlib inline body is absent from our IR;
-		// inline it (a pure Kotlin-frontend fact) to a plain read of the Lazy interface's `value` getter. bir2cir/
-		// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
-		if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter) {
-			val owner = ownerSpec(dvar.type.classifierOrNull?.owner as? IrClass, dvar.type)
-			return delegateInlined(call, BirCallInstance(ownerType = owner, virtual = true, recv = dlocal,
-				method = "value", prop = "get", args = emptyList(),
-				ret = if ((owner as? TypeNode.Fqn)?.args != null) birType(ldp.getter.returnType) else null))
-		}
-		// A user delegate class -> its concrete type; a stdlib Read(Write)Property-typed delegate (e.g.
-		// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
-		// `kotlin.Lazy<T>`), binding to the actual emitted stdlib getValue/setValue.
-		val providerOwner = delegatedProviderOwner(dvar.type)
-		val owner = providerOwner
-		val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
-		if (owner != null) {
-			val kprop = kPropertyStub(ldp.name.asString())
-			val nullRef = nullConstant()
-			return delegateInlined(call, if (callee === ldp.setter)
-				BirCallInstance(ownerType = owner, virtual = true, recv = dlocal, method = "setValue",
-					sig = delegatedOperatorSignature(callee), args = listOf(nullRef, kprop, expr(regularArgs(call).first())))
-				else BirCallInstance(ownerType = owner, virtual = true, recv = dlocal, method = "getValue",
-					sig = delegatedOperatorSignature(callee), args = listOf(nullRef, kprop),
-					ret = if (ownerGeneric) birType(ldp.getter.returnType) else null),
-				delegatedOperatorTarget(callee))
 		}
 	}
 	val name = callee.name.asString()
@@ -2603,12 +2517,32 @@ internal fun BirEmitter.readsAsStaticField(prop: IrProperty): Boolean =
 internal fun BirEmitter.writesAsStaticField(prop: IrProperty): Boolean =
 	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || !accessorRoutedTopLevelProperty(prop))
 
-/** Records that a LOCAL delegated-property access was rendered as the delegate member (locals have no CLR accessor). */
-internal fun BirEmitter.delegateInlined(
-	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
-	rendered: BirExpression,
-	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility? = null,
-): BirExpression {
-	delegateInlinedAccess = call to target
-	return rendered
+/** Locals have no emitted accessors. Project the frontend's accessor body at the access site:
+ * its ordinary call already owns the selected operator, both receivers, type arguments and visibility. */
+private fun BirEmitter.localDelegateAccess(call: IrCall, property: IrLocalDelegatedProperty): BirExpression {
+	val accessor = call.symbol.owner
+	val delegate = property.delegate!!
+	if (birType(delegate.type) is TypeNode.ByRef) {
+		val elem = birType(property.getter.returnType)
+		val slot = localSlotName(delegate)
+		return if (accessor === property.setter)
+			BirByRefStore(local = slot, elem = elem, value = expr(regularArgs(call).single()))
+		else BirByRefLoad(local = slot, elem = elem)
+	}
+	val pre = mutableListOf<BirStatement>()
+	val parameter = if (accessor === property.setter) regularParams(accessor).single() else null
+	val previous = parameter?.let {
+		valSubst.put(it, callPlan(call).bindValue(regularArgs(call).single(), "arg", "assigned value"))
+	}
+	val saved = activeDelegateType
+	activeDelegateType = delegate.type
+	try {
+		val result = withoutSourcePoints { spliceBodyWithReturns(accessor, accessor === property.setter, pre) }
+		return if (pre.isEmpty()) result else sourceValueBlock(stmts = pre, result = result)
+	} finally {
+		activeDelegateType = saved
+		if (parameter != null) {
+			if (previous == null) valSubst.remove(parameter) else valSubst[parameter] = previous
+		}
+	}
 }

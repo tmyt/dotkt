@@ -192,6 +192,7 @@ internal fun BirEmitter.localFunctionTypeArgs(
  *  here alone converts bir2cir's loud refusal into invalid IL, so the refusal stands until that lands. */
 internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): List<IrType> {
 	val out = ArrayList<IrType>()
+	val scannedAccessors = newCycleGuard()
 	fn.body?.acceptVoid(object : IrVisitorVoid() {
 		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
 			// Don't descend into NESTED lambdas/local funs — each declaration computes its own free type parameters.
@@ -202,6 +203,11 @@ internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declaration
 				is IrFunctionAccessExpression -> {
 					out.addAll(element.typeArguments.filterNotNull())
 					if (element is IrConstructorCall) element.constructedOwnerFrame()?.let(out::add)
+					if (element is IrCall) {
+						val accessor = element.symbol.owner
+						if (accessor in localDelegates && scannedAccessors.add(accessor))
+							accessor.body?.acceptVoid(this)
+					}
 				}
 				else -> {}
 			}
@@ -1350,8 +1356,7 @@ internal fun BirEmitter.kPropertyStub(name: String): BirNew =
  * property in its bound/unbound forms — including generic and referenced-assembly accessors. A MEMBER extension
  * property with both dispatch and extension receivers (`KProperty2`) is a clean deferral. `@ClrField` member
  * references use the backing-field path below. The compiler-synthesized KProperty argument of a
- * delegate's getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
- * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
+ * delegate's getValue/setValue/provideDelegate needs only the metadata stub, selected by its IR origin.
  */
 internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 	if (node.origin == IrStatementOrigin.PROPERTY_REFERENCE_FOR_DELEGATE)
@@ -1744,6 +1749,10 @@ internal fun BirEmitter.indexLocalFunctionOwnership(file: IrFile) {
 					return
 				}
 				is IrSimpleFunction -> if (isLocalDeclaration(element)) register(element)
+				is IrLocalDelegatedProperty -> {
+					localDelegates[element.getter] = element
+					element.setter?.let { localDelegates[it] = element }
+				}
 			}
 			element.acceptChildrenVoid(this)
 		}
