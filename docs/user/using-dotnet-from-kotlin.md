@@ -180,10 +180,13 @@ ordinary .NET platform rules and remain the application's responsibility.
   a platform type that may be null), Kotlin equality is unchanged. A null check
   may first narrow a variable to its non-null type. Static types matter: two
   operands widened to `Any` or to an unconstrained `T` use ordinary equality.
-  Explicit `equals`, identity (`===`), hashing and collection lookup are unaffected.
+  A non-null type parameter's upper bound can supply an operator, as can a base
+  CLR class for a Kotlin subclass. Subject-based `when (a) { b -> … }` still
+  uses Kotlin equality. Explicit `equals`, identity (`===`), hashing and collection lookup are unaffected.
 - Import the declaring CLR namespace (for example, `import MyLibrary.*`) to use
   logical negation (`!x`), ones' complement (`x.inv()`), and the infix
   `and`, `or`, `xor`, `shl`, `shr` and `ushr` views of native operators.
+  The same namespace import brings the comparison adapters below into scope.
   These are low-priority extensions: a Kotlin member keeps its usual precedence,
   and `left and right` works even if only the right-hand type declares the CLR operator.
 - A real `compareTo` (including CLR `IComparable<T>`) takes precedence. Otherwise

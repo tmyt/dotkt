@@ -1,8 +1,64 @@
 using System.Reflection.Metadata;
+using System.Reflection;
 using DotKt.Klib.Metadata;
+using KType = DotKt.Klib.Metadata.Type;
 
 internal sealed partial class AssemblyScanner
 {
+    bool CanPublishNamespaceOperators(TypeDefinitionHandle owner)
+    {
+        for (; !owner.IsNil;)
+        {
+            var def = _md.GetTypeDefinition(owner);
+            if ((def.Attributes & TypeAttributes.VisibilityMask) is not
+                    (TypeAttributes.Public or TypeAttributes.NestedPublic)) return false;
+            owner = def.GetDeclaringType();
+        }
+        return true;
+    }
+
+    static void SetOperatorFact(Function view, NameTable names, string field, string value)
+    {
+        var binding = view.FunctionAnnotation.Single(a => a.Id == names.Class("kotlin.clr.ClrExternal"));
+        binding.Argument.Add(new Annotation.Types.Argument { NameId = names.String(field),
+            Value = new Annotation.Types.Argument.Types.Value {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String, StringValue = names.String(value) } });
+    }
+
+    // Two owners in the same package can supply the same Kotlin callable signature.
+    // Keep the strict declaration in metadata so Fir2Ir cannot bind the fallback by that same ID.
+    static void RemoveShadowedComparisonViews(Package package, NameTable names)
+    {
+        var compare = package.Function.Where(f => names.StringValue(f.Name) == "compareTo" && f.ReceiverType != null)
+            .Select(f => (View: f, Role: f.FunctionAnnotation.Where(a => a.Id == names.Class("kotlin.clr.ClrExternal"))
+                .SelectMany(a => a.Argument).Where(arg => names.StringValue(arg.NameId) == "operatorRole")
+                .Select(arg => names.StringValue(arg.Value.StringValue)).SingleOrDefault()))
+            .Where(x => x.Role is "strictOrder" or "nonStrictOrder")
+            .GroupBy(x => (TypeKey(x.View.ReceiverType), FunctionShapeKey(x.View, names)));
+        foreach (var g in compare.ToArray())
+            if (g.Any(x => x.Role == "strictOrder"))
+                foreach (var x in g.Where(x => x.Role == "nonStrictOrder")) package.Function.Remove(x.View);
+    }
+
+    // Both predicates must accept each operand. Never erase mismatching generic arguments
+    // just because the two MethodDefs have the same physical signature.
+    static KType? CommonComparisonInput(KType a, KType b)
+    {
+        if (SameProjectedType(a, b)) return a;
+        static KType NonNull(KType type)
+        {
+            var copy = type.Clone();
+            copy.Nullable = false;
+            copy.FlexibleUpperBound = null;
+            copy.ClearFlexibleTypeCapabilitiesId();
+            return copy;
+        }
+        var left = NonNull(a);
+        if (!SameProjectedType(left, NonNull(b))) return null;
+        if (!a.Nullable && a.FlexibleUpperBound == null || !b.Nullable && b.FlexibleUpperBound == null) return left;
+        return a.FlexibleUpperBound != null ? a : b;
+    }
+
     void AddOperatorExtension(TypeDefinitionHandle owner, MethodDefinitionHandle method, string clrName,
         Function declaration, Package package, NameTable names, SignatureDecoder signatures, GenericContext context)
     {
@@ -28,13 +84,18 @@ internal sealed partial class AssemblyScanner
             {
                 if (byName[less].Count() != 1 || byName[greater].Count() != 1) continue;
                 var first = byName[less].Single();
-                var view = OperatorExtension(owner, first.Handle, first.Declaration, "compareTo", package, names,
+                var declaration = first.Declaration.Clone();
+                var second = byName[greater].Single().Declaration;
+                var receiver = CommonComparisonInput(declaration.ValueParameter[0].Type, second.ValueParameter[0].Type);
+                var operand = CommonComparisonInput(declaration.ValueParameter[1].Type, second.ValueParameter[1].Type);
+                if (receiver == null || operand == null) continue;
+                declaration.ValueParameter[0].Type = receiver;
+                declaration.ValueParameter[1].Type = operand;
+                var view = OperatorExtension(owner, first.Handle, declaration, "compareTo", package, names,
                     signatures, context);
                 view.ReturnType = signatures.NamedType("kotlin.Int");
-                var binding = view.FunctionAnnotation.Single(a => a.Id == names.Class("kotlin.clr.ClrExternal"));
-                binding.Argument.Add(new Annotation.Types.Argument { NameId = names.String("pairedMember"),
-                    Value = new Annotation.Types.Argument.Types.Value {
-                        Type = Annotation.Types.Argument.Types.Value.Types.Type.String, StringValue = names.String(greater) } });
+                SetOperatorFact(view, names, "pairedMember", greater);
+                SetOperatorFact(view, names, "operatorRole", less == "op_LessThan" ? "strictOrder" : "nonStrictOrder");
                 break;
             }
         }

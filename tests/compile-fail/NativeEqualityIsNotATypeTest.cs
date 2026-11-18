@@ -1,5 +1,18 @@
 namespace EqualityBoundary;
 
+public class Outer
+{
+    protected class Hidden { public static int operator &(Left left, Hidden hidden) => 0; }
+}
+
+#nullable enable
+public sealed class Order
+{
+    public static bool operator <=(Order a, Order? b) => true;
+    public static bool operator >=(Order a, Order b) => b.GetHashCode() == 0;
+}
+#nullable restore
+
 public sealed class Left
 {
     public int Number => 1;

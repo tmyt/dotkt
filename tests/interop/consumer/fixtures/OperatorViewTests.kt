@@ -9,6 +9,7 @@ class OperatorViewTests {
         val left = Left()
         val right = Right<String>()
         check(left == right && left != right)
+        check(42 == right && 41 != right)
         val negated = !(left == right)
         check(!negated)
         val k = Key(3)
@@ -20,6 +21,8 @@ class OperatorViewTests {
         check(other !in setOf(k))
         fun <T> same(a: T, b: T): Boolean = a == b
         check(!same(k, other))
+        fun <T : Key> bounded(a: T, b: T): Boolean = a == b
+        check(bounded(k, other))
         fun <T> maybe(a: Key, b: T): Boolean = a == b
         check(!maybe(k, other) && !maybe(k, null))
         check(!(k.Oblivious() == other))
@@ -48,6 +51,7 @@ class OperatorViewTests {
         check(a.compareTo(a) == 0 && PartialOrder<String>(-1).compareTo(a) == 0)
         check(a.Calls == calls + "LGLGLGLG")
         check(Ranked().compareTo(Ranked()) == 17 && Ranked() > Ranked())
+        check(Left() < Key(1))
         val compare: (StrictOrder, StrictOrder) -> Int = StrictOrder::compareTo
         check(compare(StrictOrder(4), StrictOrder(1)) > 0)
     }

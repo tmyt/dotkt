@@ -18,6 +18,7 @@ import org.jetbrains.kotlin.fir.resolve.transformers.body.resolve.FirAbstractBod
 import org.jetbrains.kotlin.fir.scopes.impl.FirLocalScope
 import org.jetbrains.kotlin.fir.scopes.impl.declaredMemberScope
 import org.jetbrains.kotlin.fir.symbols.impl.FirRegularClassSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirTypeParameterSymbol
 import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.fir.visitors.FirTransformer
 import org.jetbrains.kotlin.fir.visitors.FirVisitor
@@ -26,12 +27,12 @@ import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.resolve.calls.tower.isSuccess
+import org.jetbrains.kotlin.types.ConstantValueKind
 
 /** Select while the surrounding body is being resolved: a native predicate's true result
  * proves nothing about the operand types. Replacing equality after DFA would leave invalid smart casts. */
 internal class NativeEquality {
     private val external = ClassId.topLevel(FqName("kotlin.clr.ClrExternal"))
-    private val nativeMember = Name.identifier("memberName")
     private val cache = mutableMapOf<Pair<FirRegularClassSymbol, Name>, List<FirNamedFunction>>()
     private fun candidates(session: FirSession, owner: FirRegularClassSymbol, name: Name): List<FirNamedFunction> = cache.getOrPut(owner to name) {
         val types = listOf(owner) + lookupSuperTypes(owner.fir, lookupInterfaces = false, deep = true,
@@ -40,10 +41,19 @@ internal class NativeEquality {
             for (type in types.filter { it.hasAnnotation(external, session) }) session.declaredMemberScope(type, FirResolvePhase.STATUS).processFunctionsByName(name) {
                 val fn = it.fir
                 if (fn.isStatic && fn.returnTypeRef.coneType.isBoolean &&
-                    fn.getAnnotationByClassId(external, session)?.getStringArgument(nativeMember) == name.asString()) add(fn)
+                    fn.operatorRole(session) == (if (name.asString() == "op_Equality") "equals" else "notEquals")) add(fn)
             }
         }
     }
+    private fun owners(type: ConeKotlinType, session: FirSession, seen: MutableSet<FirTypeParameterSymbol>): List<FirRegularClassSymbol> =
+        when (val rigid = type.lowerBoundIfFlexible()) {
+            is ConeTypeParameterType -> rigid.lookupTag.typeParameterSymbol.let { parameter ->
+                if (seen.add(parameter)) parameter.resolvedBounds.flatMap { owners(it.coneType, session, seen) } else emptyList()
+            }
+            is ConeIntersectionType -> rigid.intersectedTypes.flatMap { owners(it, session, seen) }
+            is ConeDefinitelyNotNullType -> owners(rigid.original, session, seen)
+            else -> listOfNotNull(rigid.toRegularClassSymbol(session))
+        }
     fun prepare(file: FirFile) { file.transformChildren(object : FirTransformer<Unit>() {
         override fun <E : FirElement> transformElement(element: E, data: Unit): E {
             element.transformChildren(this, data)
@@ -57,6 +67,14 @@ internal class NativeEquality {
     }, Unit) }
 
     private inner class AtBodyResolution(val original: FirEqualityOperatorCall) : FirEqualityOperatorCall() {
+        // The built-in equality resolver approximates integer literals to Int without an expected
+        // type. Keep their original form so ordinary overload resolution can choose a native parameter.
+        private val literals = original.argumentList.arguments.map { arg ->
+            (arg as? FirLiteralExpression)?.takeIf { it.kind == ConstantValueKind.IntegerLiteral ||
+                it.kind == ConstantValueKind.UnsignedIntegerLiteral }?.let {
+                buildLiteralExpression(it.source, it.kind, it.value, it.annotations.toMutableList(), setType = false, prefix = it.prefix)
+            }
+        }
         override val source get() = original.source
         override val annotations get() = original.annotations
         @UnresolvedExpressionTypeAccess override val coneTypeOrNull get() = original.coneTypeOrNull
@@ -76,11 +94,11 @@ internal class NativeEquality {
             val result = original.transform<FirElement,D>(transformer, data)
             if (result !== original) return result as E
             if (transformer !is FirAbstractBodyResolveTransformer || data !is ResolutionMode) return this as E
-            return select(original, transformer) as E
+            return select(original, transformer, literals) as E
         }
     }
 
-    private fun select(eq: FirEqualityOperatorCall, resolver: FirAbstractBodyResolveTransformer): FirStatement {
+    private fun select(eq: FirEqualityOperatorCall, resolver: FirAbstractBodyResolveTransformer, literals: List<FirLiteralExpression?>): FirStatement {
             val session = resolver.session
             val name = when (eq.operation) {
                 FirOperation.EQ -> Name.identifier("op_Equality")
@@ -90,14 +108,16 @@ internal class NativeEquality {
             val arguments = eq.argumentList.arguments
         if (arguments.any { !it.hasResolvedType || it.resolvedType.canBeNull(session) }) return eq
             val functions = arguments.flatMap { arg ->
-                arg.resolvedType.toRegularClassSymbol(session)?.let { candidates(session, it, name) }.orEmpty()
+                owners(arg.resolvedType, session, mutableSetOf()).flatMap { candidates(session, it, name) }
             }.distinct()
             if (functions.isEmpty()) return eq
             val scope = functions.fold(FirLocalScope(session)) { s, f -> s.storeFunction(f, session) }
             return resolver.context.withTowerDataContext(resolver.context.towerDataContext.addLocalScope(scope)) {
                 val call = buildFunctionCall {
                     source = eq.source
-                    argumentList = buildArgumentList { this.arguments.addAll(arguments) }
+                    argumentList = buildArgumentList { arguments.forEachIndexed { i, arg ->
+                        this.arguments += literals[i]?.transform<FirExpression, ResolutionMode>(resolver, ResolutionMode.ContextDependent) ?: arg
+                    } }
                     calleeReference = buildSimpleNamedReference { source = eq.source; this.name = name }
                 }
                 val mode = ResolutionMode.ContextIndependent

@@ -1880,6 +1880,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                         semanticParent.NestedClassName.Add(names.String(childName));
                 }
             }
+            RemoveShadowedComparisonViews(fragment.Package, names);
             MarkLowPriorityDelegateOverloads(fragment.Package.Function, names);
             _typeAliases.Project(packageName, fragment, names);
             fragment.Strings = names.Strings;
@@ -2204,6 +2205,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         int? semanticKind = null,
         Package? operatorPackage = null)
     {
+        if (operatorPackage != null && !CanPublishNamespaceOperators(handle)) operatorPackage = null;
         var metadataName = _md.GetString(def.Name);
         var metadataNamespace = _md.GetString(def.Namespace);
         var kotlinName = KotlinDefinitionPath(handle).Chain[^1];
@@ -2589,6 +2591,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                             !function.ReturnType.Nullable)
                             (comparisons ??= []).Add(projected);
                     }
+                    else if (clrMethodName is "op_Equality" or "op_Inequality")
+                        SetOperatorFact(function, names, "operatorRole", clrMethodName == "op_Equality" ? "equals" : "notEquals");
                     else AddOperatorExtension(handle, methodHandle, clrMethodName, function, operatorPackage, names,
                         signatures, context);
                 }

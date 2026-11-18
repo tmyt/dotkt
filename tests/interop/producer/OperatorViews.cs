@@ -49,8 +49,10 @@ public sealed class Ranked : System.IComparable<Ranked>
     public static bool operator >(Ranked a, Ranked b) => throw new System.Exception();
 }
 
-public sealed class Key(int n)
+public class Key(int n)
 {
+    public static bool operator <=(Left a, Key b) => false;
+    public static bool operator >=(Left a, Key b) => true;
     public int Number => n;
     public Key Oblivious() => this;
     public static bool operator ==(Key x, object y) => true;
@@ -59,9 +61,15 @@ public sealed class Key(int n)
     public override int GetHashCode() => n;
 }
 
-public sealed class Left;
+public sealed class Left
+{
+    public static bool operator <(Left a, Key b) => true;
+    public static bool operator >(Left a, Key b) => false;
+}
 public sealed class Right<T>
 {
+    public static bool operator ==(long a, Right<T> b) => a == 42;
+    public static bool operator !=(long a, Right<T> b) => a != 42;
     public static bool operator ==(Left a, Right<T> b) => true;
     public static bool operator !=(Left a, Right<T> b) => true;
     public override bool Equals(object other) => false;
