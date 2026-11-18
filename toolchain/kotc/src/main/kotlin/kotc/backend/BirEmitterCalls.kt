@@ -60,6 +60,7 @@ import org.jetbrains.kotlin.ir.visitors.IrVisitorVoid
 import org.jetbrains.kotlin.ir.visitors.acceptVoid
 import org.jetbrains.kotlin.ir.visitors.acceptChildrenVoid
 import org.jetbrains.kotlin.ir.types.IrSimpleType
+import org.jetbrains.kotlin.ir.types.typeConstructorParameters
 import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.types.impl.IrCapturedType
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
@@ -418,6 +419,14 @@ internal fun calleeLabel(callee: org.jetbrains.kotlin.ir.declarations.IrFunction
 	if (callee is IrConstructor) ((callee.parent as? IrClass)?.name?.asString() ?: "constructor")
 	else callee.name.asString()
 
+/** The constructed result is a type operand even if the plugin didn't repeat its arguments on the call. */
+internal fun IrConstructorCall.constructedOwnerFrame(includeEnclosing: Boolean = false): IrSimpleType? {
+	val owner = symbol.owner.parent as? IrClass ?: return null
+	if (!includeEnclosing && owner.typeParameters.indices.all { typeArguments.getOrNull(it) != null }) return null
+	val result = type as? IrSimpleType ?: return null
+	return result.takeIf { it.classifier == owner.symbol && it.arguments.size == owner.typeConstructorParameters.count() }
+}
+
 /** `type` as the CALLER sees it: the DECLARING class's type parameters replaced by this call site's instantiation
  *  (the receiver's type arguments, or a constructor's own constructed type), and the callee's own type parameters by
  *  this call's resolved type ARGUMENTS.
@@ -450,21 +459,17 @@ internal fun BirEmitter.callSiteSubstitutor(
 	val enclosingTps = ownerClass?.let { innerSemanticEnclosingTypeParams(it) }.orEmpty()
 	val semanticOwnerTps = ownerTps + enclosingTps
 	if (callee is IrConstructor) {
-		// A constructed inner type carries Kotlin's semantic argument order [own..., enclosing...]. The enclosing
-		// parameters are re-declared on the emitted inner CLR type, so they belong to the constructor's type frame just
-		// as much as its own parameters do. Closing only ownerTps left an outer T open inside a default such as
-		// `class O<T>(val v:T) { inner class I(val x:T = v) }`, even though the call's type was already I<Int>.
-		// Delegating/enum constructor calls have Unit type and continue through the established typeArguments path below.
-		val constructedArgs = (call.type as? IrSimpleType)?.arguments
-		if (enclosingTps.isNotEmpty() && constructedArgs?.size == semanticOwnerTps.size) {
+		// A construction's result supplies the owner's complete Kotlin frame [own..., enclosing...],
+		// even when an IR plugin does not repeat the arguments on the call.
+		val constructedArgs = (call as? IrConstructorCall)?.constructedOwnerFrame(includeEnclosing = enclosingTps.isNotEmpty())
+			?.arguments?.takeIf { it.size >= semanticOwnerTps.size }
+		if (enclosingTps.isNotEmpty() && constructedArgs != null) {
 			semanticOwnerTps.forEach { params.add(it.symbol) }
-			args.addAll(constructedArgs)
+			// Local types can append enclosing function parameters after the class owner slots.
+			args.addAll(constructedArgs.take(semanticOwnerTps.size))
 		}
-		// For the remaining constructor shapes, the call's type arguments close the class's own parameters. They ride
-		// the call node for EVERY shape, whereas `call.type` only names the construction for a `new`: a `: super(…)`
-		// delegation and an enum-entry call are statements whose type is `Unit`, and reading the owner frame from there
-		// left the base class's type variables unsubstituted in the DERIVED class's frame.
-		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) }
+		// Delegating and enum-entry calls have no constructed result; use their explicit arguments.
+		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) ?: constructedArgs?.get(it) }
 		if (params.isEmpty() && ownerTps.isNotEmpty() && ta.all { it != null }) {
 			ownerTps.forEach { params.add(it.symbol) }
 			ta.forEach { args.add(it!!) }
