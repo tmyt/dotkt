@@ -41,17 +41,20 @@ static partial class FaithfulHintRecognition
         if (site == RenderSite.Print && FaithfulHints.IsStarProjectedColl(surface)) return new(Renderer.Element);
         if (FaithfulHints.ClassifyColl(value) is { } collection)
             return new(Renderer.Collection, collection.kind, collection.args);
-        // An open T can carry null without a nullable wrapper in the source type.
-        return site == RenderSite.Concat && value is (TypeNode.Nullable or TypeNode.Tv or TypeNode.Oblivious)
+        // Convert each template operand before evaluating the next. Deferring a
+        // concrete object's ToString to CLR Concat would reorder it past a generic operand.
+        return site == RenderSite.Concat && surface is not TypeNode.Fqn { Name: "kotlin.String" or "System.String" or "string" }
             ? new(Renderer.Nullable) : default;
     }
 
     static IBirExpression Render(IBirExpression operand, Rendering rendering) => rendering.Kind switch {
-        Renderer.Collection => FaithfulHints.CollToString(FaithfulHints.StripAnyCast(operand), rendering.Collection, rendering.Arguments),
-        Renderer.Element => FaithfulHints.ElemToString(operand),
-        Renderer.Nullable => FaithfulHints.LibraryToString(operand),
+        Renderer.Collection => TextResult(FaithfulHints.CollToString(FaithfulHints.StripAnyCast(operand), rendering.Collection, rendering.Arguments)),
+        Renderer.Element => TextResult(FaithfulHints.ElemToString(operand)),
+        Renderer.Nullable => TextResult(FaithfulHints.LibraryToString(operand)),
         _ => operand,
     };
+
+    static BirCallStatic TextResult(BirCallStatic call) => call with { Ret = new TypeNode.Fqn("kotlin.String") };
 
     static string ReinterpretElement(string method, TypeNode receiver, IReadOnlySet<string> localTopLevelFns)
     {
@@ -108,7 +111,8 @@ static partial class FaithfulHintRecognition
             for (var index = 0; index < concat.Parts.Value.Length; index++)
             {
                 var part = concat.Parts.Value[index];
-                concat.Parts.Value[index] = Render(part, SelectRendering(RenderSite.Concat, null, BirGraphStaticType.Value(part, scope)));
+                concat.Parts.Value[index] = Render(part, SelectRendering(RenderSite.Concat,
+                    BirGraphStaticType.Surface(part, scope), BirGraphStaticType.Value(part, scope)));
             }
         return concat;
     }
