@@ -39,6 +39,17 @@ import java.util.Base64
 private const val STRING_TABLE_CODEC = "dotkt_string_table_codec"
 private const val UTF16_STRING_TABLE_CODEC = "utf16le-base64-indexed"
 
+internal fun packagesWithAncestors(declared: Set<String>): Set<String> = buildSet {
+    for (name in declared) {
+        var current = name
+        while (add(current)) {
+            val separator = current.lastIndexOf('.')
+            if (separator < 0) break // The root package is present only when explicitly declared.
+            current = current.substring(0, separator)
+        }
+    }
+}
+
 internal class ClrKlibStringTables(val libraries: List<KotlinLibrary>) {
     private val encoded = libraries.filter { it.manifestProperties.containsKey(STRING_TABLE_CODEC) }
     // One provider retains the original library order even when only one table needs this codec.
@@ -91,6 +102,7 @@ private class ClrUtf16KlibSymbolProvider(
         for ((library, header) in headers)
             for (name in header.packageFragmentNameList) getOrPut(name) { mutableListOf() }.add(library)
     }
+    private val packages = packagesWithAncestors(librariesByPackage.keys)
     private class Part(
         val library: KotlinLibrary,
         val fragment: ProtoBuf.PackageFragment,
@@ -165,6 +177,5 @@ private class ClrUtf16KlibSymbolProvider(
 
     override fun isNewPlaceForBodyGeneration(classProto: ProtoBuf.Class) = false
 
-    override fun hasPackage(fqName: FqName) = fqName.asString() in librariesByPackage ||
-        librariesByPackage.keys.any { it.startsWith(fqName.asString() + ".") }
+    override fun hasPackage(fqName: FqName) = fqName.asString() in packages
 }

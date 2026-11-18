@@ -2,6 +2,7 @@ package kotc.bir
 
 import kotc.backend.TypeAliasDeclarations
 import kotc.pipeline.clrKlibNameResolver
+import kotc.pipeline.packagesWithAncestors
 import org.jetbrains.kotlin.library.KotlinLibrary
 import org.jetbrains.kotlin.metadata.ProtoBuf
 import org.jetbrains.kotlin.metadata.deserialization.Flags
@@ -13,6 +14,14 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class SourceMetadataTest {
+    @Test
+    fun klibPackageMembershipIncludesOnlyDeclaredPackagesAndDottedAncestors() {
+        val declared = setOf("net.api.deep", "net.api.other", "network")
+        val expected = setOf("net", "net.api", "net.api.deep", "net.api.other", "network")
+        assertEquals(expected, packagesWithAncestors(declared))
+        assertEquals(expected + "", packagesWithAncestors(declared + ""))
+    }
+
     private val text = "quote\"\\\n\u0001κ😀"
     private val floatBits = 0xffc00017L.toInt()
 
