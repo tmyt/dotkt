@@ -9,8 +9,11 @@
   <Target Name="DotKtValidateTargetFramework"
           BeforeTargets="PrepareForBuild"
           Condition="'$(IsCrossTargetingBuild)' != 'true'">
+    <ItemGroup>
+      <_DotKtSupportedVersion Include="$(DotKtSupportedTargetFrameworkVersion)" />
+    </ItemGroup>
     <Error Code="DOTKTSDK001"
-           Condition="'$(TargetFrameworkIdentifier)' != '$(DotKtSupportedTargetFrameworkIdentifier)' or '$(TargetFrameworkVersion)' != '$(DotKtSupportedTargetFrameworkVersion)'"
-           Text="DotKt SDK $(DotKtVersion) does not support target framework '$(TargetFramework)'. Supported targets use $(DotKtSupportedTargetFrameworkIdentifier),Version=$(DotKtSupportedTargetFrameworkVersion) (for example net10.0 or net10.0-windows)." />
+           Condition="'$(TargetFrameworkIdentifier)' != '$(DotKtSupportedTargetFrameworkIdentifier)' or '@(_DotKtSupportedVersion->WithMetadataValue('Identity', '$(TargetFrameworkVersion)'))' == ''"
+           Text="DotKt SDK $(DotKtVersion) does not support target framework '$(TargetFramework)'. Supported targets use $(DotKtSupportedTargetFrameworkIdentifier) with versions @(_DotKtSupportedVersion, ', '), including platform-qualified targets." />
   </Target>
 </Project>

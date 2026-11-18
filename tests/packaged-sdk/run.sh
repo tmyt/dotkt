@@ -1457,6 +1457,11 @@ case_portable_pdb() {
 
 case_toolchain_assembly_identity
 case_exe
+if bash "$ROOT/tests/packaged-sdk/net11/run.sh" "$NUGET_CONFIG" "$VER" "$WS/net11" >"$WS/net11.log" 2>&1; then
+	pass net11
+else
+	fail net11 "could not build against .NET 11 references and run on .NET 11" "$(tail -30 "$WS/net11.log")"
+fi
 case_incremental_emission
 case_carrier_compression
 case_application_manifest
