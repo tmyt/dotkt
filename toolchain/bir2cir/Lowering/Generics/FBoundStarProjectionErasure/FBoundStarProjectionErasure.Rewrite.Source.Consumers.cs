@@ -84,7 +84,7 @@ static partial class FBoundStarProjectionErasure
         if (node is not (BirCallStatic or BirCallInstance) || node.DeclarationIdentityFact.OrDefault() is not string identity
             || SourceSelectedOwner(node) is not TypeNode.Fqn owner) return node;
         var arguments = node.ApplicationTypeArguments.OrEmpty();
-        var declared = state.Realization.Bindings.SourceLocalDeclarations.TryGetValue((owner.Name, identity), out var selected)
+        var declared = state.Demand.Preparation.Bindings.SourceLocalDeclarations.TryGetValue((owner.Name, identity), out var selected)
             ? (selected.Source as BirFunctionDeclaration)?.Ret.OrDefault()
             : state.References.DeclarationIdentityReturn(identity, owner.Name, arguments.Length, node is BirCallStatic);
         if (declared == null) return node;
@@ -98,7 +98,7 @@ static partial class FBoundStarProjectionErasure
     {
         if (node is not BirCallInstance call || !new SourceMemberUse(call).Property(out var property, out var accessor)
             || accessor != "get" || call.OwnerType.OrDefault() is not TypeNode.Fqn owner
-            || state.Realization.SourceDefinitions.ContainsKey(owner.Name) || !state.References.HasDotKtOwner(owner.Name)
+            || state.Demand.Preparation.Bindings.SourceDefinitions.ContainsKey(owner.Name) || !state.References.HasDotKtOwner(owner.Name)
             || !call.Sig.HasValue || !state.References.TrySelectedSourceMethodDeclaration(owner.Name, property, 0,
                 call.Sig.Value, call.ResultTypeStamp, owner.Args ?? Array.Empty<TypeNode>(), Array.Empty<BirTypeParameter>(),
                 Array.Empty<TypeNode>(), out var selected, accessor)) return node;

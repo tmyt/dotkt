@@ -18,7 +18,6 @@ static partial class FBoundStarProjectionErasure
         var exact = arguments[0] is BirThis or BirNew || SourceExactOuter((BirGraphValue)arguments[0]);
         var variant = !exact && state.Projection.RequiresKotlinValueCarrier(selectedOuter);
         if (!variant && (suppliedOuter == null || !ContainsExistential(suppliedOuter, existentialTypes, existentialMethods))) return node;
-        var context = state.Realization;
         var innerDefinition = state.Definition(innerType.Name);
         var local = innerDefinition?.Mods.OrDefault()?.Inner.OrDefault() == true;
         var referenced = state.References.TryInnerSemanticOwner(innerType.Name, out var referencedOuter);
@@ -44,8 +43,8 @@ static partial class FBoundStarProjectionErasure
                 && constructor.DeclarationId.OrDefault() == identity).ToArray();
             if (matches.Length != 1) throw new InvalidOperationException(
                 $"bir2cir: star-projected inner construction '{inner.Name}' resolves to {matches.Length} exact local constructors");
-            var original = context.Bindings.GetCapturedSource(matches[0]);
-            var factory = context.Declarations.InnerFactories(outer)[original];
+            var original = state.Demand.Preparation.Bindings.GetCapturedSource(matches[0]);
+            var factory = state.Declarations.InnerFactories(outer)[original];
             // The factory is an authored physical declaration. Its selected
             // signature stays live until this call binds; only original method
             // matching uses the independently frozen source signatures.
@@ -135,7 +134,7 @@ static partial class FBoundStarProjectionErasure
         if (signature.Any(ContainsManagedReference)) throw new NotSupportedException(
             $"bir2cir: projected constructor `{owner.Name}` has a ref/out or pointer parameter; "
             + "the object[] reflection ABI cannot preserve managed-reference aliasing");
-        var locals = state.Realization.SourceDefinitions.Keys.ToHashSet(StringComparer.Ordinal);
+        var locals = state.Demand.Preparation.Bindings.SourceDefinitions.Keys.ToHashSet(StringComparer.Ordinal);
         var text = new TypeNode.Fqn("kotlin.String");
         var systemType = new TypeNode.Fqn("System.Type");
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
@@ -167,7 +166,7 @@ static partial class FBoundStarProjectionErasure
         return owner.Args.Where((argument, index) => (frame == null || frame.PhysicalSlot(index).Representation
                 is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable)
             && ContainsExistentialProjection(argument)
-            && (state.Realization.NativeProofs.ExactTypeArgument(owner.Name, index)
+            && (state.Demand.NativeProofs.ExactTypeArgument(owner.Name, index)
                 || StripSourceNullability(argument) is not TypeNode.Fqn nominal
                 || !state.Projection.TryExistentialCarrier(nominal.Name, out var carrier)
                 || StripSourceNullability(state.Projection.Rewrite(argument)) != new TypeNode.Fqn(carrier))).Any();

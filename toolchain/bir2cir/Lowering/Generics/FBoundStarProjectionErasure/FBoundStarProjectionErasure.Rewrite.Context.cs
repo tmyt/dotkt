@@ -6,9 +6,10 @@ static partial class FBoundStarProjectionErasure
 {
     internal sealed class SourceRewriteState
     {
-        internal CarrierRealizationContext Realization { get; }
+        internal CarrierDemandPlan Demand { get; }
+        internal SourceCarrierDeclarations Declarations { get; }
         internal CarrierProjectionContext Projection { get; }
-        internal ReferenceMetadataIndex References => Realization.References;
+        internal ReferenceMetadataIndex References { get; }
         internal IReadOnlyDictionary<string, Owner> Owners => Projection.Owners;
         internal IReadOnlyDictionary<string, string> LocalClrAliases => Projection.LocalClrAliases;
         internal IReadOnlySet<string> Carriers { get; }
@@ -24,7 +25,9 @@ static partial class FBoundStarProjectionErasure
             Func<TypeNode, IBirExpression, IBirExpression> componentPredicate,
             CurrentPhysicalTypeView currentPhysical = null, CarrierProjectionContext projection = null)
         {
-            Realization = realization;
+            Demand = realization.Demand;
+            Declarations = realization.Declarations;
+            References = realization.References;
             Projection = projection ?? realization.Projection;
             this.currentPhysical = currentPhysical;
             ComponentPredicate = componentPredicate;
@@ -35,7 +38,7 @@ static partial class FBoundStarProjectionErasure
 
         internal IBirTypeDeclaration Definition(string name) => currentPhysical != null
             ? currentPhysical.Definitions.GetValueOrDefault(name)
-            : Realization.SourceDefinitions.TryGetValue(name, out var binding) ? (IBirTypeDeclaration)binding.Source : null;
+            : Demand.Preparation.Bindings.SourceDefinitions.TryGetValue(name, out var binding) ? (IBirTypeDeclaration)binding.Source : null;
         internal IReadOnlyList<TypeNode> ProjectArguments(TypeNode.Fqn source, string target)
             => ProjectConstructedArguments(source, target, types);
         internal bool ClrVariance(TypeNode.Fqn target, IReadOnlyList<TypeNode> arguments, bool physical = false)
@@ -45,7 +48,7 @@ static partial class FBoundStarProjectionErasure
         internal bool TrySpreadOwner(BirSpreadConcat spread, out TypeNode.Fqn owner)
             => TrySourceSpreadOwner(spread, types, out owner);
         internal bool TryInitializerOwner(BirNewArrayInit initializer, out TypeNode.Fqn owner)
-            => TrySourceInitializerOwner(initializer, Realization.Preparation, types, out owner);
+            => TrySourceInitializerOwner(initializer, Demand.Preparation, types, out owner);
         internal bool TryArrayOwner(BirNewArray array, out TypeNode.Fqn owner)
             => TryVarianceProjectedArrayOwner(array.Elem.OrDefault(), array.Elems.OrEmpty().Select(value =>
                 (value is BirConstant constant && constant.Value.OrDefault() is null or BirLiteral.NullLiteral,
@@ -97,7 +100,7 @@ static partial class FBoundStarProjectionErasure
     };
 
     internal static bool SourceNativeSignature(BirGraphValue declaration, SourceRewriteState state)
-        => SourceTypeSlotFacts(declaration, state.Realization, declarationDescriptor: false, state.LocalClrAliases).NativeMethodSignature;
+        => SourceTypeSlotFacts(declaration, state.Projection, declarationDescriptor: false, state.LocalClrAliases).NativeMethodSignature;
 
     internal static void PreserveNormalizedSourceReturn(BirFunctionDeclaration declaration,
         TypeNode original, TypeNode physical, SourceRewriteState state)
@@ -181,7 +184,7 @@ static partial class FBoundStarProjectionErasure
         BirInlineCapture value => value.Outer.OrDefault(), _ => false,
     };
 
-    static TypeSlotFacts SourceTypeSlotFacts(BirGraphValue node, CarrierRealizationContext context,
+    static TypeSlotFacts SourceTypeSlotFacts(BirGraphValue node, CarrierProjectionContext context,
         bool declarationDescriptor, IReadOnlyDictionary<string, string> currentAliases = null)
     {
         var kind = (node as BirGraphNode)?.Tag;

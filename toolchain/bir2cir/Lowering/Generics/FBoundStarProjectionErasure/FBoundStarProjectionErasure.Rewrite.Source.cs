@@ -61,7 +61,7 @@ static partial class FBoundStarProjectionErasure
         if (node is IBirTypeDeclaration type && IsTypeDefinition(type.Kind.OrDefault()))
         {
             var parameters = Parameters(type.TypeParams);
-            if (!typesOnly) ProjectDependentTypeConstraintsSource(type, state.Realization);
+            if (!typesOnly) ProjectDependentTypeConstraintsSource(type, state.Projection);
             var facts = NullableRepresentationViews.TypeFacts(node);
             return scope with { TypeParameters = parameters, MethodParameters = null,
                 ExistentialTypes = SourceExistentialParameters(parameters, "type"), ExistentialMethods = null,
@@ -150,7 +150,7 @@ static partial class FBoundStarProjectionErasure
         node.RewriteOwnFieldsInPlace((field, _, type) => {
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
-            var facts = SourceTypeSlotFacts(node, state.Realization, scope.Descriptor, state.LocalClrAliases);
+            var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases);
             var bound = scope.Bound || BoundTypeSlot(facts, field);
             var shape = scope.ArrayShape || NativeArrayTypeSlot(facts, field);
             if (field == "typeArgs") return RewriteSourceMethodArgument(node, type, index, state, bound, shape);
@@ -162,7 +162,7 @@ static partial class FBoundStarProjectionErasure
                 return state.Projection.Rewrite(type, bound,
                     preserveConstructedHead: constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index);
             if (field == "constraints" && scope.ParameterOwner != null
-                && state.Realization.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
+                && state.Demand.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
             return state.Projection.Rewrite(type, bound, preserveConstructedHead:
                 ConstructionHeadSlot(facts, field)
                 || (ArrayComponentTypeSlot(facts, field) || NativeLocationTypeSlot(facts, field)) && PreservesNativeWitnessHead(type, state.Projection)
@@ -170,7 +170,7 @@ static partial class FBoundStarProjectionErasure
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape);
         }, (field, _, child) => {
             if (!typesOnly && earlyOperand && field == "e") return;
-            var facts = SourceTypeSlotFacts(node, state.Realization, scope.Descriptor, state.LocalClrAliases);
+            var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases);
             var next = childScope with { Bound = scope.Bound || BoundTypeSlot(facts, field),
                 ArrayShape = scope.ArrayShape || NativeArrayTypeSlot(facts, field),
                 Descriptor = field is "clrBaseImpls" or "clrInterfaceImpls" or "overrides" or "inheritedImplementation",
@@ -179,7 +179,7 @@ static partial class FBoundStarProjectionErasure
             {
                 var index = positions.GetValueOrDefault(field);
                 positions[field] = index + 1;
-                if (state.Realization.Bindings.TryGetCapturedSource(node, out var binding))
+                if (state.Demand.Preparation.Bindings.TryGetCapturedSource(node, out var binding))
                     next = next with { ParameterOwner = binding, ParameterIndex = index };
             }
             RewriteSource(child, next, state, names, typesOnly);
@@ -211,8 +211,8 @@ static partial class FBoundStarProjectionErasure
         var identity = call.DeclarationIdentityFact.OrDefault();
         var owner = SourceSelectedOwner(call) as TypeNode.Fqn;
         var selected = owner != null && identity != null
-            && state.Realization.Bindings.SourceLocalDeclarations.TryGetValue((owner.Name, identity), out var declaration)
-            ? declaration : state.Realization.NativeProofs.LocalSourceMethodBinding(identity);
+            && state.Demand.Preparation.Bindings.SourceLocalDeclarations.TryGetValue((owner.Name, identity), out var declaration)
+            ? declaration : state.Demand.NativeProofs.LocalSourceMethodBinding(identity);
         var frame = selected != null ? (selected.Source as BirFunctionDeclaration)?.NullableRepresentationFrame.OrDefault()
             : state.References.NullableMethodFrame(identity);
         if (frame != null && frame.PhysicalArity != call.ApplicationTypeArguments.Value.Length)
@@ -224,7 +224,7 @@ static partial class FBoundStarProjectionErasure
         return state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray,
             preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
                 && (PreservesNativeWitnessHead(argument, state.Projection) || factory
-                    || state.Realization.NativeProofs.ExactMethodArgument(selected, identity, index)
+                    || state.Demand.NativeProofs.ExactMethodArgument(selected, identity, index)
                     || StripSourceNullability(argument) is TypeNode.Fqn alias && state.Projection.RequiresOpaqueVariantAlias(alias)
                         && !ContainsExistentialProjection(alias) && !state.Projection.ProjectionCanChangeConstruction(alias)));
     }

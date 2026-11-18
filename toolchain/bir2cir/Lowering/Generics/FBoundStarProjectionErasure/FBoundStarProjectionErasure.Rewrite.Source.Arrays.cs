@@ -130,7 +130,7 @@ static partial class FBoundStarProjectionErasure
             BirNewClosure value => (value.ClosureType.OrDefault() as TypeNode.Fqn, value.Method.OrDefault()), _ => default,
         };
         return selected.Item1 != null && selected.Item2 != null
-            && state.Realization.Bindings.SourceLocalMethods.TryGetValue(selected.Item1.Name + "\0" + selected.Item2, out var methods)
+            && state.Demand.Preparation.Bindings.SourceLocalMethods.TryGetValue(selected.Item1.Name + "\0" + selected.Item2, out var methods)
             ? UniqueLocalDelegateTarget(methods)?.Source as BirFunctionDeclaration : null;
     }
 

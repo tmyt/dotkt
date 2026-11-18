@@ -60,7 +60,7 @@ static partial class FBoundStarProjectionErasure
         if (node is not (BirCallInstance or BirNewBoundDelegate)) return node;
         var call = new SourceMemberUse(node);
         if (call.Exact || call.Owner is not TypeNode.Fqn { Args: { } args } owner || call.Name == null) return node;
-        var context = state.Realization;
+        var context = state.Demand;
         var refs = state.References;
         state.Owners.TryGetValue(owner.Name, out var start);
         var projected = state.ProjectedType(call.Receiver as BirGraphValue);
@@ -101,7 +101,7 @@ static partial class FBoundStarProjectionErasure
                 : (BirGraphValue)AlignCallResultSource((IBirExpression)node, physical, protectExactCast: true);
         }
         if (start is { Needed: true } && FindDeclaringSourceOwner(start, sourceMember, accessor, count, arity,
-            authored, call.Identity, context) is { } selected)
+            authored, call.Identity, context, state.Declarations) is { } selected)
         {
             var (declaring, row) = selected;
             if (row.ReferenceContract != null)
@@ -123,7 +123,7 @@ static partial class FBoundStarProjectionErasure
             var (bridgeOwner, declaring, declaration) = inherited;
             CloseResult(declaration.Ret.OrDefault());
             call.BindOwner(bridgeOwner.ErasedName);
-            call.Name = BaseStarMethodNameSource(declaring, (IBirTypeDeclaration)context.SourceDefinitions[declaring].Source, declaration);
+            call.Name = BaseStarMethodNameSource(declaring, (IBirTypeDeclaration)context.Preparation.Bindings.SourceDefinitions[declaring].Source, declaration);
             call.Parameters(declaration.Params.OrEmpty().Select(parameter => EraseOwnerTv(parameter.Type.OrDefault(), state.Owners, refs)),
                 writeCallee: false);
             MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor,
@@ -161,7 +161,8 @@ static partial class FBoundStarProjectionErasure
             : accessor == null && (declaration.ExistentialSourceMember.OrDefault() ?? declaration.Name.OrDefault()) == member;
 
     static (Owner Owner, SourceSlot Slot)? FindDeclaringSourceOwner(Owner start, string member, string accessor,
-        int count, int arity, IReadOnlyList<TypeNode> signature, string identity, CarrierRealizationContext context)
+        int count, int arity, IReadOnlyList<TypeNode> signature, string identity, CarrierDemandPlan context,
+        SourceCarrierDeclarations declarations)
     {
         var frontier = new List<Owner> { start };
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -170,7 +171,7 @@ static partial class FBoundStarProjectionErasure
             var matches = new List<(Owner, SourceSlot)>();
             foreach (var owner in frontier)
                 if (seen.Add(owner.Name))
-                    foreach (var row in context.Declarations.Slots(owner).Values)
+                    foreach (var row in declarations.Slots(owner).Values)
                         if ((identity != null ? row.Declaration.DeclarationId.OrDefault() == identity : MatchesSourceMember(row.Declaration, member, accessor))
                             && !row.Declaration.Static.OrDefault() && row.Declaration.Params.OrEmpty().Length == count
                             && row.Declaration.TypeParams.OrEmpty().Length == arity
@@ -183,7 +184,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     static (Owner BridgeOwner, string Declaring, BirFunctionDeclaration Declaration)? FindInheritedSourceBaseMember(
-        Owner start, string member, string accessor, int count, int arity, string identity, CarrierRealizationContext context)
+        Owner start, string member, string accessor, int count, int arity, string identity, CarrierDemandPlan context)
     {
         var frontier = new List<Owner> { start };
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -211,7 +212,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     static IReadOnlyList<TypeNode> ProjectSourceOwnerArguments(Owner start, IReadOnlyList<TypeNode> arguments,
-        string target, CarrierRealizationContext context)
+        string target, CarrierDemandPlan context)
     {
         var pending = new Queue<(Owner Owner, TypeNode[] Arguments, int Depth)>();
         pending.Enqueue((start, arguments.ToArray(), 0));
@@ -231,7 +232,7 @@ static partial class FBoundStarProjectionErasure
                     && SubstituteDeclarationTypeArguments(edge, current, Array.Empty<TypeNode>()) is TypeNode.Fqn projected)
                 {
                     var values = projected.Args ?? Array.Empty<TypeNode>();
-                    if (values.Length == context.Definition(ancestor).TypeParams.OrEmpty().Length) pending.Enqueue((ancestor, values, depth + 1));
+                    if (values.Length == ((IBirTypeDeclaration)ancestor.DefinitionBinding.Source).TypeParams.OrEmpty().Length) pending.Enqueue((ancestor, values, depth + 1));
                 }
         }
         return matches.Count == 1 ? matches.Values.Single() : null;

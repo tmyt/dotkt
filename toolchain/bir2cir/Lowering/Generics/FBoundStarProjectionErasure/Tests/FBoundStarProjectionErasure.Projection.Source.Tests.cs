@@ -66,7 +66,7 @@ static partial class FBoundStarProjectionErasure
             var typeBounds = dependent.KotlinSupertypesPre.Value.Bounds[2].ToArray();
             var methodBounds = method.MethodTypeParameterBoundsPre.Value.Bounds[1].ToArray();
             var slot = InterfaceSlotSource(method, "slot", "ProjectionFacts", context);
-            ProjectDependentTypeConstraintsSource(dependent, context);
+            ProjectDependentTypeConstraintsSource(dependent, context.Projection);
             TypeNode Project(TypeNode bound) => ProjectOwnerMethodBound(bound, context.Projection, physical: false);
             TypeNode Classifier(TypeNode bound) => PhysicalBoundClassifier(bound, context.Projection);
             OwnerConstrainedMethodLowering.CloseOwnersSource(context, ContainsOwnerTv, Project, Classifier);
