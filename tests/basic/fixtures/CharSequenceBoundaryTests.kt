@@ -21,7 +21,34 @@ private fun boundaryNullable(flag: Boolean, value: String?, other: CharSequence)
     if (flag) value else other
 private fun boundaryAbsent(): CharSequence? = null
 
+private fun <T : CharSequence> boundaryLength(produce: () -> T): Int = produce().length
+private fun <T : CharSequence> boundaryIdentity(produce: () -> T): T = produce()
+@Suppress("UNCHECKED_CAST")
+private fun <T : CharSequence> boundaryCast(value: Any?): T = value as T
+@Suppress("UNCHECKED_CAST")
+private fun <T : CharSequence> boundarySafeCast(value: Any?): T? = value as? T
+private fun <T : CharSequence> boundaryStore(dst: Array<CharSequence>, read: System.Func1<T>) { dst[0] = read() }
+
 class CharSequenceBoundaryTests {
+    @TestAttribute
+    fun genericWitnessAcceptsStringsAndPreservesCustomValues() {
+        val text = "four"
+        val custom = BoundaryText("three")
+        var calls = 0
+        check(boundaryLength { calls++; text } == 4 && calls == 1)
+        check(boundaryLength { calls++; custom } == 5 && calls == 2)
+        check(boundaryIdentity { calls++; text } === text && calls == 3)
+        check(boundaryIdentity { calls++; custom } === custom && calls == 4)
+        check(boundaryCast<String>(text) === text && boundaryCast<BoundaryText>(custom) === custom)
+        check(boundarySafeCast<String>(text) === text && boundarySafeCast<String>(42) == null)
+        var rejected = false
+        try { boundaryCast<String>(42) } catch (_: System.InvalidCastException) { rejected = true }
+        check(rejected)
+        val dst = arrayOf<CharSequence>(custom)
+        boundaryStore(dst, System.Func1<String> { calls++; text })
+        check(dst[0].length == 4 && calls == 5)
+    }
+
     @TestAttribute
     fun boundAnyReferencesKeepCustomCharSequenceVirtualDispatch() {
         class MutableSequence(var text: String) : CharSequence {

@@ -37,6 +37,13 @@ necessary for these paths. The presence of an adapter does not imply a live Stri
 
 ## Layer ownership
 
+A Kotlin `T : CharSequence` upper bound is retained for Kotlin consumers in
+metadata. It is not a CLR interface constraint on the executable generic
+declaration: native strings do not implement that interface. A C# caller thus
+sees a weaker constraint. A value transported as `T` keeps its identity; a
+scalar interface slot obtains a view only when the value is used there.
+Other CLR constraints on the same type parameter are retained.
+
 `kotc` projects Kotlin CharSequence identities and operations into BIR. In `bir2cir`,
 `TypedCharSequenceIdentity` establishes the synthetic identity before
 `TypedModuleInventory` detects user implementers. `CharSeqStringLowering` selects eligible string slots, and

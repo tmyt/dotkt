@@ -21,6 +21,8 @@ class NestedText : Slot<Slot<CharSequence>> {
 open class Base<T>(val value: T)
 class DerivedText(value: String = "base") : Base<CharSequence>(value)
 
+class TextReader<T : CharSequence?>(val value: T) { fun lengthOrZero() = value?.length ?: 0 }
+
 class UnchangedText : Slot<String> {
     override fun read(): String = "unchanged"
 }

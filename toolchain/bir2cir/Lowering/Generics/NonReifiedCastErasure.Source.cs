@@ -4,6 +4,48 @@ using DotKt.Cir;
 
 static class NonReifiedCastErasure
 {
+    // An erased upper bound checks membership; it does not convert the Kotlin
+    // value into the interface view used for CLR CharSequence member dispatch.
+    internal static BirGraphValue ProjectOperation(BirGraphValue node, ReferenceMetadataIndex refs)
+    {
+        var (bound, input, safe) = node switch {
+            BirCast cast => (cast.ErasedTypeOperand.OrDefault(), cast.E.OrDefault(), false),
+            BirInstanceOrNull test => (test.ErasedTypeOperand.OrDefault(), test.E.OrDefault(), true),
+            _ => (null, null, false),
+        };
+        if (input == null || !StringCharSequenceBridge.IsGenericCharSequenceBound(bound))
+        {
+            RewriteOperation(node);
+            return node;
+        }
+        var name = "$csBound$" + System.Threading.Interlocked.Increment(ref nextLocal);
+        var obj = new TypeNode.Fqn("object");
+        BirLocal Read() => new() { Name = name, Sty = obj };
+        BirConstant Null() => new() { Type = obj, Value = new BirLiteral.NullLiteral() };
+        BirConditional Admit(IBirExpression condition, IBirExpression otherwise) => new() {
+            Type = obj, Cond = OptionalField<IBirExpression>.Of(condition), Then = Read(),
+            Else = OptionalField<IBirExpression>.Of(otherwise),
+        };
+        IBirExpression result = Null();
+        if (!safe)
+        {
+            var exception = refs.ResolveRefType("System.InvalidCastException");
+            result = new BirThrowExpression { Value = new BirNewClr {
+                Type = new TypeNode.Fqn("System.InvalidCastException"), Args = Array.Empty<IBirExpression>(),
+                MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs,
+                    exception.GetConstructor(System.Type.EmptyTypes), "ctor", exception, null)),
+            } };
+            result = Admit(new BirBinaryOperation { Op = "===", Lhs = Read(), Rhs = Null() }, result);
+        }
+        foreach (var classifier in new[] { SharedSyntheticSynthesis.CharSeq, "System.Text.StringBuilder", "System.String" })
+            result = Admit(new BirIsInstance { Type = new TypeNode.Fqn(classifier), E = Read() }, result);
+        return new BirValueBlock {
+            Type = obj, Stmts = new IBirStatement[] { new BirVariable { Name = name, Type = obj,
+                Init = OptionalField<IBirExpression>.Of(input) } }, Result = OptionalField<IBirExpression>.Of(result),
+        };
+    }
+    static int nextLocal;
+
     internal static void RewriteOperation(BirGraphValue node)
     {
         // Bare unchecked type-parameter casts keep their documented null
