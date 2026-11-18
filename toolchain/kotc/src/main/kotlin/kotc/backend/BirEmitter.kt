@@ -19,6 +19,7 @@ import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrPackageFragment
 import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
@@ -72,6 +73,7 @@ import org.jetbrains.kotlin.ir.expressions.IrContinue
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.classId
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
+import org.jetbrains.kotlin.ir.util.getPackageFragment
 import org.jetbrains.kotlin.ir.util.resolveFakeOverride
 import org.jetbrains.kotlin.ir.declarations.IrTypeParameter
 import org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol
@@ -123,12 +125,15 @@ private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 ) + setOf("Managed", "Cdecl", "Stdcall", "Thiscall", "Fastcall", "Unmanaged", "Required", "Optional", "Value")
 	.map { "kotlin.clr.signature.$it" } + (1..32).map { "kotlin.clr.signature.Array$it" }
 
-class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
+class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null,
+	private val sourceFragments: Set<IrPackageFragment> = emptySet()) {
 
 	/** Frontend-authoritative callable identity. The JVM-oriented FIR2IR pipeline does not populate IdSignature for
 	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
 	 * itself. Calls read the selected IrSymbol through this identity map; bir2cir never reconstructs it after erasure. */
 	private val declarationIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
+	internal fun ownsSourceCallable(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
+		fn.getPackageFragment() in sourceFragments && (fn !is IrSimpleFunction || !isInheritedSynthetic(fn))
 	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 		fn is IrSimpleFunction && fn.isFakeOverride && fn.modality == Modality.ABSTRACT &&
 			(fn.parent as? IrClass)?.let { it.kind != ClassKind.INTERFACE && !isExternalNetType(it) } == true
@@ -147,9 +152,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val annotations: List<IrConstructorCall> = fn.annotations + property?.annotations.orEmpty()
 		val identity = annotations.singleOrNull {
 			it.type.classFqName?.asString() == "kotlin.clr.KotlinDeclarationIdentity"
-		}
+		} ?: return null
+		// Plugins can copy an overridden declaration's annotations. A real declaration
+		// in this compilation owns its identity; an inherited view can still carry it.
+		if (ownsSourceCallable(fn)) return null
 		val setter = property?.setter === fn
-		val identityArgument = identity?.let { regularArgs(it).getOrNull(if (setter) 1 else 0) }
+		val identityArgument = regularArgs(identity).getOrNull(if (setter) 1 else 0)
 		val direct = (identityArgument as? IrConst)
 			?.value
 			?.let { it as? String }
@@ -164,8 +172,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun declarationIdForPhysicalAllocation(
 		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
 	): String? {
-		val projectedClrOwner = clrExternalOwner(fn)
-			?: (fn.parent as? IrClass)?.let { clrExternalOwner(it) }
+		val projectedClrOwner = clrExternalOwner(fn) ?: (fn.parent as? IrClass)?.let { clrExternalOwner(it) }
 		if (fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) {
 			val carried = carriedDeclarationId(fn)
 			// A source/KLIB Kotlin declaration has a stable Kotlin identity even when its frontend KLIB predates the

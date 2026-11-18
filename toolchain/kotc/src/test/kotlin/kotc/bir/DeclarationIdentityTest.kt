@@ -4,6 +4,7 @@ package kotc.bir
 
 import kotc.backend.BirEmitter
 import kotc.backend.DefaultTypeFrame
+import kotc.backend.clrExternalOwner
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
@@ -28,6 +29,7 @@ import org.jetbrains.kotlin.ir.symbols.impl.IrTypeParameterSymbolImpl
 import org.jetbrains.kotlin.ir.types.classifierOrNull
 import org.jetbrains.kotlin.ir.types.defaultType
 import org.jetbrains.kotlin.ir.types.typeWith
+import org.jetbrains.kotlin.ir.util.createThisReceiverParameter
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.types.Variance
@@ -58,23 +60,26 @@ class DeclarationIdentityTest {
         val container = owner("Container")
         val t = parameter(container, "T", 0)
         container.typeParameters = listOf(t)
+        container.createThisReceiverParameter()
         val kotlinPkg = IrExternalPackageFragmentImpl(IrExternalPackageFragmentSymbolImpl(), FqName("kotlin"))
         val stringType = owner("String", kotlinPkg).symbol.typeWith()
         val unitType = owner("Unit", kotlinPkg).symbol.typeWith()
-        val annotationOwner = owner("KotlinDeclarationIdentity",
-            IrExternalPackageFragmentImpl(IrExternalPackageFragmentSymbolImpl(), FqName("kotlin.clr")))
-        annotationOwner.kind = ClassKind.ANNOTATION_CLASS
-        val annotationType = annotationOwner.symbol.typeWith()
-        val annotationConstructor = IrFactoryImpl.buildConstructor { returnType = annotationType }.apply {
-            parent = annotationOwner
-            addValueParameter("getterOrMethod", stringType)
-            addValueParameter("setter", stringType)
+        fun carrier(name: String, first: String, second: String): IrAnnotationImpl {
+            val annotationOwner = owner(name,
+                IrExternalPackageFragmentImpl(IrExternalPackageFragmentSymbolImpl(), FqName("kotlin.clr")))
+            annotationOwner.kind = ClassKind.ANNOTATION_CLASS
+            val annotationType = annotationOwner.symbol.typeWith()
+            val constructor = IrFactoryImpl.buildConstructor { returnType = annotationType }.apply {
+                parent = annotationOwner
+                addValueParameter("first", stringType)
+                addValueParameter("second", stringType)
+            }
+            return IrAnnotationImpl.fromSymbolOwner(0, 1, annotationType, constructor.symbol).apply {
+                arguments[0] = IrConstImpl.string(0, 1, stringType, first)
+                arguments[1] = IrConstImpl.string(0, 1, stringType, second)
+            }
         }
-        fun identity(first: String, second: String) = IrAnnotationImpl.fromSymbolOwner(
-            0, 1, annotationType, annotationConstructor.symbol).apply {
-            arguments[0] = IrConstImpl.string(0, 1, stringType, first)
-            arguments[1] = IrConstImpl.string(0, 1, stringType, second)
-        }
+        fun identity(first: String, second: String) = carrier("KotlinDeclarationIdentity", first, second)
         val method = IrFactoryImpl.buildFun { name = Name.identifier("read"); returnType = t.defaultType }.apply {
             parent = container
             annotations = listOf(identity("carried-method", ""))
@@ -95,8 +100,38 @@ class DeclarationIdentityTest {
             assertEquals(TypeNode.Fqn("identitytest.CallerOnly"), emitter.typeArgSubst[t])
             assertEquals(TypeNode.Tv("method", 7), emitter.liftedTypeArgSubst["type" to 0])
             assertSame(defaults, emitter.defaultTypeFrame)
+            val source = BirEmitter(sourceFragments = setOf(pkg))
+            val own = source.declarationId(declaration)
+            assertNotEquals(expected, own)
+            assertEquals(own, source.declarationIdForPhysicalAllocation(declaration))
         }
+        val sourcePkg = IrExternalPackageFragmentImpl(IrExternalPackageFragmentSymbolImpl(), pkg.packageFqName)
+        fun generatedOverride(name: String) = IrFactoryImpl.buildFun { this.name = method.name; returnType = stringType }.apply {
+            parent = owner(name, sourcePkg).apply {
+                superTypes = listOf(container.symbol.typeWith(stringType))
+                createThisReceiverParameter()
+            }
+            overriddenSymbols = listOf(method.symbol)
+            annotations = method.annotations
+        }
+        val source = BirEmitter(sourceFragments = setOf(sourcePkg))
+        val copied = IrFactoryImpl.buildFun { name = Name.identifier("copied"); returnType = stringType }.apply {
+            parent = sourcePkg
+            annotations = listOf(identity("imported-top-level", ""), carrier("ClrExternal", "Host", "Host"))
+        }
+        assertEquals(source.declarationId(copied), source.declarationIdForPhysicalAllocation(copied))
+        assertEquals(null, source.clrExternalOwner(copied))
+        val first = generatedOverride("First")
+        val second = generatedOverride("Second")
+        assertEquals("carried-method", source.declarationIdForPhysicalAllocation(method))
+        assertNotEquals(source.declarationId(first), source.declarationId(second))
+        assertEquals(source.declarationId(first), source.declarationIdForPhysicalAllocation(first))
         method.isFakeOverride = true
+        assertEquals("carried-method", BirEmitter(sourceFragments = setOf(pkg)).declarationId(method))
+        val materialized = IrFactoryImpl.buildFun {
+            name = method.name; returnType = stringType; origin = IrDeclarationOrigin.FAKE_OVERRIDE
+        }.apply { parent = first.parent; annotations = method.annotations; isFakeOverride = false }
+        assertEquals("carried-method", source.declarationId(materialized))
         method.modality = Modality.ABSTRACT
         val ownObligation = BirEmitter().declarationId(method)
         assertNotEquals("carried-method", ownObligation)

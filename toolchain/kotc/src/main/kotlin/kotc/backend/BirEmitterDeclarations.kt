@@ -202,7 +202,7 @@ internal fun BirEmitter.sourcePropertyDeclaration(property: IrProperty, hasSette
 		kotlinStatic = kotlinStatic, overrides = overrides)
 
 /** Whether FIR2IR explicitly materialized [fn] as an inherited declaration rather than a source declaration. */
-private fun isInheritedSynthetic(fn: IrSimpleFunction): Boolean {
+internal fun isInheritedSynthetic(fn: IrSimpleFunction): Boolean {
 	// Delegation is a frontend-authored concrete forwarding declaration, never an inherited implementation. Its FIR
 	// symbol is derived from the overridden member and can therefore retain supertype provenance even though the IR
 	// declaration owns a real body in this class.
