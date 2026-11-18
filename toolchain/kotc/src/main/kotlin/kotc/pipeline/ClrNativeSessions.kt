@@ -7,6 +7,7 @@ package kotc.pipeline
 
 import org.jetbrains.kotlin.cli.common.SessionConstructionUtils
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.config.targetPlatform
 import org.jetbrains.kotlin.fir.DependencyListForCliModule
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.deserialization.ModuleDataProvider
@@ -34,6 +35,7 @@ internal fun prepareClrNativeSessions(
     isCommonSource: (KtFile) -> Boolean,
     fileBelongsToModule: (KtFile, String) -> Boolean,
 ) = ClrKlibStringTables(resolvedLibraries).let { tables ->
+    val fragmentTables = ClrFragmentStringTables()
     val factory = object : FirNativeSessionFactory() {
         override fun createAdditionalDependencyProviders(
             session: FirSession, moduleDataProvider: ModuleDataProvider,
@@ -41,8 +43,11 @@ internal fun prepareClrNativeSessions(
         ) = tables.providers(session, moduleDataProvider, kotlinScopeProvider) +
             super.createAdditionalDependencyProviders(session, moduleDataProvider, kotlinScopeProvider, tables.libraries)
     }
+    // For a separate fragment the CLI reads the target from the configuration, not the
+    // prepareSessions argument. Use the same native frontend for its metadata dependencies.
+    val platform = NativePlatforms.unspecifiedNativePlatform
     SessionConstructionUtils.prepareSessions(
-        files, configuration, rootModuleName, NativePlatforms.unspecifiedNativePlatform,
+        files, configuration.copy().apply { targetPlatform = platform }, rootModuleName, platform,
         metadataCompilationMode = false, libraryList, extensionRegistrars,
         isCommonSource, isScript = { false }, fileBelongsToModule,
         createMetadataSessionFactoryContextForHmppCommonLibrarySession = {
@@ -54,10 +59,13 @@ internal fun prepareClrNativeSessions(
         createSharedLibrarySession = { factory.createSharedLibrarySession(rootModuleName, configuration, extensionRegistrars) },
         createLibrarySession = { shared -> factory.createLibrarySession(
             tables.standard, shared, libraryList.moduleDataProvider, extensionRegistrars, configuration) },
-        createSourceSession = { moduleData, kind, configure -> factory.createSourceSession(
-            moduleData, extensionRegistrars, configuration, kind, icData = null, init = configure) },
+        createSourceSession = { moduleData, kind, configure ->
+            fragmentTables.beforeSourceSessions()
+            factory.createSourceSession(moduleData, extensionRegistrars, configuration, kind, icData = null, init = configure)
+        },
         additionalProvidersForMetadataLibrarySessionsInHmppMode = { session, modules, scopes, libraries ->
-            factory.createAdditionalDependencyProviders(session, modules, scopes, libraries)
+            fragmentTables.record(session, modules, scopes, libraries)
+            FirNativeSessionFactory.createAdditionalDependencyProviders(session, modules, scopes, libraries)
         },
     )
 }

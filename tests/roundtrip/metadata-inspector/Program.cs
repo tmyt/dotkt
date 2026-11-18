@@ -2154,6 +2154,21 @@ static void VerifyDll(string path)
 static void VerifyKlib(string path)
 {
     using var archive = ZipFile.OpenRead(path);
+    using (var input = archive.GetEntry("default/linkdata/package_roundtrip.utf16literals/0_utf16literals.knm")!.Open())
+    {
+        var literals = PackageFragment.Parser.ParseFrom(input);
+        void StoredString(IEnumerable<DotKt.Klib.Metadata.Property> properties, string name, byte[] utf16LE)
+        {
+            var value = properties.Single(p => String(literals, p.Name) == name && p.CompileTimeValue != null).CompileTimeValue;
+            Require(value.Type == DotKt.Klib.Metadata.Annotation.Types.Argument.Types.Value.Types.Type.String
+                && value.HasStringValue && String(literals, value.StringValue) == Convert.ToBase64String(utf16LE)
+                && literals.Strings.String[^1].Split(',').Contains(value.StringValue.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                name + " is not a STRING referencing its encoded UTF-16 row");
+        }
+        StoredString(literals.Package.Property, "LOW_TEXT", [0xff, 0xdf]);
+        StoredString(Class(literals, "roundtrip.utf16literals.Utf16ConstantOwner.Companion").Property,
+            "TEXT", [0x00, 0xd8, 0x00, 0x00, 0xff, 0xdf, 0x3d, 0xd8, 0x00, 0xde]);
+    }
     var entry = archive.Entries.Single(e =>
         e.FullName.EndsWith("/package_roundtrip.dispatchsurface/0_dispatchsurface.knm", StringComparison.Ordinal));
     using var stream = entry.Open();

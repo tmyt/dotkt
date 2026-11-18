@@ -93,6 +93,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			configuration = configuration,
 		).all
 		val stringTables = ClrKlibStringTables(klibs)
+		val fragmentTables = ClrFragmentStringTables()
 
 		val environment = KotlinCoreEnvironment.createForProduction(
 			rootDisposable,
@@ -171,6 +172,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 				).also(::installClrStaticDeserialization)
 			},
 			createSourceSession = { moduleData, kmpModuleKind, sessionConfigurator ->
+				fragmentTables.beforeSourceSessions()
 				sessionFactory.createSourceSession(
 					moduleData,
 					projectEnvironment,
@@ -182,8 +184,9 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 					init = sessionConfigurator,
 				)
 			},
-			additionalProvidersForMetadataLibrarySessionsInHmppMode = { session, modules, scopes, _ ->
-				stringTables.providers(session, modules, scopes)
+			additionalProvidersForMetadataLibrarySessionsInHmppMode = { session, modules, scopes, libraries ->
+				fragmentTables.record(session, modules, scopes, libraries)
+				emptyList()
 			},
 		)
 

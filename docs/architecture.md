@@ -54,7 +54,8 @@ Normal values and all existing source indexes remain unchanged.
 The metadata-provider adapter restores the table before constructing Kotlin's
 standard declaration/annotation deserializers. App and native/stdlib sessions
 retain the original library order, visibility, forward declarations and source
-metadata. The index row is transport data, never a source
+metadata. Independent KLIB readers must use `clrKlibNameResolver` for these
+fragments. The index row is transport data, never a source
 string, and restoration must precede semantic use. This does not change Kotlin
 String types or the native CLR custom-attribute SerString limitation. See
 [the KLIB representation contract](design-dll2klib.md#klib-representation).
