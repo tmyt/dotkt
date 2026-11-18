@@ -34,7 +34,7 @@ class FactoryLeaf : FactoryMiddle() {
 }
 
 abstract class ClassFactoryBase {
-    abstract val item: Value
+    internal abstract val item: Value
     abstract fun make(): Value?
     abstract fun <T> makeFrom(seed: T, text: String): Value
 }

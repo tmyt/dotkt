@@ -614,7 +614,8 @@ static partial class KotlinOverrideSlotBridge
                     slotOwnerArgs, ownArgs)) continue;
             if (!m.ParamsPresent || m.Parameters.Length != slotParams.Length) continue;
             var ps = m.Parameters;
-            if (m.Visibility is not (null or "public" or "protected")) continue;
+            // A local internal declaration can override a virtual slot in the same assembly.
+            if (m.Visibility is not (null or "public" or "protected" or "internal")) continue;
             if (!OverridesInto(m, defs, supName, propertyName ?? semanticName,
                 accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" },
                 slotDeclarationId)) continue;
