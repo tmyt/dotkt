@@ -24,6 +24,8 @@ public annotation class ClrExternal(
     // kotc forwards this compiler fact, and bir2cir alone applies that frame.
     val memberOwner: String = "",
     val memberName: String = "",
+    // A comparison view represents two selected native declarations with the same operands.
+    val pairedMember: String = "",
 )
 
 // A projected event declaration, as distinct from an ordinary property storing a ClrEvent value. dll2klib owns

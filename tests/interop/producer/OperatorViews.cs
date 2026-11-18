@@ -19,3 +19,32 @@ public sealed class Operand<T>(T value)
     public static T operator &(Bits bits, Operand<T> rhs) => rhs.Value;
     public static T operator ~(Operand<T> rhs) => rhs.Value;
 }
+
+public sealed class StrictOrder(int key)
+{
+    public int Key => key;
+    public static string Trace = "";
+    public static StrictOrder Make(int n) { Trace += n; return new(n); }
+    public static bool operator <(StrictOrder a, StrictOrder b) { Trace += "<"; return a.Key < b.Key; }
+    public static bool operator >(StrictOrder a, StrictOrder b) { Trace += ">"; return a.Key > b.Key; }
+    public static bool operator <=(StrictOrder a, StrictOrder b) => throw new System.Exception();
+    public static bool operator >=(StrictOrder a, StrictOrder b) => throw new System.Exception();
+}
+
+public readonly struct PartialOrder<T>(int key)
+{
+    public int Key => key;
+    public static string Trace = "";
+    public static bool operator <=(PartialOrder<T> a, PartialOrder<T> b)
+    { Trace += "L"; return a.Key >= 0 && a.Key <= b.Key; }
+    public static bool operator >=(PartialOrder<T> a, PartialOrder<T> b)
+    { Trace += "G"; return a.Key >= 0 && a.Key >= b.Key; }
+    public string Calls => Trace;
+}
+
+public sealed class Ranked : System.IComparable<Ranked>
+{
+    public int CompareTo(Ranked other) => 17;
+    public static bool operator <(Ranked a, Ranked b) => throw new System.Exception();
+    public static bool operator >(Ranked a, Ranked b) => throw new System.Exception();
+}

@@ -374,11 +374,13 @@ class V:
 
     def external_member_binding(self, f, path, value):
         shape = _definitions["birExternalMemberBinding"]
-        if not isinstance(value, dict) or set(value) != set(shape["required"]):
-            self.err(f, path, "externalMember must carry exactly its declared owner and member fields")
+        if not isinstance(value, dict) or not set(shape["required"]) <= set(value) <= set(shape["properties"]):
+            self.err(f, path, "externalMember must carry its declared binding fields")
             return
         if not isinstance(value["member"], str):
             self.err(f, path + "/member", "externalMember.member must be a string")
+        if "pairedMember" in value and not isinstance(value["pairedMember"], str):
+            self.err(f, path + "/pairedMember", "externalMember.pairedMember must be a string")
         if not isinstance(value["owner"], str):
             self.err(f, path + "/owner", "externalMember.owner must be encoded declaration TypeNode text")
             return

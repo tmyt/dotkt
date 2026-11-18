@@ -177,6 +177,13 @@ ordinary .NET platform rules and remain the application's responsibility.
   `and`, `or`, `xor`, `shl`, `shr` and `ushr` views of native operators.
   These are low-priority extensions: a Kotlin member keeps its usual precedence,
   and `left and right` works even if only the right-hand type declares the CLR operator.
+- A real `compareTo` (including CLR `IComparable<T>`) takes precedence. Otherwise
+  an imported Boolean `<` / `>` pair supplies `compareTo`: test `<` first, then
+  `>` if needed. If only the `<=` / `>=` pair applies, both are tested once in
+  that order. The adapter returns −1, 0 or 1; two equal Boolean results in the
+  non-strict pair yield 0, as does an unordered strict result. Both direct
+  `compareTo` and Kotlin relational syntax use this ordering. It does not add
+  `Comparable<T>` conformance or preserve every individual native predicate.
 - A non-conversion CLR operator is also callable by its exact method name. For example,
   `SqlInt32.op_Equality(a, b)` returns a `SqlBoolean`, including SQL null. Call static
   operators on the declaring type and mutating instance operators on the receiver.

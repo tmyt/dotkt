@@ -2451,6 +2451,7 @@ internal sealed partial class AssemblyScanner : IDisposable
 
         var projectedFunctions = new List<ProjectedFunction>();
         var projectedConstructors = new List<ProjectedConstructor>();
+        List<ProjectedFunction>? comparisons = null;
         foreach (var methodHandle in def.GetMethods())
         {
             var method = _md.GetMethodDefinition(methodHandle);
@@ -2574,16 +2575,22 @@ internal sealed partial class AssemblyScanner : IDisposable
                     function.FunctionAnnotation.Add(
                         KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
                 result.Function.Add(function);
+                var projected = new ProjectedFunction(methodHandle, function, PhysicalParameterKeys(method, context));
+                projectedFunctions.Add(projected);
                 if (operatorPackage != null && !_attrs.IsDotKtAssembly &&
                     (method.Attributes & (MethodAttributes.MemberAccessMask | MethodAttributes.Static |
                         MethodAttributes.SpecialName)) == (MethodAttributes.Public | MethodAttributes.Static |
                         MethodAttributes.SpecialName) && IsExplicitOperatorMethod(clrMethodName, method.Attributes))
-                    AddOperatorExtension(handle, methodHandle, clrMethodName, function, operatorPackage, names,
+                {
+                    if (clrMethodName is "op_LessThan" or "op_GreaterThan" or "op_LessThanOrEqual" or "op_GreaterThanOrEqual")
+                    {
+                        if (function.ValueParameter.Count == 2 && IsNamed(function.ReturnType, "kotlin.Boolean", names) &&
+                            !function.ReturnType.Nullable)
+                            (comparisons ??= []).Add(projected);
+                    }
+                    else AddOperatorExtension(handle, methodHandle, clrMethodName, function, operatorPackage, names,
                         signatures, context);
-                projectedFunctions.Add(new ProjectedFunction(
-                    methodHandle,
-                    function,
-                    PhysicalParameterKeys(method, context)));
+                }
             }
         }
         if (!_attrs.IsDotKtAssembly)
@@ -2591,6 +2598,8 @@ internal sealed partial class AssemblyScanner : IDisposable
             AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names);
             AddNrtParamsOverloadBridges(projectedFunctions, result.Function, names);
         }
+        if (comparisons != null)
+            AddComparisonExtensions(handle, comparisons, operatorPackage!, names, signatures, typeContext);
         AddMemberAwaitBridges(handle, def, result, names, signatures, typeContext);
         foreach (var methodHandle in def.GetMethods())
         {
