@@ -34,6 +34,13 @@ class PropertyDelegateUpperDelegate(private var v: String) {
 
 private interface PropertyDelegateState<out T> { val value: T }
 private class PropertyDelegateCell<T>(override var value: T) : PropertyDelegateState<T>
+private class PropertyDelegateRaw(val raw: Any?)
+@Suppress("UNCHECKED_CAST")
+private operator fun <R> PropertyDelegateRaw.getValue(thisRef: Any?, property: KProperty<*>): R = raw as R
+private fun <T> propertyDelegateReader(raw: PropertyDelegateRaw): () -> Any? {
+    val answer: T by raw
+    return { answer }
+}
 @Suppress("NOTHING_TO_INLINE")
 private inline operator fun <T> PropertyDelegateState<T>.getValue(thisRef: Any?, property: KProperty<*>): T {
     check(thisRef == null && property.name == "items")
@@ -127,6 +134,8 @@ class PropertyDelegateTests {
         upper = "world"
         assertEquals("WORLD", upper)           // WORLD
         PropertyDelegateWriter().exercise()
+        assertEquals("lifted", propertyDelegateReader<String>(PropertyDelegateRaw("lifted"))())
+        assertEquals(37, propertyDelegateReader<Int>(PropertyDelegateRaw(37))())
     }
 
     @TestAttribute

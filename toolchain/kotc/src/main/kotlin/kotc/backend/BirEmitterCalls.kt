@@ -2532,14 +2532,12 @@ private fun BirEmitter.localDelegateAccess(call: IrCall, property: IrLocalDelega
 	val pre = mutableListOf<BirStatement>()
 	val parameter = if (accessor === property.setter) regularParams(accessor).single() else null
 	val previous = parameter?.let {
-		val (binding, value) = bindOnce(regularArgs(call).single(), it.type, "__delegateArg")
-		binding?.let(pre::add)
-		valSubst.put(it, value)
+		valSubst.put(it, callPlan(call).bindValue(regularArgs(call).single(), "arg", "assigned value"))
 	}
 	val saved = activeDelegateType
 	activeDelegateType = delegate.type
 	try {
-		val result = spliceBodyWithReturns(accessor, accessor === property.setter, pre)
+		val result = withoutSourcePoints { spliceBodyWithReturns(accessor, accessor === property.setter, pre) }
 		return if (pre.isEmpty()) result else sourceValueBlock(stmts = pre, result = result)
 	} finally {
 		activeDelegateType = saved

@@ -623,8 +623,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// anonymous-object class is made generic over. Parallel to liftedTypeArgNames; the construction site (blockExpr)
 	// renders each through birType so the enclosing-scope `tv` (method/type) is emitted structurally.
 	internal val liftedTypeArgParams = java.util.IdentityHashMap<IrClass, List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>>()
-	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
-	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
+	// Local accessors are projected at their call sites, including their lexical type dependencies.
 	internal val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
 	// The delegate type while projecting a generated accessor body. Lazy.getValue is
 	// @InlineOnly; unlike ordinary convention calls it has no runtime declaration.
@@ -1002,7 +1001,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear(); refTypeByVariable.clear()
 		refTypeParameterIds.clear()
-		localFunctionOwnerByVariable.clear(); localFunctionIds.clear()
+		localFunctionOwnerByVariable.clear(); localFunctionIds.clear(); localDelegates.clear()
 		propertyAssociations.clear(); propertyAssociationCounter = 0
 		indexLocalFunctionOwnership(file)
 		// Compile-time kotlin.clr intrinsics are consumed at their call sites and have no physical CLR method.
