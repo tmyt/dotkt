@@ -15,6 +15,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     readonly List<ReferenceAssembly> _assemblies;
     readonly ManagedReferenceCatalog _compileRefs;
+    internal string CompileStdlibName => _compileRefs.CompileStdlibName;
 
     // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
     readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias

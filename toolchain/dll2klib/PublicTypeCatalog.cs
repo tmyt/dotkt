@@ -25,7 +25,7 @@ internal readonly record struct PublicTypeSurface(
 // Resolve those references against the complete MSBuild reference universe before publishing a
 // Kotlin supertype: Kotlin has no surface spelling for a CLR interface edge containing an
 // inaccessible classifier.
-internal sealed class PublicTypeCatalog : IDisposable
+internal sealed partial class PublicTypeCatalog : IDisposable
 {
     private readonly Dictionary<string, PublicTypeCatalogEntry> _entries;
     private readonly Dictionary<string, string> _assemblyPaths;

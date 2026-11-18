@@ -478,6 +478,11 @@ AssemblyMetadata("DotKt.LibraryKind", "stdlib")
 The authoritative frontend surface is the standard-library KLIB, so these CLR
 assemblies must not also be projected as reference KLIBs.
 
+When projecting an annotation class, dll2klib restores its Kotlin `@Target`
+from the actual stdlib attribute constructor and enum literals. An explicit
+empty target list remains empty; an absent attribute leaves Kotlin's defaults
+in effect. CLR `AttributeUsage` is not a substitute for Kotlin target metadata.
+
 - Direct CLI mode reports a warning and ignores a marked stdlib assembly.
 - Batch/response-file mode silently removes marked stdlib assemblies because
   they are expected members of an MSBuild-resolved reference set.

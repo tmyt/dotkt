@@ -41,6 +41,9 @@ sealed class ManagedReferenceCatalog
     public IReadOnlyList<Entry> Entries { get; }
     public IReadOnlyList<string> Paths { get; }
 
+    public string CompileStdlibName =>
+        _bySimpleName.TryGetValue(RuntimeStdlibName, out var stdlib) ? stdlib.Identity.Name : null;
+
     /// <summary>
     /// The runtime stdlib twin's file, when the ref-reader collapse removed it from the resolution set.
     /// </summary>
