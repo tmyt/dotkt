@@ -199,7 +199,7 @@
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
     <PropertyGroup Condition="'@(DotKtCompilerPlugin)' != '' or '@(DotKtCompilerPluginOption)' != ''">
-      <_DotKtPluginArguments>@&quot;$(IntermediateOutputPath)dotkt-plugins.rsp&quot;</_DotKtPluginArguments>
+      <_DotKtPluginArguments>&quot;-Xdotkt-plugin-arguments=$(IntermediateOutputPath)dotkt-plugins.rsp&quot;</_DotKtPluginArguments>
     </PropertyGroup>
     <WriteCompilerPluginArguments Condition="'$(_DotKtPluginArguments)' != ''"
                                   OutputFile="$(IntermediateOutputPath)dotkt-plugins.rsp"

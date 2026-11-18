@@ -18,7 +18,7 @@ public sealed class WriteCompilerPluginArguments : Microsoft.Build.Utilities.Tas
         {
             var args = new List<string>();
             var hashes = new List<string>();
-            var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var jar in Plugins)
             {
                 var path = jar.GetMetadata("FullPath");

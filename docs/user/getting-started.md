@@ -189,6 +189,11 @@ path are loaded once. Options retain declaration order and repetitions; each plu
 decides which options may repeat. Changing or removing a registration, option, or
 JAR content invalidates Kotlin compilation.
 
+Visual Studio checks file timestamps before invoking MSBuild. If plugin tooling
+can replace a JAR while preserving its timestamp, set
+`<DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>` in the project
+so Build/F5 runs the same content check as `dotnet build`.
+
 ### Reference assemblies and native resources
 
 Starting with 0.9.20, set `ProduceReferenceAssembly=true` to also

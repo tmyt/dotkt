@@ -44,6 +44,7 @@ object SelectedCallDeclarations {
 	private val irReferenceOwners = mutableMapOf<Key, IrType>()
 
 	fun reset() { source.clear(); ir.clear(); adapterCalls.clear(); referenceOwners.clear(); irReferenceOwners.clear() }
+	internal fun sites() = (source.keys + referenceOwners.keys).map { it.file to it.end }
 
 	/** A lookup-only relation can select an owner absent from the receiver's declaration inheritance.
 	 * Preserve that exact constructed owner without changing the authored callable-reference type. */
@@ -92,7 +93,7 @@ object SelectedCallDeclarations {
 				expression.acceptChildrenVoid(this)
 				val adapter = expression.symbol.owner as? IrSimpleFunction ?: return
 				if (adapter.origin != IrDeclarationOrigin.ADAPTER_FOR_CALLABLE_REFERENCE) return
-				val selected = at(file.fileEntry.name, expression.endOffset, adapter.name.asString(), reference = true)
+				val selected = at(PluginCallSites.sourceOf(file.fileEntry.name, expression), expression.endOffset, adapter.name.asString(), reference = true)
 					?: return
 				val target = expression.reflectionTarget ?: return
 				adapter.body?.acceptVoid(object : IrVisitorVoid() {

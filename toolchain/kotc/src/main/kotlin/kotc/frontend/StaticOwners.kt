@@ -9,6 +9,7 @@ object ClrStaticOwners {
 	private val source = mutableMapOf<Key, ConeKotlinType>()
 	private val ir = mutableMapOf<Key, IrType>()
 	fun reset() { source.clear(); ir.clear() }
+	internal fun sites() = source.keys.map { it.file to it.end }
 	fun record(file: String, end: Int, name: String, kind: String, owner: ConeKotlinType) {
 		val key = Key(file, end, name, kind)
 		val previous = source.putIfAbsent(key, owner)

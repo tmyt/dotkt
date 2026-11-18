@@ -4,6 +4,12 @@
   file only chains the standard .NET SDK. -->
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 
+  <!-- Include registrations from project and package imports in the IDE's
+       timestamp-based check, before it decides whether to invoke MSBuild. -->
+  <ItemGroup>
+    <UpToDateCheckInput Include="@(DotKtCompilerPlugin)" />
+  </ItemGroup>
+
   <!-- Validate each inner build from SDK-owned capability data. NuGet also rejects DotKt.Stdlib on an incompatible
        TFM, but this diagnostic remains deterministic when a project deliberately opts out of the implicit stdlib. -->
   <Target Name="DotKtValidateTargetFramework"

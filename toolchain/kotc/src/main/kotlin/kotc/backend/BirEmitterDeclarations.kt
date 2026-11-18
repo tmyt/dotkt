@@ -2449,7 +2449,7 @@ internal fun BirEmitter.sourcePathOf(node: IrElement): String? {
 		while (owner is IrDeclaration) owner = owner.parent
 		return (owner as? IrFile)?.fileEntry?.name
 	}
-	return locationOf(node)?.path
+	return kotc.frontend.PluginCallSites.sourceOf(locationOf(node)?.path, node)
 }
 
 /** The `companionReceiver` declaration field for a Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`,

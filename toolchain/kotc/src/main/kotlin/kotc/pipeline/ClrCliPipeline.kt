@@ -149,7 +149,7 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 		val fir2IrResult = input.frontendOutput.convertToIrAndActualize(
 			Fir2IrExtensions.Default,
 			Fir2IrConfiguration.forKlibCompilation(input.configuration, input.configuration.diagnosticsCollector),
-			irGeneratorExtensions = input.configuration.getCompilerExtensions(IrGenerationExtension),
+			irGeneratorExtensions = kotc.frontend.PluginCallSites.guard(input.configuration.getCompilerExtensions(IrGenerationExtension)),
 			irMangler = JsManglerIr,
 			visibilityConverter = ClrFir2IrVisibilityConverter,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,
