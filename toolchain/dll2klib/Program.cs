@@ -2510,7 +2510,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                     constructor,
                     PhysicalParameterKeys(method, context)));
             }
-            else if ((method.Attributes & MethodAttributes.SpecialName) == 0 && !name.StartsWith('<'))
+            else if (!name.StartsWith('<') && ((method.Attributes & MethodAttributes.SpecialName) == 0 ||
+                IsExplicitOperatorMethod(clrMethodName, method.Attributes)))
             {
                 var modalityForMethod = isClrDelegate ? 2
                     : (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
@@ -4922,6 +4923,14 @@ internal sealed partial class AssemblyScanner : IDisposable
         if (!type.HasClassName) return false;
         return type.ClassName == ownerName;
     }
+
+    // Publish the operator's actual static/instance MethodDef through the ordinary
+    // function path. Conversion overloads require result-type selection and cannot
+    // be exposed by this parameter-based Kotlin call surface.
+    private static bool IsExplicitOperatorMethod(string name, MethodAttributes attributes) =>
+        (attributes & MethodAttributes.RTSpecialName) == 0 &&
+        name.StartsWith("op_", StringComparison.Ordinal) && name.Length > 3 &&
+        name is not ("op_Implicit" or "op_Explicit" or "op_CheckedExplicit" or "op_CheckedImplicit");
 
     private static readonly Dictionary<string, string> OperatorNames = new(StringComparer.Ordinal)
     {

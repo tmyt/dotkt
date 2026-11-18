@@ -172,6 +172,10 @@ ordinary .NET platform rules and remain the application's responsibility.
   typed `or`, `and`, `xor`, `inv`, and `in` operations without leaving its enum type.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
   (`==` deliberately routes to `Equals`, the Kotlin semantics.)
+- A non-conversion CLR operator is also callable by its exact method name. For example,
+  `SqlInt32.op_Equality(a, b)` returns a `SqlBoolean`, including SQL null. Call static
+  operators on the declaring type and mutating instance operators on the receiver.
+  Calling `op_True` or `op_False` explicitly does not make that receiver a Kotlin Boolean.
 - C#-defined **extension methods** surface as Kotlin extension functions.
 
 ### Kotlin arrays as `System.Array`
