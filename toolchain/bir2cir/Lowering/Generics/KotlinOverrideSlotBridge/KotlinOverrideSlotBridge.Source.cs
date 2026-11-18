@@ -175,17 +175,9 @@ static partial class KotlinOverrideSlotBridge
                         && slot.DescriptorMember != slot.Implementation.Name
                         && (definition.Kind != "class" || reimplements || slot.HasDefault);
                     if (!needsSignatureBridge && needsPropertySlot && definition.Kind != "interface")
-                    {
+                        // Only declaration shape is known here. Bind the MethodImpl after the
+                        // implemented interface and its type arguments have their final storage.
                         slot.Implementation.SetVirtual();
-                        var descriptor = new BirMethodImpl { Owner = slot.DescriptorSpec, Member = slot.DescriptorMember,
-                            Arity = slot.Implementation.Arity, Params = slot.Signature ?? slot.Parameters, Ret = slot.Return,
-                            TypeParams = slot.TypeParameters == null ? default
-                                : OptionalField<BirTypeParameter[]>.Of(SubstituteParameters(slot.TypeParameters, slot.SemanticSpec.Args ?? Array.Empty<TypeNode>())),
-                            DotktValueReturn = slot.UnitValueReturn ? OptionalField<bool>.Of(true) : default };
-                        var method = slot.Implementation.Source;
-                        if (!method.ClrInterfaceImpls.OrEmpty().Any(existing => existing.StructurallyEquals(descriptor)))
-                            method.ClrInterfaceImpls = method.ClrInterfaceImpls.OrEmpty().Append(descriptor).ToArray();
-                    }
                 });
         }
     }

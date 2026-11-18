@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Custom mutable map entry sets now work both through delegation and through a
+  generic base class, retaining write-through access to the original map.
 - Kotlin callers in another assembly see a function's source signature and
   annotations when an IR compiler plugin adds hidden parameters.
 

@@ -280,6 +280,9 @@ static partial class KotlinOverrideSlotBridge
                     if (definition.Kind == "interface") context.ExactSources[bridge] = association;
                 }
             }
+            // The bridge entry implements the selected declaration's signature, including
+            // arguments substituted from its exact constructed owner. Its body adapts to the implementation.
+            bridge._physicalDeclarationSignature = true;
             var exact = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,
                 slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn);
             if (slot.ReferenceMember != null && slot.ReferenceMember != slot.DescriptorMember) exact.ReferenceMember = slot.ReferenceMember;

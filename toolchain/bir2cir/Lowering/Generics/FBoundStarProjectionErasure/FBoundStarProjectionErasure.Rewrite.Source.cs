@@ -148,8 +148,9 @@ static partial class FBoundStarProjectionErasure
         if (!typesOnly) RewriteSourceRuntimeClassifier(node, scope.ThisType, state);
         var positions = new Dictionary<string, int>(StringComparer.Ordinal);
         node.RewriteOwnFieldsInPlace((field, _, type) => {
-            // A selected MethodImpl names the exact constructed parent, not a value to erase.
-            if (field == "owner" && node is BirMethodImpl slotOwner && state.SelectedSlotOwners?.Contains(slotOwner) == true)
+            // A final MethodImpl describes a closed declaration, not independently erasable values.
+            if (node is BirMethodImpl descriptor && state.SelectedSlotOwners?.Contains(descriptor) == true
+                && field is "owner" or "params" or "ret")
                 return type;
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
