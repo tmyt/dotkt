@@ -2235,6 +2235,16 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             _exactPhysicalTypeByDottedName.TryGetValue(OwnerIdentity(ownerFqn, arity), out exact);
     }
 
+    // Top-level arity is already in the type arguments. Preserve nested segments, but do not
+    // merge top-level Kotlin interfaces just because they have the same CLR representation.
+    internal string HierarchyComparisonName(string name, int arity)
+    {
+        if (name.Contains('+')) return name;
+        if (!IsLocalEmittedType(name) && TryExactPhysicalTypeName(name, arity, out var exact)
+            && exact?.Contains('+') == true) return exact;
+        return BareOwnerFqn(name);
+    }
+
     // Exact CLR metadata identity for a trusted external DotKt classifier. Local source declarations remain
     // authoritative and therefore never rewrite through a same-named reference.
     // Reference mappings are complete at construction; replacing the local inventory starts a new snapshot lifetime.
