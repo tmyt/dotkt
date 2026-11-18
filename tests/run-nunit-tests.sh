@@ -475,6 +475,12 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
 		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		if ! python3 "$ROOT/tests/roundtrip/assert-fragment-constant.py" \
+			"$ROOT/toolchain/kotc/build/install/kotc/bin/kotc" \
+			"$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.fragment-constant.log" 2>&1; then
+			echo "  FRAGMENT CONSTANT FAIL"; tail -25 "$ROOT/build/nunit-$name.fragment-constant.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" --representation-types "$STDLIB_REF_DLL" "$STDLIB_RT_DLL" \
 			"$ROOT/tests/roundtrip/upstream-stdlib-producer/bin/$CONFIGURATION/net10.0/UpstreamStdlibProducer.dll" \
 			"$dir/obj/$CONFIGURATION/net10.0/klib/UpstreamStdlibProducer.klib" \

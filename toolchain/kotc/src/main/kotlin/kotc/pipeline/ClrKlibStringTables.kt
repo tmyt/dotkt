@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.config.AnalysisFlags
 import org.jetbrains.kotlin.descriptors.annotations.AnnotationUseSiteTarget
 import org.jetbrains.kotlin.fir.FirModuleData
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.SessionConfiguration
 import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
 import org.jetbrains.kotlin.fir.declarations.FirFunction
 import org.jetbrains.kotlin.fir.declarations.FirProperty
@@ -20,8 +21,15 @@ import org.jetbrains.kotlin.fir.deserialization.*
 import org.jetbrains.kotlin.fir.isNewPlaceForBodyGeneration
 import org.jetbrains.kotlin.fir.languageVersionSettings
 import org.jetbrains.kotlin.fir.resolve.providers.FirSymbolProvider
+import org.jetbrains.kotlin.fir.resolve.providers.FirProvider
+import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
+import org.jetbrains.kotlin.fir.resolve.providers.impl.FirCachingCompositeSymbolProvider
+import org.jetbrains.kotlin.fir.resolve.providers.impl.FirLibrarySessionProvider
 import org.jetbrains.kotlin.fir.scopes.FirKotlinScopeProvider
 import org.jetbrains.kotlin.fir.session.KlibBasedAnnotationDeserializer
+import org.jetbrains.kotlin.fir.session.KlibBasedSymbolProvider
+import org.jetbrains.kotlin.fir.session.StructuredProviders
+import org.jetbrains.kotlin.fir.session.structuredProviders
 import org.jetbrains.kotlin.library.KotlinLibrary
 import org.jetbrains.kotlin.library.components.metadata
 import org.jetbrains.kotlin.library.metadata.*
@@ -59,6 +67,34 @@ internal class ClrKlibStringTables(val libraries: List<KotlinLibrary>) {
         if (encoded.isEmpty()) emptyList() else listOf(ClrUtf16KlibSymbolProvider(session, modules, scopes, libraries))
 }
 
+/** Separate HMPP compilation creates each non-leaf library session inside the Kotlin CLI.
+ * Its additional-provider callback runs *after* a stock KLIB reader is selected. Replace
+ * that reader in place before any source session snapshots its dependencies; appending a
+ * reader would expose the encoded string (or duplicate the same declaration). */
+internal class ClrFragmentStringTables {
+    private val replacements = mutableMapOf<FirSession, FirSymbolProvider>()
+
+    fun record(session: FirSession, modules: ModuleDataProvider, scopes: FirKotlinScopeProvider, libraries: List<KotlinLibrary>) {
+        ClrKlibStringTables(libraries).providers(session, modules, scopes).singleOrNull()?.let { replacements[session] = it }
+    }
+
+    @OptIn(SessionConfiguration::class)
+    fun beforeSourceSessions() {
+        for ((session, reader) in replacements) {
+            val dependencies = session.structuredProviders
+            val stock = dependencies.dependencyProviders.filterIsInstance<KlibBasedSymbolProvider>().single()
+            fun List<FirSymbolProvider>.withReader() = map { if (it === stock) reader else it }
+            session.register(StructuredProviders::class, StructuredProviders(dependencies.sourceProviders, dependencies.incrementalProvider,
+                dependencies.dependencyProviders.withReader(), dependencies.sharedProvider))
+            val providers = (session.symbolProvider as FirCachingCompositeSymbolProvider).providers.withReader()
+            val composite = FirCachingCompositeSymbolProvider(session, providers)
+            session.register(FirSymbolProvider::class, composite)
+            session.register(FirProvider::class, FirLibrarySessionProvider(composite))
+        }
+        replacements.clear()
+    }
+}
+
 /** Decode at the metadata boundary, before any declaration/annotation is deserialized. */
 internal fun clrKlibNameResolver(library: KotlinLibrary, fragment: ProtoBuf.PackageFragment): NameResolverImpl {
     val codec = library.manifestProperties.getProperty(STRING_TABLE_CODEC)
@@ -94,7 +130,6 @@ private class ClrUtf16KlibSymbolProvider(
     session, modules, scopes, FirDeclarationOrigin.Library, KlibMetadataSerializerProtocol,
 ) {
     private val annotationDeserializer = KlibBasedAnnotationDeserializer(session)
-    private val constDeserializer = FirConstDeserializer(KlibMetadataSerializerProtocol)
     private val flexibleTypes = FirTypeDeserializer.FlexibleTypeFactory.Default
     private val configuration = CommonCompilerDeserializationConfiguration(session.languageVersionSettings)
     private val headers = libraries.associateWith { parseModuleHeader(it.metadata.moduleHeaderData) }
@@ -130,7 +165,7 @@ private class ClrUtf16KlibSymbolProvider(
     override fun computePackagePartsInfos(packageFqName: FqName) = parts(packageFqName).map { part ->
         PackagePartsCacheData(part.fragment.`package`, FirDeserializationContext.createForPackage(
             packageFqName, part.fragment.`package`, part.names, part.module,
-            annotationDeserializer, flexibleTypes, constDeserializer, kdocDeserializer, part.source,
+            annotationDeserializer, flexibleTypes, FirConstDeserializer(KlibMetadataSerializerProtocol), kdocDeserializer, part.source,
         ), part, fileAnnotations = fileAnnotations(part))
     }
 
