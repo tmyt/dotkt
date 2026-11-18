@@ -155,6 +155,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   an enclosing-frame check. Construction, inheritance, lexical receivers, and the hidden enclosing-instance slot
   retain their exact CLR class head; nested type arguments still use their ordinary physical value representation.
   Imported CLR declaration signatures do not change.
+- A CLR class constraint cannot be satisfied by an existential interface. For example, when
+  constructing `Queue<Frame<*>>` with `A : Item`, a shared CLR base such as `Item` can represent
+  the queue's element type if it satisfies the declared constraints for every frame. This does not
+  widen native constructor arguments: a CLR `List<Frame<Long>>` still requires its exact element type.
 - **Generic declarations retain exact dependent Kotlin relations in metadata and representable CLR proofs.**
   For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
   express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.
