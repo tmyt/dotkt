@@ -1766,7 +1766,7 @@ internal fun BirEmitter.sourceClassDefinition(klass: IrClass, captures: List<Pai
 		var parent: Any? = klass.parent
 		while (parent != null) {
 			when (parent) {
-				is IrClass -> return if (parent.isCompanion) parent.parent as? IrClass else parent
+				is IrClass -> return parent
 				is IrDeclaration -> parent = parent.parent
 				else -> return null
 			}
@@ -2023,9 +2023,7 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 	val savedSemanticOwner = activeSemanticOwner
 	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
 	activeSemanticOwnerDeclaration = klass
-	activeSemanticOwner = if (klass.isCompanion)
-		(klass.parent as? IrClass)?.let(::typeName) ?: fileClass
-	else typeName(klass)
+	activeSemanticOwner = typeName(klass)
 	// Captured outer values arrive as leading ctor params and are stored into the capture fields first
 	// (the instance initializers below read them, e.g. `var cur = from` -> `this.__outer.from`).
 	val capParams = captures.map { (decl, fname) ->
