@@ -94,34 +94,37 @@ static partial class ClrMemberResolution
 
     // A memberRef keeps the target's exact metadata spelling (`List`1`, nested `+`) but the MethodImpl descriptor is
     // ordinary CIR type vocabulary (arity-free, dotted).  Selection compares those two vocabularies structurally;
-    // only the comparison drops metadata punctuation. MemberRefOf retains the exact reflected name.
-    internal static TypeNode MethodImplComparisonType(TypeNode type)
+    // MemberRefOf retains the exact reflected name. Comparing two physical hierarchy edges instead
+    // resolves their classifiers through the reference index, since flattening can merge distinct TypeDefs.
+    static TypeNode MethodImplComparisonType(TypeNode type) => MethodImplComparisonType(type, null);
+
+    internal static TypeNode MethodImplComparisonType(TypeNode type, ReferenceMetadataIndex ownerIndex)
     {
+        TypeNode Compare(TypeNode child) => MethodImplComparisonType(child, ownerIndex);
         type = BirTypeLowering.CanonicalPhysicalSlotType(type);
         return type switch
         {
-            TypeNode.Fqn f => new TypeNode.Fqn(
-                ReferenceMetadataIndex.BareOwnerFqn(f.Name).Replace('+', '.'),
-                f.Args?.Select(MethodImplComparisonType).ToArray()),
+            TypeNode.Fqn f => new TypeNode.Fqn(ownerIndex?.HierarchyComparisonName(f.Name, f.Args?.Length ?? 0)
+                ?? ReferenceMetadataIndex.BareOwnerFqn(f.Name).Replace('+', '.'), f.Args?.Select(Compare).ToArray()),
             TypeNode.Array array => new TypeNode.Array(
-                MethodImplComparisonType(array.Elem), array.Rank, array.SzArray),
+                Compare(array.Elem), array.Rank, array.SzArray),
             // Compare the document's physical nullable wrapper with metadata's constructed Nullable`1<V>.
             TypeNode.Nullable nullable => new TypeNode.Fqn("System.Nullable",
-                new[] { MethodImplComparisonType(nullable.Of) }),
-            TypeNode.Oblivious oblivious => new TypeNode.Oblivious(MethodImplComparisonType(oblivious.Of)),
-            TypeNode.ByRef byRef => new TypeNode.ByRef(MethodImplComparisonType(byRef.Of)),
-            TypeNode.Ptr pointer => new TypeNode.Ptr(MethodImplComparisonType(pointer.Of)),
+                new[] { Compare(nullable.Of) }),
+            TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Compare(oblivious.Of)),
+            TypeNode.ByRef byRef => new TypeNode.ByRef(Compare(byRef.Of)),
+            TypeNode.Ptr pointer => new TypeNode.Ptr(Compare(pointer.Of)),
             TypeNode.Mod modifier => new TypeNode.Mod(modifier.Req,
-                MethodImplComparisonType(modifier.M), MethodImplComparisonType(modifier.Of)),
+                Compare(modifier.M), Compare(modifier.Of)),
             TypeNode.FnPtr pointer => pointer with {
-                Ret = MethodImplComparisonType(pointer.Ret),
-                Params = pointer.Params.Select(MethodImplComparisonType).ToArray(),
+                Ret = Compare(pointer.Ret),
+                Params = pointer.Params.Select(Compare).ToArray(),
             },
-            TypeNode.Fn { Clr: not null } fn => MethodImplComparisonType(BirTypeLowering.DelegateFqnOf(fn)),
+            TypeNode.Fn { Clr: not null } fn => Compare(BirTypeLowering.DelegateFqnOf(fn)),
             TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
-                MethodImplComparisonType(fn.Ret), fn.Params.Select(MethodImplComparisonType).ToArray(),
-                fn.Recv == null ? null : MethodImplComparisonType(fn.Recv), fn.Clr,
-                fn.Ctx?.Select(MethodImplComparisonType).ToArray()),
+                Compare(fn.Ret), fn.Params.Select(Compare).ToArray(),
+                fn.Recv == null ? null : Compare(fn.Recv), fn.Clr,
+                fn.Ctx?.Select(Compare).ToArray()),
             _ => type,
         };
     }

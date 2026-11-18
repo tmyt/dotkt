@@ -144,10 +144,15 @@ static class ReferenceMetadataReader
 
     internal static TypeNode.Fqn ExactDeclaringView(Type type)
     {
-        if (DeclarationTypeNode(type) is not TypeNode.Fqn view) return null;
+        if (HierarchyView(type) is not TypeNode.Fqn view) return null;
         var definition = type.IsConstructedGenericType ? type.GetGenericTypeDefinition() : type;
         return new TypeNode.Fqn(ExactPhysicalMetadataName(definition), view.Args);
     }
+
+    // Total arity disambiguates a top-level hierarchy edge, not a nested one:
+    // Outer<T>.Face<U> and Outer.Face<T,U> have the same flattened signature.
+    static TypeNode.Fqn HierarchyView(Type type) =>
+        DeclarationTypeNode(type, nominalDelegates: false, preserveNestedIdentity: true) as TypeNode.Fqn;
 
     internal static string CompanionExtensionKey(string owner, string receiverJson, string kind, string sourceName)
     {
@@ -497,8 +502,8 @@ static class ReferenceMetadataReader
                     var semanticTypeShape = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
-                        DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
-                        type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
+                        HierarchyView(type.BaseType),
+                        type.GetInterfaces().Select(HierarchyView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
                     metadata.TypeShapes[typeDeclarationIdentity] = semanticTypeShape;
                     // Inheritance edges are declaration identities just like member owners. The exact index retains
                     // the reflected TypeDef spelling so current-format override markers traverse a physical graph
@@ -2864,15 +2869,21 @@ static class ReferenceMetadataReader
     // here and must retain their CLR owner space and position.
     internal static TypeNode DeclarationTypeNode(Type type) => DeclarationTypeNode(type, nominalDelegates: false);
 
-    internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates)
+    internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
+        DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
+
+    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity)
     {
+        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity);
+        string Name(Type def) => preserveNestedIdentity && def.IsNested ? ExactPhysicalMetadataName(def)
+            : DottedFqn(StripGenericArity(def.FullName ?? def.Name));
         if (type == null) return null;
-        if (type.IsByRef) return DeclarationTypeNode(type.GetElementType()!, nominalDelegates) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
+        if (type.IsByRef) return Project(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
         if (type.IsPointer)
-            return DeclarationTypeNode(type.GetElementType()!, nominalDelegates) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
+            return Project(type.GetElementType()!) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
         if (type.IsArray)
         {
-            if (DeclarationTypeNode(type.GetElementType()!, nominalDelegates) is not TypeNode e1) return null;
+            if (Project(type.GetElementType()!) is not TypeNode e1) return null;
             return type.IsSZArray ? new TypeNode.Array(e1) : TypeNode.Array.General(e1, type.GetArrayRank());
         }
         if (type.IsGenericParameter)
@@ -2884,21 +2895,21 @@ static class ReferenceMetadataReader
         {
             var invoke = type.GetMethod("Invoke");
             if (invoke == null) return null;
-            var ret = DeclarationTypeNode(invoke.ReturnType);
-            var ps = invoke.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray();
+            var ret = Project(invoke.ReturnType);
+            var ps = invoke.GetParameters().Select(p => Project(p.ParameterType)).ToArray();
             return ret != null && ps.All(p => p != null) ? new TypeNode.Fn(false, ret, ps, null, delegateFamily) : null;
         }
         if (type.IsConstructedGenericType)
         {
             var def = type.GetGenericTypeDefinition();
-            var args = type.GetGenericArguments().Select(argument => DeclarationTypeNode(argument, nominalDelegates)).ToArray();
+            var args = type.GetGenericArguments().Select(Project).ToArray();
             if (IsNullableDefinition(def)) return new TypeNode.Nullable(args[0]);
-            return new TypeNode.Fqn(DottedFqn(StripGenericArity(def.FullName ?? def.Name)), args);
+            return new TypeNode.Fqn(Name(def), args);
         }
         // This is an exact reflected declaration, not Kotlin's Unit-return convention. A real Unit class must stay
         // a value-position token here, particularly beneath constructed interfaces; only System.Void denotes no value.
         var prim = type.FullName == "kotlin.Unit" ? null : PrimitiveBirName(type);
-        return new TypeNode.Fqn(prim ?? DottedFqn(StripGenericArity(type.FullName ?? type.Name)));
+        return new TypeNode.Fqn(prim ?? Name(type));
     }
 
     static bool IsFunc(Type type) =>

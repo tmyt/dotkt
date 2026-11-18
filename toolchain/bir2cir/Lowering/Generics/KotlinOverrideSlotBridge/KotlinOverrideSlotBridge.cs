@@ -396,7 +396,7 @@ static partial class KotlinOverrideSlotBridge
         TypeNode Physical(TypeNode type) => ClrMemberResolution.MethodImplComparisonType(
             BirTypeLowering.LowerPhysicalType(
                 type, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false, localTypeNames,
-                nullableFrames: refs.NullableTypeFrames));
+                nullableFrames: refs.NullableTypeFrames), refs);
         var physicalSlot = Physical(slotOwner);
         return SupertypeGraph.Reachable(new Def { Interfaces = cls.Interfaces }, defs, refs)
             .Any(edge => edge.isInterface && Equals(Physical(edge.spec), physicalSlot));
