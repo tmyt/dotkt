@@ -6,8 +6,6 @@ static partial class ClrMemberResolution
 {
     internal static void SourceInheritedExternalCallsSelfTest()
     {
-        var previousReferences = _refs;
-        try
         {
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var obj = new TypeNode.Fqn("System.Object"); var text = new TypeNode.Fqn("System.String");
@@ -163,7 +161,6 @@ static partial class ClrMemberResolution
                     "absent/null result stamp presence was invented");
             }
         }
-        finally { _refs = previousReferences; }
         Console.WriteLine("[source inherited external calls] self-test OK (current hierarchy, local priority, exact metadata, delegate frames, MOVE continuation)");
     }
 }

@@ -7,8 +7,6 @@ static partial class ClrMemberResolution
 {
     internal static void WellKnownTableSelfTest()
     {
-        var prior = _refs;
-        try
         {
             var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var method = new BirFunctionDeclaration {
@@ -78,6 +76,5 @@ static partial class ClrMemberResolution
                     throw new InvalidOperationException("Final CIR role-table codecs changed selected physical facts");
             Console.WriteLine("[typed fixed-member table] self-test OK (actual references, twelve exact roles, open signatures, continuing owners, BIR/CIR JSON+MessagePack)");
         }
-        finally { _refs = prior; }
     }
 }

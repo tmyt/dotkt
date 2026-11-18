@@ -11,7 +11,6 @@ static partial class ClrMemberResolution
     internal static void ResolveBaseConstructors(BirFileDeclaration root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes)
     {
-        _refs = refs;
         foreach (var type in root.Types.OrEmpty())
         {
             if (type.Base.OrDefault() is not TypeNode.Fqn baseFqn || localTypes.Contains(baseFqn.Name)) continue;
@@ -29,14 +28,14 @@ static partial class ClrMemberResolution
                     .Where(candidate => candidate.GetParameters().Length == signature.Count).ToList();
                 var winner = ctor.DelegationDeclarationId.HasValue
                     ? refs.SelectConstructorDeclaration(candidates, ctor.DelegationDeclarationId.Value)
-                    : ClrDeclarationMatching.PickDeclaredConstructor(_refs, candidates, signature,
+                    : ClrDeclarationMatching.PickDeclaredConstructor(refs, candidates, signature,
                         $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(signature)})");
                 ctor.BaseCtorRef = BirMemberReference.FromPhysical(MemberRefOf(refs, winner,
                     MemberRefNode.Kinds.Ctor, open, baseFqn.Args));
                 var parameters = winner.GetParameters();
                 for (var index = 0; index < parameters.Length; index++)
                 {
-                    var slot = SupertypeGraph.SubstOwnerTvs(ClrDeclarationMatching.RefTypeOf(_refs, _localTypes, parameters[index].ParameterType), baseFqn.Args ?? []);
+                    var slot = SupertypeGraph.SubstOwnerTvs(ClrDeclarationMatching.RefTypeOf(refs, _localTypes, parameters[index].ParameterType), baseFqn.Args ?? []);
                     MarkDelegateSlot((BirGraphValue)arguments[index], SubstituteMethodTypeArgs(slot, []), refs, localTypes);
                 }
                 ctor.DelegationDeclarationId = default;

@@ -81,7 +81,7 @@ The resolution path's state and its current ownership:
 | State | Writers / readers | Lifetime and problem | Required boundary |
 |---|---|---|---|
 | `ReferencedCallSignatures.snapshots`, `nextId` | Module source capture allocates; cold-call capability extends; referenced graph reader borrows read-only vectors; root cleanup removes markers only | Compilation lifetime, independent from another module and each root's marker cleanup | Private catalog; only capture, projection, query/release and disposal operations; no selector reads the table |
-| `_refs` | Binding entry points assign it; binding queries/writers supply current facts to the scalar matching/reference units | Ambient last-call reference universe, including calls made before the final binding pass | Explicit reference queries passed to exact selection / rendering; no dependency on another entry point's initialization |
+| Binding reference queries | Pipeline supplies its existing reference index; binding walks forward it to exact selection, templates and reference rendering | Borrowed compilation universe, including calls before final binding; no process-held last-call index | Explicit method inputs; callers cannot initialize another walk's reference universe |
 | `_localTypes` | Native, declaration, referenced and delegate entry points replace it | Per invocation facts stored process-wide | Pass-owned local physical identity input, not reference metadata |
 | Referenced `externalCanonicalTypes`, `localDeclarationIds` | Caller supplies; entry normalizes absent inputs and planner reads | Entry-local references, released with that walk | Ordinary explicit selection inputs, not process-held sets or new catalog owners |
 | Physical delegate `localCarriers` | Pipeline supplies its chosen carrier relation to physical target binding, construction and value-flow | Borrowed module relation; value-flow keeps it in its existing pass-local index | Explicit seam/adapter input, not a process-held map; source-only target stamping does not consume it |
@@ -106,8 +106,8 @@ declaring/signature types from selected reflection declarations and explicit
 reference/local-type facts. It has no fields, graph writer, resource ownership
 or resolver backreference. Selection and dispatch policy stay with binding.
 Existing binding entry points still supply their current facts; the two scalar
-forwarders for current external callers remain pending that input extraction,
-not a claim that ambient binding state is gone. No new compatibility path or
+forwarders for current external callers now receive the reference index explicitly;
+local physical-type membership remains a separate input-extraction obligation. No new compatibility path or
 internal-mutation guarantee is introduced.
 
 Referenced declaration validation receives the planner's current local-type
@@ -116,7 +116,7 @@ validation and final MemberRef construction use those same facts explicitly;
 the index does not borrow the resolver's ambient scalar forwarder for this path.
 The referenced graph writer still has the remaining binding inputs listed above.
 
-Physical delegate seam checks receive that same carrier relation explicitly.
+Physical delegate seam checks receive the pipeline's chosen local carrier relation explicitly.
 Construction forwards it to materialization; final value-flow retains it in
 its existing index and supplies it per conversion. Source-only target stamping
 no longer accepts an unused relation. Cache scope, adapter construction and
@@ -134,8 +134,9 @@ defensive copies or internal-mutation guarantees are added.
 Scan borrows method/slot queries before index construction; binding uses the
 same index-owned decoder. It retains no reflection handles and closes each PE
 reader locally. There is no additional owner wrapper or defensive query copy.
-The shared grammar and emitter's instance reader are unchanged. Ambient `_refs`
-and the other invocation-state rows above remain separate obligations.
+The shared grammar and emitter's instance reader are unchanged. Binding methods
+borrow that index explicitly rather than saving it process-wide. The remaining
+ambient local-type membership above is a separate obligation.
 
 The referenced-call path already has `ReferencedCallInput` and
 `ReferencedCallPlan`: the reader/writer owns graph transport; selection owns

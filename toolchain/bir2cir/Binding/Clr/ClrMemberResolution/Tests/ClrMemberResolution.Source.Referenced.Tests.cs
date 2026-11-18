@@ -8,7 +8,7 @@ static partial class ClrMemberResolution
     {
         static void Require(bool value, string reason)
         { if (!value) throw new InvalidOperationException("Source final referenced calls: " + reason); }
-        var previousReferences = _refs; var previousLocals = _localTypes;
+        var previousLocals = _localTypes;
         var refs = ReferenceMetadataIndex.ReferencedSourceTestIndex(out var selectedPropertyId);
         var text = new TypeNode.Fqn("System.String"); var obj = new TypeNode.Fqn("System.Object");
         var integer = new TypeNode.Fqn("System.Int32"); var unit = new TypeNode.Fqn("void");
@@ -185,7 +185,7 @@ static partial class ClrMemberResolution
         }
         finally
         {
-            _refs = previousReferences; _localTypes = previousLocals;
+            _localTypes = previousLocals;
         }
     }
 }

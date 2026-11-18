@@ -26,10 +26,9 @@ static partial class ClrMemberResolution
     /// </summary>
     public static void ResolveAttributeCtors(BirFileDeclaration root, ReferenceMetadataIndex refs, string file)
     {
-        // One index per run; assigning rather than coalescing, for the reason MemberRefOf's own note gives.
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        refs = refs ?? throw new ArgumentNullException(nameof(refs));
         TypedAttributeBinding.Visit(root, attribute => {
-            ResolveAppliedAttribute(attribute);
+            ResolveAppliedAttribute(refs, attribute);
             // This lane follows the owning frontier. The earlier DOM crossing
             // check can no longer inspect a constructor first selected here.
             if (attribute.MemberRef.HasValue)
@@ -38,31 +37,31 @@ static partial class ClrMemberResolution
         });
     }
 
-    static void ResolveAppliedAttribute(BirAttribute attr)
+    static void ResolveAppliedAttribute(ReferenceMetadataIndex bindingReferences, BirAttribute attr)
     {
         if (!attr.AttrExternal.OrDefault() || attr.MemberRef.IsPresent) return;
         if (attr.Attr.OrDefault() is not TypeNode.Fqn attrFqn) return;
         var assembly = attr.AttrAssembly.OrDefault();
         var arguments = attr.ArgTypes.OrEmpty();
-        if (ResolveAppliedAttributeCtor(attrFqn, assembly, arguments) is { } selected)
+        if (ResolveAppliedAttributeCtor(bindingReferences, attrFqn, assembly, arguments) is { } selected)
             attr.MemberRef = BirMemberReference.FromPhysical(selected);
     }
 
     internal static AttributeApplication ResolveAttributeCtor(AttributeApplication attribute, ReferenceMetadataIndex refs)
     {
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        refs = refs ?? throw new ArgumentNullException(nameof(refs));
         if (attribute.AttrExternal != true || attribute.MemberRef != null || attribute.Attr is not TypeNode.Fqn type)
             return attribute;
-        return attribute with { MemberRef = ResolveAppliedAttributeCtor(type, attribute.AttrAssembly, attribute.ArgTypes) };
+        return attribute with { MemberRef = ResolveAppliedAttributeCtor(refs, type, attribute.AttrAssembly, attribute.ArgTypes) };
     }
 
-    static MemberRefNode ResolveAppliedAttributeCtor(TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments)
+    static MemberRefNode ResolveAppliedAttributeCtor(ReferenceMetadataIndex bindingReferences, TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments)
     {
         // The exact declaring scope when one is stated: a compiler-synthesized attribute can share its FQN with
         // a private lookalike, which is why that key exists at all.
         var open = assembly != null
-            ? _refs.ResolveRefTypeIn(attrFqn.Name, assembly)
-            : ResolveOwnerType(attrFqn);
+            ? bindingReferences.ResolveRefTypeIn(attrFqn.Name, assembly)
+            : ResolveOwnerType(attrFqn, refs: bindingReferences);
         // An attribute type outside the reference set is already skipped downstream — a compile-time opt-in
         // marker that need not survive into IL. Nothing to name, so nothing is claimed.
         if (open == null) return null;
@@ -79,7 +78,7 @@ static partial class ClrMemberResolution
         // program, and an attribute is decoration: refusing to compile over one would reject source because a
         // marker could not be encoded. (`PickUnique` throws, which is right where a MEMBER is being called and
         // wrong here, and the difference is the whole reason this uses the quiet form.)
-        var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, ctors, argNodes, attrFqn.Args);
-        return win == null ? null : ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
+        var win = ClrDeclarationMatching.TryPickUniqueCtor(bindingReferences, ctors, argNodes, attrFqn.Args);
+        return win == null ? null : ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
     }
 }

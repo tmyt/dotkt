@@ -13,7 +13,7 @@ static partial class TypedPhysicalOperandNormalization
         ReferenceMetadataIndex references)
     {
         var owner = references.ResolveRefType("System.Type");
-        var getter = ClrMemberResolution.MemberRefOf(owner.GetProperty("IsValueType").GetMethod,
+        var getter = ClrMemberResolution.MemberRefOf(references, owner.GetProperty("IsValueType").GetMethod,
             MemberRefNode.Kinds.Method, owner, null);
         new Normalizer(isValue ?? (_ => false), typeOf, BirMemberReference.FromPhysical(getter))
             .Walk(root, new Dictionary<string, TypeNode>(StringComparer.Ordinal));

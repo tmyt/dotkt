@@ -7,7 +7,7 @@ static partial class ClrMemberResolution
     internal static void ResolveInheritedExternalCalls(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs)
     {
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var definitions = SupertypeGraph.CollectSource(roots);
         var methods = new Dictionary<string, InheritedLocalMethod[]>(StringComparer.Ordinal);
         foreach (var owner in roots.SelectMany(root => root.Types.OrEmpty()))
@@ -36,7 +36,7 @@ static partial class ClrMemberResolution
                 : OptionalField<BirTypeParameter[]>.Of(declared.Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray());
             // This is the same selected-parameter writer used by referenced
             // binding, with the existing module delegate/carrier authorities.
-            StampSourceReferencedDelegateTargets(call.Args.OrDefault(), call.TypeArgs.OrEmpty(),
+            StampSourceReferencedDelegateTargets(refs, call.Args.OrDefault(), call.TypeArgs.OrEmpty(),
                 new ReferencedCallPlan(Declaration: plan.Declaration, DelegateOwnerArguments: plan.OwnerArgs));
             return (BirGraphValue)AdaptInheritedGenericResultSource(call);
         }

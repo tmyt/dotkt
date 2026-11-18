@@ -14,7 +14,6 @@ using DotKt.Bir;
 static partial class ClrMemberResolution
 {
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
-    static ReferenceMetadataIndex _refs;
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
@@ -23,13 +22,12 @@ static partial class ClrMemberResolution
         bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
         TypeNode[] parameterOwnerArguments = null)
     {
-        _refs = refs;
-        var declaration = ResolveOwnerType(owner)
+        var declaration = ResolveOwnerType(owner, refs: refs)
             ?? throw new InvalidOperationException("Native generic proof demand lacks its selected declaration owner");
         // This caller runs before the full BIR vocabulary walk. Lower the selected formal parameters in their
         // declaration role, not the call's value arguments, before sharing the physical descriptor matcher.
-        var signature = parameters.Select(type => ClrDeclarationMatching.CanonicalNativeFormalType(_refs, type)).ToList();
-        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(_refs, _localTypes, declaration, name, arity, instance, signature, parameterOwnerArguments)
+        var signature = parameters.Select(type => ClrDeclarationMatching.CanonicalNativeFormalType(refs, type)).ToList();
+        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(refs, _localTypes, declaration, name, arity, instance, signature, parameterOwnerArguments)
             ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{name}' "
                 + $"has no exact selected MethodDef for descriptor {string.Join(", ", parameters)}; candidates: "
                 + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
@@ -38,15 +36,7 @@ static partial class ClrMemberResolution
         return selected;
     }
 
-    // ---- shared resolution ---------------------------------------------------------------------
-
-    // Resolve the owner's OPEN definition off the ref.dll — via ResolveRefType, which (unlike ResolveNetType) does NOT
-    // skip `kotlin.*`, so a stdlib-owner clr* node (`kotlin.collections.Iterator.next()`, kept by IteratorConsumer-
-    // Normalization for the rt-stdlib link) resolves its declared member sig here too. RESPECTS generic arity: a generic
-    // owner (args present) binds the arity-suffixed def (`TaskCompletionSource`1`), never a same-named NON-generic sibling.
-    internal static Type ResolveOwnerType(TypeNode.Fqn ownerFqn)
-        => ResolveOwnerType(ownerFqn, _refs);
-
+    // Resolve the exact open owner in the caller's compile-reference universe.
     internal static Type ResolveOwnerType(TypeNode.Fqn ownerFqn, ReferenceMetadataIndex refs)
     {
         if (refs == null) return null;
@@ -72,8 +62,7 @@ static partial class ClrMemberResolution
     {
         declaration = null;
         if (refs == null || ownerFqn == null || name == null || callSignature == null) return false;
-        _refs = refs;
-        var open = ResolveOwnerType(ownerFqn);
+        var open = ResolveOwnerType(ownerFqn, refs: refs);
         if (open == null) return false;
         // Defaults belong to the same accessor MethodDef used by later interop
         // binding, not to the Kotlin operator spelling of an indexed property.
@@ -86,13 +75,13 @@ static partial class ClrMemberResolution
         var ownerArgs = ownerFqn.Args?.Select(type => Physical(type, typeArg: true)).ToArray();
         var flags = BindingFlags.Public | BindingFlags.NonPublic
             | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
-        var candidates = Candidates(open, name, argNodes, ownerArgs, flags)
+        var candidates = Candidates(refs, open, name, argNodes, ownerArgs, flags)
             .Where(IsPublicOrProtected)
             .Where(method => method.IsGenericMethodDefinition
                 ? method.GetGenericArguments().Length == methodArity
                 : methodArity == 0)
             .ToList();
-        declaration = ClrDeclarationMatching.TryPickDeclared(_refs, _localTypes, candidates, argNodes, open)
+        declaration = ClrDeclarationMatching.TryPickDeclared(refs, _localTypes, candidates, argNodes, open)
             ?? throw new InvalidOperationException(
                 $"bir2cir: default argument declaration '{ownerFqn.Name}.{name}' has no unique open signature");
         return true;
@@ -105,13 +94,13 @@ static partial class ClrMemberResolution
     // `IEnumerable<T>.GetEnumerator()` ambiguous with the inherited non-generic `IEnumerable.GetEnumerator()`
     // (resolvedMemberParams = [] cannot distinguish return-type-only overloads), so consult them only when no own member is
     // applicable. Static calls never bind an implemented-interface slot.
-    static List<MethodInfo> Candidates(Type open, string name, List<TypeNode> argNodes, TypeNode[] ownerArgs, BindingFlags flags)
+    static List<MethodInfo> Candidates(ReferenceMetadataIndex bindingReferences, Type open, string name, List<TypeNode> argNodes, TypeNode[] ownerArgs, BindingFlags flags)
     {
         var own = new List<MethodInfo>();
         try { own.AddRange(open.GetMethods(flags).Where(m => m.Name == name &&
             m.GetParameters().Length == argNodes.Count && IsPublicOrProtected(m))); } catch { }
         if ((flags & BindingFlags.Instance) == 0 ||
-            own.Any(m => ClrDeclarationMatching.Match(_refs, m.GetParameters(), argNodes, ownerArgs) != ClrDeclarationMatching.MatchKind.No))
+            own.Any(m => ClrDeclarationMatching.Match(bindingReferences, m.GetParameters(), argNodes, ownerArgs) != ClrDeclarationMatching.MatchKind.No))
             return own;
         var withInterfaces = new List<MethodInfo>(own);
         foreach (var bi in ClrDeclarationMatching.SafeInterfaces(open))
@@ -119,15 +108,15 @@ static partial class ClrMemberResolution
                 m.GetParameters().Length == argNodes.Count && IsPublicOrProtected(m))); } catch { }
         return withInterfaces;
     }
-    internal static string DeclaringTypeIdentity(MethodBase member)
+    internal static string DeclaringTypeIdentity(ReferenceMetadataIndex bindingReferences, MethodBase member)
     {
         var declaring = member?.DeclaringType
             ?? throw new InvalidOperationException($"bir2cir: resolved member '{member}' has no declaring type");
-        declaring = ClrDeclarationMatching.SafeDef(ClrDeclarationMatching.AliasResolve(_refs, declaring));
+        declaring = ClrDeclarationMatching.SafeDef(ClrDeclarationMatching.AliasResolve(bindingReferences, declaring));
         return declaring.FullName ?? declaring.Name;
     }
-    internal static JsonNode DeclaringTypeDescriptor(MethodBase member)
-        => TypeJson.Write(new TypeNode.Fqn(DeclaringTypeIdentity(member)));
+    internal static JsonNode DeclaringTypeDescriptor(ReferenceMetadataIndex bindingReferences, MethodBase member)
+        => TypeJson.Write(new TypeNode.Fqn(DeclaringTypeIdentity(bindingReferences, member)));
 
     // dispatch (clrInstance): mirrors ilemit EmitInstanceCall (Bodies.cs). All facts are MLC-readable off the resolved
     // MethodInfo + the owner value-type-ness. constraintType is redundant (== the owner `type` slot), so NOT carried.

@@ -15,8 +15,6 @@ static partial class ClrMemberResolution
             root.Visit(node => { if (ReferenceEquals(node, target)) count++; });
             return count;
         }
-        var previousReferences = _refs;
-        try
         {
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var text = new TypeNode.Fqn("System.String");
@@ -117,7 +115,6 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(otherCast.E.Value, other) && Occurrences(otherCall, (BirGraphValue)other) == 1,
                 "protected this must remain lexical while a non-this receiver is cast exactly once");
         }
-        finally { _refs = previousReferences; }
         Console.WriteLine("[typed exact CLR calls] self-test OK (real MethodDefs, open/closed signatures, argument copies, receiver-once, protected metadata and exact optional presence)");
     }
 }

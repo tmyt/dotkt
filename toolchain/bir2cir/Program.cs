@@ -1081,7 +1081,7 @@ sealed class Pipeline
 
         // These selections consume the complete physical declarations, after
         // collision allocation, without creating another source inventory.
-        ClrMemberResolution.ResolveLocalConstructors(captured);
+        ClrMemberResolution.ResolveLocalConstructors(refs, captured);
         ClrMemberResolution.ResolvePhysicalLocalDelegateTargets(captured, refs,
             localCarriers: localExistentialOwners);
         ClrMemberResolution.ResolveInheritedExternalCalls(captured, refs);

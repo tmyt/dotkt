@@ -81,7 +81,7 @@ static partial class ClrMemberResolution
     internal static void ResolveLocalDelegateTargetsSource(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex references)
     {
-        _refs = references ?? throw new ArgumentNullException(nameof(references));
+        references = references ?? throw new ArgumentNullException(nameof(references));
         var owners = SourceLocalDelegateOwners(roots);
         var localTypes = owners.Keys.ToHashSet(StringComparer.Ordinal);
         void Walk(BirGraphValue node)

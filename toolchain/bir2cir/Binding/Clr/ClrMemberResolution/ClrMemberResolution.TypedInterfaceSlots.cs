@@ -16,7 +16,7 @@ static partial class ClrMemberResolution
     // This inventory retains the actual mutable MethodDefs, not reconstructed source declarations.
     public static void ResolveInterfaceSlots(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
-        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var definitions = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
         foreach (var root in roots)
             foreach (var type in root.Types.OrEmpty())

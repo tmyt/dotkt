@@ -193,7 +193,7 @@ static partial class ForeignNullableGenericCrossing
         var cacheKey = spec.Name + "`" + (spec.Args?.Length ?? 0);
         if (ReflectedSlotCache.TryGetValue(cacheKey, out var cached)) return cached;
         var result = new List<Slot>();
-        var open = ClrMemberResolution.ResolveOwnerType(spec);
+        var open = ClrMemberResolution.ResolveOwnerType(spec, refs: refs);
         MethodInfo[] members = Array.Empty<MethodInfo>();
         if (open != null)
             try { members = open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
@@ -207,7 +207,7 @@ static partial class ForeignNullableGenericCrossing
                 {
                     Name = m.Name,
                     Owner = DeclaringName(m, refs) ?? spec.Name,
-                    PhysicalOwner = ClrMemberResolution.DeclaringTypeIdentity(m),
+                    PhysicalOwner = ClrMemberResolution.DeclaringTypeIdentity(refs, m),
                     Arity = m.IsGenericMethodDefinition ? m.GetGenericArguments().Length : 0,
                     Params = m.GetParameters().Select(p => ClrDeclarationMatching.MemberSigOf(refs, p.ParameterType)).ToArray(),
                     Ret = m.ReturnType == typeof(void) ? null : ClrDeclarationMatching.MemberSigOf(refs, m.ReturnType),

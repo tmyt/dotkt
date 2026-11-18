@@ -10,7 +10,6 @@ static partial class ClrMemberResolution
     public static void MaterializeDelegateSlots(PhysicalDelegateDeclarations declarations, BirFileDeclaration document, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes, IReadOnlyDictionary<string, string> localCarriers = null)
     {
-        _refs = refs;
         _localTypes = localTypes ?? new HashSet<string>();
         var adapters = new TypedPhysicalDelegateAdapter(refs, () => UnitSingletonRead(refs), declarations);
         var pending = new List<BirGraphSlot>();
@@ -41,7 +40,7 @@ static partial class ClrMemberResolution
         {
             if (conversion.Type.OrDefault() is not TypeNode.Fqn slot) return conversion;
             if (conversion.FuncType.OrDefault() is not TypeNode.Fn function
-                || PhysicalFunctionShape(slot, includeNominal: true) is not TypeNode.Fn signature)
+                || PhysicalFunctionShape(refs, slot, includeNominal: true) is not TypeNode.Fn signature)
                 throw new InvalidOperationException("CLR delegate SAM conversion has no physical Invoke signature");
             // A function-bounded source TV is a generic value, so the declared
             // function view is crossed explicitly before natural delegate storage.
@@ -56,10 +55,10 @@ static partial class ClrMemberResolution
         if (target == null || construction.Natural is not TypeNode.Fn natural) return value;
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(natural);
         if (naturalDelegate == null || SameDelegate(naturalDelegate, target)) return value;
-        if (ClrDeclarationMatching.IsVoidNode(natural.Ret) && SlotInvokeReturn(target) is TypeNode result && !ClrDeclarationMatching.IsVoidNode(result))
-            return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(localCarriers, natural, target, result), alwaysArguments: false);
-        if (PhysicalFunctionShape(target, includeNominal: true) is TypeNode.Fn signatureType
-            && NeedsSlotAdapter(localCarriers, natural, signatureType))
+        if (ClrDeclarationMatching.IsVoidNode(natural.Ret) && SlotInvokeReturn(refs, target) is TypeNode result && !ClrDeclarationMatching.IsVoidNode(result))
+            return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(refs, localCarriers, natural, target, result), alwaysArguments: false);
+        if (PhysicalFunctionShape(refs, target, includeNominal: true) is TypeNode.Fn signatureType
+            && NeedsSlotAdapter(refs, localCarriers, natural, signatureType))
             return Adapt((IBirExpression)value, target, BoxedDelegateAdapterPlan(natural, signatureType), alwaysArguments: true);
 
         // Only the constructor binding follows this retarget operation. Target

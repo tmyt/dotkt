@@ -594,7 +594,7 @@ static partial class MemberCallSubstitution
                 intrinsic, 0, false, source.Skip(1).ToArray(), out var target))
         {
             var openOwner = ClrMemberResolution.ResolveOwnerType(physicalReceiver, refs);
-            var targetOwner = ClrMemberResolution.DeclaringTypeRef(target, openOwner, physicalReceiver.Args) as TypeNode.Fqn
+            var targetOwner = ClrMemberResolution.DeclaringTypeRef(refs, target, openOwner, physicalReceiver.Args) as TypeNode.Fqn
                 ?? throw new InvalidOperationException("Intrinsic extension has no constructed declaring owner");
             TypeNode Close(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, targetOwner.Args ?? Array.Empty<TypeNode>());
             var parameters = target.GetParameters().Select(parameter => Close(ClrDeclarationMatching.MemberSigOf(refs, parameter.ParameterType))).ToArray();

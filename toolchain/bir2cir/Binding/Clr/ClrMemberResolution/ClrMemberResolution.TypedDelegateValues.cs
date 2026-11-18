@@ -6,20 +6,16 @@ static partial class ClrMemberResolution
 {
     internal static BirStaticFieldGet UnitSingletonRead(ReferenceMetadataIndex references)
     {
-        _refs = references ?? throw new ArgumentNullException(nameof(references));
+        references = references ?? throw new ArgumentNullException(nameof(references));
         var owner = new TypeNode.Fqn(UnitFqn);
         var result = new BirStaticFieldGet { OwnerType = owner, Name = UnitInstance };
-        if (StaticFieldReference(owner, UnitInstance) is { } reference)
+        if (StaticFieldReference(references, owner, UnitInstance) is { } reference)
             result.FieldRef = BirMemberReference.FromPhysical(reference);
         return result;
     }
 
     internal static void TypedDelegateValueSelfTest(Action<ReferenceMetadataIndex> test)
-    {
-        var prior = _refs;
-        try { test(ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location })); }
-        finally { _refs = prior; }
-    }
+        => test(ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location }));
 
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, string> localCarriers, TypeNode source, TypeNode target, out TypeNode.Fqn slot)
@@ -33,25 +29,20 @@ static partial class ClrMemberResolution
                 TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "object" or "System.Object" })
             return null;
         if (references == null && (source is not TypeNode.Fn || target is not TypeNode.Fn)) return null;
-        _refs = references ?? throw new ArgumentNullException(nameof(references));
-        if (PhysicalFunctionShape(source) is not TypeNode.Fn {
+        references = references ?? throw new ArgumentNullException(nameof(references));
+        if (PhysicalFunctionShape(references, source) is not TypeNode.Fn {
                 Ret: TypeNode.Fqn { Name: "void" or "System.Void", Args: null } } natural
-            || PhysicalFunctionShape(target) is not TypeNode.Fn {
+            || PhysicalFunctionShape(references, target) is not TypeNode.Fn {
                 Ret: TypeNode.Fqn { Name: "kotlin.Unit" or "object" or "System.Object", Args: null } } wanted)
             return null;
         slot = BirTypeLowering.DelegateFqnOf(wanted);
-        return VoidDelegateAdapterPlan(localCarriers, natural, slot, wanted.Ret);
+        return VoidDelegateAdapterPlan(references, localCarriers, natural, slot, wanted.Ret);
     }
 
     internal static MemberRefNode DelegateInvokeReference(ReferenceMetadataIndex references, TypeNode stated)
     {
-        _refs = references ?? throw new ArgumentNullException(nameof(references));
-        return DelegateInvokeReference(stated);
-    }
-
-    static MemberRefNode DelegateInvokeReference(TypeNode stated)
-    {
-        var context = DelegatePhysicalContext();
+        references = references ?? throw new ArgumentNullException(nameof(references));
+        var context = DelegatePhysicalContext(references);
         var physical = BirTypeLowering.LowerSlot(stated, context, BirTypeLowering.PhysicalSlotRole.Value);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
@@ -59,7 +50,7 @@ static partial class ClrMemberResolution
         if (physical is not TypeNode.Fqn delegateFqn)
             throw new InvalidOperationException(
                 $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type");
-        var open = ResolveOwnerType(delegateFqn)
+        var open = ResolveOwnerType(delegateFqn, refs: references)
             ?? throw new InvalidOperationException(
                 $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
         var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -67,19 +58,14 @@ static partial class ClrMemberResolution
         if (invoke.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one");
-        return ClrMemberReferences.MemberRefOf(_refs, _localTypes, invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
+        return ClrMemberReferences.MemberRefOf(references, _localTypes, invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
             ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 
     internal static MemberRefNode DelegateConstructorReference(ReferenceMetadataIndex references, TypeNode stated)
     {
-        _refs = references ?? throw new ArgumentNullException(nameof(references));
-        return DelegateConstructorReference(stated);
-    }
-
-    static MemberRefNode DelegateConstructorReference(TypeNode stated)
-    {
-        var context = DelegatePhysicalContext();
+        references = references ?? throw new ArgumentNullException(nameof(references));
+        var context = DelegatePhysicalContext(references);
         var physical = BirTypeLowering.LowerSlot(stated, context, BirTypeLowering.PhysicalSlotRole.Value);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
@@ -87,25 +73,25 @@ static partial class ClrMemberResolution
         if (physical is not TypeNode.Fqn delegateFqn)
             throw new InvalidOperationException(
                 $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type");
-        var open = ResolveOwnerType(delegateFqn)
+        var open = ResolveOwnerType(delegateFqn, refs: references)
             ?? throw new InvalidOperationException(
                 $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == 2).ToList();
-        var win = ClrDeclarationMatching.TryPickUniqueCtor(_refs, ctors,
+        var win = ClrDeclarationMatching.TryPickUniqueCtor(references, ctors,
             new List<TypeNode> { new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.IntPtr") },
             delegateFqn.Args ?? Array.Empty<TypeNode>())
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
                 + $"{ctors.Count} two-argument candidate(s)");
-        return ClrMemberReferences.MemberRefOf(_refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open,
+        return ClrMemberReferences.MemberRefOf(references, _localTypes, win, MemberRefNode.Kinds.Ctor, open,
             delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 
     // These leaf bindings already have the resolver's reference universe and
     // local/external boundary. They must not inherit a last lowered file/shadow.
-    static BirTypeLowering.PhysicalTypeContext DelegatePhysicalContext() => new(
-        refBuild: false, aliases: _refs.Aliases, isValue: _refs.IsValueType,
-        physicalNames: _refs.PhysicalTypeNames, localTypes: _localTypes,
-        nullableFrames: _refs.NullableTypeFrames);
+    static BirTypeLowering.PhysicalTypeContext DelegatePhysicalContext(ReferenceMetadataIndex bindingReferences) => new(
+        refBuild: false, aliases: bindingReferences.Aliases, isValue: bindingReferences.IsValueType,
+        physicalNames: bindingReferences.PhysicalTypeNames, localTypes: _localTypes,
+        nullableFrames: bindingReferences.NullableTypeFrames);
 }
