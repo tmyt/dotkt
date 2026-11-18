@@ -128,7 +128,7 @@ static partial class FBoundStarProjectionErasure
             || !owner.Args.Any(ContainsExistentialProjection) || !construction.MemberSignature.HasValue
             || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return node;
         var signature = construction.MemberSignature.Value;
-        if (signature.Any(type => type == null) || !ConstructionHasHiddenWitnessSource(owner, state)) return node;
+        if (signature.Any(type => type == null) || !ConstructionHasHiddenWitnessSource(owner, state, signature)) return node;
         var result = state.Projection.Rewrite(owner);
         if (result is TypeNode.Fqn projected && projected.Name == owner.Name) return node;
         if (signature.Any(ContainsManagedReference)) throw new NotSupportedException(
@@ -160,18 +160,27 @@ static partial class FBoundStarProjectionErasure
         };
     }
 
-    static bool ConstructionHasHiddenWitnessSource(TypeNode.Fqn owner, SourceRewriteState state)
+    static bool ConstructionHasHiddenWitnessSource(TypeNode.Fqn owner, SourceRewriteState state, TypeNode[] signature = null)
     {
         var frame = state.Owners.TryGetValue(owner.Name, out var definition) ? state.Projection.OwnerFrame(definition)
             : state.References.NullableTypeFrames.GetValueOrDefault(owner.Name);
         return owner.Args.Where((argument, index) => (frame == null || frame.PhysicalSlot(index).Representation
                 is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable)
             && ContainsExistentialProjection(argument)
-            && SharedProjectedClassWitness(owner, index, argument, state) == null
+            && (SharedProjectedClassWitness(owner, index, argument, state) == null
+                || signature?.Any(parameter => NeedsOperandWitness(parameter, index)) == true)
             && (state.Demand.NativeProofs.ExactTypeArgument(owner.Name, index)
                 || StripSourceNullability(argument) is not TypeNode.Fqn nominal
                 || !state.Projection.TryExistentialCarrier(nominal.Name, out var carrier)
                 || StripSourceNullability(state.Projection.Rewrite(argument)) != new TypeNode.Fqn(carrier))).Any();
+    }
+
+    static bool NeedsOperandWitness(TypeNode parameter, int index)
+    {
+        if (StripSourceNullability(parameter) is TypeNode.Tv) return false;
+        var used = false;
+        BirGraphNameFields.VisitTypeNodes(parameter, node => used |= node is TypeNode.Tv { Scope: "type" } tv && tv.I == index);
+        return used;
     }
 
     static TypeNode.Fqn SharedProjectedClassWitness(TypeNode.Fqn owner, int index, TypeNode argument, SourceRewriteState state)

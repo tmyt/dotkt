@@ -7,8 +7,11 @@ import roundtrip.constrainedbound.ReferencedAnyBoundSink
 import roundtrip.constrainedbound.ReferencedBoundSink
 import roundtrip.constrainedbound.ReferencedIntBoundSink
 import roundtrip.constrainedbound.PendingItems
-import roundtrip.constrainedbound.ResultItem
+import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.localItemResult
+import roundtrip.constrainedbound.StreamChunk
+import roundtrip.constrainedbound.firstChunk
+import System.Collections.Generic.List as ClrList
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
@@ -24,6 +27,11 @@ class ConstrainedNullableBoundTests {
         queue.put(text)
         check(queue.get(0) === numeric && queue.get(0).result == 42L)
         check(queue.get(1) === text && queue.get(1).result == "text")
+        val exact = ClrList<StreamChunk<Long>>()
+        val chunk = StreamChunk(42L)
+        exact.Add(chunk)
+        @Suppress("UNCHECKED_CAST")
+        check(firstChunk(exact as ClrList<StreamChunk<*>>) === chunk)
     }
 
     @TestAttribute
