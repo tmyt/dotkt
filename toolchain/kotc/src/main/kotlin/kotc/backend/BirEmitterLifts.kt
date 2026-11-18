@@ -199,7 +199,10 @@ internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declaration
 			when (element) {
 				is IrTypeOperatorCall -> out.add(element.typeOperand)
 				is IrClassReference -> out.add(element.classType)
-				is IrFunctionAccessExpression -> out.addAll(element.typeArguments.filterNotNull())
+				is IrFunctionAccessExpression -> {
+					out.addAll(element.typeArguments.filterNotNull())
+					if (element is IrConstructorCall) element.constructedOwnerFrame()?.let(out::add)
+				}
 				else -> {}
 			}
 			element.acceptChildrenVoid(this)
