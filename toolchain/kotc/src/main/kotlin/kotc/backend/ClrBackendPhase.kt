@@ -50,6 +50,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
 		val bir = BirEmitter(messageCollector, result.irBuiltIns, moduleFragment.files.toSet())
+		val sourceCallables = pluginSources?.select(result)
 		// Which local `var`s need a heap ref-cell is a property of the variable, not of the emission frame, and one
 		// declaration's expression can be emitted in another file's frame (an omitted default argument is inlined at
 		// the caller). Decide it ONCE over the whole module, before any file is emitted, so every emission root agrees.
@@ -72,7 +73,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			try {
 				val birFile = bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
 				if (birFile != null) {
-					val sources = pluginSources?.collect(irFile, bir::declarationIdForPhysicalAllocation).orEmpty()
+					val sources = sourceCallables?.invoke(irFile, bir::declarationIdForPhysicalAllocation).orEmpty()
 					kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"),
 						if (sources.isEmpty()) birFile else birFile.copy(sourceCallables = sources), format)
 				}

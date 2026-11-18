@@ -104,7 +104,7 @@ internal object TypeAliasDeclarations {
         private fun typeParameter(parameter: ProtoBuf.TypeParameter, types: TypeTable) = SourceTypeParameter(
             id = parameter.id, name = names.getString(parameter.name), variance = parameter.variance.name.lowercase(),
             bounds = (parameter.upperBoundList + parameter.upperBoundIdList.map { types[it] }).map { type(it, types) },
-            annotations = parameter.getExtension(KlibMetadataProtoBuf.typeParameterAnnotation).map(::annotation),
+            annotations = parameter.annotationList.ifEmpty { parameter.getExtension(KlibMetadataProtoBuf.typeParameterAnnotation) }.map(::annotation),
         )
 
         fun callable(id: String, function: ProtoBuf.Function, types: TypeTable): SourceCallable {
@@ -117,7 +117,7 @@ internal object TypeAliasDeclarations {
                     parameter.hasVarargElementTypeId() -> type(types[parameter.varargElementTypeId], types)
                     else -> null
                 },
-                annotations = parameter.getExtension(KlibMetadataProtoBuf.parameterAnnotation).map(::annotation),
+                annotations = parameter.annotationList.ifEmpty { parameter.getExtension(KlibMetadataProtoBuf.parameterAnnotation) }.map(::annotation),
             )
             return SourceCallable(
                 declarationId = id, name = names.getString(function.name), flags = function.flags,
@@ -131,8 +131,10 @@ internal object TypeAliasDeclarations {
                 contextParameters = function.contextParameterList.map(::value),
                 valueParameters = function.valueParameterList.map(::value),
                 returnType = type(if (function.hasReturnType()) function.returnType else types[function.returnTypeId], types),
-                annotations = function.getExtension(KlibMetadataProtoBuf.functionAnnotation).map(::annotation),
-                receiverAnnotations = function.getExtension(KlibMetadataProtoBuf.functionExtensionReceiverAnnotation).map(::annotation),
+                annotations = function.annotationList.ifEmpty { function.getExtension(KlibMetadataProtoBuf.functionAnnotation) }.map(::annotation),
+                receiverAnnotations = function.extensionReceiverAnnotationList.ifEmpty {
+                    function.getExtension(KlibMetadataProtoBuf.functionExtensionReceiverAnnotation)
+                }.map(::annotation),
             )
         }
 
@@ -152,8 +154,9 @@ internal object TypeAliasDeclarations {
                     }
                 }
             }
-            val annotations = (0 until source.getExtensionCount(KlibMetadataProtoBuf.typeAnnotation))
-                .map { annotation(source.getExtension(KlibMetadataProtoBuf.typeAnnotation, it)) }
+            val annotations = source.annotationList.ifEmpty {
+                source.getExtension(KlibMetadataProtoBuf.typeAnnotation)
+            }.map(::annotation)
             val outerType = if (source.hasOuterType() || source.hasOuterTypeId())
                 type(if (source.hasOuterType()) source.outerType else types[source.outerTypeId], types) else null
             val abbreviatedType = if (source.hasAbbreviatedType() || source.hasAbbreviatedTypeId())

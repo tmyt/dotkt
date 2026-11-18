@@ -107,8 +107,10 @@ definition is internal, sealed, compiler-generated, and has assembly-only `Attri
 map of the structured declaration, not protobuf or a serialized KLIB. ilemit applies assembly attributes literally after their constructors
 are defined. Declaration metadata survives reference-body stripping.
 
-BIR roots may also carry `sourceCallables`. When an IR plugin changes a named function's
-signature, its Kotlin source parameters, result, type parameters and annotations come from FIR.
+BIR roots may also carry `sourceCallables`. In a compilation with IR plugins, importable,
+source-authored named functions retain their Kotlin parameters, result, type parameters and
+annotations from FIR. This does not depend on a physical parameter count changing: a plugin
+can also modify type-use annotations without changing the CLR parameter types.
 The declaration ID, by contrast, identifies the transformed function. bir2cir consumes each
 record into a repeatable assembly-level `KotlinSourceCallableAttribute` using the same codec as
 an alias. dll2klib projects the source signature to the consumer frontend and retains the ID for

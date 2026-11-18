@@ -5112,40 +5112,44 @@ internal sealed partial class AssemblyScanner : IDisposable
             var signature = method.DecodeProjectedSignature(signatures, context);
             var kotlinFlags = _attrs.Int32(
                 entry.KotlinImplementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
-            var function = new Function
+            var function = _sourceMetadata.Callable(declarationIdentity?.Id, names);
+            if (function == null)
             {
-                Name = names.String(declarationIdentity?.Name ??
-                    _md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
-                Flags = (Flags.Callable(
-                    method.Attributes,
-                    CallableModality(method.Attributes),
-                    kotlinFlags,
-                    isInline: _attrs.Has(
-                        entry.KotlinImplementation,
-                        MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
-                    (1 << 18),
-                ReturnType = (kotlinFlags & 4) != 0
-                    ? ProjectReturn(
-                        entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context)
-                    : declarationIdentity?.ReturnType is TypeNode semanticReturn
-                        ? signatures.FromTypeNode(semanticReturn)
-                        : ProjectReturn(
-                            entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
-                ValueParameter = {
-                    Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters,
-                        declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0)
-                },
-                ReceiverType = CSharp14ExtensionReceiver(
-                    entry.ReceiverMarker, entry.BlockArity, names, signatures,
-                    eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
-            };
-            function.Flags = CallableVisibility(entry.KotlinImplementation, function.Flags);
-            PromoteContextParameters(method, function);
-            AddCSharp14MethodTypeParameters(
-                entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
-                declarationIdentity?.SemanticReifiedTypeParameterIndices);
-            ApplySourceFunctionPriority(function, kotlinFlags, names);
+                function = new Function
+                {
+                    Name = names.String(declarationIdentity?.Name ??
+                        _md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
+                    Flags = (Flags.Callable(
+                        method.Attributes,
+                        CallableModality(method.Attributes),
+                        kotlinFlags,
+                        isInline: _attrs.Has(
+                            entry.KotlinImplementation,
+                            MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
+                        (1 << 18),
+                    ReturnType = (kotlinFlags & 4) != 0
+                        ? ProjectReturn(
+                            entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context)
+                        : declarationIdentity?.ReturnType is TypeNode semanticReturn
+                            ? signatures.FromTypeNode(semanticReturn)
+                            : ProjectReturn(
+                                entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
+                    ValueParameter = {
+                        Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
+                            declarationIdentity?.Parameters,
+                            declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0)
+                    },
+                    ReceiverType = CSharp14ExtensionReceiver(
+                        entry.ReceiverMarker, entry.BlockArity, names, signatures,
+                        eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
+                };
+                function.Flags = CallableVisibility(entry.KotlinImplementation, function.Flags);
+                PromoteContextParameters(method, function);
+                AddCSharp14MethodTypeParameters(
+                    entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
+                    declarationIdentity?.SemanticReifiedTypeParameterIndices);
+                ApplySourceFunctionPriority(function, kotlinFlags, names);
+            }
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(

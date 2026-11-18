@@ -9,7 +9,13 @@ fun <T> render(content: @Marker () -> T): Int = -1
 
 fun render(content: Int): Int = content
 
-class Scope<T> {
-    @Marker
-    fun <R> render(value: T, content: @Marker (T) -> R): Int = -1
+class Tag
+@Marker
+companion fun Tag.marked(content: @Marker () -> Int): Int = -1
+
+class Scope<A> {
+    class Nested<T> {
+        @Marker
+        fun <R> render(value: T, content: @Marker (T) -> R): Int = -1
+    }
 }

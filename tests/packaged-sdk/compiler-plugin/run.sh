@@ -39,6 +39,7 @@ compile() { dotnet build app/App.ktproj --no-restore -v:minimal "$@"; }
 run() { dotnet app/bin/Debug/net10.0/App.dll; }
 compile > initial.log
 test "$(run)" = 'from the package'
+bash "$src/../../run-ilverify.sh" app/bin/Debug/net10.0/{App,Library}.dll
 dotnet msbuild app/App.ktproj -getItem:UpToDateCheckInput | grep -F 'compiler plugin.jar' >/dev/null
 rsp=app/obj/Debug/net10.0/dotkt-plugins.rsp
 test "$(grep -c -- '-Xplugin=' "$rsp")" = 1
