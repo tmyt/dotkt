@@ -28,10 +28,8 @@ static partial class AnySlotRebind
                 if (owner != null && !types.ContainsKey(owner)
                     && references.TryExistentialPhysicalOwner(owner, out _) && call.Recv.HasValue)
                     return FromCall(call, consumeAnySlot: true);
+                if (!AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true)) call.AnySlot = default;
             }
-            // The selected ToString fact has identified the dispatch; a super call stays nonvirtual.
-            if (call.Method.Value == "ToString" && !AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true))
-                call.AnySlot = default;
             if (owner == null || !types.ContainsKey(owner) || ResolvesSlot(types, owner, call.Method.Value)) return call;
             if (superCall)
             {

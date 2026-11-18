@@ -43,7 +43,8 @@ static partial class ObjectSlotRename
             var renamed = RenameField(method);
             writeMethod(renamed);
             clearIdentity?.Invoke();
-            if (!RetainAnySlot(kind, renamed.OrDefault(), virtualCall, superCall, owner))
+            if (!RetainAnySlot(kind, renamed.OrDefault(),
+                AnySlotRebind.IsVirtualToString(kind, renamed.OrDefault(), true, virtualCall, superCall), owner))
                 clearAnySlot();
         }
         switch (node)
@@ -74,9 +75,9 @@ static partial class ObjectSlotRename
         node.VisitChildren(Rename);
     }
 
-    static bool RetainAnySlot(string kind, string method, bool? virtualCall, bool superCall, string owner) =>
-        method is "Equals" or "GetHashCode" || kind == "callInstance" &&
-        (method == "ToString" && (superCall || virtualCall != false) || AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true));
+    static bool RetainAnySlot(string kind, string method, bool virtualToString, string owner) =>
+        method is "Equals" or "GetHashCode" || virtualToString
+        || kind == "callInstance" && AliasHelperHoist.UsesNativeArrayObjectSlot(owner, true);
 
     static string RenameName(string name) => name != null && Slot.TryGetValue(name, out var slot) ? slot : name;
     static OptionalField<string> RenameField(OptionalField<string> value) =>
