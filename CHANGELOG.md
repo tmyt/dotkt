@@ -5,8 +5,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- A Kotlin annotation imported from another assembly keeps its declared
-  `@Target` set, including type-use and type-parameter positions.
 - Inline collection operations such as `mapValues` can enumerate maps whose
   values contain star projections.
 
@@ -14,6 +12,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   adding methods to the CLR enum itself.
 - Applied Kotlin annotations preserve omitted constructor arguments, including
   class-literal defaults imported from another DLL.
+- A Kotlin annotation imported from another assembly keeps its declared
+  `@Target` set, including type-use and type-parameter positions.
 - `Float` and `Double` now use Kotlin bit-defined neighbors, ULP spacing, and
   sign copying. The CLR stdlib also exposes `Float.nextUp`, `nextDown`,
   `nextTowards`, and `ulp` without widening to double precision.

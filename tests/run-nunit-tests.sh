@@ -748,12 +748,12 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  DEFAULT WITNESS CONTRACT FAIL — see build/nunit-$name.default-witness-contract.log"
 			tail -25 "$ROOT/build/nunit-$name.default-witness-contract.log"; rc=1
 		fi
-		if bash "$ROOT/tests/roundtrip/run-reified-import-negative.sh" "$producer_klib" \
-			>"$ROOT/build/nunit-$name.reified-import-negative.log" 2>&1; then
-			echo "  imported semantic reified declarations reject non-reified type arguments"
+		if bash "$ROOT/tests/roundtrip/run-import-negative.sh" "$producer_klib" \
+			>"$ROOT/build/nunit-$name.import-negative.log" 2>&1; then
+			echo "  imported reified declarations and annotation targets enforce frontend restrictions"
 		else
-			echo "  IMPORTED REIFIED FRONTEND NEGATIVE FAIL — see build/nunit-$name.reified-import-negative.log"
-			tail -25 "$ROOT/build/nunit-$name.reified-import-negative.log"; rc=1
+			echo "  IMPORTED FRONTEND NEGATIVE FAIL — see build/nunit-$name.import-negative.log"
+			tail -25 "$ROOT/build/nunit-$name.import-negative.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-package-nullable-method-bound "$producer_klib" "starprojection" \

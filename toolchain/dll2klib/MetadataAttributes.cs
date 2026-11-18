@@ -23,7 +23,7 @@ internal sealed class MetadataAttributes
     {
         _md = md;
         _dotKtAssembly = HasAssemblyMarker();
-        _standardLibrary = HasAssemblyMetadata("DotKt.LibraryKind", "stdlib");
+        _standardLibrary = HasStandardLibraryMarker();
         if (_dotKtAssembly)
         {
             foreach (var handle in md.TypeDefinitions)
@@ -88,7 +88,7 @@ internal sealed class MetadataAttributes
     public IReadOnlyList<EntityHandle> AttributeTypes(EntityHandle owner, string name)
         => Applications(owner, name).Select(application => application.Type).ToArray();
 
-    public IEnumerable<(EntityHandle Type, BlobHandle Value)> Applications(EntityHandle owner, string name)
+    public IEnumerable<(EntityHandle Type, EntityHandle Constructor, BlobHandle Value)> Applications(EntityHandle owner, string name)
     {
         if (owner.IsNil) yield break;
         foreach (var handle in _md.GetCustomAttributes(owner))
@@ -96,7 +96,7 @@ internal sealed class MetadataAttributes
             var attribute = _md.GetCustomAttribute(handle);
             if (AttributeTypeName(attribute.Constructor) != name) continue;
             var type = AttributeType(attribute.Constructor);
-            if (!type.IsNil) yield return (type, attribute.Value);
+            if (!type.IsNil) yield return (type, attribute.Constructor, attribute.Value);
         }
     }
 
@@ -267,19 +267,24 @@ internal sealed class MetadataAttributes
     private bool HasAssemblyMarker()
         => HasAssemblyMetadata("DotKt.Compiler", "metadata-v1");
 
-    private bool HasAssemblyMetadata(string key, string value)
+    internal bool HasStandardLibraryMarker(Func<EntityHandle, bool>? markerType = null) =>
+        HasAssemblyMetadata("DotKt.LibraryKind", "stdlib", markerType);
+
+    private bool HasAssemblyMetadata(string key, string value, Func<EntityHandle, bool>? markerType = null)
     {
         if (!_md.IsAssembly) return false;
-        return All(_md.GetAssemblyDefinition().GetCustomAttributes(), "System.Reflection.AssemblyMetadataAttribute")
+        return All(_md.GetAssemblyDefinition().GetCustomAttributes(), "System.Reflection.AssemblyMetadataAttribute", markerType: markerType)
             .Any(a => a.StringValue == key && a.StringValue2 == value);
     }
 
-    private IEnumerable<Attr> All(CustomAttributeHandleCollection handles, string expectedName, bool requireTrust = false)
+    private IEnumerable<Attr> All(CustomAttributeHandleCollection handles, string expectedName, bool requireTrust = false,
+        Func<EntityHandle, bool>? markerType = null)
     {
         foreach (var handle in handles)
         {
             var ca = _md.GetCustomAttribute(handle);
             if (AttributeTypeName(ca.Constructor) != expectedName) continue;
+            if (markerType != null && !markerType(AttributeType(ca.Constructor))) continue;
             if (requireTrust && expectedName.StartsWith(DotKtNs, StringComparison.Ordinal) &&
                 !IsExactTrustedCarrier(ca, expectedName)) continue;
             Attr? decoded = null;

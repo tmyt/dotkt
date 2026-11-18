@@ -43,15 +43,21 @@ static partial class ClrMemberResolution
         if (attr.Attr.OrDefault() is not TypeNode.Fqn attrFqn) return;
         // Kotlin's target meta-annotation comes from the frontend stdlib KLIB,
         // not a CLR projection. Bind its real stdlib constructor when imported.
-        if (!attr.AttrExternal.OrDefault() && (attrFqn.Name != "kotlin.annotation.Target"
-            || bindingLocalTypes?.Contains(attrFqn.Name) == true)) return;
+        var kotlinTarget = !attr.AttrExternal.OrDefault() && attrFqn.Name == "kotlin.annotation.Target"
+            && bindingLocalTypes?.Contains(attrFqn.Name) != true;
+        if (!attr.AttrExternal.OrDefault() && !kotlinTarget) return;
         var assembly = attr.AttrAssembly.OrDefault();
+        if (kotlinTarget)
+            assembly = bindingReferences.CompileStdlibName
+                ?? throw new InvalidOperationException("Kotlin @Target requires the stdlib in the compile references");
         var arguments = attr.ArgTypes.OrEmpty();
         if (ResolveAppliedAttributeCtor(bindingLocalTypes, bindingReferences, attrFqn, assembly, arguments) is { } selected)
         {
             attr.AttrExternal = true;
             attr.MemberRef = BirMemberReference.FromPhysical(selected);
         }
+        else if (kotlinTarget)
+            throw new InvalidOperationException($"Kotlin @Target constructor not found in '{assembly}'");
     }
 
     internal static AttributeApplication ResolveAttributeCtor(IReadOnlySet<string> bindingLocalTypes, AttributeApplication attribute, ReferenceMetadataIndex refs)
