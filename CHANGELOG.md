@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Kotlin events with function handlers taking 17–22 arguments now use the same
+  wide delegates as ordinary Kotlin functions, including across DLL boundaries.
 - The packaged SDK supports `net11.0` and platform-qualified .NET 11 targets alongside
   .NET 10. Compiler tools still run on .NET 10.
 

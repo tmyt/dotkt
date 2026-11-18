@@ -7,6 +7,7 @@ import roundtrip.eventraise.PublisherOuter
 import roundtrip.eventraise.PolicyPublisher
 import roundtrip.eventraise.localInheritedRaises
 import roundtrip.eventraise.SuperPublisher
+import roundtrip.eventraise.WidePublisher
 import roundtrip.eventraise.RaiseCountingPolicy
 import roundtrip.eventvisibility.EventVisibilitySource
 import kotlin.clr.ClrEvent
@@ -31,6 +32,22 @@ private class ImportedSuperChild : SuperPublisher() {
 private fun <A, B> raiseGeneric(source: Publisher<A, B>, value: B) { source.Changed(value) }
 
 class EventRaiseTests {
+    @TestAttribute
+    fun wideFunctionEventsUseCallableDelegatesAcrossModules() {
+        val source = WidePublisher()
+        assertEquals(18, source.localRaiseTotal())
+        var total = 0
+        val token = source.Query.subscribe { first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last ->
+            total += last - first
+            -1
+        }
+        fun fire() { source.Query(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) }
+        fire()
+        token.close()
+        fire()
+        assertEquals(16, total)
+    }
+
     @TestAttribute
     fun inheritedLocalRaisesSelectTheDeclaringEvent() {
         assertEquals(42, localInheritedRaises())

@@ -16,7 +16,7 @@ using DotKt.Cir;
 // Kotlin function or nominal handler type) in the type's `clrEvents` array, plus three synthesized accessor methods add_/remove_/raise_<E>
 // whose bodies are tagged `clrEventAccessor{kind,event}` and whose add_/remove_ carry an `overrides` closure naming the
 // interface event slot by Kotlin identity (owner FQN + event name). This pass — the ONLY layer that reads the ref.dll —
-// resolves the concrete delegate `D` (the interface event's EventHandlerType, or an Action/Func synthesized from the
+// resolves the concrete delegate `D` (the interface event's EventHandlerType, or the physical delegate selected from the
 // handler fn for a new event) and:
 //   * inserts a real backing field `<E>$delegate : D`, or retains the explicit Kotlin policy field;
 //   * rewrites each accessor's param signature to `D` (add/remove) / D.Invoke's params (raise) and its tagged body to a
@@ -163,7 +163,7 @@ static partial class ClrEventImplBinding
     // The concrete delegate type node for an event + the type nodes of its Invoke's params (raise's signature). For an
     // OVERRIDE (the add_ accessor's `overrides` closure names the interface event slot) the delegate is the interface
     // event's `EventHandlerType`, read off the ref.dll — bir2cir OWNS this resolution (§9). For a NEW event (no override)
-    // the handler Kotlin FUNCTION type maps to a System.Action/Func delegate of the same shape.
+    // the Kotlin function handler uses the same delegate family as an ordinary function value.
     static (TypeNode Delegate, TypeNode[] Parameters) ResolveDelegate(
         string name, IEnumerable<BirOverride> overrides, TypeNode handlerType, ReferenceMetadataIndex refs,
         TypeNode constructedOwner = null, bool policyArguments = false)
@@ -354,16 +354,12 @@ static partial class ClrEventImplBinding
         _ => type,
     };
 
-    // A handler Kotlin function type `(A,B)->R` -> `System.Action<A,B>` (R = Unit/void) or `System.Func<A,B,R>`, plus the
-    // Invoke param nodes (= the handler's params). The natural CLR lowering of a Kotlin fn type for a brand-new event.
     static (TypeNode, TypeNode[]) FnToDelegate(TypeNode.Fn fn)
     {
-        var parameters = fn.DelegateParams.Select(BirGraphValue.CopyType).ToArray();
-        var voidReturn = fn.Ret == null || fn.Ret is TypeNode.Fqn { Name: "kotlin.Unit" or "void" };
-        var arguments = voidReturn ? parameters.Select(BirGraphValue.CopyType).ToArray()
-            : parameters.Select(BirGraphValue.CopyType).Append(BirGraphValue.CopyType(fn.Ret)).ToArray();
-        return (new TypeNode.Fqn(voidReturn ? "System.Action" : "System.Func",
-            arguments.Length == 0 ? null : arguments), parameters);
+        var physical = BirTypeLowering.PhysicalDelegate(
+            BirTypeLowering.DelegateReturnSlot(fn), fn.Params, fn.Recv, fn.Clr);
+        return (BirGraphValue.CopyType(BirTypeLowering.DelegateFqnOf(physical)),
+            physical.DelegateParams.Select(BirGraphValue.CopyType).ToArray());
     }
 
     // An MLC Type -> its concrete lowered TypeNode (BCL FullName spelling, generic args recursed, Nullable<T> -> T?). Keeps
