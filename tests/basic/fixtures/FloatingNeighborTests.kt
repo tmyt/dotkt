@@ -33,6 +33,9 @@ class FloatingNeighborTests {
             check(nan.withSign(1).toRawBits() == (bits and Long.MAX_VALUE))
             check(1.0.withSign(nan).toRawBits() == System.Math.CopySign(1.0, nan).toRawBits())
         }
+        // Copying only the sign bit must not quiet a signaling NaN.
+        val signaling = 0x7ff0000000000042L
+        check(Double.fromBits(signaling).withSign(-1).toRawBits() == (signaling or Long.MIN_VALUE))
     }
 
     @TestAttribute fun floatNeighborsAndSpacing() {
@@ -66,5 +69,7 @@ class FloatingNeighborTests {
             check(nan.withSign(1).toRawBits() == (bits and Int.MAX_VALUE))
             check(1f.withSign(nan).toRawBits() == System.MathF.CopySign(1f, nan).toRawBits())
         }
+        val signaling = 0x7f800042
+        check(Float.fromBits(signaling).withSign(-1).toRawBits() == (signaling or Int.MIN_VALUE))
     }
 }
