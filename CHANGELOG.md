@@ -7,6 +7,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Lambdas declared in an enum's companion object now compile and run without
   adding methods to the CLR enum itself.
+- Applied Kotlin annotations preserve omitted constructor arguments, including
+  class-literal defaults imported from another DLL.
 - `Float` and `Double` now use Kotlin bit-defined neighbors, ULP spacing, and
   sign copying. The CLR stdlib also exposes `Float.nextUp`, `nextDown`,
   `nextTowards`, and `ulp` without widening to double precision.

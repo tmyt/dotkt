@@ -5,7 +5,7 @@ import kotlin.reflect.KCallable
 import kotlin.reflect.KClass
 import kotlin.reflect.KClassifier
 
-annotation class ImportedTyped(val type: KClass<*>)
+annotation class ImportedTyped(val type: KClass<*> = String::class)
 open class OrdinaryBase(val payload: String)
 open class ImportedManual : OrdinaryBase("base"), KClass<Any> {
     override val simpleName: String get() = "Imported"

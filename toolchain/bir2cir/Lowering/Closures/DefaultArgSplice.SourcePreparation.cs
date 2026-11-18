@@ -22,7 +22,8 @@ static partial class DefaultArgSplice
             var fileContext = new CaptureContext("<file>", position?.F.OrDefault(), position?.L.HasValue == true ? position.L.Value : null);
             void Walk(BirGraphValue node, CaptureContext context)
             {
-                if (node == null || node is BirAttribute or IBirExecutablePayload) return;
+                if (node == null || node is IBirExecutablePayload) return;
+                if (node is BirAttribute annotation) { expansion.ExpandAttribute(annotation); return; }
                 context = ContextFor(node, context);
                 foreach (var slot in ExpandMaterialized(node, expansion, hoist))
                     materialized.Add(new MaterializedOccurrence(slot, context));

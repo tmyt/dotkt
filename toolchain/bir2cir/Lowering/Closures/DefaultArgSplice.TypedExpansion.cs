@@ -34,6 +34,18 @@ static partial class DefaultArgSplice
             }
             ExpandTrailing(node);
         }
+        internal void ExpandAttribute(BirAttribute attribute)
+        {
+            if (attribute.Args.OrDefault() is not { } arguments || !arguments.Any(arg => arg is BirDefaultArgument)) return;
+            var signature = attribute.ArgTypes.Value;
+            var name = ((TypeNode.Fqn)attribute.Attr.Value).Name;
+            var defaults = refs.KotlinDefaultValuesFor(name, ReferenceMetadataReader.CtorKeyName, signature.Length,
+                ReferenceMetadataIndex.SignatureKeyOf(signature), ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true));
+            for (var i = 0; i < arguments.Length; i++)
+                if (arguments[i] is BirDefaultArgument)
+                    arguments[i] = defaults != null && defaults.TryGetValue(i, out var expression) && expression is IBirAttributeValue value
+                        ? value : throw new InvalidOperationException(UnrepresentableDefault(diagnosticContext, name, i, null));
+        }
         void Fill(List<IBirExpression> arguments, BirCallBinding[] bindings, int count, Dictionary<int, IBirExpression> defaults,
             IBirExpression dispatch, IBirExpression extension, IBirExpression enclosing, string semantic,
             TypeNode[] methods, TypeNode[] owners, string label)

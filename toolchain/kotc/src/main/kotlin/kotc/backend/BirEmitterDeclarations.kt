@@ -1697,11 +1697,6 @@ internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<Bi
 		if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
 		val clr = clrName(ac)
 		val attrClr = true.takeIf { clr != null }
-		data class Applied(val parameter: IrValueParameter, val value: org.jetbrains.kotlin.ir.expressions.IrExpression)
-		val applied = ann.symbol.owner.parameters.mapIndexedNotNull { index, parameter ->
-			if (!isValueParameter(parameter)) return@mapIndexedNotNull null
-			ann.arguments.getOrNull(index)?.let { Applied(parameter, it) }
-		}
 		fun namedRole(parameter: IrValueParameter): Pair<String, String>? {
 			val markers = parameter.annotations.filter {
 				it.type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
@@ -1720,15 +1715,27 @@ internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<Bi
 			}
 			return values[0]!! to values[1]!!
 		}
-		val fixed = mutableListOf<Applied>()
+		val types = mutableListOf<TypeNode>()
+		val args = mutableListOf<BirExpression>()
 		val named = mutableListOf<BirAttributeNamedArgument>()
-		for (argument in applied) {
-			val role = namedRole(argument.parameter)
-			if (role == null) fixed += argument
-			else named += BirAttributeNamedArgument(role.first, role.second, birType(argument.parameter.type), expr(argument.value))
+		for ((index, parameter) in ann.symbol.owner.parameters.withIndex()) {
+			if (!isValueParameter(parameter)) continue
+			val supplied = ann.arguments.getOrNull(index)
+			val role = namedRole(parameter)
+			if (role != null) {
+				if (supplied != null) named += BirAttributeNamedArgument(role.first, role.second, birType(parameter.type), expr(supplied))
+				continue
+			}
+			val value = supplied ?: parameter.defaultValue?.expression
+			args += when {
+				value is org.jetbrains.kotlin.ir.expressions.IrErrorExpression -> BirDefaultArgument
+				value != null -> expr(value)
+				else -> omittedVararg(ann, ann.symbol.owner, parameter, null) ?: BirDefaultArgument
+			}
+			types += birType(parameter.type)
 		}
 		BirAttribute(attr = TypeNode.Fqn(clr ?: typeName(ac)), attrClr = attrClr,
-			argTypes = fixed.map { birType(it.parameter.type) }, args = fixed.map { expr(it.value) },
+			argTypes = types, args = args,
 			namedArgs = named.takeIf { it.isNotEmpty() }?.toList())
 	}
 }
