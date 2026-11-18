@@ -17,6 +17,10 @@ import roundtrip.kclassvalues.ImportedTyped
 @ImportedTyped
 private class ConsumerDefaultLabel
 
+private annotation class NestedLabel(val label: ImportedLabel = ImportedLabel())
+private annotation class LabelArray(val code: Int = 7, vararg val labels: ImportedLabel)
+@NestedLabel @LabelArray private class UnencodableLabels
+
 class AnnotationPropertyRoundtripTests {
     @TestAttribute
     fun scalarAnnotationPropertiesSurviveDllImport() {
@@ -33,6 +37,9 @@ class AnnotationPropertyRoundtripTests {
         assertEquals(19, consumer.code)
         val typed = type.GetCustomAttributes(ImportedTyped::class as System.Type, false)[0] as ImportedTyped
         assertEquals(String::class, typed.type)
+        val unsupported = UnencodableLabels::class as System.Type
+        assertEquals(0, unsupported.GetCustomAttributes(NestedLabel::class as System.Type, false).size)
+        assertEquals(0, unsupported.GetCustomAttributes(LabelArray::class as System.Type, false).size)
     }
 
     @TestAttribute

@@ -10,6 +10,7 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NetAttr.LabelAttribute
 // il-netattr-vararg
 import NetAttrVararg.TagAttribute
+import NetAttrVararg.PickAttribute
 
 // il-netattr top-level decls (prefixed uniquely so they cannot collide with netattr-vararg's Widget/helper below).
 @LabelAttribute("entity", 5)
@@ -20,6 +21,7 @@ fun netAttrHelper(n: Int) = n * 2
 
 // il-netattr-vararg top-level decls: the params-object[]-only attribute applied BARE (zero args) and with args.
 @TagAttribute
+@PickAttribute(many = [])
 class NetAttrVarargWidget(val id: Int) { fun show() = "widget#$id" }
 
 @TagAttribute("helper", 1)
@@ -34,6 +36,8 @@ class AttributeTests {
 
     @TestAttribute
     fun netattrVararg() {
+        val picked = (NetAttrVarargWidget::class as System.Type).GetCustomAttributes(PickAttribute::class as System.Type, false)[0] as PickAttribute
+        assertEquals(11, picked.Code)
         assertEquals("widget#7", NetAttrVarargWidget(7).show())  // widget#7
         assertEquals(42, netAttrVarargHelper(21))               // 42
     }

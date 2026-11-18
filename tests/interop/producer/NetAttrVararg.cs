@@ -9,4 +9,9 @@ namespace NetAttrVararg {
         public TagAttribute(params object[] args) { Args = args; }
         public object[] Args;
     }
+    public class PickAttribute : Attribute {
+        public readonly int Code;
+        public PickAttribute(int code = 11, params object[] many) { Code = code; }
+        public PickAttribute(int code = 22, object one = null) { Code = code; }
+    }
 }
