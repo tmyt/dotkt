@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Overriding an inherited abstract member across modules now binds the same
+  declaration as a call through the base class, including covariant map entries.
 - Specialized map interfaces can dispatch inherited Kotlin implementations even
   when their keys or values have nested generic arguments.
 - Internal overrides now use the same virtual-slot bridges as public overrides
