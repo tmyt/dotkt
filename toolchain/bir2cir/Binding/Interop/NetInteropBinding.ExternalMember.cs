@@ -9,10 +9,11 @@ static partial class NetInteropBinding
     {
         var binding = call.ExternalMember.Value;
         var arguments = call.TypeArguments.OrEmpty();
-        if (binding.Owner.Value.Type is not TypeNode.Fqn { Args.Length: > 0 } open)
-            throw new InvalidOperationException("Projected static member requires a constructed declaring type");
-        var methodArity = arguments.Length - open.Args.Length;
-        if (methodArity < 0 || !open.Args.Select((argument, index) => argument is TypeNode.Tv { Scope: "method" } tv
+        if (binding.Owner.Value.Type is not TypeNode.Fqn open)
+            throw new InvalidOperationException("Projected static member requires a named declaring type");
+        var ownerParameters = open.Args ?? [];
+        var methodArity = arguments.Length - ownerParameters.Length;
+        if (methodArity < 0 || !ownerParameters.Select((argument, index) => argument is TypeNode.Tv { Scope: "method" } tv
                 && tv.I == methodArity + index).All(match => match))
             throw new InvalidOperationException("Projected static member owner does not match its declared argument frame");
         var nativeFrame = arguments.Select((_, index) => (TypeNode)(index < methodArity

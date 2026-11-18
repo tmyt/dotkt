@@ -172,6 +172,11 @@ ordinary .NET platform rules and remain the application's responsibility.
   typed `or`, `and`, `xor`, `inv`, and `in` operations without leaving its enum type.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
   (`==` deliberately routes to `Equals`, the Kotlin semantics.)
+- Import the declaring CLR namespace (for example, `import MyLibrary.*`) to use
+  logical negation (`!x`), ones' complement (`x.inv()`), and the infix
+  `and`, `or`, `xor`, `shl`, `shr` and `ushr` views of native operators.
+  These are low-priority extensions: a Kotlin member keeps its usual precedence,
+  and `left and right` works even if only the right-hand type declares the CLR operator.
 - A non-conversion CLR operator is also callable by its exact method name. For example,
   `SqlInt32.op_Equality(a, b)` returns a `SqlBoolean`, including SQL null. Call static
   operators on the declaring type and mutating instance operators on the receiver.

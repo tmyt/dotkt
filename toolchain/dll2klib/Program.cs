@@ -1852,7 +1852,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                     def,
                     names,
                     signatures,
-                    semanticClassName: semanticName is null ? null : SemanticClassName(handle, names, semanticName));
+                    semanticClassName: semanticName is null ? null : SemanticClassName(handle, names, semanticName),
+                    operatorPackage: fragment.Package);
                 MergeGenericStaticCarrier(handle, klass, names, signatures);
                 fragment.Class.Add(klass);
                 fragment.ClassName.Add(klass.FqName);
@@ -2200,7 +2201,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         NameTable names,
         SignatureDecoder signatures,
         int? semanticClassName = null,
-        int? semanticKind = null)
+        int? semanticKind = null,
+        Package? operatorPackage = null)
     {
         var metadataName = _md.GetString(def.Name);
         var metadataNamespace = _md.GetString(def.Namespace);
@@ -2572,6 +2574,12 @@ internal sealed partial class AssemblyScanner : IDisposable
                     function.FunctionAnnotation.Add(
                         KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
                 result.Function.Add(function);
+                if (operatorPackage != null && !_attrs.IsDotKtAssembly &&
+                    (method.Attributes & (MethodAttributes.MemberAccessMask | MethodAttributes.Static |
+                        MethodAttributes.SpecialName)) == (MethodAttributes.Public | MethodAttributes.Static |
+                        MethodAttributes.SpecialName) && IsExplicitOperatorMethod(clrMethodName, method.Attributes))
+                    AddOperatorExtension(handle, methodHandle, clrMethodName, function, operatorPackage, names,
+                        signatures, context);
                 projectedFunctions.Add(new ProjectedFunction(
                     methodHandle,
                     function,
@@ -5286,7 +5294,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             function.TypeParameter.Add(lifted);
         }
         var binding = ClrExternalAnnotation(names, owner);
-        var target = new TypeNode.Fqn(ExactMetadataTypeName(owner), Enumerable.Range(methodArity, parameters.Count)
+        var target = new TypeNode.Fqn(ExactMetadataTypeName(owner), parameters.Count == 0 ? null : Enumerable.Range(methodArity, parameters.Count)
             .Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray());
         foreach (var (field, value) in new[] { ("memberOwner", TypeNode.ToJson(target)),
             ("memberName", _md.GetString(_md.GetMethodDefinition(method).Name)) })
@@ -5351,7 +5359,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                     "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
                     requireTrust: false))
                 continue;
-            var child = ReadClass(childHandle, childDef, names, signatures);
+            var child = ReadClass(childHandle, childDef, names, signatures, operatorPackage: fragment.Package);
             MergeGenericStaticCarrier(childHandle, child, names, signatures);
             parent.NestedClassName.Add(names.String(KotlinDefinitionPath(childHandle).Chain[^1]));
             fragment.Class.Add(child);
