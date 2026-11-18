@@ -822,6 +822,7 @@ internal static class BirGraphDom
                 case "memberMethodTypeParams": break;
                 case "memberSignature": break;
                 case "memberReturnType": break;
+                case "externalMember": break;
                 case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
                 case "_innerFactoryArguments": break;
@@ -879,6 +880,7 @@ internal static class BirGraphDom
             MemberMethodTypeParams = Field<BirTypeParameter[]>(fields, "memberMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            ExternalMember = Field<BirExternalMemberBinding>(fields, "externalMember", value => ReadBirExternalMemberBinding(value!)),
             _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             _innerFactoryArguments = Field<bool>(fields, "_innerFactoryArguments", value => value!.GetValue<bool>()),

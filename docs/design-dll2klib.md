@@ -345,6 +345,12 @@ Kotlin subclasses. At the BIR boundary `bir2cir` decodes the immutable typed own
 frame and emits an exact MemberRef-bearing call (ordinary virtual dispatch for reference receivers, constrained
 dispatch for value receivers). `ilemit` does not rediscover the comparison contract.
 
+An explicitly named static operator on a generic CLR type also carries a selected target.
+Its Kotlin function takes the native method's type parameters first, followed by the
+declaring type's parameters, so Kotlin can infer both from the operands without a
+parameterized static qualifier. The target owner uses those trailing method variables.
+`bir2cir` restores the closed owner and passes only genuine method arguments to the CLR call.
+
 The annotation is not propagated beyond BIR. `kotc` requires both facts to
 recognize the current-format external declaration and transports
 `physicalOwner` in the existing owner/type fields; `bir2cir` uses that exact

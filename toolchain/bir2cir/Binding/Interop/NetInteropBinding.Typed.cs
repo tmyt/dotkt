@@ -66,6 +66,7 @@ static partial class NetInteropBinding
             Method = call.Method; Property = call.Prop; Visibility = call.MemberVisibility.OrDefault(); Companion = call.CompanionCall.OrDefault();
             Signature = call.Sig; Shapes = call.ShapeTypes; ArgumentTypes = call.ArgTypes; TypeArguments = call.TypeArgs;
             Arguments = call.Args; Suspend = call.SuspendCall; CapturedArguments = call._capturedGenericArgument; CapturedResult = call._capturedGenericResult;
+            ExternalMember = call.ExternalMember;
         }
         internal SourceCall(BirCallInstance call)
         {
@@ -99,7 +100,11 @@ static partial class NetInteropBinding
         => !isStatic && call.Signature.HasValue ? OptionalField<SourceTypeVector>.Of(SourceTypeVector.Create(call.Signature.Value)) : default;
     static BirGraphValue LowerCall(SourceCall call, ReferenceMetadataIndex refs)
     {
-        if (call.ExternalMember.HasValue) return LowerSelectedExternalMember(call, refs);
+        if (call.ExternalMember.HasValue)
+        {
+            if (!call.Static) return LowerSelectedExternalMember(call, refs);
+            BindProjectedStaticFrame(call);
+        }
         var args = call.Arguments.OrEmpty();
         var signatures = SelectSignatures(call.ArgumentTypes.OrDefault(), call.Shapes.OrDefault(), call.Signature.OrDefault());
         var plan = SelectCall(refs, call.Owner.OrDefault(), call.Method.OrDefault(), call.Static, call.Companion,

@@ -19,6 +19,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   .NET 10. Compiler tools still run on .NET 10.
 - CLR slot binding distinguishes nested interfaces with the same flattened generic
   arity, including interfaces inherited through a non-generic base class.
+- Call CLR operators such as `SqlInt32.op_Equality` and `ArraySegment.op_Equality`
+  by name from Kotlin, preserving their native return types and receiver behavior.
 
 ## 0.9.26 (2026-11-18)
 

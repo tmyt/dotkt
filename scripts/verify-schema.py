@@ -1401,8 +1401,8 @@ class V:
             for key, val in o.items():
                 p = path + "/" + key
                 if key == "externalMember":
-                    if not f.endswith(".bir.json") or o.get("k") != "callInstance":
-                        self.err(f, p, "externalMember belongs to a BIR instance call and must be consumed before CIR")
+                    if not f.endswith(".bir.json") or o.get("k") not in ("callInstance", "callStatic"):
+                        self.err(f, p, "externalMember belongs to a BIR member call and must be consumed before CIR")
                     self.external_member_binding(f, p, val)
                     continue
                 if key == "defaultBir":
