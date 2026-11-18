@@ -84,6 +84,10 @@ static partial class KotlinOverrideSlotBridge
         if (covariantAlreadyOwns?.Invoke() == true) return null;
         var retFit = unitValueReturn && IsVoid(declRet) && !impl.ReturnsValue
             ? Fit.Bridge
+            : unitValueReturn && IsUnitValueSlot(declRet)
+            // Both MethodDefs already return the Unit reference. A bridge over the
+            // same virtual slot would dispatch back into itself.
+            ? Fit.Same
             : Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
                 returnPosition: true, referencedSlot, hasClassifier);
         if (retFit == Fit.Foreign && SameSourceRepresentationVariables(slotRet,

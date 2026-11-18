@@ -422,11 +422,9 @@ static partial class KotlinOverrideSlotBridge
                 // A null PARAMETER fact is a slot this reader cannot state, and inventing one from the physical
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
-                // A native accessor and an explicitly selected hot/cold MethodDef state exact CLR signatures.
-                // Ordinary Kotlin reference lookups may restore nullable-generic carriers even in the late phase.
-                // Never erase a native Nullable<V> nested in a reified slot into an unrelated Kotlin object slot.
-                var physicalSignature = physicalProjection != null || nativeOwner != null
-                    || phase == Phase.PhysicalBridges && selectedClassDeclaration != null;
+                // The late reference lookup returns the actual MethodDef header, including
+                // when the selected declaration is reached through an inherited interface.
+                var physicalSignature = physicalProjection != null || nativeOwner != null || phase == Phase.PhysicalBridges;
                 var slotParams = slotParams0
                     .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalSignature),
                         accessorKind != null ? physicalSelectedArgs : selectedSlotArgs))
