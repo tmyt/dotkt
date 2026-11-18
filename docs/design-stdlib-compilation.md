@@ -24,6 +24,11 @@ CLR platform actuals use one of three forms:
 
 bir2cir reads binding metadata from `DotKt.Private.Stdlib.dll` and substitutes the application call or type. kotc does not recognize stdlib symbols, and ilemit does not interpret Kotlin bindings.
 
+For floating-point math, `toRawBits` and `fromBits` bind to CLR bit reinterpretation.
+Kotlin code uses those primitives for representable neighbors, ULP spacing and
+sign copying at both widths. Functions such as `sin`, `log`, `sqrt` and `hypot`
+retain their native numerical implementations; no portable transcendental library is required.
+
 ## `TODO()` bodies
 
 A `TODO()` body is not by itself evidence of missing work. An `actual` declaration carrying `@ClrIntrinsic`, or enclosed by a bound type, can retain a throwing Kotlin body as metadata filler because application call sites are substituted before runtime.
