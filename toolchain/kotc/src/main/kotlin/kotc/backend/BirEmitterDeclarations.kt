@@ -1766,7 +1766,7 @@ internal fun BirEmitter.sourceClassDefinition(klass: IrClass, captures: List<Pai
 		var parent: Any? = klass.parent
 		while (parent != null) {
 			when (parent) {
-				is IrClass -> return if (parent.isCompanion) parent.parent as? IrClass else parent
+				is IrClass -> return parent
 				is IrDeclaration -> parent = parent.parent
 				else -> return null
 			}
