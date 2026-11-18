@@ -5,6 +5,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.26 (2026-11-18)
+
+### Release highlights
+
+- All five packages and SDK defaults use `0.9.26`; the embedded Kotlin compiler and
+  upstream common standard-library baseline remain **2.4.21**.
+- Make bir2cir responsibility boundaries and compilation-owned binding inputs
+  explicit, preserving existing lowering and metadata contracts without adding
+  defensive guarantees for hypothetical internal mutations.
+- Improve generic callback/capture handling, declaration identities, CLR interop
+  and cross-assembly metadata roundtrips.
+- Continue to require the .NET 10 SDK and a .NET runtime of **10.0.12 or later**.
+
+### Changes
+
 - Separate imported inline/default payload indexing from reference metadata
   loading, preserving existing splice materialization.
 
