@@ -67,7 +67,7 @@ static partial class ObjectSlotRename
             call.Virtual = virtualCall;
             call.OwnerType = new TypeNode.Fqn(owner);
             Apply(call);
-            var retained = owner != "probe.Value" || !superCall && (!virtualCall.HasValue || virtualCall.Value);
+            var retained = owner != "probe.Value" || superCall || !virtualCall.HasValue || virtualCall.Value;
             if (call.Method.OrDefault() != "ToString" || call.DeclarationId.IsPresent
                 || call.AnySlot.IsPresent != retained || call.AnySlot.OrDefault() != retained
                 || call.Super.OrDefault() != superCall || !call.Virtual.Equals(virtualCall)

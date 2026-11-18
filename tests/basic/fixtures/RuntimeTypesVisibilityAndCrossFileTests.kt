@@ -146,7 +146,10 @@ open class RuntimeTypesA { open fun name() = "A" }
 open class RuntimeTypesB : RuntimeTypesA() { override fun name() = super.name() + "B" }
 class RuntimeTypesC : RuntimeTypesB() { override fun name() = super.name() + "C" }
 open class RuntimeTypesAnimal { override fun toString() = "animal" }
-class RuntimeTypesDog : RuntimeTypesAnimal() { override fun toString() = "dog>" + super.toString() }
+abstract class RuntimeTypesMammal : RuntimeTypesAnimal()
+class RuntimeTypesDog : RuntimeTypesMammal() { override fun toString() = "dog>" + super.toString() }
+open class RuntimeTypesPlain
+class RuntimeTypesLeaf : RuntimeTypesPlain() { override fun toString() = "[" + super.toString() + "]" }
 interface RuntimeTypesGreeter { fun hi(): String = "hi-default" }
 class RuntimeTypesImpl : RuntimeTypesGreeter { override fun hi() = "impl+" + super.hi() }
 
@@ -315,6 +318,7 @@ class RuntimeTypeAndSuperDispatchTests {
         assertEquals("Derived<Base>", d.describe())     // Derived<Base>
         assertEquals("ABC", RuntimeTypesC().name())               // ABC
         assertEquals("dog>animal", RuntimeTypesDog().toString())  // dog>animal
+        assertEquals("[RuntimeTypesLeaf]", RuntimeTypesLeaf().toString())
         assertEquals("impl+hi-default", RuntimeTypesImpl().hi())  // impl+hi-default
         assertEquals("method-derived>method-base:call", RuntimeTypesSuperMethodDerived().inheritedMethod("call"))
         assertEquals("property-derived>property-base", RuntimeTypesSuperPropertyDerived().inheritedProperty)
