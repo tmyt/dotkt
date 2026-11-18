@@ -10,7 +10,9 @@ static partial class DefaultArgSplice
 
     internal static void AssertNoPlaceholder(BirGraphValue root, string context)
     {
-        if (root == null) return;
+        // Attribute values are metadata, not executable call plans. Unencodable
+        // nested annotation constructors are never evaluated by the application.
+        if (root is null or BirAttribute) return;
         var here = DeclarationContext(root, context);
         if (root is IBirTypeDeclaration { Name.HasValue: true } owner)
             foreach (var constructor in owner.Ctors.OrEmpty())

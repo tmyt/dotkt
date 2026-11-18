@@ -228,6 +228,7 @@ static class ReferenceMetadataReader
 
     internal static TypeKey ParamKey(TypeNode t, bool relaxed) => t switch
     {
+        TypeNode.Oblivious o => ParamKey(o.Of, relaxed),
         TypeNode.ByRef b => new TypeKey(TypeKeyKind.ByRef, Element: ParamKey(b.Of, relaxed)),
         TypeNode.Array a => new TypeKey(TypeKeyKind.Array, Element: ParamKey(a.Elem, relaxed)),
         TypeNode.Nullable n when relaxed && !IsValueKey(ParamKey(n.Of, false)) => ParamKey(n.Of, true),

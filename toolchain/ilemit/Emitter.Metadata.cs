@@ -210,7 +210,10 @@ sealed partial class Emitter
             WriteFieldOrPropType(writer, type.GetElementType());
             return;
         }
-        var code = type.FullName switch
+        writer.Write(AttributeScalarCode(type));
+    }
+
+    static byte AttributeScalarCode(Type type) => type.FullName switch
         {
             "System.Boolean" => 0x02,
             "System.Char" => 0x03,
@@ -227,10 +230,8 @@ sealed partial class Emitter
             "System.String" => 0x0e,
             "System.Type" => 0x50,
             "System.Object" => 0x51,
-            _ => throw new NotSupportedException($"custom attribute named argument type '{type}' is not supported"),
+            _ => throw new NotSupportedException($"custom attribute scalar type '{type}' is not supported"),
         };
-        writer.Write((byte)code);
-    }
 
     static void WriteAttributeValue(BinaryWriter writer, Type type, object value)
     {
@@ -255,10 +256,13 @@ sealed partial class Emitter
         }
         if (type.IsArray)
         {
+            // Even an empty or null array needs a legal custom-attribute element type.
+            var element = type.GetElementType();
+            if (!IsAttributeEnumType(element)) _ = AttributeScalarCode(element);
             if (value == null) { writer.Write(-1); return; }
             if (value is not Array values) throw new ArgumentException($"custom attribute value is not an array for {type}");
             writer.Write(values.Length);
-            foreach (var item in values) WriteAttributeValue(writer, type.GetElementType(), item);
+            foreach (var item in values) WriteAttributeValue(writer, element, item);
             return;
         }
 

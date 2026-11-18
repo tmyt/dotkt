@@ -10,6 +10,16 @@ import roundtrip.annotationproperties.ImportedTags
 import roundtrip.annotationproperties.ImportedTypes
 import roundtrip.annotationproperties.producedTags
 import roundtrip.annotationproperties.producedTypes
+import roundtrip.annotationproperties.ProducerDefaultLabel
+import roundtrip.kclassvalues.ImportedTyped
+
+@ImportedLabel(code = 19)
+@ImportedTyped
+private class ConsumerDefaultLabel
+
+private annotation class NestedLabel(val label: ImportedLabel = ImportedLabel())
+private annotation class LabelArray(val code: Int = 7, vararg val labels: ImportedLabel)
+@NestedLabel @LabelArray private class UnencodableLabels
 
 class AnnotationPropertyRoundtripTests {
     @TestAttribute
@@ -17,6 +27,19 @@ class AnnotationPropertyRoundtripTests {
         assertEquals("producer", producedLabel().value)
         assertEquals(17, producedLabel().code)
         assertEquals(11, ImportedLabel("consumer").code)
+        fun applied(type: System.Type) = type.GetCustomAttributes(ImportedLabel::class as System.Type, false)[0] as ImportedLabel
+        val producer = applied(ProducerDefaultLabel::class as System.Type)
+        assertEquals("default", producer.value)
+        assertEquals(17, producer.code)
+        val type = ConsumerDefaultLabel::class as System.Type
+        val consumer = applied(type)
+        assertEquals("default", consumer.value)
+        assertEquals(19, consumer.code)
+        val typed = type.GetCustomAttributes(ImportedTyped::class as System.Type, false)[0] as ImportedTyped
+        assertEquals(String::class, typed.type)
+        val unsupported = UnencodableLabels::class as System.Type
+        assertEquals(0, unsupported.GetCustomAttributes(NestedLabel::class as System.Type, false).size)
+        assertEquals(0, unsupported.GetCustomAttributes(LabelArray::class as System.Type, false).size)
     }
 
     @TestAttribute

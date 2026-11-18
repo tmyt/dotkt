@@ -1012,8 +1012,9 @@ not cloning an evaluation, which is the whole point.
 one of the call's values, a cross-module omission (a `defaultArg` reservation), or a `callInline` (below).
 Without one the positional argument array IS the
 evaluation plan — one reader per value, positional order. The standing invariant is the converse: **any transform that
-gives a call value a second consumer must go through a plan.** A `defaultArg` outside one is refused loudly by
-`DefaultArgSplice`.
+gives a call value a second consumer must go through a plan.** An executable `defaultArg` outside one is refused by
+`DefaultArgSplice`. Applied attributes are not executable calls: an omitted imported default occupies its fixed
+constructor slot in `args` until bir2cir fills it from metadata. Absent named CLR properties and fields have no slot.
 
 **`callInline`.** A spliced inline call's body becomes the caller's, and it may read a parameter any number of times,
 in a loop, inside a closure, or not at all — so every value the call SUPPLIES has a second reader by construction, and

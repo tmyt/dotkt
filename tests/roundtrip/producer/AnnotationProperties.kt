@@ -1,6 +1,7 @@
 package roundtrip.annotationproperties
 
-annotation class ImportedLabel(val value: String, val code: Int = 11)
+annotation class ImportedLabel(val value: String = "default", val code: Int = 11)
+@ImportedLabel(code = 17) class ProducerDefaultLabel
 annotation class ImportedArrays(val names: Array<String>, val counts: IntArray)
 annotation class ImportedTags(vararg val tags: String)
 annotation class ImportedTypes(val nested: ImportedLabel, val kind: DeprecationLevel)
