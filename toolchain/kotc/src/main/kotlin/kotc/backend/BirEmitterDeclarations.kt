@@ -818,13 +818,8 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 	// This is declaration projection only: bir2cir resolves the exact physical constructor from delegationSig.
 	fun secondaryCtor(c: IrConstructor): BirConstructor {
 		val body = c.body as? IrBlockBody
-		val delegating: IrFunctionAccessExpression? = body?.statements?.firstNotNullOfOrNull { statement ->
-			when (statement) {
-				is IrDelegatingConstructorCall -> statement
-				is IrEnumConstructorCall -> statement
-				else -> null
-			}
-		}
+		val site = body?.delegationSite(allowEnumCall = true)
+		val delegating = site?.call
 		if (delegating == null || delegating.symbol.owner.parent !== ec) {
 			invariantBroken(c, "a rich enum secondary constructor has no same-enum delegation target")
 			return BirConstructor(emptyList(), null, emptyList(), thisArgs = BirField.Null, vis = "private")
@@ -834,7 +829,7 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 		val params = (listOf(
 			BirParameter(nameParam, TypeNode.Fqn("kotlin.String")),
 			BirParameter(ordinalParam, TypeNode.Fqn("kotlin.Int"))) + sourceParameters(sourceParams))
-		val (plan, delegatedArgs) = withCallPlan(delegating) { delegatedCtorArgs(delegating) }
+		val (plan, delegatedArgs) = withDelegationPlan(site) { delegatedCtorArgs(delegating) }
 		val thisArgs = (listOf(
 			BirLocal(nameParam), BirLocal(ordinalParam)) + delegatedArgs)
 		val targetTypes = delegating.symbol.owner.parameters.filter(::isValueParameter)
@@ -843,8 +838,8 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 		// The delegated target owns instance initialization. A secondary body emits only its own statements after the
 		// delegation; expanding an IrInstanceInitializerCall here would initialize the enum twice.
 		val ownStatements = body.statements.flatMap { statement ->
-			when (statement) {
-				is IrDelegatingConstructorCall, is IrEnumConstructorCall, is IrInstanceInitializerCall -> emptyList()
+			when {
+				statement === site.statement || statement is IrInstanceInitializerCall -> emptyList()
 				else -> stmt(statement)
 			}
 		}
@@ -2029,6 +2024,46 @@ internal fun BirEmitter.sourceClassDefinition(klass: IrClass, captures: List<Pai
 	return result
 }
 
+private data class DelegationSite(
+	val statement: org.jetbrains.kotlin.ir.IrStatement,
+	val call: IrFunctionAccessExpression,
+	val temporaries: List<IrVariable>,
+)
+
+private fun IrBlockBody.delegationSite(allowEnumCall: Boolean = false): DelegationSite? =
+	statements.firstNotNullOfOrNull { statement ->
+		val reorder = (statement as? IrBlock)?.takeIf { it.origin == IrStatementOrigin.ARGUMENTS_REORDERING_FOR_CALL }
+		val call = (reorder?.statements?.lastOrNull() ?: statement) as? IrFunctionAccessExpression
+			?: return@firstNotNullOfOrNull null
+		if (call !is IrDelegatingConstructorCall && !(allowEnumCall && call is IrEnumConstructorCall)) return@firstNotNullOfOrNull null
+		val temporaries = reorder?.statements?.dropLast(1).orEmpty().map {
+			(it as? IrVariable)?.takeIf { v -> !v.isVar && v.initializer != null } ?: return@firstNotNullOfOrNull null
+		}
+		DelegationSite(statement, call, temporaries)
+	}
+
+// The prefix evaluates in source order; the selected call reads its values in parameter order.
+// Keep those evaluations inside the same plan as default arguments and the enclosing receiver.
+private fun <T> BirEmitter.withDelegationPlan(site: DelegationSite, emit: () -> T): Pair<CallPlan, T> =
+	withCallPlan(site.call) {
+		if (site.temporaries.isEmpty()) return@withCallPlan emit()
+		val saved = site.temporaries.associateWith { valSubst[it] }
+		try {
+			val plan = callPlan(site.call)
+			for (temp in site.temporaries) {
+				val init = temp.initializer!!
+				val location = byrefMarker(init)
+				val rendered = if (location != null) byrefBackingField(location) ?: expr(location) else expr(init)
+				valSubst[temp] = if (location != null)
+					plan.bind("arg", "address", isStableLocation(init), birType(temp.type), "delegating constructor argument", rendered)
+				else plan.bind("arg", "value", isStableValue(init), birType(temp.type), "delegating constructor argument", rendered)
+			}
+			emit()
+		} finally {
+			saved.forEach { (temp, old) -> if (old != null) valSubst[temp] = old else valSubst.remove(temp) }
+		}
+	}
+
 internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, captures: List<Pair<IrValueDeclaration, String>> = emptyList()): BirConstructor {
 	val savedSemanticOwner = activeSemanticOwner
 	val savedSemanticDeclaration = activeSemanticOwnerDeclaration
@@ -2051,7 +2086,8 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 	val carrierOwner = ctor.takeIf { captures.isEmpty() || klass.isInner }
 	val params = capParams + sourceParameters(ctor.parameters, carrierOwner)
 	val body = ctor.body as? IrBlockBody
-	val delegating = body?.statements?.filterIsInstance<IrDelegatingConstructorCall>()?.firstOrNull()
+	val site = body?.delegationSite()
+	val delegating = site?.call
 	val delegateClass = delegating?.symbol?.owner?.parent as? IrClass
 	// `constructor(...) : this(...)` delegates to a sibling ctor; `: super(...)` / implicit -> base.
 	val isThisDelegate = delegating != null && delegateClass == klass
@@ -2089,8 +2125,8 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 	// `preStmts`, which ilemit emits before the `this`/`base` call itself. At most one delegation exists per
 	// constructor, so the two arms below share the one slot.
 	var delegationBindings: List<BirCallBinding>? = null
-	val thisArgs = if (isThisDelegate) withCallPlan(delegating!!) {
-		capForwardArgs + delegatedCtorArgs(delegating)
+	val thisArgs = if (isThisDelegate) withDelegationPlan(site!!) {
+		capForwardArgs + delegatedCtorArgs(site.call)
 	}.let { (plan, a) ->
 		delegationBindings = plan.bindingFacts().takeIf { !plan.isEmpty }
 		a
@@ -2106,7 +2142,7 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 					?: return@let listOf(invariantBroken(delegating,
 						"a local base class's capture is not a capture of the derived local class"))
 			}
-			withCallPlan(d) { baseCaptureArgs + delegatedCtorArgs(d) }
+			withDelegationPlan(site) { baseCaptureArgs + delegatedCtorArgs(d) }
 				.let { (plan, a) ->
 					delegationBindings = plan.bindingFacts().takeIf { !plan.isEmpty }
 					a
@@ -2118,9 +2154,9 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 	val stmts = ArrayList<BirStatement>()
 	stmts.addAll(capAssigns)   // store captures before instance initializers, which may read them
 	body?.statements?.forEach { s ->
-		when (s) {
-			is IrDelegatingConstructorCall -> {}
-			is IrInstanceInitializerCall -> stmts.addAll(instanceInitializerStatements(klass))
+		when {
+			s === site?.statement -> {}
+			s is IrInstanceInitializerCall -> stmts.addAll(instanceInitializerStatements(klass))
 			else -> stmts.addAll(stmt(s))
 		}
 	}

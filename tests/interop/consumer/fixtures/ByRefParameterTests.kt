@@ -34,6 +34,9 @@ private var byRefOrderLog = ""
 private fun byRefOrderMk(): ByRefOrderHolder { byRefOrderLog += "m"; return ByRefOrderHolder(1) }
 private fun byRefOrderD(): Int { byRefOrderLog += "d"; return 3 }
 private fun byRefOrderP(): Int { byRefOrderLog += "p"; return 2 }
+private fun byRefCtorReceiver(holder: ByRefOrderHolder): ByRefOrderHolder { byRefOrderLog += "r"; return holder }
+private class ByRefCtorChild(holder: ByRefOrderHolder) :
+    OutRef.RefConstructor(slot = byref(byRefCtorReceiver(holder).n), value = byRefOrderP())
 private fun byRefOrderIdx(): Int { byRefOrderLog += "i"; return 0 }
 private fun byRefOrderTake(r: ClrRef<Int>, a: Int = byRefOrderD(), b: Int = a * 10): Int = a + b
 private fun byRefOrderTakeP(p: Int, r: ClrRef<Int>, a: Int = byRefOrderD(), b: Int = a * 10): Int = p + a + b
@@ -106,6 +109,12 @@ private fun <T : ICounter> byRefNativeReceiverBeforeTransfer(first: T, stop: Boo
 class ByRefParameterTests {
     @TestAttribute
     fun kotlinManagedReferenceParameterPreservesCallEvaluationOrder() {
+        val holder = ByRefOrderHolder(40)
+        byRefOrderLog = ""
+        ByRefCtorChild(holder)
+        assertEquals("rp", byRefOrderLog)
+        assertEquals(42, holder.n)
+
         byRefOrderLog = ""
         assertEquals(33, byRefOrderCall())
         assertEquals("md", byRefOrderLog)
