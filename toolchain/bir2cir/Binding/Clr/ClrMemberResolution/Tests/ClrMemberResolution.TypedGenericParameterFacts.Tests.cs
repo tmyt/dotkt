@@ -23,14 +23,14 @@ static partial class ClrMemberResolution
                 .Single(method => method.Name == "As" && method.IsGenericMethodDefinition
                     && method.GetGenericArguments().Length == 1
                     && method.GetParameters() is [var parameter] && parameter.ParameterType == typeof(object));
-            var selected = SelectedGenericProofDeclaration(owner, "As", 1, false, descriptor, refs);
+            var selected = SelectedGenericProofDeclaration(null, owner, "As", 1, false, descriptor, refs);
             Require(selected.MetadataToken == reflected.MetadataToken && selected.Module.ModuleVersionId == reflected.Module.ModuleVersionId,
                 "physical descriptor selected a different actual framework MethodDef");
             var call = new BirGenericStatic { Type = owner, Method = "As", ResolvedMemberParams = descriptor,
                 TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) }, Args = Array.Empty<IBirExpression>() };
             var arguments = call.TypeArgs.Value;
             var values = call.Args.Value;
-            var facts = SelectedMethodTypeParametersInPhysicalFrame(call, refs);
+            var facts = SelectedMethodTypeParametersInPhysicalFrame(null, call, refs);
             Require(facts is [var parameterFacts] && parameterFacts.Name.Value == reflected.GetGenericArguments()[0].Name
                 && parameterFacts.SpecialConstraints.Value.Contains("class") && !parameterFacts.Constraints.IsPresent
                 && !parameterFacts.Variance.IsPresent && !parameterFacts.Reified.IsPresent && !parameterFacts.ErasedInnerConstraints.IsPresent
@@ -38,7 +38,7 @@ static partial class ClrMemberResolution
                 && ReferenceEquals(call.Args.Value, values) && !call.MemberRef.IsPresent && !call._resolvedMethodTypeParams.IsPresent,
                 "native flags/presence changed or a read-only fact query mutated its call");
             facts[0].Name = "mutated"; facts[0].SpecialConstraints.Value[0] = "mutated";
-            var independent = SelectedMethodTypeParametersInPhysicalFrame(call, refs);
+            var independent = SelectedMethodTypeParametersInPhysicalFrame(null, call, refs);
             Require(independent[0].Name.Value == reflected.GetGenericArguments()[0].Name
                 && independent[0].SpecialConstraints.Value.Contains("class")
                 && !ReferenceEquals(independent[0], facts[0]) && !ReferenceEquals(independent[0].SpecialConstraints.Value, facts[0].SpecialConstraints.Value),
@@ -46,13 +46,13 @@ static partial class ClrMemberResolution
 
             var empty = new BirGenericStatic { Type = new TypeNode.Fqn("System.Array"), Method = "Empty",
                 TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) }, ResolvedMemberParams = Array.Empty<TypeNode>() };
-            var unconstrained = SelectedMethodTypeParametersInPhysicalFrame(empty, refs);
+            var unconstrained = SelectedMethodTypeParametersInPhysicalFrame(null, empty, refs);
             Require(unconstrained.Length == 1 && !unconstrained[0].Constraints.IsPresent && !unconstrained[0].SpecialConstraints.IsPresent,
                 "an explicit zero-parameter descriptor was confused with absence or invented unconstrained fields");
-            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(empty with { ResolvedMemberParams = default }, refs));
-            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(empty with { ResolvedMemberParams = OptionalField<TypeNode[]>.Null }, refs));
-            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(empty with { TypeArgs = OptionalField<TypeNode[]>.Null }, refs));
-            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(owner, "As", 1, true, descriptor, refs));
+            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(null, empty with { ResolvedMemberParams = default }, refs));
+            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(null, empty with { ResolvedMemberParams = OptionalField<TypeNode[]>.Null }, refs));
+            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(null, empty with { TypeArgs = OptionalField<TypeNode[]>.Null }, refs));
+            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(null, owner, "As", 1, true, descriptor, refs));
 
             // Static native constraints retain method-frame variables beneath
             // constructed interfaces; struct/new and allows-ref-struct are CLR
@@ -62,8 +62,8 @@ static partial class ClrMemberResolution
                     && method.GetGenericArguments().Length == 2 && method.GetParameters() is [var span, var comparable]
                     && span.ParameterType.IsGenericType && span.ParameterType.GetGenericTypeDefinition() == typeof(Span<>)
                     && comparable.ParameterType.IsGenericParameter);
-            var searchSignature = search.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(refs, _localTypes, parameter.ParameterType)).ToArray();
-            var searchFacts = SelectedMethodTypeParametersInPhysicalFrame(new TypeNode.Fqn("System.MemoryExtensions"),
+            var searchSignature = search.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(refs, null, parameter.ParameterType)).ToArray();
+            var searchFacts = SelectedMethodTypeParametersInPhysicalFrame(null, new TypeNode.Fqn("System.MemoryExtensions"),
                 search.Name, 2, false, searchSignature, refs);
             Require(searchFacts.Length == 2 && searchFacts[1].Constraints.Value.Any(type => type is TypeNode.Fqn {
                     Name: "System.IComparable", Args: [TypeNode.Tv { Scope: "method", I: 0 }],
@@ -74,8 +74,8 @@ static partial class ClrMemberResolution
                     "selected allows-ref-struct flag changed from the actual MethodDef");
             var read = typeof(System.Runtime.InteropServices.MemoryMarshal).GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Single(method => method.Name == "Read" && method.IsGenericMethodDefinition && method.GetParameters().Length == 1);
-            var readFacts = SelectedMethodTypeParametersInPhysicalFrame(new TypeNode.Fqn("System.Runtime.InteropServices.MemoryMarshal"),
-                read.Name, 1, false, read.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(refs, _localTypes, parameter.ParameterType)).ToArray(), refs);
+            var readFacts = SelectedMethodTypeParametersInPhysicalFrame(null, new TypeNode.Fqn("System.Runtime.InteropServices.MemoryMarshal"),
+                read.Name, 1, false, read.GetParameters().Select(parameter => ClrDeclarationMatching.RefTypeOf(refs, null, parameter.ParameterType)).ToArray(), refs);
             Require(readFacts.Length == 1 && readFacts[0].SpecialConstraints.Value.Contains("struct")
                 && readFacts[0].SpecialConstraints.Value.Contains("new")
                 && readFacts[0].Constraints.Value.Any(type => type is TypeNode.Fqn { Name: "System.ValueType" }),
@@ -90,14 +90,14 @@ static partial class ClrMemberResolution
             };
             var instance = new BirGenericInstance { Type = constructedOwner, Method = "ConvertAll",
                 TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 1) }, ResolvedMemberParams = Convert(new TypeNode.Tv("type", 0)) };
-            var open = SelectedMethodTypeParametersInPhysicalFrame(instance, refs);
-            var implemented = SelectedMethodTypeParametersInPhysicalFrame(constructedOwner, "ConvertAll", 1, true,
+            var open = SelectedMethodTypeParametersInPhysicalFrame(null, instance, refs);
+            var implemented = SelectedMethodTypeParametersInPhysicalFrame(null, constructedOwner, "ConvertAll", 1, true,
                 Convert(ownerVariable), refs, new TypeNode[] { ownerVariable });
             Require(open.Length == 1 && implemented.Length == 1 && open[0].StructurallyEquals(implemented[0])
                 && !open[0].Constraints.IsPresent && !open[0].SpecialConstraints.IsPresent
                 && instance.ResolvedMemberParams.Value[0] is TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }, TypeNode.Tv { Scope: "method", I: 0 }] },
                 "method facts or selected open descriptor were substituted into the caller's owner/method frame");
-            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(constructedOwner, "ConvertAll", 1, true,
+            Refused(() => SelectedMethodTypeParametersInPhysicalFrame(null, constructedOwner, "ConvertAll", 1, true,
                 Convert(new TypeNode.Tv("type", 0)), refs, new TypeNode[] { ownerVariable }));
         }
         Console.WriteLine("[typed native generic parameter facts] self-test OK (exact framework selection, physical constraints, frames, presence, independent ownership)");

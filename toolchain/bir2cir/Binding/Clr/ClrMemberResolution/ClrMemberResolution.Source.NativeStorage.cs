@@ -5,7 +5,7 @@ using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
-    static void ResolveNativeOverrideSource(ReferenceMetadataIndex bindingReferences, BirFunctionDeclaration method)
+    static void ResolveNativeOverrideSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirFunctionDeclaration method)
     {
         var owner = method.PendingOverrideOwner.OrDefault() as TypeNode.Fqn;
         var implementation = method.Name.OrDefault();
@@ -24,62 +24,62 @@ static partial class ClrMemberResolution
             ?? throw new InvalidOperationException($"bir2cir: override '{owner.Name}.{name}' param #{index} has an unreadable type node")).ToList();
         // The requirement bit and exact base slot are one binding result:
         // ilemit consumes this reference rather than reselecting an override.
-        method.ClrOverrideRef = BirMemberReference.FromPhysical(SelectNativeOverrideBase(bindingReferences, owner, open, name, arguments, result));
+        method.ClrOverrideRef = BirMemberReference.FromPhysical(SelectNativeOverrideBase(bindingLocalTypes, bindingReferences, owner, open, name, arguments, result));
         method.RequiresClrOverride = true;
         method.PendingOverrideOwner = default;
         method.PendingOverrideMember = default;
         method.PendingOverrideReturn = default;
     }
 
-    static void ResolveNativeStorageSource(ReferenceMetadataIndex bindingReferences, BirGraphValue node)
+    static void ResolveNativeStorageSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node)
     {
         switch (node)
         {
             case BirPropertyGet read:
-                WriteNativeStorage(read, SelectNativePropertyStorage(bindingReferences, read.Type.OrDefault(), read.Name.OrDefault(),
+                WriteNativeStorage(read, SelectNativePropertyStorage(bindingLocalTypes, bindingReferences, read.Type.OrDefault(), read.Name.OrDefault(),
                     false, read.Static.OrDefault(), read.Super.OrDefault()));
                 break;
             case BirPropertySet write:
-                var property = SelectNativePropertyStorage(bindingReferences, write.Type.OrDefault(), write.Name.OrDefault(),
+                var property = SelectNativePropertyStorage(bindingLocalTypes, bindingReferences, write.Type.OrDefault(), write.Name.OrDefault(),
                     true, write.Static.OrDefault(), write.Super.OrDefault());
                 WriteNativeStorage(write, property);
-                MarkNativeWrittenSlot(bindingReferences, write.Value.OrDefault(), property.WrittenSlot);
+                MarkNativeWrittenSlot(bindingLocalTypes, bindingReferences, write.Value.OrDefault(), property.WrittenSlot);
                 break;
             case BirFieldGet read:
-                if (HasNativeSelectedField(bindingReferences, read.MemberRef.OrDefault(), false, null)) break;
-                if (SelectNativeFieldStorage(bindingReferences, read.OwnerType.OrDefault(), read.Name.OrDefault(), false) is { } field)
+                if (HasNativeSelectedField(bindingLocalTypes, bindingReferences, read.MemberRef.OrDefault(), false, null)) break;
+                if (SelectNativeFieldStorage(bindingLocalTypes, bindingReferences, read.OwnerType.OrDefault(), read.Name.OrDefault(), false) is { } field)
                     WriteNativeStorage(read, field);
                 break;
             case BirFieldSetExpression write:
-                if (HasNativeSelectedField(bindingReferences, write.MemberRef.OrDefault(), true, write.Value.OrDefault())) break;
-                if (SelectNativeFieldStorage(bindingReferences, write.OwnerType.OrDefault(), write.Name.OrDefault(), true) is { } fieldWrite)
+                if (HasNativeSelectedField(bindingLocalTypes, bindingReferences, write.MemberRef.OrDefault(), true, write.Value.OrDefault())) break;
+                if (SelectNativeFieldStorage(bindingLocalTypes, bindingReferences, write.OwnerType.OrDefault(), write.Name.OrDefault(), true) is { } fieldWrite)
                 {
                     WriteNativeStorage(write, fieldWrite);
-                    MarkNativeWrittenSlot(bindingReferences, write.Value.OrDefault(), fieldWrite.WrittenSlot);
+                    MarkNativeWrittenSlot(bindingLocalTypes, bindingReferences, write.Value.OrDefault(), fieldWrite.WrittenSlot);
                 }
                 break;
             case BirSetField write:
-                if (HasNativeSelectedField(bindingReferences, write.MemberRef.OrDefault(), true, write.Value.OrDefault())) break;
-                if (SelectNativeFieldStorage(bindingReferences, write.OwnerType.OrDefault(), write.Name.OrDefault(), true) is { } statementWrite)
+                if (HasNativeSelectedField(bindingLocalTypes, bindingReferences, write.MemberRef.OrDefault(), true, write.Value.OrDefault())) break;
+                if (SelectNativeFieldStorage(bindingLocalTypes, bindingReferences, write.OwnerType.OrDefault(), write.Name.OrDefault(), true) is { } statementWrite)
                 {
                     WriteNativeStorage(write, statementWrite);
-                    MarkNativeWrittenSlot(bindingReferences, write.Value.OrDefault(), statementWrite.WrittenSlot);
+                    MarkNativeWrittenSlot(bindingLocalTypes, bindingReferences, write.Value.OrDefault(), statementWrite.WrittenSlot);
                 }
                 break;
             case BirEventAdd add:
-                ResolveNativeEventSource(bindingReferences, add);
+                ResolveNativeEventSource(bindingLocalTypes, bindingReferences, add);
                 break;
             case BirEventRemove remove:
-                ResolveNativeEventSource(bindingReferences, remove);
+                ResolveNativeEventSource(bindingLocalTypes, bindingReferences, remove);
                 break;
             case BirStaticFieldGet read:
                 if (!read.FieldRef.IsPresent && read.OwnerType.OrDefault() is TypeNode.Fqn readOwner
-                    && read.Name.OrDefault() is string readName && StaticFieldReference(bindingReferences, readOwner, readName) is { } readRef)
+                    && read.Name.OrDefault() is string readName && StaticFieldReference(bindingLocalTypes, bindingReferences, readOwner, readName) is { } readRef)
                     read.FieldRef = BirMemberReference.FromPhysical(readRef);
                 break;
             case BirStaticFieldSet write:
                 if (!write.FieldRef.IsPresent && write.OwnerType.OrDefault() is TypeNode.Fqn writeOwner
-                    && write.Name.OrDefault() is string writeName && StaticFieldReference(bindingReferences, writeOwner, writeName) is { } writeRef)
+                    && write.Name.OrDefault() is string writeName && StaticFieldReference(bindingLocalTypes, bindingReferences, writeOwner, writeName) is { } writeRef)
                     write.FieldRef = BirMemberReference.FromPhysical(writeRef);
                 break;
             // clrStaticField has only the already-authored FieldRef, with no
@@ -87,10 +87,10 @@ static partial class ClrMemberResolution
         }
     }
 
-    static bool HasNativeSelectedField(ReferenceMetadataIndex bindingReferences, BirMemberReference selected, bool write, IBirExpression value)
+    static bool HasNativeSelectedField(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirMemberReference selected, bool write, IBirExpression value)
     {
         if (selected?.Kind.OrDefault() != MemberRefNode.Kinds.Field) return false;
-        if (write) MarkNativeWrittenSlot(bindingReferences, value, SupertypeGraph.SubstOwnerTvs(
+        if (write) MarkNativeWrittenSlot(bindingLocalTypes, bindingReferences, value, SupertypeGraph.SubstOwnerTvs(
             SignatureValueTypes.Of(selected.ReturnType.OrDefault()),
             (selected.DeclaringType.OrDefault() as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>()));
         // Exact direct family storage is already authoritative. In particular,
@@ -98,9 +98,9 @@ static partial class ClrMemberResolution
         return true;
     }
 
-    static void MarkNativeWrittenSlot(ReferenceMetadataIndex bindingReferences, IBirExpression value, TypeNode slot)
+    static void MarkNativeWrittenSlot(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, IBirExpression value, TypeNode slot)
     {
-        if (value is BirGraphValue expression) MarkDelegateSlot(expression, slot, bindingReferences, _localTypes);
+        if (value is BirGraphValue expression) MarkDelegateSlot(expression, slot, bindingReferences, bindingLocalTypes);
     }
 
     static bool NativeLocalEvent(bool local, TypeNode delegateType, string accessor, TypeNode owner, string dispatch)
@@ -118,11 +118,11 @@ static partial class ClrMemberResolution
         // identity. MOVE the actual operand under the new checked view.
         => new() { Type = target, E = handler.IsPresent ? handler : OptionalField<IBirExpression>.Null };
 
-    static void ResolveNativeEventSource(ReferenceMetadataIndex bindingReferences, BirEventAdd node)
+    static void ResolveNativeEventSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirEventAdd node)
     {
         if (NativeLocalEvent(node.LocalAccessor.OrDefault(), node.DelegateType.OrDefault(), node.Accessor.OrDefault(),
             node.AccessorOwner.OrDefault(), node.Dispatch.OrDefault())) return;
-        var selected = SelectNativeEventStorage(bindingReferences, node.Type.OrDefault(), node.Event.OrDefault(), node.Static.OrDefault(), true);
+        var selected = SelectNativeEventStorage(bindingLocalTypes, bindingReferences, node.Type.OrDefault(), node.Event.OrDefault(), node.Static.OrDefault(), true);
         node.Type = selected.Owner; node.Accessor = selected.Accessor;
         node.MemberRef = BirMemberReference.FromPhysical(selected.Reference);
         node.Handler = NativeEventHandler(node.Handler, selected.WrittenSlot);
@@ -130,11 +130,11 @@ static partial class ClrMemberResolution
         if (selected.Dispatch != null) node.Dispatch = selected.Dispatch;
     }
 
-    static void ResolveNativeEventSource(ReferenceMetadataIndex bindingReferences, BirEventRemove node)
+    static void ResolveNativeEventSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirEventRemove node)
     {
         if (NativeLocalEvent(node.LocalAccessor.OrDefault(), node.DelegateType.OrDefault(), node.Accessor.OrDefault(),
             node.AccessorOwner.OrDefault(), node.Dispatch.OrDefault())) return;
-        var selected = SelectNativeEventStorage(bindingReferences, node.Type.OrDefault(), node.Event.OrDefault(), node.Static.OrDefault(), false);
+        var selected = SelectNativeEventStorage(bindingLocalTypes, bindingReferences, node.Type.OrDefault(), node.Event.OrDefault(), node.Static.OrDefault(), false);
         node.Type = selected.Owner; node.Accessor = selected.Accessor;
         node.MemberRef = BirMemberReference.FromPhysical(selected.Reference);
         node.Handler = NativeEventHandler(node.Handler, selected.WrittenSlot);

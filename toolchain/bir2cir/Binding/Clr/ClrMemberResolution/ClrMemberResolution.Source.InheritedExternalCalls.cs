@@ -4,7 +4,7 @@ using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
-    internal static void ResolveInheritedExternalCalls(IReadOnlyList<BirFileDeclaration> roots,
+    internal static void ResolveInheritedExternalCalls(IReadOnlySet<string> bindingLocalTypes, IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
@@ -27,7 +27,7 @@ static partial class ClrMemberResolution
             if (node is not BirCallInstance call || call.MemberRef.IsPresent
                 || call.OwnerType.OrDefault() is not TypeNode.Fqn owner
                 || !call.Method.HasValue || !call.Sig.HasValue || call.Sig.Value.Any(type => type == null)) return node;
-            var plan = PlanInheritedExternalCall(owner, call.Method.Value, call.TypeArgs.OrEmpty().Length,
+            var plan = PlanInheritedExternalCall(bindingLocalTypes, owner, call.Method.Value, call.TypeArgs.OrEmpty().Length,
                 call.Sig.Value, definitions, methods, refs);
             if (plan == null) return node;
             call.MemberRef = BirMemberReference.FromPhysical(plan.Reference);
@@ -36,7 +36,7 @@ static partial class ClrMemberResolution
                 : OptionalField<BirTypeParameter[]>.Of(declared.Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray());
             // This is the same selected-parameter writer used by referenced
             // binding, with the existing module delegate/carrier authorities.
-            StampSourceReferencedDelegateTargets(refs, call.Args.OrDefault(), call.TypeArgs.OrEmpty(),
+            StampSourceReferencedDelegateTargets(bindingLocalTypes, refs, call.Args.OrDefault(), call.TypeArgs.OrEmpty(),
                 new ReferencedCallPlan(Declaration: plan.Declaration, DelegateOwnerArguments: plan.OwnerArgs));
             return (BirGraphValue)AdaptInheritedGenericResultSource(call);
         }

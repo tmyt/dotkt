@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Native binding consumes the already-physical owner and carried declaration
@@ -11,14 +10,15 @@ using DotKt.Bir;
 // this family applies the chosen bindings and authors exact MemberRefs.
 // ilemit only links those stated identities. Applicability must not replace an
 // explicitly selected descriptor.
+// Physical binding borrows the caller's local-name set; reference-only source
+// queries use the index's name view without a physical-local override.
 static partial class ClrMemberResolution
 {
     const string DeclarationIdentityBoundKey = "dotktDeclarationIdentityBound";
-    static IReadOnlySet<string> _localTypes = new HashSet<string>();
 
     // Proof demand and final MemberRef emission consume the same frontend-selected open descriptor. A lone
     // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
-    static MethodInfo SelectedGenericProofDeclaration(TypeNode.Fqn owner, string name, int arity,
+    static MethodInfo SelectedGenericProofDeclaration(IReadOnlySet<string> bindingLocalTypes, TypeNode.Fqn owner, string name, int arity,
         bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
         TypeNode[] parameterOwnerArguments = null)
     {
@@ -27,7 +27,7 @@ static partial class ClrMemberResolution
         // This caller runs before the full BIR vocabulary walk. Lower the selected formal parameters in their
         // declaration role, not the call's value arguments, before sharing the physical descriptor matcher.
         var signature = parameters.Select(type => ClrDeclarationMatching.CanonicalNativeFormalType(refs, type)).ToList();
-        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(refs, _localTypes, declaration, name, arity, instance, signature, parameterOwnerArguments)
+        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(refs, bindingLocalTypes, declaration, name, arity, instance, signature, parameterOwnerArguments)
             ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{name}' "
                 + $"has no exact selected MethodDef for descriptor {string.Join(", ", parameters)}; candidates: "
                 + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
@@ -56,7 +56,7 @@ static partial class ClrMemberResolution
     // DefaultArgSplice runs before NetInteropBinding, but it must read defaults from the exact MethodDef this pass will
     // later put in memberRef. Match in the selected declaration/projection frame; a second applicability search here
     // can materialize a sibling's value irreversibly after owner substitution makes their parameters coincide.
-    internal static bool TryResolveExternalMethodForDefaults(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn,
+    internal static bool TryResolveExternalMethodForDefaults(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn,
         string name, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
         out MethodInfo declaration, string propertyKind = null)
     {
@@ -81,7 +81,7 @@ static partial class ClrMemberResolution
                 ? method.GetGenericArguments().Length == methodArity
                 : methodArity == 0)
             .ToList();
-        declaration = ClrDeclarationMatching.TryPickDeclared(refs, _localTypes, candidates, argNodes, open)
+        declaration = ClrDeclarationMatching.TryPickDeclared(refs, bindingLocalTypes, candidates, argNodes, open)
             ?? throw new InvalidOperationException(
                 $"bir2cir: default argument declaration '{ownerFqn.Name}.{name}' has no unique open signature");
         return true;
@@ -115,8 +115,6 @@ static partial class ClrMemberResolution
         declaring = ClrDeclarationMatching.SafeDef(ClrDeclarationMatching.AliasResolve(bindingReferences, declaring));
         return declaring.FullName ?? declaring.Name;
     }
-    internal static JsonNode DeclaringTypeDescriptor(ReferenceMetadataIndex bindingReferences, MethodBase member)
-        => TypeJson.Write(new TypeNode.Fqn(DeclaringTypeIdentity(bindingReferences, member)));
 
     // dispatch (clrInstance): mirrors ilemit EmitInstanceCall (Bodies.cs). All facts are MLC-readable off the resolved
     // MethodInfo + the owner value-type-ness. constraintType is redundant (== the owner `type` slot), so NOT carried.

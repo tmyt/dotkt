@@ -117,7 +117,7 @@ static partial class GenericArrayStorageLowering
             ? new BirSetLocal { Name = arrayName, Value = E(NullArray()) }
             : new BirThrow { Value = E(new BirNewClr { Type = new TypeNode.Fqn("System.InvalidCastException"),
                 Args = Array.Empty<IBirExpression>(), MemberRef = BirMemberReference.FromPhysical(
-                    ClrMemberResolution.MemberRefOf(refs, exceptionConstructor, "ctor", exceptionOwner, null)) }) };
+                    ClrMemberResolution.MemberRefOf(null, refs, exceptionConstructor, "ctor", exceptionOwner, null)) }) };
         BirBinaryOperation IsNull() => new() { Op = "===", Lhs = E(Read(arrayName, arrayType)), Rhs = E(NullArray()) };
         var statements = new List<IBirStatement>();
         if (inputName != null) statements.Add(Variable(inputName, new TypeNode.Fqn("System.Object"), operand));
@@ -141,7 +141,7 @@ static partial class GenericArrayStorageLowering
     static IBirExpression SourceTypeOperationCall(ReferenceMetadataIndex refs, string owner, string method,
         IBirExpression receiver, string result, string[] parameters, params IBirExpression[] arguments)
     {
-        var plan = ClrMemberResolution.PlanArrayStorageCall(refs, method, parameters, owner, receiver == null);
+        var plan = ClrMemberResolution.PlanArrayStorageCall(null, refs, method, parameters, owner, receiver == null);
         var reference = BirMemberReference.FromPhysical(plan.Reference);
         if (receiver == null) return new BirNativeStatic { Type = new TypeNode.Fqn(owner), Method = method,
             Recv = OptionalField<IBirExpression>.Null, Args = arguments,

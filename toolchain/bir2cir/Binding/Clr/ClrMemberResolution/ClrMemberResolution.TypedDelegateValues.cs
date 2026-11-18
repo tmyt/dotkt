@@ -4,12 +4,12 @@ using DotKt.Bir.Lowering;
 
 static partial class ClrMemberResolution
 {
-    internal static BirStaticFieldGet UnitSingletonRead(ReferenceMetadataIndex references)
+    internal static BirStaticFieldGet UnitSingletonRead(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex references)
     {
         references = references ?? throw new ArgumentNullException(nameof(references));
         var owner = new TypeNode.Fqn(UnitFqn);
         var result = new BirStaticFieldGet { OwnerType = owner, Name = UnitInstance };
-        if (StaticFieldReference(references, owner, UnitInstance) is { } reference)
+        if (StaticFieldReference(bindingLocalTypes, references, owner, UnitInstance) is { } reference)
             result.FieldRef = BirMemberReference.FromPhysical(reference);
         return result;
     }
@@ -39,10 +39,10 @@ static partial class ClrMemberResolution
         return VoidDelegateAdapterPlan(references, localCarriers, natural, slot, wanted.Ret);
     }
 
-    internal static MemberRefNode DelegateInvokeReference(ReferenceMetadataIndex references, TypeNode stated)
+    internal static MemberRefNode DelegateInvokeReference(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex references, TypeNode stated)
     {
         references = references ?? throw new ArgumentNullException(nameof(references));
-        var context = DelegatePhysicalContext(references);
+        var context = DelegatePhysicalContext(bindingLocalTypes, references);
         var physical = BirTypeLowering.LowerSlot(stated, context, BirTypeLowering.PhysicalSlotRole.Value);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
@@ -58,14 +58,14 @@ static partial class ClrMemberResolution
         if (invoke.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one");
-        return ClrMemberReferences.MemberRefOf(references, _localTypes, invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
+        return ClrMemberReferences.MemberRefOf(references, bindingLocalTypes, invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
             ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 
-    internal static MemberRefNode DelegateConstructorReference(ReferenceMetadataIndex references, TypeNode stated)
+    internal static MemberRefNode DelegateConstructorReference(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex references, TypeNode stated)
     {
         references = references ?? throw new ArgumentNullException(nameof(references));
-        var context = DelegatePhysicalContext(references);
+        var context = DelegatePhysicalContext(bindingLocalTypes, references);
         var physical = BirTypeLowering.LowerSlot(stated, context, BirTypeLowering.PhysicalSlotRole.Value);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
@@ -84,14 +84,14 @@ static partial class ClrMemberResolution
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
                 + $"{ctors.Count} two-argument candidate(s)");
-        return ClrMemberReferences.MemberRefOf(references, _localTypes, win, MemberRefNode.Kinds.Ctor, open,
+        return ClrMemberReferences.MemberRefOf(references, bindingLocalTypes, win, MemberRefNode.Kinds.Ctor, open,
             delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 
     // These leaf bindings already have the resolver's reference universe and
     // local/external boundary. They must not inherit a last lowered file/shadow.
-    static BirTypeLowering.PhysicalTypeContext DelegatePhysicalContext(ReferenceMetadataIndex bindingReferences) => new(
+    static BirTypeLowering.PhysicalTypeContext DelegatePhysicalContext(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences) => new(
         refBuild: false, aliases: bindingReferences.Aliases, isValue: bindingReferences.IsValueType,
-        physicalNames: bindingReferences.PhysicalTypeNames, localTypes: _localTypes,
+        physicalNames: bindingReferences.PhysicalTypeNames, localTypes: bindingLocalTypes,
         nullableFrames: bindingReferences.NullableTypeFrames);
 }

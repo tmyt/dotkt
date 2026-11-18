@@ -45,7 +45,7 @@ static partial class ClrMemberResolution
     };
 
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>
-    public static void ResolveWellKnown(BirFileDeclaration root, ReferenceMetadataIndex refs)
+    public static void ResolveWellKnown(IReadOnlySet<string> bindingLocalTypes, BirFileDeclaration root, ReferenceMetadataIndex refs)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var table = new Dictionary<string, MemberRefNode>(StringComparer.Ordinal);
@@ -66,7 +66,7 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = ClrMemberReferences.MemberRefOf(refs, _localTypes, win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
+            table[role] = ClrMemberReferences.MemberRefOf(refs, bindingLocalTypes, win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
         {
@@ -83,7 +83,7 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}'");
-            table[role] = ClrMemberReferences.MemberRefOf(refs, _localTypes, win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
+            table[role] = ClrMemberReferences.MemberRefOf(refs, bindingLocalTypes, win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         }
         root.WellKnownRefs = PhysicalMemberTable.Create(table);
     }
@@ -116,19 +116,19 @@ static partial class ClrMemberResolution
 
 static partial class ClrMemberResolution
 {
-    internal static bool TryResolveAliasedInterfaceSlot(ReferenceMetadataIndex refs,
+    internal static bool TryResolveAliasedInterfaceSlot(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs,
         TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
         BirTypeParameter[] wantedTypeParams, TypeNode[] wantedOwnerArgs,
         out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn,
         TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null)
-        => TryResolveAliasedInterfaceSlotByShape(refs, physicalOwner, member, methodArity, wantedParams,
+        => TryResolveAliasedInterfaceSlotByShape(bindingLocalTypes, refs, physicalOwner, member, methodArity, wantedParams,
             wantedTypeParams == null ? null : KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                 wantedTypeParams, wantedOwnerArgs ?? Array.Empty<TypeNode>()),
             out declarationOwner, out declarationMember, out declarationParams, out declarationReturn,
             selectionOwnerArgs, wantedReturn);
 
-    internal static bool TryResolveAliasedInterfaceSlotByShape(ReferenceMetadataIndex refs,
+    internal static bool TryResolveAliasedInterfaceSlotByShape(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs,
         TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
         string wantedShape,
         out TypeNode.Fqn declarationOwner, out string declarationMember,
@@ -155,7 +155,7 @@ static partial class ClrMemberResolution
             if (!IsPublicOrProtected(method) || method.Name != member
                 || method.GetGenericArguments().Length != methodArity
                 || method.GetParameters().Length != wantedParams.Length) continue;
-            var reference = MemberRefOf(refs, method, MemberRefNode.Kinds.Method, open, ownerArgs);
+            var reference = MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, ownerArgs);
             var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
@@ -167,7 +167,7 @@ static partial class ClrMemberResolution
             var selectionArgs = declaringArgs;
             if (selectionOwnerArgs != null)
             {
-                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, _localTypes, method, open, selectionOwnerArgs) as TypeNode.Fqn;
+                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, bindingLocalTypes, method, open, selectionOwnerArgs) as TypeNode.Fqn;
                 selectionArgs = selectionOwner?.Args ?? Array.Empty<TypeNode>();
             }
             var selectionParameters = reference.ParameterTypes
@@ -209,7 +209,7 @@ static partial class ClrMemberResolution
     sealed record InheritedExternalCallPlan(MethodInfo Declaration, MemberRefNode Reference, TypeNode[] OwnerArgs);
 
 
-    static InheritedExternalCallPlan PlanInheritedExternalCall(TypeNode.Fqn owner, string name, int methodArity,
+    static InheritedExternalCallPlan PlanInheritedExternalCall(IReadOnlySet<string> bindingLocalTypes, TypeNode.Fqn owner, string name, int methodArity,
         TypeNode[] callSig, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
         IReadOnlyDictionary<string, InheritedLocalMethod[]> methods, ReferenceMetadataIndex refs)
     {
@@ -256,7 +256,7 @@ static partial class ClrMemberResolution
                 .ToList();
             var declaration = ClrDeclarationMatching.TryPickUnique(refs, candidates, callSig.ToList(), spec.Args ?? Array.Empty<TypeNode>());
             if (declaration == null) continue;
-            var reference = ClrMemberReferences.MemberRefOf(refs, _localTypes, declaration, MemberRefNode.Kinds.Method, open,
+            var reference = ClrMemberReferences.MemberRefOf(refs, bindingLocalTypes, declaration, MemberRefNode.Kinds.Method, open,
                 spec.Args ?? Array.Empty<TypeNode>());
             answers.Add(new(declaration, reference, spec.Args ?? Array.Empty<TypeNode>()));
         }

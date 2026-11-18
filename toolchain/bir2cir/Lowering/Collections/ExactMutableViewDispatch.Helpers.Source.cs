@@ -18,7 +18,7 @@ static partial class ExactMutableViewDispatch
         var receiver = arguments[0];
         var declaration = CloseDeclaring((TypeNode.Fqn)declaring, view.Args);
         rewritten = Wrap(receiver, view, (int)literal.Value, call.Ret.OrDefault() ?? new TypeNode.Fqn("kotlin.Int"),
-            local => ClrMemberResolution.ExactInstanceCall(refs, method, declaration, local, Array.Empty<IBirExpression>()),
+            local => ClrMemberResolution.ExactInstanceCall(null, refs, method, declaration, local, Array.Empty<IBirExpression>()),
             local => {
                 // Move the original receiver into Wrap's sole initializer;
                 // reuse this call only after replacing that owning child.
@@ -78,7 +78,7 @@ static partial class ExactMutableViewDispatch
             captured[index] = new BirLocal { Name = name };
         }
         IBirExpression[] NativeArguments() => captured.Skip(2).Select(CloneRead).ToArray();
-        IBirExpression Query(IBirExpression receiver) => ClrMemberResolution.ExactInstanceCall(refs, query,
+        IBirExpression Query(IBirExpression receiver) => ClrMemberResolution.ExactInstanceCall(null, refs, query,
             CloseDeclaring((TypeNode.Fqn)queryOwner, view.Args), receiver,
             hasIndex ? new[] { CloneRead(captured[2]) } : Array.Empty<IBirExpression>());
         TypeNode slot = operation switch {
@@ -89,12 +89,12 @@ static partial class ExactMutableViewDispatch
         };
         if (!refs.TryResolveStaticMemberSignature("kotlin.collections.ClrCollectionDefaultsKt", operation,
             helperArguments.Length, true, call.Sig.Value, null, out _, out var helperDeclaration, out _)) return false;
-        var helperResult = HelperSlot(ClrMemberResolution.DeclaredMethodReturn(refs, helperDeclaration));
+        var helperResult = HelperSlot(ClrMemberResolution.DeclaredMethodReturn(null, refs, helperDeclaration));
         var resultType = helperResult is TypeNode.Fqn { Name: "void" or "System.Void" }
             ? helperResult : call.Ret.OrDefault() ?? helperResult;
         var dispatch = Wrap(captured[0], view, 6, resultType,
             receiver => {
-                var native = ClrMemberResolution.ExactInstanceCall(refs, mutation, mutationOwner,
+                var native = ClrMemberResolution.ExactInstanceCall(null, refs, mutation, mutationOwner,
                     CloneRead(receiver), NativeArguments());
                 if (!needsQuery) return native;
                 var old = CallEvalLowering.FreshBindingId();

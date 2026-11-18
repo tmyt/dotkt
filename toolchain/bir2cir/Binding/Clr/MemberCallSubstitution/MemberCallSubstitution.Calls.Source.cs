@@ -590,11 +590,11 @@ static partial class MemberCallSubstitution
             && refs.Aliases.TryGetValue(sourceReceiver.Name, out var sourceClrOwner)
             && SubstMethodTv(first, node.TypeArgs.OrDefault()) is TypeNode.Fqn declaredReceiver
             && ClrOwnerType(refs, declaredReceiver) is TypeNode.Fqn physicalReceiver
-            && ClrMemberResolution.TryResolveExternalMethodForDefaults(refs, new TypeNode.Fqn(sourceClrOwner, sourceReceiver.Args),
+            && ClrMemberResolution.TryResolveExternalMethodForDefaults(null, refs, new TypeNode.Fqn(sourceClrOwner, sourceReceiver.Args),
                 intrinsic, 0, false, source.Skip(1).ToArray(), out var target))
         {
             var openOwner = ClrMemberResolution.ResolveOwnerType(physicalReceiver, refs);
-            var targetOwner = ClrMemberResolution.DeclaringTypeRef(refs, target, openOwner, physicalReceiver.Args) as TypeNode.Fqn
+            var targetOwner = ClrMemberResolution.DeclaringTypeRef(null, refs, target, openOwner, physicalReceiver.Args) as TypeNode.Fqn
                 ?? throw new InvalidOperationException("Intrinsic extension has no constructed declaring owner");
             TypeNode Close(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, targetOwner.Args ?? Array.Empty<TypeNode>());
             var parameters = target.GetParameters().Select(parameter => Close(ClrDeclarationMatching.MemberSigOf(refs, parameter.ParameterType))).ToArray();

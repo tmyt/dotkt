@@ -30,12 +30,12 @@ static partial class ClrMemberResolution
                     ? refs.SelectConstructorDeclaration(candidates, ctor.DelegationDeclarationId.Value)
                     : ClrDeclarationMatching.PickDeclaredConstructor(refs, candidates, signature,
                         $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(signature)})");
-                ctor.BaseCtorRef = BirMemberReference.FromPhysical(MemberRefOf(refs, winner,
+                ctor.BaseCtorRef = BirMemberReference.FromPhysical(MemberRefOf(localTypes, refs, winner,
                     MemberRefNode.Kinds.Ctor, open, baseFqn.Args));
                 var parameters = winner.GetParameters();
                 for (var index = 0; index < parameters.Length; index++)
                 {
-                    var slot = SupertypeGraph.SubstOwnerTvs(ClrDeclarationMatching.RefTypeOf(refs, _localTypes, parameters[index].ParameterType), baseFqn.Args ?? []);
+                    var slot = SupertypeGraph.SubstOwnerTvs(ClrDeclarationMatching.RefTypeOf(refs, localTypes, parameters[index].ParameterType), baseFqn.Args ?? []);
                     MarkDelegateSlot((BirGraphValue)arguments[index], SubstituteMethodTypeArgs(slot, []), refs, localTypes);
                 }
                 ctor.DelegationDeclarationId = default;

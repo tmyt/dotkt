@@ -156,7 +156,7 @@ static partial class KotlinOverrideSlotBridge
                         parameter, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
                         localTypeNames, nullableFrames: refs.NullableTypeFrames)).ToArray();
                     if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
-                            refs, loweredDescriptorOwner, aliasedPhysicalMember, methodArity, comparableParams,
+                            null, refs, loweredDescriptorOwner, aliasedPhysicalMember, methodArity, comparableParams,
                             MethodTypeParameterShapeKey(slot.TypeParameters, supArgs),
                             out var declarationOwner, out var declarationMember,
                             out var physicalParams, out var physicalRet))
@@ -525,7 +525,7 @@ static partial class KotlinOverrideSlotBridge
                             parameter, refs.Aliases, isValue, refs.PhysicalTypeNames,
                             typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames)).ToArray();
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
-                                refs, loweredOwner, descriptorMember, methodArity, comparableParams,
+                                null, refs, loweredOwner, descriptorMember, methodArity, comparableParams,
                                 MethodTypeParameterShapeKey(selectedSlotTypeParams, selectedSlotArgs),
                                 out var declarationOwner, out var declarationMember,
                                 out var physicalParams, out var physicalRet,

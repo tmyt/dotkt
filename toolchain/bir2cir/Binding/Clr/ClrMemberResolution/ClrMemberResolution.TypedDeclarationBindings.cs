@@ -7,8 +7,8 @@ static partial class ClrMemberResolution
     internal static void ApplyDeclarationBindings(BirFileDeclaration document,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes)
     {
-        _localTypes = localTypes ?? new HashSet<string>();
+        localTypes = localTypes ?? new HashSet<string>();
         ResolveExternalClassOverrides(document, refs);
-        ResolveExternalBaseMethodImpls(refs, document, _localTypes);
+        ResolveExternalBaseMethodImpls(refs, document, localTypes);
     }
 }

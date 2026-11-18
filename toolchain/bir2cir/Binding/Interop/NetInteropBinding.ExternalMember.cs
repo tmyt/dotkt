@@ -20,7 +20,7 @@ static partial class NetInteropBinding
         // their explicit owner vectors remain distinct.
         var method = open.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Single(method => method.Name == binding.Member.Value);
-        var reference = ClrMemberResolution.MemberRefOf(refs, method, MemberRefNode.Kinds.Method, open, owner.Args);
+        var reference = ClrMemberResolution.MemberRefOf(null, refs, method, MemberRefNode.Kinds.Method, open, owner.Args);
         // A reference receiver can be a subtype of its declaration owner. Its
         // value is interface-compatible, but &Subtype is not &DeclarationOwner.
         if (!refs.IsValueType(sourceOwner))

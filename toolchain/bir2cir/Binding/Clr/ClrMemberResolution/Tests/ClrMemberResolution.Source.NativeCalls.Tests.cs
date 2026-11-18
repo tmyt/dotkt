@@ -17,8 +17,6 @@ static partial class ClrMemberResolution
             catch (InvalidOperationException error) when (error.Message.Contains(fragment, StringComparison.Ordinal)) { return; }
             throw new InvalidOperationException("Typed native calls: missing refusal for " + fragment);
         }
-        var savedLocals = _localTypes;
-        try
         {
             var references = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var localTypes = new HashSet<string> { "LocalConstruction" };
@@ -126,7 +124,7 @@ static partial class ClrMemberResolution
             var collection = new BirNewClr { Type = new TypeNode.Fqn("System.Collections.ObjectModel.Collection", new TypeNode[] { text }),
                 Args = viewArguments, ArgTypes = new TypeNode[] { sourceView },
                 MemberSignature = new TypeNode[] { new TypeNode.Fqn("System.Collections.Generic.IList", new TypeNode[] { typeTv }) } };
-            ResolveNativeCallsSource(references, collection);
+            ResolveNativeCallsSource(localTypes, references, collection);
             Need(ReferenceEquals(collection.Args.Value, viewArguments) && viewArguments[0] is BirCast cast
                 && cast.Type.Value == new TypeNode.Fqn("System.Collections.Generic.IList", new TypeNode[] { text })
                 && ReferenceEquals(cast.E.Value, actualView) && !cast.Sty.IsPresent
@@ -135,26 +133,25 @@ static partial class ClrMemberResolution
 
             var explicitNullReference = new BirConstrainedCall { MemberRef = OptionalField<BirMemberReference>.Null,
                 Super = true, ResolvedMemberParams = Array.Empty<TypeNode>() };
-            ResolveNativeCallsSource(references, explicitNullReference);
+            ResolveNativeCallsSource(localTypes, references, explicitNullReference);
             Need(explicitNullReference.MemberRef.IsNull && !explicitNullReference.Super.IsPresent && explicitNullReference.ResolvedMemberParams.HasValue,
                 "constrained ContainsKey short-circuit was weakened to HasValue");
             var alreadyResolved = new BirGenericStatic { MemberRef = empty.MemberRef, ResolvedMemberReturn = OptionalField<TypeNode>.Null,
                 ResolvedMemberParams = Array.Empty<TypeNode>() };
-            ResolveNativeCallsSource(references, alreadyResolved);
+            ResolveNativeCallsSource(localTypes, references, alreadyResolved);
             Need(alreadyResolved.ResolvedMemberReturn.IsNull && ReferenceEquals(alreadyResolved.MemberRef.Value, empty.MemberRef.Value)
                 && !alreadyResolved.ResolvedMemberParams.IsPresent, "generic explicit-null return presence short-circuit changed");
-            Refused(() => ResolveNativeCallsSource(references, new BirGenericStatic { ResolvedMemberReturn = OptionalField<TypeNode>.Null }),
+            Refused(() => ResolveNativeCallsSource(localTypes, references, new BirGenericStatic { ResolvedMemberReturn = OptionalField<TypeNode>.Null }),
                 "declared-return stamp without its resolved memberRef");
-            Refused(() => ResolveNativeCallsSource(references, new BirGenericStatic { Type = new TypeNode.Fqn("System.Array"), Method = "Empty",
+            Refused(() => ResolveNativeCallsSource(localTypes, references, new BirGenericStatic { Type = new TypeNode.Fqn("System.Array"), Method = "Empty",
                 TypeArgs = new TypeNode[] { text }, Args = Array.Empty<IBirExpression>(), ResolvedMemberParams = OptionalField<TypeNode[]>.Null }),
                 "no usable frontend-resolved parameter vector");
-            Refused(() => ResolveNativeCallsSource(references, new BirConstrainedCall { Iface = item.Iface, Method = "get_Item" }), "requires an 'args' array");
-            Refused(() => ResolveNativeCallsSource(references, new BirNew { Type = builder.Type,
+            Refused(() => ResolveNativeCallsSource(localTypes, references, new BirConstrainedCall { Iface = item.Iface, Method = "get_Item" }), "requires an 'args' array");
+            Refused(() => ResolveNativeCallsSource(localTypes, references, new BirNew { Type = builder.Type,
                 Args = new IBirExpression[] { new BirLocal { Name = "capacity", Sty = integer } },
                 ArgTypes = new TypeNode[] { integer }, MemberSignature = new TypeNode[] { integer },
                 ConstructorDeclarationId = "missing-current-selected-constructor" }), "selects 0 runtime MethodDefs");
         }
-        finally { _localTypes = savedLocals; }
         Console.WriteLine("[source native calls] constructors, exact open declarations, dispatch roots, protected/array/delegate roles and owning operands: OK");
     }
 }

@@ -252,7 +252,7 @@ static partial class CapturedGenericInvocation
                 new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
             if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, name, 0, true, signature, null, out _, out var declaration, out var declaringType))
                 throw new InvalidOperationException("Captured invocation runtime helper has no exact declaration");
-            var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(refs, declaration, "method", declaringType, null));
+            var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, declaration, "method", declaringType, null));
             return new BirNativeStatic { Type = new TypeNode.Fqn(RuntimeOwner), Method = name, Args = arguments, Ret = result,
                 MemberRef = member, ResolvedMemberReturn = BirGraphValue.CopyType(member.ReturnType.Value) };
         }

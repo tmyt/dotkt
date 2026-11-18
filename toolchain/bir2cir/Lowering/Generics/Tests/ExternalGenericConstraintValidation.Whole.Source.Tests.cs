@@ -30,7 +30,7 @@ static partial class ExternalGenericConstraintValidation
             BirTypeParameter Parameter(string name) => new() { Name = name, SpecialConstraints = new[] { "struct" } };
             var reflected = typeof(ExternalGenericConstraintValidation).GetMethod(nameof(WholeSourceConstraintSignature),
                 BindingFlags.Static | BindingFlags.NonPublic);
-            var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(references, reflected,
+            var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, reflected,
                 MemberRefNode.Kinds.Method, reflected.DeclaringType, Array.Empty<TypeNode>()));
             var selected = reflected.GetGenericArguments().Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
             // A real referenced declaration owns !!0, not this nongeneric

@@ -8,16 +8,18 @@ using DotKt.Cir;
 sealed class TypedPhysicalDelegateAdapter
 {
     readonly ReferenceMetadataIndex references;
+    readonly IReadOnlySet<string> localTypes;
     readonly Func<IBirExpression> unitValue;
     readonly PhysicalDelegateDeclarations declarations;
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
     BirFileDeclaration document;
     string scope;
 
-    internal TypedPhysicalDelegateAdapter(ReferenceMetadataIndex references, Func<IBirExpression> unitValue,
+    internal TypedPhysicalDelegateAdapter(IReadOnlySet<string> localTypes, ReferenceMetadataIndex references, Func<IBirExpression> unitValue,
         PhysicalDelegateDeclarations declarations)
     {
         this.references = references;
+        this.localTypes = localTypes;
         this.unitValue = unitValue;
         this.declarations = declarations;
     }
@@ -34,7 +36,7 @@ sealed class TypedPhysicalDelegateAdapter
             ClosureType = new TypeNode.Fqn(adapter), Method = "invoke",
             Captures = new IBirExpression[] { new BirLocal { Name = temporary } }, FuncType = slot,
             DelegateCtorRef = BirMemberReference.FromPhysical(
-                ClrMemberResolution.DelegateConstructorReference(references, slot)),
+                ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
         };
         if (plan.Parameters != null || plan.Arguments.Length != 0) adapted.TypeArgs = plan.Arguments.ToArray();
 
@@ -72,7 +74,7 @@ sealed class TypedPhysicalDelegateAdapter
         }
         var key = ClrMemberResolution.DelegateAdapterKey(plan);
         if (adapters.TryGetValue(key, out var existing)) return existing;
-        var declaration = declarations.CreateAdapter(scope, plan, references, unitValue);
+        var declaration = declarations.CreateAdapter(localTypes, scope, plan, references, unitValue);
         var name = declaration.Name.Value;
         document.Types = document.Types.OrEmpty().Append(declaration).ToArray();
         adapters[key] = name;
@@ -87,7 +89,7 @@ sealed class TypedPhysicalDelegateAdapter
             new TypeNode[] { new TypeNode.Fqn("System.Object") }, Clr: "System.Func");
         var root = new BirFileDeclaration { FileClass = "Probe.Owner", Types = Array.Empty<IBirTypeDeclaration>() };
         var original = new BirLocal { Name = "effectfulDelegate" };
-        var adapter = new TypedPhysicalDelegateAdapter(references,
+        var adapter = new TypedPhysicalDelegateAdapter(null, references,
             () => new BirStaticFieldGet { OwnerType = new TypeNode.Fqn("kotlin.Unit"), Name = "INSTANCE" },
             new PhysicalDelegateDeclarations());
         var first = (BirValueBlock)adapter.AdaptUnitDelegateValue(null, root, original, source, target);

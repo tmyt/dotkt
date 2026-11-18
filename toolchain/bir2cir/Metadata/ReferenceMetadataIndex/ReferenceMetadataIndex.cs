@@ -885,7 +885,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         defaults = null;
         parameterNames = null;
         if (!ClrMemberResolution.TryResolveExternalMethodForDefaults(
-                this, owner, method, methodArity, isStatic, callSignature, out var declaration, propertyKind))
+                null, this, owner, method, methodArity, isStatic, callSignature, out var declaration, propertyKind))
             return false;
         parameterNames = declaration.GetParameters()
             .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)
@@ -4916,9 +4916,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         var primitiveCall = new BirGenericStatic { Type = new TypeNode.Fqn("System.MemoryExtensions"), Method = "AsSpan",
             TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) }, ResolvedMemberParams = new TypeNode[] {
                 new TypeNode.Array(new TypeNode.Tv("method", 0)), new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.Int") } };
-        var aliasFacts = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(aliasCall, nativeDescriptors);
+        var aliasFacts = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, aliasCall, nativeDescriptors);
         if (aliasFacts.Length != 1
-            || ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(primitiveCall, nativeDescriptors).Length != 1)
+            || ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, primitiveCall, nativeDescriptors).Length != 1)
             throw new InvalidOperationException("Native proof selection lost formal alias/primitive physical lowering");
         if (!aliasFacts[0].SpecialConstraints.OrEmpty().Contains("class"))
             throw new InvalidOperationException("Native proof selection required a source spelling for a CLR-only flag");
@@ -4933,13 +4933,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         var closedProofCall = new BirGenericInstance { Type = closedProofOwner, Method = "ConvertAll",
             TypeArgs = new TypeNode[] { new TypeNode.Tv("method", 0) },
             ResolvedMemberParams = ConvertParameters(new TypeNode.Tv("type", 0)) };
-        if (ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(closedProofOwner, "ConvertAll", 1, true,
+        if (ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, closedProofOwner, "ConvertAll", 1, true,
                 ConvertParameters(closedProofArgument), nativeDescriptors, new TypeNode[] { closedProofArgument }).Length != 1
-            || ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(closedProofCall, nativeDescriptors).Length != 1)
+            || ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, closedProofCall, nativeDescriptors).Length != 1)
             throw new InvalidOperationException("Native proof selection confused override and open call owner frames");
         var invalidDescriptor = aliasCall with { ResolvedMemberParams = new TypeNode[] { new TypeNode.Fqn("System.Int32") } };
         var rejected = false;
-        try { ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(invalidDescriptor, nativeDescriptors); }
+        try { ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, invalidDescriptor, nativeDescriptors); }
         catch (InvalidOperationException) { rejected = true; }
         if (!rejected) throw new InvalidOperationException("Native proof selection guessed from a unique method name");
         // PhysicalParameterFactsSelfTest covers admitted shipped declarations,

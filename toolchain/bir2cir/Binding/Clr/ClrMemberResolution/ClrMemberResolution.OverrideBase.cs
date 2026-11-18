@@ -22,27 +22,27 @@ using DotKt.Bir;
 // that takes ownership of the same slot removes the typed implementation's pending binding to avoid two MethodImpls.
 static partial class ClrMemberResolution
 {
-    static MemberRefNode SelectNativeOverrideBase(ReferenceMetadataIndex bindingReferences, TypeNode.Fqn owner, Type open, string name,
+    static MemberRefNode SelectNativeOverrideBase(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode.Fqn owner, Type open, string name,
         List<TypeNode> arguments, TypeNode result)
     {
         var candidates = new List<MethodInfo>();
         try { candidates.AddRange(open.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Where(method => method.Name == name && method.IsVirtual && method.GetParameters().Length == arguments.Count)); } catch { }
-        var selected = PickOverrideBase(bindingReferences, candidates, arguments, result, open, owner.Args,
+        var selected = PickOverrideBase(bindingLocalTypes, bindingReferences, candidates, arguments, result, open, owner.Args,
             $"override base={owner.Name}.{name}({DescArgs(arguments)}):{result}");
-        return ClrMemberReferences.MemberRefOf(bindingReferences, _localTypes, selected, MemberRefNode.Kinds.Method, open, owner.Args);
+        return ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, selected, MemberRefNode.Kinds.Method, open, owner.Args);
     }
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what
     // "override" means), so this is a STRUCTURAL identity match — NOT the call side's arg-applicability (which would let
     // a scalar `Any` arg "match" an `Any[]` param via the object-downcast rule and make BaseContinuationImpl's
     // `create(Any,Cont)` / `create(Any[],Cont)` ambiguous). Require exactly one after §12.8.10.2 most-derived shadowing;
     // 0 = hard ABI error, >1 = malformed. NEVER a first-pick.
-    static MethodInfo PickOverrideBase(ReferenceMetadataIndex bindingReferences, List<MethodInfo> cands, List<TypeNode> argNodes, TypeNode returnNode,
+    static MethodInfo PickOverrideBase(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, List<MethodInfo> cands, List<TypeNode> argNodes, TypeNode returnNode,
         Type open, TypeNode[] ownerArgs,
         string desc)
     {
         var hits = ClrDeclarationMatching.MostDerived(cands.Where(c => bindingReferences.NativeMethodSignature(c) != null
-            ? ExternalMethodImplSlotMatches(bindingReferences, c, open, ownerArgs, argNodes, returnNode)
+            ? ExternalMethodImplSlotMatches(bindingLocalTypes, bindingReferences, c, open, ownerArgs, argNodes, returnNode)
             : OverrideMatch(bindingReferences, c.GetParameters(), argNodes) && OverrideParamMatch(bindingReferences, returnNode, c.ReturnType)).ToList());
         if (hits.Count == 0) throw ClrDeclarationMatching.NoMatch(desc, cands);
         if (hits.Count == 1) return hits[0];

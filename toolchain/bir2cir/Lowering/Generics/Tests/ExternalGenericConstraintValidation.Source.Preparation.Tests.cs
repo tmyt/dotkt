@@ -43,7 +43,7 @@ static partial class ExternalGenericConstraintValidation
         // This real C# MethodDef supplies the selected new() row. The consumer
         // exercises Prepared's actual local-type table, not a test-only getter.
         var method = typeof(ExternalGenericConstraintValidation).GetMethod(nameof(SourcePreparationNewConstraint), BindingFlags.Static | BindingFlags.NonPublic);
-        var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(refs, method,
+        var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, method,
             MemberRefNode.Kinds.Method, method.DeclaringType, Array.Empty<TypeNode>()));
         var declarations = method.GetGenericArguments().Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
         void Validate(string name, bool accepted)

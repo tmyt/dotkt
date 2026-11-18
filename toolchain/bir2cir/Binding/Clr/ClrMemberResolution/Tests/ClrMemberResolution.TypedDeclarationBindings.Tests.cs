@@ -6,8 +6,6 @@ static partial class ClrMemberResolution
 {
     internal static void DeclarationBindingsSelfTest()
     {
-        var priorLocalTypes = _localTypes;
-        try
         {
             var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
             var integer = new TypeNode.Fqn("System.Int32");
@@ -115,6 +113,5 @@ static partial class ClrMemberResolution
                 throw new InvalidOperationException("Typed declaration binding reselected a completed MethodImpl");
             Console.WriteLine("[typed declaration binding] self-test OK (exact override structure, generic/inherited slots, owning signatures, presence and local exclusions)");
         }
-        finally { _localTypes = priorLocalTypes; }
     }
 }

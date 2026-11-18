@@ -82,7 +82,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             // signature facts (notably a logical suspend result) with reflected physical return types.
             if (Bare(face.Name) is not (IEnumerable or IEnumerableT))
             {
-                if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(refs, face, member, arity,
+                if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(null, refs, face, member, arity,
                         Array.Empty<TypeNode>(), null, face.Args ?? Array.Empty<TypeNode>(),
                         out var declarationOwner, out _, out _, out _, wantedReturn: ret)) return false;
                 face = declarationOwner;

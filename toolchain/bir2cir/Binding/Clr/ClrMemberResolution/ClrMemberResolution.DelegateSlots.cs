@@ -87,16 +87,15 @@ static partial class ClrMemberResolution
     // A delegate's arguments are METHOD slots (Root-H), the same classification the reference carrier makes for
     // them, so they are lowered in that position and not as storage.
     static TypeNode.Fqn DelegateFqnOfSlot(TypeNode slotType, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypes = null)
+        IReadOnlySet<string> localTypes)
     {
-        localTypes ??= _localTypes;
         if (refs == null)
             throw new InvalidOperationException("bir2cir: delegate slot resolution has no reference universe");
         var shape = slotType;
         while (shape is TypeNode.Nullable nullable) shape = nullable.Of;
         while (shape is TypeNode.Oblivious oblivious) shape = oblivious.Of;
         var physical = BirTypeLowering.LowerPhysicalType(shape, refs.Aliases, refs.IsValueType,
-            refs.PhysicalTypeNames, typeArg: false, localTypes ?? new HashSet<string>(), nullableFrames: refs.NullableTypeFrames);
+            refs.PhysicalTypeNames, typeArg: false, localTypes, nullableFrames: refs.NullableTypeFrames);
         if (physical is TypeNode.Fn fn) physical = BirTypeLowering.DelegateFqnOf(fn);
         if (physical is not TypeNode.Fqn named) return null;
         var open = ResolveOwnerType(named, refs);

@@ -36,7 +36,7 @@ static partial class ClrMemberResolution
         var second = new BirFileDeclaration { FileClass = "Declaration", Types = new IBirTypeDeclaration[] { iface } };
         var roots = new[] { first, second };
         var refs = ReferenceMetadataIndex.Build(Array.Empty<string>());
-        ResolveInterfaceSlots(roots, refs);
+        ResolveInterfaceSlots(null, roots, refs);
         if (!ReferenceEquals(cls.Methods.Value[0], implementation) || !ReferenceEquals(implementation.ClrInterfaceImpls.Value[0], getter)
             || implementation.ClrInterfaceImpls.Value.Length != 2 || getter.Member.Value != "get_Value" || getter.Ret.Value != text
             || !ReferenceEquals(implementation.ClrInterfaceImpls.Value[1], generic) || generic.Ret.Value != text
@@ -45,7 +45,7 @@ static partial class ClrMemberResolution
             || prebound.Methods.Value[0].ClrInterfaceImpls.Value.Length != 2)
             throw new InvalidOperationException("Typed local interface slots lost exact physical names, generic frames, bridge exclusions, deduplication or marker presence");
         var stable = first.DeepClone();
-        ResolveInterfaceSlots(roots, refs);
+        ResolveInterfaceSlots(null, roots, refs);
         if (!first.StructurallyEquals(stable)) throw new InvalidOperationException("Final typed local interface resolution was not stable");
 
         var external = new BirMethodImpl { Owner = new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { text }),
@@ -56,7 +56,7 @@ static partial class ClrMemberResolution
         var externalClass = new BirClassDefinition { Name = "Fixture.External", Kind = "class", Methods = new[] { externalMethod } };
         var externalRoot = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { externalClass } };
         var native = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
-        ResolveInterfaceSlots(new[] { externalRoot }, native);
+        ResolveInterfaceSlots(null, new[] { externalRoot }, native);
         var set = externalClass.InterfaceSlotRefs.Value.Single();
         var slot = set.Slots.Value.Single();
         if (!ReferenceEquals(externalMethod.ClrInterfaceImpls.Value.Single(), external)

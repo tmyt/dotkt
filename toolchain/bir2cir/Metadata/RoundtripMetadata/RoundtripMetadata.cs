@@ -212,7 +212,7 @@ static partial class RoundtripMetadata
     {
         // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
         // member it delegates to rather than describing it.
-        var baseConstructor = ClrMemberResolution.ParameterlessBaseCtorRef(refs, "System.Attribute");
+        var baseConstructor = ClrMemberResolution.ParameterlessBaseCtorRef(null, refs, "System.Attribute");
         CirConstructor Ctor(params CirParameter[] parameters) => new() {
             Vis = "public", Params = parameters, BaseArgs = Array.Empty<ICirExpression>(),
             BaseCtorRef = baseConstructor, Body = [],
@@ -284,7 +284,7 @@ static partial class RoundtripMetadata
                 new NamedAttributeArgument("property", "Inherited", new TypeNode.Fqn("System.Boolean"), new AttributeArgument.BooleanValue(false)),
             ]);
         return AttrClass(AKTypeAlias, constructor) with {
-            Attrs = new[] { ClrMemberResolution.ResolveAttributeCtor(usage, refs) },
+            Attrs = new[] { ClrMemberResolution.ResolveAttributeCtor(null, usage, refs) },
         };
     }
 

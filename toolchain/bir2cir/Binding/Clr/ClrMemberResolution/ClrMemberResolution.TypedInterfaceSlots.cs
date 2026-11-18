@@ -14,7 +14,7 @@ static partial class ClrMemberResolution
     /// </remarks>
     // Final physical declarations are indexed module-wide before any owner is stamped.
     // This inventory retains the actual mutable MethodDefs, not reconstructed source declarations.
-    public static void ResolveInterfaceSlots(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
+    public static void ResolveInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var definitions = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -24,7 +24,7 @@ static partial class ClrMemberResolution
         foreach (var root in roots)
             root.Visit(node => {
                 if (node is IBirTypeDeclaration type && type.Name.HasValue)
-                    StampInterfaceSlots(type, definitions, refs);
+                    StampInterfaceSlots(bindingLocalTypes, type, definitions, refs);
             });
     }
 
@@ -47,7 +47,7 @@ static partial class ClrMemberResolution
     sealed record InterfaceCandidate(MethodInfo Method, MemberRefNode Reference,
         TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return);
 
-    static void StampInterfaceSlots(IBirTypeDeclaration type,
+    static void StampInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IBirTypeDeclaration type,
         IReadOnlyDictionary<string, IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs)
     {
         if (InterfaceSlotSets(type).IsPresent || !type.Methods.HasValue) return;
@@ -84,7 +84,7 @@ static partial class ClrMemberResolution
                     .Where(method => IsPublicOrProtected(method) && method.GetGenericArguments().Length == arity
                         && method.GetParameters().Length == parameters.Length)
                     .Select(method => {
-                        var reference = MemberRefOf(refs, method, MemberRefNode.Kinds.Method, open, arguments);
+                        var reference = MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, arguments);
                         var declaringArguments = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
                         return new InterfaceCandidate(method, reference, declaringArguments,
                             reference.ParameterTypes.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArguments)).ToArray(),

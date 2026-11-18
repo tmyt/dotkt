@@ -7,8 +7,6 @@ static partial class ClrMemberResolution
     internal static void SelfTestTypedDelegateSlots() => TypedDelegateValueSelfTest(refs =>
     {
         var declarations = new PhysicalDelegateDeclarations();
-        var priorTypes = _localTypes;
-        try
         {
             var voidType = new TypeNode.Fqn("void");
             var objectType = new TypeNode.Fqn("System.Object");
@@ -118,6 +116,5 @@ static partial class ClrMemberResolution
                 "void-to-void SAM adapter returned a Unit value");
             Console.WriteLine("[typed delegate construction] self-test OK (five shapes, SAM, exact bindings, bottom-up ownership and cache scope)");
         }
-        finally { _localTypes = priorTypes; }
     });
 }

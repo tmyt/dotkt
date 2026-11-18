@@ -93,14 +93,14 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException("Real IReadOnlyList metadata missing");
             var getter = listType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
                 .Single(method => method.Name == "get_Item");
-            var reference = BirMemberReference.FromPhysical(MemberRefOf(refs, getter, "method", listType, new TypeNode[] { unit }));
+            var reference = BirMemberReference.FromPhysical(MemberRefOf(null, refs, getter, "method", listType, new TypeNode[] { unit }));
             var referenced = new BirNewDelegate { CalleeOwner = Named("System.Collections.Generic.IReadOnlyList", unit), Method = "get_Item",
                 MemberRef = reference, Sig = new TypeNode[] { integer },
                 FuncType = new TypeNode.Fn(false, none, new TypeNode[] { integer }, Clr: "System.Action") };
             var arrayType = refs.ResolveRefType("System.Array") ?? throw new InvalidOperationException("Real Array metadata missing");
             var empty = arrayType.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
                 .Single(method => method.Name == "Empty" && method.IsGenericMethodDefinition);
-            var arrayReference = BirMemberReference.FromPhysical(MemberRefOf(refs, empty, "method", arrayType, Array.Empty<TypeNode>()));
+            var arrayReference = BirMemberReference.FromPhysical(MemberRefOf(null, refs, empty, "method", arrayType, Array.Empty<TypeNode>()));
             var referencedMethod = new BirNewDelegate { CalleeOwner = Named("System.Array"), Method = "Empty", MemberRef = arrayReference,
                 Sig = Array.Empty<TypeNode>(), TypeArgs = new TypeNode[] { text },
                 FuncType = new TypeNode.Fn(false, erased, Array.Empty<TypeNode>(), Clr: "System.Func") };

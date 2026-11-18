@@ -26,12 +26,12 @@ static partial class ClrMemberResolution
             var left = new BirConstant { Type = text, Value = new BirLiteral.TextLiteral("left") };
             var right = new BirConstant { Type = obj, Value = new BirLiteral.NullLiteral() };
             IBirExpression[] arguments = { left, right };
-            var staticPlan = PlanExactDispatch(refs, concat, text, isStatic: true);
+            var staticPlan = PlanExactDispatch(null, refs, concat, text, isStatic: true);
             Require(staticPlan.Name == "Concat" && staticPlan.Result == text
                 && staticPlan.Arguments.SequenceEqual(new TypeNode[] { obj, obj })
                 && staticPlan.Reference.ReturnType == text && staticPlan.Visibility == null
                 && staticPlan.OwnerParameters == null, "static plan changed its selected physical signature");
-            var call = ExactStaticCall(refs, concat, text, arguments);
+            var call = ExactStaticCall(null, refs, concat, text, arguments);
             var reference = call.MemberRef.Value;
             Require(call.Owner.Value == text && !call.OwnerType.IsPresent && call.Method.Value == "Concat"
                 && call.Virtual.HasValue && !call.Virtual.Value && call.DotktDeclarationIdentityBound.Value
@@ -55,12 +55,12 @@ static partial class ClrMemberResolution
             var owner = new TypeNode.Fqn("System.Collections.Generic.List`1", new TypeNode[] { text });
             IBirExpression receiver = new BirNew { Type = owner, Args = Array.Empty<IBirExpression>() };
             IBirExpression index = new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(0) };
-            var instancePlan = PlanExactDispatch(refs, item, owner, isStatic: false);
+            var instancePlan = PlanExactDispatch(null, refs, item, owner, isStatic: false);
             Require(instancePlan.Result == text && instancePlan.Reference.ReturnType == new TypeNode.Tv("type", 0)
                 && instancePlan.Arguments.SequenceEqual(new TypeNode[] { integer })
                 && instancePlan.Reference.DeclaringType == owner && instancePlan.Visibility == null,
                 "generic owner's closed result was confused with its open MemberRef return");
-            var instance = ExactInstanceCall(refs, item, owner, receiver, new[] { index });
+            var instance = ExactInstanceCall(null, refs, item, owner, receiver, new[] { index });
             var itemReference = instance.MemberRef.Value;
             Require(instance.OwnerType.Value == owner && instance.Method.Value == "get_Item" && instance.Virtual.Value
                 && instance.DotktDeclarationIdentityBound.Value && instance.Ret.Value == text && instance.Sty.Value == text
@@ -78,19 +78,19 @@ static partial class ClrMemberResolution
                 && !instance.ArgTypes.IsPresent && !instance.DeclarationId.IsPresent,
                 "instance renderer lost receiver-once, open signature or the already-closed result/stamp");
             var closedItem = typeof(List<string>).GetProperty("Item")!.GetMethod!;
-            var closedPlan = PlanExactDispatch(refs, closedItem, owner, isStatic: false);
+            var closedPlan = PlanExactDispatch(null, refs, closedItem, owner, isStatic: false);
             Require(closedPlan.Result == text && closedPlan.Reference.ReturnType == new TypeNode.Tv("type", 0),
                 "a reflected closed MethodDef was substituted twice or leaked its closed signature into the MemberRef");
 
             var clone = typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            var protectedPlan = PlanExactDispatch(refs, clone, obj, isStatic: false);
+            var protectedPlan = PlanExactDispatch(null, refs, clone, obj, isStatic: false);
             Require(protectedPlan.Visibility == "protected" && protectedPlan.OwnerParameters == null
                 && protectedPlan.Result == obj && protectedPlan.Reference.ReturnType == obj,
                 "protected nongeneric access plan acquired inferred owner parameters or return facts");
             IBirExpression self = new BirThis();
             IBirExpression other = new BirNew { Type = obj, Args = Array.Empty<IBirExpression>() };
-            var thisCall = ExactInstanceCall(refs, clone, obj, self, Array.Empty<IBirExpression>());
-            var otherCall = ExactInstanceCall(refs, clone, obj, other, Array.Empty<IBirExpression>());
+            var thisCall = ExactInstanceCall(null, refs, clone, obj, self, Array.Empty<IBirExpression>());
+            var otherCall = ExactInstanceCall(null, refs, clone, obj, other, Array.Empty<IBirExpression>());
             foreach (var protectedCall in new[] { thisCall, otherCall })
                 Require(protectedCall.MemberVisibility.Value == "protected"
                     && protectedCall.MemberOwnerTypeParams.IsPresent && protectedCall.MemberOwnerTypeParams.IsNull
