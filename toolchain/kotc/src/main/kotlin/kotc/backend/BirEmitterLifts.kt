@@ -1202,12 +1202,10 @@ internal fun BirEmitter.extensionReferenceCall(
 		val extRecvParam = extensionReceiverParam(fn)!!
 		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn))
 			.map { birType(it.type) }
-		return if (hasRefTa)
-			BirCallStatic(ownerType = TypeNode.Fqn(externalFileClass), method = fn.name.asString(), typeArgs = refTa,
-				shapeTypes = declShapeTypes, args = callArgs, suspendCall = suspendCall, declarationId = declarationIdentity)
-		else
-			BirCallStatic(ownerType = TypeNode.Fqn(externalFileClass), method = fn.name.asString(), argTypes = declShapeTypes,
-				ret = ret, args = callArgs, suspendCall = suspendCall, declarationId = declarationIdentity)
+		return BirCallStatic(ownerType = TypeNode.Fqn(externalFileClass), method = fn.name.asString(), typeArgs = refTa,
+			shapeTypes = declShapeTypes.takeIf { hasRefTa }, argTypes = declShapeTypes.takeUnless { hasRefTa },
+			ret = ret.takeUnless { hasRefTa }, args = callArgs, suspendCall = suspendCall,
+			declarationId = declarationIdentity, externalMember = clrExternalMember(fn))
 	}
 	return BirCallStatic(owner = BirField.Null, method = fn.name.asString(), sig = overloadSignature(fn),
 		typeArgs = refTa, ret = ret.takeIf { hasRefTa }, args = callArgs, suspendCall = suspendCall,

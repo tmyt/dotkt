@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Imported CLR operators support Kotlin negation, bitwise operations, shifts,
+  ordered comparisons, and statically selected Boolean equality and inequality.
+
 - Register JVM-hosted Kotlin FIR and IR compiler plugins from projects or NuGet
   build assets using `DotKtCompilerPlugin` and `DotKtCompilerPluginOption`.
 

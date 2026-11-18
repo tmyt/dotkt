@@ -2566,7 +2566,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
                 if ((method.Attributes & (MethodAttributes.Static | MethodAttributes.SpecialName)) ==
-                    (MethodAttributes.Static | MethodAttributes.SpecialName) && def.GetGenericParameters().Count != 0)
+                    (MethodAttributes.Static | MethodAttributes.SpecialName) &&
+                    (def.GetGenericParameters().Count != 0 || clrMethodName is "op_Equality" or "op_Inequality"))
                     ProjectStaticOwnerParameters(handle, methodHandle, function, names, signatures, context);
                 ApplyPInvokeProjection(method, function, names);
                 // Ordinary members already carry their physical declaring class.

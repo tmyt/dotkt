@@ -171,7 +171,16 @@ ordinary .NET platform rules and remain the application's responsibility.
   (a `when` needs an `else` — .NET enums are open). An enum carrying the exact CLR `[Flags]` attribute also exposes
   typed `or`, `and`, `xor`, `inv`, and `in` operations without leaving its enum type.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
-  (`==` deliberately routes to `Equals`, the Kotlin semantics.)
+- For two statically non-null operands, Kotlin `==` and `!=` can select the
+  corresponding imported Boolean CLR operator from either operand type. Each
+  operator is selected independently by overload resolution: `a != b` need not
+  mean `!(a == b)`. Equally applicable declarations are ambiguous. A native
+  comparison is not a type test and cannot smart-cast the other operand.
+  With no applicable native operator, or with a nullable operand (including
+  a platform type that may be null), Kotlin equality is unchanged. A null check
+  may first narrow a variable to its non-null type. Static types matter: two
+  operands widened to `Any` or to an unconstrained `T` use ordinary equality.
+  Explicit `equals`, identity (`===`), hashing and collection lookup are unaffected.
 - Import the declaring CLR namespace (for example, `import MyLibrary.*`) to use
   logical negation (`!x`), ones' complement (`x.inv()`), and the infix
   `and`, `or`, `xor`, `shl`, `shr` and `ushr` views of native operators.

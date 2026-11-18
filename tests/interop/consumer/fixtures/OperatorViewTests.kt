@@ -1,7 +1,39 @@
 import NUnit.Framework.TestAttribute
 import OperatorViews.*
 
+private infix fun Bits.and(right: Operand<Double>): Double = right.Value + 1.0
+
 class OperatorViewTests {
+    @TestAttribute
+    fun equalitySelectsTheTwoNativeOperatorsIndependently() {
+        val left = Left()
+        val right = Right<String>()
+        check(left == right && left != right)
+        val negated = !(left == right)
+        check(!negated)
+        val k = Key(3)
+        val other = Key(3)
+        check(k == other && k != other && !k.equals(other) && k !== other)
+        val erased: Any = k
+        val erasedOther: Any = other
+        check(erased != erasedOther)
+        check(other !in setOf(k))
+        fun <T> same(a: T, b: T): Boolean = a == b
+        check(!same(k, other))
+        fun <T> maybe(a: Key, b: T): Boolean = a == b
+        check(!maybe(k, other) && !maybe(k, null))
+        check(!(k.Oblivious() == other))
+        fun nullable(a: Key?, b: Key): Boolean {
+            val before = a == b
+            if (a == null) return !before
+            return !before && a == b && a != b
+        }
+        check(nullable(k, other) && nullable(null, other))
+        var calls = 0
+        fun next(): Key { calls++; return k }
+        check(next() != next() && calls == 2)
+    }
+
     @TestAttribute
     fun comparisonUsesTheSameAdapterAndEvaluatesEachOperandOnce() {
         StrictOrder.Trace = ""
@@ -16,6 +48,8 @@ class OperatorViewTests {
         check(a.compareTo(a) == 0 && PartialOrder<String>(-1).compareTo(a) == 0)
         check(a.Calls == calls + "LGLGLGLG")
         check(Ranked().compareTo(Ranked()) == 17 && Ranked() > Ranked())
+        val compare: (StrictOrder, StrictOrder) -> Int = StrictOrder::compareTo
+        check(compare(StrictOrder(4), StrictOrder(1)) > 0)
     }
 
     @TestAttribute
@@ -27,5 +61,8 @@ class OperatorViewTests {
         check((a shl 1).Value == 2 && (b shr 1).Value == 1 && (Bits(-2) ushr 1).Value == Int.MAX_VALUE)
         check((a and Operand<String>("right")) == "right")
         check(Operand<Int>(13).inv() == 13)
+        check((a and Operand<Double>(2.0)) == 3.0)
+        val inverse: () -> Bits = a::inv
+        check(inverse().Value == -2)
     }
 }
