@@ -1,0 +1,8 @@
+<Project Sdk="DotKt.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Fixture.Consumer" Version="1.0.0" />
+    <!-- Deliberately register the same JAR under a different spelling. -->
+    <DotKtCompilerPlugin Include="$([System.IO.Path]::GetFullPath('$(FixturePluginPath)'))" Condition="'$(WithoutPlugin)' != 'true' and '$(FixturePluginPath)' != ''" />
+  </ItemGroup>
+</Project>

@@ -4,6 +4,10 @@
      (eng/KotlinClr.targets) imports it explicitly. The packaged SDK companion under buildMultiTargeting handles
      cross-targeting outer builds. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
 <Project>
+  <UsingTask TaskName="DotKt.Build.WriteCompilerPluginArguments" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
+             Condition="'$(MSBuildRuntimeType)' == 'Core'" />
+  <UsingTask TaskName="DotKt.Build.WriteCompilerPluginArguments" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
+             TaskFactory="TaskHostFactory" Condition="'$(MSBuildRuntimeType)' == 'Full'" />
   <UsingTask TaskName="DotKt.Build.WriteAssemblyOptions" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
              Condition="'$(MSBuildRuntimeType)' == 'Core'" />
   <UsingTask TaskName="DotKt.Build.WriteAssemblyOptions" AssemblyFile="$(DotKtBuildTasks)" Runtime="NET"
@@ -194,8 +198,16 @@
       <_DotKtEscapedCommonSourcePaths>$(_DotKtCommonSourcePaths.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCommonSourcePaths>
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
+    <PropertyGroup Condition="'@(DotKtCompilerPlugin)' != '' or '@(DotKtCompilerPluginOption)' != ''">
+      <_DotKtPluginArguments>@&quot;$(IntermediateOutputPath)dotkt-plugins.rsp&quot;</_DotKtPluginArguments>
+    </PropertyGroup>
+    <WriteCompilerPluginArguments Condition="'$(_DotKtPluginArguments)' != ''"
+                                  OutputFile="$(IntermediateOutputPath)dotkt-plugins.rsp"
+                                  Plugins="@(DotKtCompilerPlugin)" Options="@(DotKtCompilerPluginOption)">
+      <Output TaskParameter="Fingerprint" PropertyName="_DotKtPluginFingerprint" />
+    </WriteCompilerPluginArguments>
     <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="kotc=$(DotKtKotcOptions);bir-format=$(_DotKtBirFormat);klib-zip-cache=$(DotKtKlibZipFileAccessorCacheLimit);mpp=$(DotKtMppFlags);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
+                      Lines="kotc=$(DotKtKotcOptions);bir-format=$(_DotKtBirFormat);klib-zip-cache=$(DotKtKlibZipFileAccessorCacheLimit);mpp=$(DotKtMppFlags);plugins=$(_DotKtPluginFingerprint);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
   </Target>
 
   <!-- Compile every .kt to BIR from the frontend stdlib plus the complete MSBuild-resolved reference-KLIB set.
@@ -252,7 +264,7 @@
                       Lines="@(_DotKtKotcResponseArgument->'%(Value)')"
                       Overwrite="true" />
     <Exec Condition="'@(KotlinCompile)' != ''"
-          Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(DotKtKotcOptions)" />
+          Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(_DotKtPluginArguments) $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -459,6 +471,6 @@
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
-    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(DotKtEmitOptionsManifest);$(_DotKtIlEmitStamp);$(_DotKtResolvedEmitOptions);$(_DotKtNativeResources)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(IntermediateOutputPath)dotkt-plugins.rsp;$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest);$(DotKtEmitOptionsManifest);$(_DotKtIlEmitStamp);$(_DotKtResolvedEmitOptions);$(_DotKtNativeResources)" />
   </Target>
 </Project>

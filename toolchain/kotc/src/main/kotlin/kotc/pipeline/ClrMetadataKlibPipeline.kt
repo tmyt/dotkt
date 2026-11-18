@@ -2,7 +2,9 @@
 
 package kotc.pipeline
 
+import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.builtins.DefaultBuiltIns
+import org.jetbrains.kotlin.compiler.plugin.getCompilerExtensions
 import org.jetbrains.kotlin.cli.common.diagnosticsCollector
 import org.jetbrains.kotlin.cli.common.metadataDestinationDirectory
 import org.jetbrains.kotlin.cli.pipeline.CheckCompilationErrors
@@ -74,7 +76,7 @@ object ClrMetadataKlibFir2IrPhase : PipelinePhase<MetadataFrontendPipelineArtifa
 		val fir2IrResult = input.frontendOutput.convertToIrAndActualize(
 			Fir2IrExtensions.Default,
 			Fir2IrConfiguration.forKlibCompilation(input.configuration, input.configuration.diagnosticsCollector),
-			irGeneratorExtensions = emptyList(),
+			irGeneratorExtensions = input.configuration.getCompilerExtensions(IrGenerationExtension),
 			irMangler = JsManglerIr,
 			visibilityConverter = ClrFir2IrVisibilityConverter,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,

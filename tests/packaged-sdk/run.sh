@@ -1470,6 +1470,11 @@ case_application_manifest
 case_managed_versions
 case_jit_debugging
 case_reference_assembly
+if bash "$ROOT/tests/packaged-sdk/compiler-plugin/run.sh" "$FEED" "$VER" "$WS/compiler-plugin" >"$WS/compiler-plugin.log" 2>&1; then
+	pass compiler-plugin
+else
+	fail compiler-plugin "JVM plugin package, execution or invalidation failed" "$(tail -30 "$WS/compiler-plugin.log")"
+fi
 case_portable_pdb
 case_multitarget_klib_references
 case_library
