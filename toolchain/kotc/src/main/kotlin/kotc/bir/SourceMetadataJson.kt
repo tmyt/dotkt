@@ -4,6 +4,7 @@ package kotc.bir
 internal object SourceMetadataJson {
     fun encode(value: SourceTypeAlias): String = buildString { write(value, this) }
     fun write(value: SourceTypeAlias, output: StringBuilder) = writeSourceTypeAlias(value, output)
+    fun write(value: SourceCallable, output: StringBuilder) = writeSourceCallable(value, output)
 
     private fun writeSourceTypeAlias(value: SourceTypeAlias, sb: StringBuilder) {
         sb.append('{')
@@ -38,6 +39,87 @@ internal object SourceMetadataJson {
             writeSourceAnnotation(item, sb)
         }
         sb.append(']')
+        sb.append('}')
+    }
+
+    private fun writeSourceCallable(value: SourceCallable, sb: StringBuilder) {
+        sb.append('{')
+        sb.append("\"declarationId\":")
+        TypeNodeJson.writeString(value.declarationId, sb)
+        sb.append(",\"name\":")
+        TypeNodeJson.writeString(value.name, sb)
+        sb.append(",\"flags\":")
+        sb.append(value.flags)
+        sb.append(",\"typeParameters\":")
+        sb.append('[')
+        value.typeParameters.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceTypeParameter(item, sb)
+        }
+        sb.append(']')
+        sb.append(",\"reifiedParameters\":")
+        sb.append('[')
+        value.reifiedParameters.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            sb.append(item)
+        }
+        sb.append(']')
+        sb.append(",\"contextParameters\":")
+        sb.append('[')
+        value.contextParameters.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceValueParameter(item, sb)
+        }
+        sb.append(']')
+        sb.append(",\"valueParameters\":")
+        sb.append('[')
+        value.valueParameters.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceValueParameter(item, sb)
+        }
+        sb.append(']')
+        sb.append(",\"returnType\":")
+        writeSourceType(value.returnType, sb)
+        sb.append(",\"annotations\":")
+        sb.append('[')
+        value.annotations.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceAnnotation(item, sb)
+        }
+        sb.append(']')
+        sb.append(",\"receiverAnnotations\":")
+        sb.append('[')
+        value.receiverAnnotations.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceAnnotation(item, sb)
+        }
+        sb.append(']')
+        value.receiverType?.let { child ->
+            sb.append(",\"receiverType\":")
+            writeSourceType(child, sb)
+        }
+        sb.append('}')
+    }
+
+    private fun writeSourceValueParameter(value: SourceValueParameter, sb: StringBuilder) {
+        sb.append('{')
+        sb.append("\"name\":")
+        TypeNodeJson.writeString(value.name, sb)
+        sb.append(",\"flags\":")
+        sb.append(value.flags)
+        sb.append(",\"type\":")
+        writeSourceType(value.type, sb)
+        sb.append(",\"annotations\":")
+        sb.append('[')
+        value.annotations.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceAnnotation(item, sb)
+        }
+        sb.append(']')
+        value.varargElementType?.let { child ->
+            sb.append(",\"varargElementType\":")
+            writeSourceType(child, sb)
+        }
         sb.append('}')
     }
 

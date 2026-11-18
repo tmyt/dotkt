@@ -134,10 +134,11 @@ class ClrFir2IrPipelineArtifact(
 	override val result: Fir2IrActualizedResult,
 	override val configuration: org.jetbrains.kotlin.config.CompilerConfiguration,
 	val typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>> = emptyMap(),
+	val pluginSources: kotc.backend.PluginCallableSources? = null,
 ) : Fir2IrPipelineArtifact() {
 	@OptIn(PipelineArtifact.CliPipelineInternals::class)
 	override fun withCompilerConfiguration(newConfiguration: org.jetbrains.kotlin.config.CompilerConfiguration): ClrFir2IrPipelineArtifact =
-		ClrFir2IrPipelineArtifact(result, newConfiguration, typeAliases)
+		ClrFir2IrPipelineArtifact(result, newConfiguration, typeAliases, pluginSources)
 }
 
 object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArtifact, ClrFir2IrPipelineArtifact>(
@@ -146,10 +147,12 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 	postActions = setOf(PerformanceNotifications.TranslationToIrFinished, CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
 	override fun executePhase(input: MetadataFrontendPipelineArtifact): ClrFir2IrPipelineArtifact {
+		val extensions = input.configuration.getCompilerExtensions(IrGenerationExtension)
+		val sourceCapture = if (extensions.isEmpty()) null else kotc.backend.PluginCallableSources(input)
 		val fir2IrResult = input.frontendOutput.convertToIrAndActualize(
 			Fir2IrExtensions.Default,
 			Fir2IrConfiguration.forKlibCompilation(input.configuration, input.configuration.diagnosticsCollector),
-			irGeneratorExtensions = kotc.frontend.PluginCallSites.guard(input.configuration.getCompilerExtensions(IrGenerationExtension)),
+			irGeneratorExtensions = listOfNotNull(sourceCapture) + kotc.frontend.PluginCallSites.guard(extensions),
 			irMangler = JsManglerIr,
 			visibilityConverter = ClrFir2IrVisibilityConverter,
 			kotlinBuiltIns = DefaultBuiltIns.Instance,
@@ -169,7 +172,7 @@ object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArti
 		}
 		kotc.frontend.SelectedCallDeclarations.convertDeclarations(fir2IrResult.components, fir2IrResult.irModuleFragment)
 		return ClrFir2IrPipelineArtifact(fir2IrResult, input.configuration,
-			kotc.backend.TypeAliasDeclarations.collect(input, fir2IrResult))
+			kotc.backend.TypeAliasDeclarations.collect(input, fir2IrResult), sourceCapture)
 	}
 }
 

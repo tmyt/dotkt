@@ -4,7 +4,7 @@ set -euo pipefail
 src=$(cd "$(dirname "$0")" && pwd)
 feed=$(realpath "$1"); ver=$2
 mkdir "$3"; ws=$(realpath "$3"); cd "$ws"
-mkdir app fixture feed native
+mkdir app fixture feed native library
 export NUGET_PACKAGES="$ws/packages"
 cat > NuGet.Config <<EOF
 <configuration><packageSources><clear/><add key="dotkt" value="$feed"/><add key="fixture" value="$ws/feed"/></packageSources><fallbackPackageFolders><clear/></fallbackPackageFolders></configuration>
@@ -13,6 +13,7 @@ cat > global.json <<EOF
 {"sdk":{"version":"10.0.100","rollForward":"latestFeature"},"msbuild-sdks":{"DotKt.Sdk":"$ver"}}
 EOF
 cp "$src"/{App.kt,Calls.kt,App.ktproj} app/
+cp "$src"/{Library.kt,Library.ktproj} library/
 cp "$src/../../interop/producer/InheritedStatics.cs" native/
 printf '%s\n' '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>' > native/Native.csproj
 cp "$src"/Fixture.* fixture/
@@ -21,7 +22,7 @@ unzip -q "$feed/DotKt.Toolchain.$ver.nupkg" 'tools/kotc/*' 'tools/kotlin-stdlib-
 lib="$ws/tools/kotc/lib"
 jars=("$lib"/*.jar); cp_arg=$(IFS=:; echo "${jars[*]}")
 java -cp "$lib/*" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler -no-stdlib -no-reflect \
-    -classpath "$cp_arg" "$src/Plugin.kt" -d classes
+    -classpath "$cp_arg" "$src/Plugin.kt" "$src/HiddenArgument.kt" -d classes
 jar cf fixture/probe.jar -C classes . -C "$src" META-INF
 bash tools/kotc/bin/kotc -classpath tools/kotlin-stdlib-clr-frontend.klib \
     -Xplugin=fixture/probe.jar -P 'plugin:dotkt.fixture:answer=from direct kotc' app/App.kt -d direct
@@ -32,11 +33,13 @@ for pkg in Plugin Consumer; do dotnet pack "fixture/Fixture.$pkg.nuspec" -o feed
 # Keep the native reference fixed; only plugin registrations may invalidate the
 # incremental checks below, not a ProjectReference rebuild with different globals.
 dotnet build native/Native.csproj
+dotnet build library/Library.ktproj
 dotnet restore app/App.ktproj --configfile NuGet.Config
 compile() { dotnet build app/App.ktproj --no-restore -v:minimal "$@"; }
 run() { dotnet app/bin/Debug/net10.0/App.dll; }
 compile > initial.log
 test "$(run)" = 'from the package'
+bash "$src/../../run-ilverify.sh" app/bin/Debug/net10.0/{App,Library}.dll
 dotnet msbuild app/App.ktproj -getItem:UpToDateCheckInput | grep -F 'compiler plugin.jar' >/dev/null
 rsp=app/obj/Debug/net10.0/dotkt-plugins.rsp
 test "$(grep -c -- '-Xplugin=' "$rsp")" = 1

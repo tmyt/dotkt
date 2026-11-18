@@ -14,6 +14,30 @@ data class SourceTypeAlias(
     override fun writeJson(output: StringBuilder) = SourceMetadataJson.write(this, output)
 }
 
+data class SourceCallable(
+    val declarationId: String,
+    val name: String,
+    val flags: Int,
+    val typeParameters: List<SourceTypeParameter>,
+    val reifiedParameters: List<Int>,
+    val receiverType: SourceType? = null,
+    val contextParameters: List<SourceValueParameter>,
+    val valueParameters: List<SourceValueParameter>,
+    val returnType: SourceType,
+    val annotations: List<SourceAnnotation>,
+    val receiverAnnotations: List<SourceAnnotation>
+) : BirValue {
+    override fun writeJson(output: StringBuilder) = SourceMetadataJson.write(this, output)
+}
+
+data class SourceValueParameter(
+    val name: String,
+    val flags: Int,
+    val type: SourceType,
+    val varargElementType: SourceType? = null,
+    val annotations: List<SourceAnnotation>
+)
+
 data class SourceClassifier(
     val packageName: String,
     val ownerPath: List<String>,

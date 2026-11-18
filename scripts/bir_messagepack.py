@@ -1,6 +1,6 @@
 """Direct typed BIR transport over the existing owning phase composition."""
 import json
-from bir_lowering_models import base, compose_shapes, csharp_type, declaration_cases, is_nullable, refkey
+from bir_lowering_models import base, compose_shapes, csharp_type, declaration_cases, is_nullable, refkey, source_records, source_readers
 
 
 def outputs(root, definitions):
@@ -25,7 +25,7 @@ def outputs(root, definitions):
         if key:
             if key == "type": return "CirMessagePack.ReadType(ref reader)"
             if key == "literalValue": return "BirLiteralMessagePack.Read(ref reader)"
-            if key == "birSourceTypeAlias": return "SourceMetadataMessagePack.Read(ref reader)"
+            if key in source_records: return f"SourceMetadataMessagePack.{source_readers[key]}(ref reader)"
             return f"Read{cs(field).removeprefix('I')}(ref reader)"
         if field.get("type") == "array":
             item = field["items"]
@@ -49,7 +49,7 @@ def outputs(root, definitions):
         if key:
             if key == "type": body = f"CirMessagePack.WriteType(ref writer, {value}, {depth});"
             elif key == "literalValue": body = f"BirLiteralMessagePack.Write(ref writer, {value}, {depth});"
-            elif key == "birSourceTypeAlias": body = f"SourceMetadataMessagePack.Write(ref writer, {value}, {depth});"
+            elif key in source_records: body = f"SourceMetadataMessagePack.Write(ref writer, {value}, {depth});"
             else: body = f"Write{cs(field).removeprefix('I')}(ref writer, {value}, {depth});"
             return [indent + body]
         if field.get("type") == "array":

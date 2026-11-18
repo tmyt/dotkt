@@ -8,6 +8,7 @@
   "$comment": "A BIR/CIR file is a compilation unit. Executable inline/default and TypeNode carriers use codec bir-msgpack/1 or Release-selected bir-msgpack+deflate/1; their owning models share this schema's phase vocabulary. KotlinInline's envelope is the birInlinePayload definition. Remaining metadata object carriers use bir-json/1. Attribute constructors and carrier placement live in spec §0.",
   "properties": {
     "typeAliases": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json" }, "description": "BIR-only actualized Kotlin alias declarations, encoded opaquely into CIR assemblyAttrs before physical lowering" },
+    "sourceCallables": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json#/$defs/callable" }, "description": "Source-facing Kotlin signatures for IR-transformed callables, linked by declaration identity" },
     "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" }, "description": "CIR assembly attribute applications, emitted literally after local constructors receive metadata tokens" },
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
@@ -128,6 +129,7 @@
     },
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
+    "birSourceCallable": { "$ref": "kotlin-typealias.schema.json#/$defs/callable", "x-dotkt-model": { "name": "SourceCallable" } },
     "birTypeDeclaration": {
       "x-dotkt-model": { "name": "BirTypeDeclaration" },
       "oneOf": [{ "$ref": "#/$defs/birClassDefinition" }, { "$ref": "#/$defs/birInterfaceDefinition" }, { "$ref": "#/$defs/birEnumDefinition" }]
@@ -152,7 +154,8 @@
         "properties": { "type": "array", "items": { "$ref": "#/$defs/birPropertyDeclaration" } },
         "types": { "type": "array", "items": { "$ref": "#/$defs/birTypeDeclaration" } },
         "refTypes": { "type": "array", "items": { "$ref": "#/$defs/birRefTypeDeclaration" } },
-        "typeAliases": { "type": "array", "items": { "$ref": "#/$defs/birSourceTypeAlias" } }
+        "typeAliases": { "type": "array", "items": { "$ref": "#/$defs/birSourceTypeAlias" } },
+        "sourceCallables": { "type": "array", "items": { "$ref": "#/$defs/birSourceCallable" } }
       },
       "required": ["fileClass", "hasMain", "fields", "methods", "properties", "types", "refTypes", "typeAliases"], "additionalProperties": false
     },

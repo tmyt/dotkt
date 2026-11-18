@@ -33,13 +33,13 @@ object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, 
 	postActions = setOf(CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
 	override fun executePhase(input: kotc.pipeline.ClrFir2IrPipelineArtifact): ClrBackendArtifact {
-		return emit(input.result, input.configuration, input.typeAliases)
+		return emit(input.result, input.configuration, input.typeAliases, input.pluginSources)
 	}
 }
 
 @OptIn(org.jetbrains.kotlin.config.MessageCollectorAccess::class)
 private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration,
-    typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>>): ClrBackendArtifact {
+    typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>>, pluginSources: PluginCallableSources?): ClrBackendArtifact {
 		val moduleFragment = result.irModuleFragment
 		val outputDir = configuration?.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)
 			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
@@ -50,6 +50,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
 		val bir = BirEmitter(messageCollector, result.irBuiltIns, moduleFragment.files.toSet())
+		val sourceCallables = pluginSources?.select(result)
 		// Which local `var`s need a heap ref-cell is a property of the variable, not of the emission frame, and one
 		// declaration's expression can be emitted in another file's frame (an omitted default argument is inlined at
 		// the caller). Decide it ONCE over the whole module, before any file is emitted, so every emission root agrees.
@@ -71,7 +72,11 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 			if (seen > 1) baseName = "${baseName}__$seen"
 			try {
 				val birFile = bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
-				if (birFile != null) kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"), birFile, format)
+				if (birFile != null) {
+					val sources = sourceCallables?.invoke(irFile, bir::declarationIdForPhysicalAllocation).orEmpty()
+					kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"),
+						if (sources.isEmpty()) birFile else birFile.copy(sourceCallables = sources), format)
+				}
 			} catch (e: Throwable) {
 				crashed = true
 				messageCollector?.report(

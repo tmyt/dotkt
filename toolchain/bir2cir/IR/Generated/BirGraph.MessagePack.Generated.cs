@@ -697,11 +697,12 @@ internal static class BirGraphMessagePack
         OptionalField<IBirTypeDeclaration[]> field5 = default;
         OptionalField<BirRefTypeDeclaration[]> field6 = default;
         OptionalField<SourceTypeAlias[]> field7 = default;
-        OptionalField<bool> field8 = default;
-        OptionalField<BirAttribute[]> field9 = default;
+        OptionalField<SourceCallable[]> field8 = default;
+        OptionalField<bool> field9 = default;
         OptionalField<BirAttribute[]> field10 = default;
-        OptionalField<PhysicalMemberTable> field11 = default;
-        OptionalField<BirDeclarationPosition> field12 = default;
+        OptionalField<BirAttribute[]> field11 = default;
+        OptionalField<PhysicalMemberTable> field12 = default;
+        OptionalField<BirDeclarationPosition> field13 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -738,25 +739,29 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TryReadNil() ? OptionalField<SourceTypeAlias[]>.Null : OptionalField<SourceTypeAlias[]>.Of(ReadArray<SourceTypeAlias>(ref reader, (ref MessagePackReader reader) => SourceMetadataMessagePack.Read(ref reader)));
                     break;
-                case "roundtripMetadataPending":
+                case "sourceCallables":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field8 = reader.TryReadNil() ? OptionalField<SourceCallable[]>.Null : OptionalField<SourceCallable[]>.Of(ReadArray<SourceCallable>(ref reader, (ref MessagePackReader reader) => SourceMetadataMessagePack.ReadCallable(ref reader)));
+                    break;
+                case "roundtripMetadataPending":
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 case "assemblyAttrs":
-                    Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
-                    break;
-                case "attrs":
                     Seen(ref seen, 1UL << 10);
                     field10 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
                     break;
-                case "wellKnownRefs":
+                case "attrs":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<PhysicalMemberTable>.Null : OptionalField<PhysicalMemberTable>.Of(PhysicalMemberTable.ReadMessagePack(ref reader));
+                    field11 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
+                    break;
+                case "wellKnownRefs":
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TryReadNil() ? OptionalField<PhysicalMemberTable>.Null : OptionalField<PhysicalMemberTable>.Of(PhysicalMemberTable.ReadMessagePack(ref reader));
                     break;
                 case "pos":
-                    Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -772,18 +777,19 @@ internal static class BirGraphMessagePack
             Types = field5,
             RefTypes = field6,
             TypeAliases = field7,
-            RoundtripMetadataPending = field8,
-            AssemblyAttrs = field9,
-            Attrs = field10,
-            WellKnownRefs = field11,
-            Pos = field12,
+            SourceCallables = field8,
+            RoundtripMetadataPending = field9,
+            AssemblyAttrs = field10,
+            Attrs = field11,
+            WellKnownRefs = field12,
+            Pos = field13,
         };
     }
 
     internal static void WriteBirFileDeclaration(ref MessagePackWriter writer, BirFileDeclaration value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.FileClass.IsPresent ? 1 : 0) + (value.HasMain.IsPresent ? 1 : 0) + (value.Fields.IsPresent ? 1 : 0) + (value.Methods.IsPresent ? 1 : 0) + (value.Properties.IsPresent ? 1 : 0) + (value.Types.IsPresent ? 1 : 0) + (value.RefTypes.IsPresent ? 1 : 0) + (value.TypeAliases.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.AssemblyAttrs.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.WellKnownRefs.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.FileClass.IsPresent ? 1 : 0) + (value.HasMain.IsPresent ? 1 : 0) + (value.Fields.IsPresent ? 1 : 0) + (value.Methods.IsPresent ? 1 : 0) + (value.Properties.IsPresent ? 1 : 0) + (value.Types.IsPresent ? 1 : 0) + (value.RefTypes.IsPresent ? 1 : 0) + (value.TypeAliases.IsPresent ? 1 : 0) + (value.SourceCallables.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.AssemblyAttrs.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.WellKnownRefs.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0));
         if (value.FileClass.IsPresent)
         {
             writer.Write("fileClass");
@@ -881,6 +887,20 @@ internal static class BirGraphMessagePack
                 CheckDepth(depth + 1);
                 writer.WriteArrayHeader(value.TypeAliases.Value.Length);
                 foreach (var item0 in value.TypeAliases.Value)
+                {
+                    SourceMetadataMessagePack.Write(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.SourceCallables.IsPresent)
+        {
+            writer.Write("sourceCallables");
+            if (value.SourceCallables.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.SourceCallables.Value.Length);
+                foreach (var item0 in value.SourceCallables.Value)
                 {
                     SourceMetadataMessagePack.Write(ref writer, item0, depth + 1 + 1);
                 }

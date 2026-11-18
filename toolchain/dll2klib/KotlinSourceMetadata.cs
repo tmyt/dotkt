@@ -6,16 +6,24 @@ using KType = DotKt.Klib.Metadata.Type;
 using KValue = DotKt.Klib.Metadata.Annotation.Types.Argument.Types.Value;
 
 // Source declaration facts, not CLR signature decoding or executable generic frames.
-internal sealed class KotlinTypeAliasMetadata
+internal sealed class KotlinSourceMetadata
 {
-    internal const string AttributeName = MetadataAttributes.DotKtNs + "KotlinTypeAliasAttribute";
+    const string AliasAttribute = MetadataAttributes.DotKtNs + "KotlinTypeAliasAttribute";
     readonly IReadOnlyList<SourceTypeAlias> _declarations;
+    const string CallableAttribute = MetadataAttributes.DotKtNs + "KotlinSourceCallableAttribute";
+    readonly IReadOnlyDictionary<string, SourceCallable> _callables;
 
-    public KotlinTypeAliasMetadata(MetadataReader reader, MetadataAttributes attributes)
+    public KotlinSourceMetadata(MetadataReader reader, MetadataAttributes attributes)
     {
-        attributes.ValidateCarrierTargets(AttributeName, HandleKind.AssemblyDefinition);
+        attributes.ValidateCarrierTargets(AliasAttribute, HandleKind.AssemblyDefinition);
+        attributes.ValidateCarrierTargets(CallableAttribute, HandleKind.AssemblyDefinition);
+        _callables = (reader.IsAssembly
+            ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), CallableAttribute)
+                .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
+                    SourceMetadataJson.ReadCallable, SourceMetadataMessagePack.ReadCallable)) : [])
+            .ToDictionary(callable => callable.DeclarationId, StringComparer.Ordinal);
         _declarations = reader.IsAssembly
-            ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), AttributeName)
+            ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), AliasAttribute)
                 .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
                     SourceMetadataJson.Read, SourceMetadataMessagePack.Read)).ToArray()
             : [];
@@ -40,18 +48,7 @@ internal sealed class KotlinTypeAliasMetadata
             };
             foreach (var parameter in declaration.TypeParameters)
             {
-                var projected = new TypeParameter {
-                    Id = parameter.Id, Name = names.String(parameter.Name),
-                    Variance = parameter.Variance switch {
-                        "inv" => TypeParameter.Types.Variance.Inv,
-                        "in" => TypeParameter.Types.Variance.In,
-                        "out" => TypeParameter.Types.Variance.Out,
-                        _ => throw new InvalidDataException("invalid typealias parameter variance"),
-                    },
-                };
-                projected.UpperBound.Add(parameter.Bounds.Select(bound => Type(bound, names)));
-                projected.TypeParameterAnnotation.Add(parameter.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
-                alias.TypeParameter.Add(projected);
+                alias.TypeParameter.Add(ProjectParameter(parameter, names));
             }
             alias.Annotation.Add(declaration.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
             if (alias.Annotation.Count > 0) alias.Flags |= 1;
@@ -60,6 +57,45 @@ internal sealed class KotlinTypeAliasMetadata
                 owner.TypeAlias.Add(alias);
             // A source-invisible containing class is absent from the reference KLIB, including its aliases.
         }
+    }
+
+    public Function? Callable(string? id, NameTable names)
+    {
+        if (id == null || !_callables.TryGetValue(id, out var source)) return null;
+        var function = new Function { Name = names.String(source.Name), Flags = source.Flags,
+            ReturnType = Type(source.ReturnType, names) };
+        if (source.ReceiverType is {} receiver) function.ReceiverType = Type(receiver, names);
+        foreach (var parameter in source.TypeParameters)
+        {
+            var projected = ProjectParameter(parameter, names);
+            projected.Reified = source.ReifiedParameters.Contains(parameter.Id);
+            function.TypeParameter.Add(projected);
+        }
+        ValueParameter ValueParameter(SourceValueParameter parameter)
+        {
+            var value = new ValueParameter { Name = names.String(parameter.Name), Flags = parameter.Flags,
+                Type = Type(parameter.Type, names) };
+            if (parameter.VarargElementType is {} elem) value.VarargElementType = Type(elem, names);
+            value.ParameterAnnotation.Add(parameter.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+            return value;
+        }
+        function.ValueParameter.Add(source.ValueParameters.Select(ValueParameter));
+        function.ContextParameter.Add(source.ContextParameters.Select(ValueParameter));
+        function.FunctionAnnotation.Add(source.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+        function.FunctionExtensionReceiverAnnotation.Add(source.ReceiverAnnotations.Select(annotation => ReadAnnotation(annotation, names)));
+        return function;
+    }
+
+    static TypeParameter ProjectParameter(SourceTypeParameter parameter, NameTable names)
+    {
+        var result = new TypeParameter { Id = parameter.Id, Name = names.String(parameter.Name),
+            Variance = parameter.Variance switch {
+                "inv" => TypeParameter.Types.Variance.Inv, "in" => TypeParameter.Types.Variance.In,
+                "out" => TypeParameter.Types.Variance.Out, _ => throw new InvalidDataException("invalid source parameter variance"),
+            } };
+        result.UpperBound.Add(parameter.Bounds.Select(bound => Type(bound, names)));
+        result.TypeParameterAnnotation.Add(parameter.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+        return result;
     }
 
     static KType Type(SourceType source, NameTable names)

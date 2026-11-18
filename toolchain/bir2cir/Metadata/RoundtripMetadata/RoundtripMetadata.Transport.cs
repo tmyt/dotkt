@@ -13,7 +13,7 @@ static partial class RoundtripMetadata
         if (!release || attribute.AttrExternal == true) return attribute;
         var slot = (attribute.Attr as TypeNode.Fqn)?.Name switch {
             AKInline or AKType or AKNullableGen or AKCollIdentity or AKSuspendFn or AKSuspendResult
-                or AKTypeAlias or AKConstructorAdapter => 0,
+                or AKTypeAlias or AKSourceCallable or AKConstructorAdapter => 0,
             DefaultBirCarrier.AttributeName => 1,
             _ => -1,
         };

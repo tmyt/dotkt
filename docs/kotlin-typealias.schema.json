@@ -17,6 +17,29 @@
     "annotations": {"$ref": "#/$defs/annotations"}
   },
   "$defs": {
+    "callable": {
+      "x-dotkt-model": {"name": "SourceCallable", "interfaces": ["BirValue"], "jsonWriter": "SourceMetadataJson.write"},
+      "type": "object", "additionalProperties": false,
+      "required": ["declarationId", "name", "flags", "typeParameters", "reifiedParameters", "contextParameters", "valueParameters", "returnType", "annotations", "receiverAnnotations"],
+      "properties": {
+        "declarationId": {"type": "string", "minLength": 1}, "name": {"type": "string"}, "flags": {"type": "integer"},
+        "typeParameters": {"type": "array", "items": {"$ref": "#/$defs/parameter"}},
+        "reifiedParameters": {"type": "array", "items": {"type": "integer"}},
+        "receiverType": {"$ref": "#/$defs/type"},
+        "contextParameters": {"type": "array", "items": {"$ref": "#/$defs/valueParameter"}},
+        "valueParameters": {"type": "array", "items": {"$ref": "#/$defs/valueParameter"}},
+        "returnType": {"$ref": "#/$defs/type"}, "annotations": {"$ref": "#/$defs/annotations"},
+        "receiverAnnotations": {"$ref": "#/$defs/annotations"}
+      }
+    },
+    "valueParameter": {
+      "x-dotkt-model": {"name": "SourceValueParameter"},
+      "type": "object", "additionalProperties": false, "required": ["name", "flags", "type", "annotations"],
+      "properties": {
+        "name": {"type": "string"}, "flags": {"type": "integer"}, "type": {"$ref": "#/$defs/type"},
+        "varargElementType": {"$ref": "#/$defs/type"}, "annotations": {"$ref": "#/$defs/annotations"}
+      }
+    },
     "path": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "classifier": {
       "x-dotkt-model": {"name": "SourceClassifier"},

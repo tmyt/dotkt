@@ -57,6 +57,7 @@ class Registrar : CompilerPluginRegistrar() {
         })
         IrGenerationExtension.registerExtension(object : IrGenerationExtension {
             override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
+                lowerHiddenArgument(moduleFragment, pluginContext)
                 for (file in moduleFragment.files) for (klass in file.declarations.filterIsInstance<IrClass>())
                     for (fn in klass.declarations.filterIsInstance<IrSimpleFunction>()) {
                         if ((fn.origin as? IrDeclarationOrigin.GeneratedByPlugin)?.pluginKey != Key) continue

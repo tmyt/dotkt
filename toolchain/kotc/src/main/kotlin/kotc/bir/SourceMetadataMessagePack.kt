@@ -10,6 +10,7 @@ internal object SourceMetadataMessagePack {
         packer.toByteArray()
     }
     fun write(value: SourceTypeAlias, packer: MessagePacker, depth: Int = 0) = writeSourceTypeAlias(value, packer, depth)
+    fun write(value: SourceCallable, packer: MessagePacker, depth: Int = 0) = writeSourceCallable(value, packer, depth)
     private fun checkDepth(depth: Int) { require(depth < 1024) { "BIR nesting exceeds 1024" } }
 
     private fun writeSourceTypeAlias(value: SourceTypeAlias, packer: MessagePacker, depth: Int) {
@@ -37,6 +38,80 @@ internal object SourceMetadataMessagePack {
         writeSourceType(value.underlyingType, packer, depth + 1)
         packer.packString("expandedType")
         writeSourceType(value.expandedType, packer, depth + 1)
+        packer.packString("annotations")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.annotations.size)
+        value.annotations.forEach { item ->
+            writeSourceAnnotation(item, packer, depth + 2)
+        }
+    }
+
+    private fun writeSourceCallable(value: SourceCallable, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(10 + (if (value.receiverType == null) 0 else 1))
+        packer.packString("declarationId")
+        MessagePackText.write(packer, value.declarationId)
+        packer.packString("name")
+        MessagePackText.write(packer, value.name)
+        packer.packString("flags")
+        packer.packInt(value.flags)
+        packer.packString("typeParameters")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.typeParameters.size)
+        value.typeParameters.forEach { item ->
+            writeSourceTypeParameter(item, packer, depth + 2)
+        }
+        packer.packString("reifiedParameters")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.reifiedParameters.size)
+        value.reifiedParameters.forEach { item ->
+            packer.packInt(item)
+        }
+        value.receiverType?.let { child ->
+            packer.packString("receiverType")
+            writeSourceType(child, packer, depth + 1)
+        }
+        packer.packString("contextParameters")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.contextParameters.size)
+        value.contextParameters.forEach { item ->
+            writeSourceValueParameter(item, packer, depth + 2)
+        }
+        packer.packString("valueParameters")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.valueParameters.size)
+        value.valueParameters.forEach { item ->
+            writeSourceValueParameter(item, packer, depth + 2)
+        }
+        packer.packString("returnType")
+        writeSourceType(value.returnType, packer, depth + 1)
+        packer.packString("annotations")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.annotations.size)
+        value.annotations.forEach { item ->
+            writeSourceAnnotation(item, packer, depth + 2)
+        }
+        packer.packString("receiverAnnotations")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.receiverAnnotations.size)
+        value.receiverAnnotations.forEach { item ->
+            writeSourceAnnotation(item, packer, depth + 2)
+        }
+    }
+
+    private fun writeSourceValueParameter(value: SourceValueParameter, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(4 + (if (value.varargElementType == null) 0 else 1))
+        packer.packString("name")
+        MessagePackText.write(packer, value.name)
+        packer.packString("flags")
+        packer.packInt(value.flags)
+        packer.packString("type")
+        writeSourceType(value.type, packer, depth + 1)
+        value.varargElementType?.let { child ->
+            packer.packString("varargElementType")
+            writeSourceType(child, packer, depth + 1)
+        }
         packer.packString("annotations")
         checkDepth(depth + 1)
         packer.packArrayHeader(value.annotations.size)
