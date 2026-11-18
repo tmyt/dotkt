@@ -21,7 +21,21 @@ private fun boundaryNullable(flag: Boolean, value: String?, other: CharSequence)
     if (flag) value else other
 private fun boundaryAbsent(): CharSequence? = null
 
+private fun <T : CharSequence> boundaryLength(produce: () -> T): Int = produce().length
+private fun <T : CharSequence> boundaryIdentity(produce: () -> T): T = produce()
+
 class CharSequenceBoundaryTests {
+    @TestAttribute
+    fun genericWitnessAcceptsStringsAndPreservesCustomValues() {
+        val text = "four"
+        val custom = BoundaryText("three")
+        var calls = 0
+        check(boundaryLength { calls++; text } == 4 && calls == 1)
+        check(boundaryLength { calls++; custom } == 5 && calls == 2)
+        check(boundaryIdentity { calls++; text } === text && calls == 3)
+        check(boundaryIdentity { calls++; custom } === custom && calls == 4)
+    }
+
     @TestAttribute
     fun boundAnyReferencesKeepCustomCharSequenceVirtualDispatch() {
         class MutableSequence(var text: String) : CharSequence {

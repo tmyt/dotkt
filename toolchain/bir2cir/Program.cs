@@ -392,6 +392,9 @@ sealed class Pipeline
         var signatures = new SourceDeclarationSignatures();
         using var callSignatures = new ReferencedCallSignatures();
         captured = signatures.Capture(captured);
+        if (!referenceBuild)
+            for (var index = 0; index < captured.Length; index++)
+                captured[index] = StringCharSequenceBridge.ProjectGenericBounds(captured[index]);
         var valuePolicy = new ValueRepresentationSourcePolicy(captured, refs, referenceBuild);
         for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
         captured = CallableVisibilityLowering.ApplyAll(captured, refs);
