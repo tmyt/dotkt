@@ -236,9 +236,16 @@ static partial class ClrEventImplBinding
             ?? throw new InvalidOperationException("bir2cir: event raise has no declaring owner type");
         var name = raise.Event.OrDefault();
         var arguments = raise.Args.OrDefault() ?? Array.Empty<IBirExpression>();
+        void CheckArgumentCount(int expected)
+        {
+            if (arguments.Length != expected)
+                throw new InvalidOperationException($"event raise '{owner.Name}.{name}' expects {expected} argument(s), got {arguments.Length}");
+        }
+
         BirGraphValue call;
         if (signatures.TryGetValue((owner.Name, name), out var local))
         {
+            CheckArgumentCount(local.Signature.Length);
             call = local.IsStatic
                 ? new BirCallStatic { Owner = Copy(owner), Method = local.Name, Sig = local.Signature.Select(Copy).ToArray(),
                     DeclarationId = local.DeclarationId, Virtual = false, Args = arguments }
@@ -249,6 +256,7 @@ static partial class ClrEventImplBinding
         else
         {
             var method = ReferencedRaise(owner, name, refs);
+            CheckArgumentCount(method.GetParameters().Length);
             call = method.IsStatic
                 ? ClrMemberResolution.ExactStaticCall(null, refs, method, owner, arguments)
                 : ClrMemberResolution.ExactInstanceCall(null, refs, method, owner, raise.Recv.OrDefault(), arguments);
