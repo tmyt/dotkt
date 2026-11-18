@@ -8,6 +8,8 @@ using KValue = projection::DotKt.Klib.Metadata.Annotation.Types.Argument.Types.V
 
 internal static class SourceMetadataProjectionTests
 {
+    private static readonly Type SourceProjection = typeof(P.SourceTypeAlias).Assembly.GetType("KotlinSourceMetadata", true)!;
+
     internal static void CheckUtf16(string json, string expected)
     {
         var source = P.BirCarrier.DecodeBody(P.BirCarrier.JsonV1, Encoding.UTF8.GetBytes(json), P.SourceMetadataJson.Read);
@@ -22,7 +24,7 @@ internal static class SourceMetadataProjectionTests
         var tool = typeof(P.SourceTypeAlias).Assembly;
         var namesType = tool.GetType("NameTable", true)!;
         var names = Activator.CreateInstance(namesType, true)!;
-        var value = tool.GetType("KotlinTypeAliasMetadata", true)!.GetMethod("Value", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var value = SourceProjection.GetMethod("Value", BindingFlags.Static | BindingFlags.NonPublic)!;
         var projected = (KValue)value.Invoke(null, [source.Annotations.Single().Arguments.Single().Value, names])!;
         var table = (projection::DotKt.Klib.Metadata.StringTable)namesType.GetProperty("Strings")!.GetValue(names)!;
         var fragment = new projection::DotKt.Klib.Metadata.PackageFragment { Strings = table };
@@ -47,7 +49,7 @@ internal static class SourceMetadataProjectionTests
         source = P.BirCarrier.DecodeBody(P.BirCarrier.MessagePackV1, binary,
             P.SourceMetadataJson.Read, P.SourceMetadataMessagePack.Read);
         var tool = typeof(P.SourceTypeAlias).Assembly;
-        var projection = tool.GetType("KotlinTypeAliasMetadata", true)!;
+        var projection = SourceProjection;
         var namesType = tool.GetType("NameTable", true)!;
         var names = Activator.CreateInstance(namesType, nonPublic: true)!;
         var type = projection.GetMethod("Type", BindingFlags.Static | BindingFlags.NonPublic)!;
