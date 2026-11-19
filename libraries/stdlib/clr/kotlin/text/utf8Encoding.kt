@@ -6,6 +6,7 @@
 package kotlin.text
 
 import kotlin.clr.byref
+import kotlin.clr.Span
 import System.Runtime.InteropServices.MemoryMarshal
 import System.Text.Unicode.Utf8
 
@@ -154,13 +155,8 @@ private fun codePointFrom4(bytes: ByteArray, byte1: Int, index: Int, endIndex: I
  */
 private const val MAX_BYTES_PER_CHAR = 3
 
-private fun utf8Capacity(string: String, start: Int, end: Int, strict: Boolean): Int {
-    val length = end - start
-    val maxBytes = System.Array.MaxLength
-    if (length <= maxBytes / MAX_BYTES_PER_CHAR) return length * MAX_BYTES_PER_CHAR
-
-    // Only the upper bound exceeds the CLR array limit; a large ASCII result may still fit.
-    var count = 0L
+private fun utf8Size(string: String, start: Int, end: Int, strict: Boolean, prefixBytes: Int): Int {
+    var count = prefixBytes.toLong()
     var index = start
     while (index < end) {
         val code = string[index++].code
@@ -174,7 +170,7 @@ private fun utf8Capacity(string: String, start: Int, end: Int, strict: Boolean):
             else -> 3
         }
     }
-    if (count > maxBytes) throw System.OutOfMemoryException()
+    if (count > System.Array.MaxLength) throw System.OutOfMemoryException()
     return count.toInt()
 }
 
@@ -198,22 +194,33 @@ internal fun encodeUtf8(string: String, startIndex: Int, endIndex: Int, throwOnM
 
     val length = endIndex - startIndex
     if (length == 0) return ByteArray(0)
+    var charIndex = startIndex
+    var byteIndex = 0
+    var bytes: ByteArray
     if (length <= System.Array.MaxLength / MAX_BYTES_PER_CHAR) {
-        // This count sizes an optimistic conversion, not the Kotlin result on malformed input.
-        // FromUtf16 never replaces: discard the candidate unless the entire slice was valid.
+        // The count sizes an optimistic buffer. Only FromUtf16's valid prefix is committed.
         val source = System.MemoryExtensions.AsSpan(string, startIndex, length)
-        val bytes = ByteArray(System.Text.Encoding.UTF8.GetByteCount(string, startIndex, length))
+        val candidate = ByteArray(System.Text.Encoding.UTF8.GetByteCount(string, startIndex, length))
         var read = 0
         var written = 0
-        val dest = MemoryMarshal.CreateSpan<UByte>(byref(bytes.asUByteArray()[0]), bytes.size)
-        if (Utf8.FromUtf16(source, dest, byref(read), byref(written), false, true) == System.Buffers.OperationStatus.Done)
-            return bytes
+        val dest = MemoryMarshal.CreateSpan<UByte>(byref(candidate.asUByteArray()[0]), candidate.size)
+        Utf8.FromUtf16(source, dest, byref(read), byref(written), false, true)
+        if (read == length && written == candidate.size) return candidate
+        charIndex += read
+        byteIndex = written
+        bytes = candidate
+    } else {
+        // A large ASCII result can fit even if the worst-case byte count would overflow.
+        bytes = ByteArray(utf8Size(string, startIndex, endIndex, throwOnMalformed, 0))
     }
-    val bytes = ByteArray(utf8Capacity(string, startIndex, endIndex, throwOnMalformed))
-    var byteIndex = 0
-    var charIndex = startIndex
 
     while (charIndex < endIndex) {
+        // The optimistic count is not authoritative for malformed input. Only size the
+        // remaining suffix if the buffer can no longer fit a whole Unicode scalar.
+        if (bytes.size - byteIndex < 4) {
+            val size = utf8Size(string, charIndex, endIndex, throwOnMalformed, byteIndex)
+            if (size > bytes.size) bytes = bytes.copyOf(size)
+        }
         val code = string[charIndex++].code
         when {
             code < 0x80 ->
@@ -244,7 +251,7 @@ internal fun encodeUtf8(string: String, startIndex: Int, endIndex: Int, throwOnM
         }
     }
 
-    return if (bytes.size == byteIndex) bytes else bytes.copyOf(byteIndex)
+    return if (byteIndex == bytes.size) bytes else bytes.copyOf(byteIndex)
 }
 
 /**
@@ -252,8 +259,15 @@ internal fun encodeUtf8(string: String, startIndex: Int, endIndex: Int, throwOnM
  */
 private const val REPLACEMENT_CHAR = '\uFFFD'
 
-private fun strictDecoder() = System.Text.UTF8Encoding(false, true)
-private val strictUtf8 = strictDecoder()
+// Both callers pass the capacity that created this writable span (String.Create or the
+// exact CharArray length). Check it before taking any managed reference, even for empty spans.
+private fun putUtf16(target: Span<Char>, offset: Int, capacity: Int, unit: Char) {
+    if (offset >= 0 && offset < capacity) {
+        var slot by byref(System.Runtime.CompilerServices.Unsafe.Add<Char>(
+            byref(MemoryMarshal.GetReference<Char>(target)), offset))
+        slot = unit
+    }
+}
 
 /**
  * Decodes the UTF-8 [bytes] array and returns the resulting [String].
@@ -271,61 +285,75 @@ internal fun decodeUtf8(bytes: ByteArray, startIndex: Int, endIndex: Int, throwO
     val length = endIndex - startIndex
     if (length == 0) return ""
     val unsigned = bytes.asUByteArray()
-    val source = MemoryMarshal.CreateReadOnlySpan<UByte>(byref(unsigned[startIndex]), length)
-    if (Utf8.IsValid(source)) {
-        try {
-            return strictUtf8.GetString(unsigned, startIndex, length)
-        } catch (_: System.Text.DecoderFallbackException) {
-            // A mutable source may have changed since validation. Never substitute a native fallback.
-        }
+    val capacity = System.Text.Encoding.UTF8.GetCharCount(unsigned, startIndex, length)
+    var actual = 0
+    val candidate = System.String.Create<Int>(capacity, length) { target, count ->
+        val source = MemoryMarshal.CreateReadOnlySpan<UByte>(byref(unsigned[startIndex]), count)
+        var read = 0
+        var written = 0
+        Utf8.ToUtf16(source, target, byref(read), byref(written), false, true)
+        actual = if (read == count) written else decodeUtf8Tail(bytes, startIndex + read, endIndex,
+            throwOnMalformed, target, capacity, written)
     }
+    if (actual == capacity) return candidate
+    if (actual < capacity) return candidate.substring(0, actual)
+    // Neither the native estimate nor the contents of a mutable byte array are promises.
+    // Each consumed byte can produce at most one UTF-16 unit, including replacement.
+    val chars = CharArray(length)
+    val span = MemoryMarshal.CreateSpan<Char>(byref(chars[0]), length)
+    val used = decodeUtf8Tail(bytes, startIndex, endIndex, throwOnMalformed, span, length, 0)
+    return chars.concatToString(0, used)
+}
+
+private fun decodeUtf8Tail(bytes: ByteArray, startIndex: Int, endIndex: Int, throwOnMalformed: Boolean,
+                           target: Span<Char>, capacity: Int, prefix: Int): Int {
     var byteIndex = startIndex
-    val stringBuilder = StringBuilder()
+    var out = prefix
 
     while (byteIndex < endIndex) {
         val byte = bytes[byteIndex++].toInt()
         when {
             byte >= 0 ->
-                stringBuilder.append(byte.toChar())
+                putUtf16(target, out++, capacity, byte.toChar())
             byte shr 5 == -2 -> {
                 val code = codePointFrom2(bytes, byte, byteIndex, endIndex, throwOnMalformed)
                 if (code <= 0) {
-                    stringBuilder.append(REPLACEMENT_CHAR)
+                    putUtf16(target, out++, capacity, REPLACEMENT_CHAR)
                     byteIndex += -code
                 } else {
-                    stringBuilder.append(code.toChar())
+                    putUtf16(target, out++, capacity, code.toChar())
                     byteIndex += 1
                 }
             }
             byte shr 4 == -2 -> {
                 val code = codePointFrom3(bytes, byte, byteIndex, endIndex, throwOnMalformed)
                 if (code <= 0) {
-                    stringBuilder.append(REPLACEMENT_CHAR)
+                    putUtf16(target, out++, capacity, REPLACEMENT_CHAR)
                     byteIndex += -code
                 } else {
-                    stringBuilder.append(code.toChar())
+                    putUtf16(target, out++, capacity, code.toChar())
                     byteIndex += 2
                 }
             }
             byte shr 3 == -2 -> {
                 val code = codePointFrom4(bytes, byte, byteIndex, endIndex, throwOnMalformed)
                 if (code <= 0) {
-                    stringBuilder.append(REPLACEMENT_CHAR)
+                    putUtf16(target, out++, capacity, REPLACEMENT_CHAR)
                     byteIndex += -code
                 } else {
                     val high = (code - 0x10000) shr 10 or 0xD800
                     val low = (code and 0x3FF) or 0xDC00
-                    stringBuilder.append(high.toChar())
-                    stringBuilder.append(low.toChar())
+                    putUtf16(target, out++, capacity, high.toChar())
+                    putUtf16(target, out++, capacity, low.toChar())
                     byteIndex += 3
                 }
             }
             else -> {
                 val _ = malformed(0, byteIndex, throwOnMalformed)
-                stringBuilder.append(REPLACEMENT_CHAR)
+                putUtf16(target, out++, capacity, REPLACEMENT_CHAR)
             }
         }
     }
 
-    return stringBuilder.toString()
+    return out
 }

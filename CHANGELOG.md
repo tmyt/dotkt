@@ -71,8 +71,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   identity even when the plugin copies annotations from an imported member.
 - A Kotlin `Nothing?` return stays nullable when called or overridden from another DLL.
 - Raising a Kotlin-declared CLR event now evaluates spread arguments and passes their elements to the selected raise accessor.
-- UTF-8 encoding and decoding use the upstream Kotlin codec. Char-array slices convert directly
-  to immutable CLR strings, preserving UTF-16 code units, including isolated surrogates.
+- UTF-8 encoding and decoding process valid prefixes with CLR bulk conversion and handle malformed
+  input using upstream Kotlin rules. Char-array slices convert directly to immutable CLR strings,
+  preserving UTF-16 code units, including isolated surrogates.
 
 ## 0.9.27 (2026-11-18)
 
