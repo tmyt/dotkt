@@ -200,13 +200,15 @@ static partial class KotlinCollectionSlotSynthesis
         var targetReturn = InCaller(target.Method.Ret.OrDefault() ?? new TypeNode.Fqn("kotlin.Boolean"));
         var slotReturn = slot.EraseReturn ? slot.NullableReturn
             ? new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) : (TypeNode)new TypeNode.Fqn("kotlin.Any")
-            : (definitions.TryGetValue(slot.SlotInterface, out var slotOwner)
+            : (definitions.TryGetValue(slot.SlotInterface, out var slotOwner) && slotOwner.Arity == 0
                 ? slotOwner.Methods.Single(method => method.Name.OrDefault() == slot.SlotMember).Ret.OrDefault()
                 : refs?.CollectionSlotReturn(slot.SlotInterface, slot.SlotMember))
                 ?? throw new InvalidOperationException($"Missing result for collection slot '{slot.SlotInterface}.{slot.SlotMember}'");
         var call = new BirCallInstance { OwnerType = BirGraphValue.CopyType(target.Owner), Virtual = true, ClrOwnerResolved = true,
             Recv = new BirThis(), Method = target.Method.ExplicitClrName.OrDefault() ?? target.Method.Name.OrDefault(),
             Sig = callSignature.ToArray(), Ret = BirGraphValue.CopyType(targetReturn), Args = callArguments.ToArray() };
+        if (target.Method.RetKotlinType.OrDefault() is { } semanticReturn && NodeType.IsNothing(semanticReturn))
+            call.Sty = BirGraphValue.CopyType(semanticReturn);
         if (target.Closed)
         {
             call.DynRet = BirGraphValue.CopyType(targetReturn);
