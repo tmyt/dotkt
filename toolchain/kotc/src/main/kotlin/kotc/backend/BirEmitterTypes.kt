@@ -189,34 +189,16 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// kotlin.CharSequence stays its plain `kotlin.CharSequence` FQN identity (the general interface branch below emits
 	// the same bare Fqn — it is non-generic with no clrName); bir2cir SUBSTITUTES it to the synthesized
 	// `dotkt_CharSequence` interface (no faithful .NET equivalent), exactly as it substitutes `kotlin.String`.
-	// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> `fn` (Func/Action shape). A
-	// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) — and its callable-REFERENCE twin
-	// `kotlin.reflect.KSuspendFunctionN` (the inferred type of `::suspendFn`) — set `fn.suspend=true`, the SAME delegate
-	// shape carrying the suspend FACT (which the newSuspendLambda SM builder needs). bir2cir ERASES a suspend `fn`
-	// to `object` wherever it lands in a TYPE slot (only the `funcType` node key keeps it), so kotc bakes no
-	// coroutine ABI here — behavior-preserving. (Mirrors the non-suspend `KFunctionN`->`fn` erasure further below.)
-	if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.reflect.KSuspendFunction") || fqp.startsWith("kotlin.Function"))) {
-		val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
-		if (args.isNotEmpty()) {
-			val ret = args.last(); val ps = args.dropLast(1)
-			val suspend = fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.reflect.KSuspendFunction")
-			// A RECEIVER function type `P.() -> R` is `FunctionN<P,…,R>` carrying the `kotlin.ExtensionFunctionType`
-			// annotation (a frontend fact). Kotlin flattens the receiver to the first delegate arg on the CLR, but that
-			// erases the "this was a receiver" bit — so a re-consuming DotKt assembly loses the implicit `this: P` in a
-			// `apply1 { … }` lambda (#145). Carry it in `fn.recv` (the FIRST type arg, dropped from params): the CLR
-			// delegate is unchanged (DelegateParams re-prepends recv), and bir2cir stamps [KotlinExtensionFunctionType]
-			// (non-suspend) / rides recv on [KotlinSuspendFunctionType] (suspend) so dll2klib restores
-			// `P.() -> R`. This covers `suspend P.() -> R` too (#47): the suspend arm keeps the recv in the erased
-			// carrier's `fn` node, and dll2klib restores the suspend extension-function type in KLIB metadata.
-			// Non-ext function type keeps the flat shape. bir2cir still
-			// erases the suspend fn slot to `object` (SuspendFnSlot ignores recv) — the SequenceScope hot path routes
-			// SequenceScope.yield/yieldAll BY NAME, not by the fn-type recv, so recv is inert there.
-			val isExt = (t as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" } == true
-			return if (isExt && ps.isNotEmpty())
-				TypeNode.Fn(suspend, funcRetTypeOf(ret), ps.drop(1).map { birTypeDeleg(it) }, birTypeDeleg(ps.first()))
-			else
-				TypeNode.Fn(suspend, funcRetTypeOf(ret), ps.map { birTypeDeleg(it) })
-		}
+	// Function applications retain every parameter and the result, even when a slot is a star.
+	// The receiver remains distinct so metadata can restore an extension function in another module.
+	val functionKind = t.classFqName?.let { standardFunctionClasses.getFunctionalClassKind(it.parent(), it.shortName().asString()) }
+	if (functionKind != null && t is IrSimpleType && t.arguments.isNotEmpty()) {
+		val args = t.arguments.map(::birTypeProjection)
+		val params = args.dropLast(1)
+		val suspend = functionKind == FunctionTypeKind.SuspendFunction || functionKind == FunctionTypeKind.KSuspendFunction
+		val extension = params.isNotEmpty() && t.annotations.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" }
+		return if (extension) TypeNode.Fn(suspend, args.last(), params.drop(1), params.first())
+		else TypeNode.Fn(suspend, args.last(), params)
 	}
 	// `by lazy` delegate: kotlin.Lazy<T> is a REAL emitted stdlib interface (its impl `UnsafeLazyImpl` is pure
 	// Kotlin, produced by the stdlib `lazy()` function) — kotc emits the plain Kotlin type identity and falls
@@ -235,17 +217,6 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// interface, the value from `Delegates.observable(…)`, and the getValue/setValue dispatch owner then
 	// all agree on one type identity (ilverify-clean). The real generic interface is used (as generic
 	// `kotlin.Lazy<T>` works with a value V).
-	// Kotlin function type `(A,B)->R` (kotlin.FunctionN<A,B,R>) and a callable-reference type `KFunctionN<…>`
-	// (the inferred type of `obj::method`/`::foo`) -> an `fn` (Func/Action delegate).
-	val fqn = t.classFqName?.asString()
-	if (fqn != null && (fqn.startsWith("kotlin.Function") || fqn.startsWith("kotlin.reflect.KFunction"))) {
-		val tys = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
-		if (tys.isNotEmpty()) {
-			val retT = tys.last()
-			val ret = if (retT.isUnit()) TypeNode.Fqn("kotlin.Unit") else argElemNullable(retT)
-			return TypeNode.Fn(false, ret, tys.dropLast(1).map { birType(it) })
-		}
-	}
 	// kotc emits the Kotlin FQN identity as-is for a SOURCE TYPE — it knows nothing about the CLR. bir2cir lowers
 	// these (kotlin.Int -> System.Int32, kotlin.Unit -> System.Void, …). NO `int`/`void`/`System.Int32` here.
 	when (val kfq = t.classFqName?.asString()) {

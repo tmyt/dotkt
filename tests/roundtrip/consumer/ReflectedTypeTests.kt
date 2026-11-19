@@ -56,5 +56,9 @@ class ReflectedTypeTests {
         val function = reflected<(String) -> Int>()
         check(function.classifier == Function1::class)
         check(function.arguments.map { it.type!!.classifier } == listOf(String::class, Int::class))
+        val projectedFunction = reflected<Function1<*, Int>>()
+        check(projectedFunction.classifier == Function1::class)
+        check(projectedFunction.arguments == listOf(KTypeProjection.STAR, KTypeProjection.invariant(typeOf<Int>())))
+        check(typeOf<Function1<*, *>>().arguments == listOf(KTypeProjection.STAR, KTypeProjection.STAR))
     }
 }
