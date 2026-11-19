@@ -5,8 +5,12 @@
 
 package kotlin.text
 
+import kotlin.clr.byref
+import System.Runtime.InteropServices.MemoryMarshal
+import System.Text.Unicode.Utf8
+
 // From Kotlin v2.4.21 libraries/stdlib/wasm/src/kotlin/text/utf8Encoding.kt (also used by JS).
-// CLR adaptations: public range exceptions and overflow-safe allocation for very large UTF-16 inputs.
+// CLR bulk operations handle valid input; only the portable algorithm chooses malformed-input behavior.
 
 /** Returns the negative [size] if [throwOnMalformed] is false, throws [CharacterCodingException] otherwise. */
 private fun malformed(size: Int, index: Int, throwOnMalformed: Boolean): Int {
@@ -192,6 +196,19 @@ private val REPLACEMENT_BYTE_SEQUENCE: ByteArray = byteArrayOf(0xEF.toByte(), 0x
 internal fun encodeUtf8(string: String, startIndex: Int, endIndex: Int, throwOnMalformed: Boolean): ByteArray {
     AbstractList.checkBoundsIndexes(startIndex, endIndex, string.length)
 
+    val length = endIndex - startIndex
+    if (length == 0) return ByteArray(0)
+    if (length <= System.Array.MaxLength / MAX_BYTES_PER_CHAR) {
+        // This count sizes an optimistic conversion, not the Kotlin result on malformed input.
+        // FromUtf16 never replaces: discard the candidate unless the entire slice was valid.
+        val source = System.MemoryExtensions.AsSpan(string, startIndex, length)
+        val bytes = ByteArray(System.Text.Encoding.UTF8.GetByteCount(string, startIndex, length))
+        var read = 0
+        var written = 0
+        val dest = MemoryMarshal.CreateSpan<UByte>(byref(bytes.asUByteArray()[0]), bytes.size)
+        if (Utf8.FromUtf16(source, dest, byref(read), byref(written), false, true) == System.Buffers.OperationStatus.Done)
+            return bytes
+    }
     val bytes = ByteArray(utf8Capacity(string, startIndex, endIndex, throwOnMalformed))
     var byteIndex = 0
     var charIndex = startIndex
@@ -235,6 +252,9 @@ internal fun encodeUtf8(string: String, startIndex: Int, endIndex: Int, throwOnM
  */
 private const val REPLACEMENT_CHAR = '\uFFFD'
 
+private fun strictDecoder() = System.Text.UTF8Encoding(false, true)
+private val strictUtf8 = strictDecoder()
+
 /**
  * Decodes the UTF-8 [bytes] array and returns the resulting [String].
  *
@@ -248,6 +268,17 @@ private const val REPLACEMENT_CHAR = '\uFFFD'
 internal fun decodeUtf8(bytes: ByteArray, startIndex: Int, endIndex: Int, throwOnMalformed: Boolean): String {
     AbstractList.checkBoundsIndexes(startIndex, endIndex, bytes.size)
 
+    val length = endIndex - startIndex
+    if (length == 0) return ""
+    val unsigned = bytes.asUByteArray()
+    val source = MemoryMarshal.CreateReadOnlySpan<UByte>(byref(unsigned[startIndex]), length)
+    if (Utf8.IsValid(source)) {
+        try {
+            return strictUtf8.GetString(unsigned, startIndex, length)
+        } catch (_: System.Text.DecoderFallbackException) {
+            // A mutable source may have changed since validation. Never substitute a native fallback.
+        }
+    }
     var byteIndex = startIndex
     val stringBuilder = StringBuilder()
 
