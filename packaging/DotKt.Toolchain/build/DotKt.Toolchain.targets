@@ -246,9 +246,6 @@
       <_DotKtKotcResponseArgument Remove="@(_DotKtKotcResponseArgument)" />
       <_DotKtEscapedKotlinCompile Remove="@(_DotKtEscapedKotlinCompile)" />
       <_DotKtEscapedKotlinCompile Include="@(KotlinCompile->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
-      <_DotKtKotcResponseArgument Include="@(_DotKtEscapedKotlinCompile)">
-        <Value>&quot;%(Identity)&quot;</Value>
-      </_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_classpath_option"><Value>-classpath</Value></_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_classpath_value"><Value>&quot;$(_DotKtEscapedFrontendClasspath)&quot;</Value></_DotKtKotcResponseArgument>
       <_DotKtKotcResponseArgument Include="_output_option"><Value>-d</Value></_DotKtKotcResponseArgument>
@@ -260,8 +257,10 @@
            kotc tokenizes its three arguments, while the quoted common-source value remains one token. -->
       <_DotKtKotcResponseArgument Include="_mpp_flags" Condition="'$(DotKtMppFlags)' != ''"><Value>$(DotKtMppFlags)</Value></_DotKtKotcResponseArgument>
     </ItemGroup>
+    <!-- Transform each source directly: metadata batching can reuse the first path's
+         spelling for case-only siblings on a case-sensitive filesystem. -->
     <WriteLinesToFile File="$(DotKtCompilerResponseFile)"
-                      Lines="@(_DotKtKotcResponseArgument->'%(Value)')"
+                      Lines="@(_DotKtEscapedKotlinCompile->'&quot;%(Identity)&quot;');@(_DotKtKotcResponseArgument->'%(Value)')"
                       Overwrite="true" />
     <Exec Condition="'@(KotlinCompile)' != ''"
           Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(_DotKtPluginArguments) $(DotKtKotcOptions)" />
