@@ -84,9 +84,14 @@ if (assembly.Version != new Version(2, 3, 4, 5) ||
     throw new Exception("Incorrect reference assembly identity or marker.");
 
 var box = md.TypeDefinitions.Select(md.GetTypeDefinition).Single(t => md.GetString(t.Name) == "Box`2");
-if (box.GetGenericParameters().Count != 2 ||
-    box.GetGenericParameters().Any(g => md.GetGenericParameter(g).GetConstraints().Count == 0))
-    throw new Exception("Reference assembly lost a CLR generic constraint.");
+var bound = md.TypeDefinitions.Single(h => md.GetString(md.GetTypeDefinition(h).Name) == "Bound"
+    && md.GetString(md.GetTypeDefinition(h).Namespace) == "refprobe");
+var parameters = box.GetGenericParameters().Select(md.GetGenericParameter).OrderBy(p => p.Index).ToArray();
+if (parameters.Length != 2 ||
+    !parameters[0].GetConstraints().Select(h => md.GetGenericParameterConstraint(h).Type)
+        .SequenceEqual(new EntityHandle[] { bound }) ||
+    parameters[1].GetConstraints().Count != 0)
+    throw new Exception("Expected the authored Bound constraint only on the ordinary type parameter.");
 foreach (var handle in md.MethodDefinitions)
 {
     var method = md.GetMethodDefinition(handle);
