@@ -16,6 +16,7 @@ public sealed class Order
 public sealed class Left
 {
     public int Number => 1;
+    public int BranchNumber => 2;
     public static bool operator ==(Left x, object y) => true;
     public static bool operator !=(Left x, object y) => true;
     public static bool operator ==(Left x, Right y) => false;

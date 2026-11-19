@@ -12,6 +12,8 @@ class OperatorViewTests {
         val right = Right<String>()
         check(left == right && left != right)
         check(42 == right && 41 != right)
+        fun literal(rhs: Right<String>?) = 42 == rhs
+        check(literal(right) && !literal(null))
         val negated = !(left == right)
         check(!negated)
         val k = Key(3)
@@ -26,17 +28,46 @@ class OperatorViewTests {
         fun <T : Key> bounded(a: T, b: T): Boolean = a == b
         check(bounded(k, other))
         fun <T> maybe(a: Key, b: T): Boolean = a == b
-        check(!maybe(k, other) && !maybe(k, null))
-        check(!(k.Oblivious() == other))
+        check(maybe(k, other) && !maybe(k, null))
+        check(k.Oblivious() == other)
         fun nullable(a: Key?, b: Key): Boolean {
             val before = a == b
             if (a == null) return !before
-            return !before && a == b && a != b
+            return before && a == b && a != b
         }
         check(nullable(k, other) && nullable(null, other))
         var calls = 0
         fun next(): Key { calls++; return k }
         check(next() != next() && calls == 2)
+
+        fun lifted(a: Key?, b: Key?): Boolean {
+            val equal = a == b
+            val unequal = a != b
+            return if (a === null || b === null) equal == (a === b) && unequal == (a !== b)
+                   else equal && unequal
+        }
+        Key.Trace = ""
+        check(lifted(null, null) && lifted(k, null) && lifted(null, other) && Key.Trace == "")
+        check(lifted(k, other) && Key.Trace == "=!")
+        Key.Trace = ""
+        check(Key.Observe("a", null) != Key.Observe("b", other) && Key.Trace == "ab")
+        Key.Trace = ""
+        val branch = when (Key.Observe("s", k)) {
+            Key.Observe("a", null) -> 0
+            Key.Observe("b", other) -> 1
+            Key.Observe("c", k) -> 2
+            else -> 3
+        }
+        check(branch == 1 && Key.Trace == "sab=")
+        Key.Trace = ""
+        val nullBranch = when (Key.Observe("s", null)) {
+            Key.Observe("a", null) -> 0
+            null -> 1
+            else -> 2
+        }
+        check(nullBranch == 0 && Key.Trace == "sa")
+        fun value(a: ValueKey?, b: ValueKey?): Boolean = a == b && a != b
+        check(value(ValueKey(7), ValueKey(7)) && !value(ValueKey(7), null) && !value(null, null))
     }
 
     @TestAttribute

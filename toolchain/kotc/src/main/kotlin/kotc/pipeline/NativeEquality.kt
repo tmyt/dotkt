@@ -23,15 +23,29 @@ import org.jetbrains.kotlin.fir.types.*
 import org.jetbrains.kotlin.fir.visitors.FirTransformer
 import org.jetbrains.kotlin.fir.visitors.FirVisitor
 import org.jetbrains.kotlin.KtRealSourceElementKind
+import org.jetbrains.kotlin.KtFakeSourceElementKind
+import org.jetbrains.kotlin.GeneratedDeclarationKey
+import org.jetbrains.kotlin.descriptors.EffectiveVisibility
+import org.jetbrains.kotlin.descriptors.Modality
+import org.jetbrains.kotlin.descriptors.Visibilities
+import org.jetbrains.kotlin.fir.expressions.impl.buildSingleExpressionBlock
+import org.jetbrains.kotlin.fir.builder.generateResolvedAccessExpression
+import org.jetbrains.kotlin.fir.declarations.builder.buildProperty
+import org.jetbrains.kotlin.fir.declarations.impl.FirResolvedDeclarationStatusImpl
+import org.jetbrains.kotlin.fir.moduleData
+import org.jetbrains.kotlin.fir.symbols.impl.FirLocalPropertySymbol
+import org.jetbrains.kotlin.fir.types.builder.buildResolvedTypeRef
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.resolve.calls.tower.isSuccess
 import org.jetbrains.kotlin.types.ConstantValueKind
+import org.jetbrains.kotlin.types.SmartcastStability
 
 /** Select while the surrounding body is being resolved: a native predicate's true result
  * proves nothing about the operand types. Replacing equality after DFA would leave invalid smart casts. */
 internal class NativeEquality {
+    private object LiftedOperand : GeneratedDeclarationKey()
     private val external = ClassId.topLevel(FqName("kotlin.clr.ClrExternal"))
     private val cache = mutableMapOf<Pair<FirRegularClassSymbol, Name>, List<FirNamedFunction>>()
     private fun candidates(session: FirSession, owner: FirRegularClassSymbol, name: Name): List<FirNamedFunction> = cache.getOrPut(owner to name) {
@@ -61,7 +75,8 @@ internal class NativeEquality {
         }
         override fun transformEqualityOperatorCall(equalityOperatorCall: FirEqualityOperatorCall, data: Unit): FirStatement {
             val eq = transformElement(equalityOperatorCall, data)
-            return if (eq.source?.kind == KtRealSourceElementKind && (eq.operation == FirOperation.EQ || eq.operation == FirOperation.NOT_EQ))
+            return if ((eq.source?.kind == KtRealSourceElementKind || eq.source?.kind == KtFakeSourceElementKind.WhenCondition)
+                && (eq.operation == FirOperation.EQ || eq.operation == FirOperation.NOT_EQ))
                 AtBodyResolution(eq) else eq
         }
     }, Unit) }
@@ -99,41 +114,124 @@ internal class NativeEquality {
     }
 
     private fun select(eq: FirEqualityOperatorCall, resolver: FirAbstractBodyResolveTransformer, literals: List<FirLiteralExpression?>): FirStatement {
-            val session = resolver.session
-            val name = when (eq.operation) {
-                FirOperation.EQ -> Name.identifier("op_Equality")
-                FirOperation.NOT_EQ -> Name.identifier("op_Inequality")
-                else -> return eq
-            }
-            val arguments = eq.argumentList.arguments
-        if (arguments.any { !it.hasResolvedType || it.resolvedType.canBeNull(session) }) return eq
-            val functions = arguments.flatMap { arg ->
-                owners(arg.resolvedType, session, mutableSetOf()).flatMap { candidates(session, it, name) }
-            }.distinct()
-            if (functions.isEmpty()) return eq
-            val scope = functions.fold(FirLocalScope(session)) { s, f -> s.storeFunction(f, session) }
-            return resolver.context.withTowerDataContext(resolver.context.towerDataContext.addLocalScope(scope)) {
-                val call = buildFunctionCall {
-                    source = eq.source
-                    argumentList = buildArgumentList { arguments.forEachIndexed { i, arg ->
-                        this.arguments += literals[i]?.transform<FirExpression, ResolutionMode>(resolver, ResolutionMode.ContextDependent) ?: arg
-                    } }
-                    calleeReference = buildSimpleNamedReference { source = eq.source; this.name = name }
+        val session = resolver.session
+        val name = Name.identifier(if (eq.operation == FirOperation.EQ) "op_Equality" else "op_Inequality")
+        val args = eq.argumentList.arguments
+        if (args.any { !it.hasResolvedType || it is FirLiteralExpression && it.kind == ConstantValueKind.Null }) return eq
+        val functions = args.flatMap { arg ->
+            owners(arg.resolvedType, session, mutableSetOf()).flatMap { candidates(session, it, name) }
+        }.distinct()
+        if (functions.isEmpty()) return eq
+
+        val operands = Operands(session, eq)
+        val scope = functions.fold(FirLocalScope(session)) { s, f -> s.storeFunction(f, session) }
+        return resolver.context.withTowerDataContext(resolver.context.towerDataContext.addLocalScope(scope)) {
+            val call = buildFunctionCall {
+                source = eq.source
+                argumentList = buildArgumentList {
+                    for (i in args.indices) arguments += literals[i]?.transform<FirExpression, ResolutionMode>(
+                        resolver, ResolutionMode.ContextDependent) ?: operands.present(i)
                 }
-                val mode = ResolutionMode.ContextIndependent
-                val resolved = resolver.components.callResolver.resolveCallAndSelectCandidate(call, mode)
-                val ref = resolved.calleeReference
+                calleeReference = buildSimpleNamedReference { source = eq.source; this.name = name }
+            }
+            val mode = ResolutionMode.ContextIndependent
+            val resolved = resolver.components.callResolver.resolveCallAndSelectCandidate(call, mode)
+            val ref = resolved.calleeReference
             val ambiguity = (ref as? FirErrorReferenceWithCandidate)?.diagnostic as? ConeAmbiguityError
             val ambiguous = ambiguity?.applicability?.isSuccess == true &&
                 ambiguity.candidateSymbols.all { target -> functions.any { it.symbol == target } }
             if (!ambiguous && (ref !is FirNamedReferenceWithCandidate || !ref.candidate.isSuccessful ||
                 functions.none { it.symbol == ref.candidate.symbol })) return@withTowerDataContext eq
-                val flow = resolver.components.dataFlowAnalyzer
-                flow.enterCallArguments(resolved, emptyList())
-                flow.exitCallExplicitReceiver()
-                flow.exitCallArguments()
-                flow.enterFunctionCall(resolved)
-                resolver.components.callCompleter.completeCall(resolved, mode).also { flow.exitFunctionCall(it, true) }
+
+            val flow = resolver.components.dataFlowAnalyzer
+            flow.enterCallArguments(resolved, emptyList())
+            flow.exitCallExplicitReceiver()
+            flow.exitCallArguments()
+            flow.enterFunctionCall(resolved)
+            val selected = resolver.components.callCompleter.completeCall(resolved, mode)
+            flow.exitFunctionCall(selected, true)
+            operands.guard(selected)
+        }
+    }
+
+    private class Operands(private val session: FirSession, private val eq: FirEqualityOperatorCall) {
+        private val args = eq.argumentList.arguments
+        private val nullable = args.map { it.resolvedType.canBeNull(session) }
+        // Capture both sides before any null test. A literal has no effects and its original
+        // integer-literal type must remain available to the overload resolver.
+        private val temps = args.mapIndexed { i, arg ->
+            if (nullable.none { it } || arg is FirLiteralExpression) null else buildProperty {
+                moduleData = session.moduleData
+                origin = LiftedOperand.origin
+                name = Name.special(if (i == 0) "<equality-left>" else "<equality-right>")
+                symbol = FirLocalPropertySymbol()
+                isLocal = true
+                isVar = false
+                returnTypeRef = buildResolvedTypeRef { coneType = arg.resolvedType }
+                status = FirResolvedDeclarationStatusImpl(Visibilities.Local, Modality.FINAL, EffectiveVisibility.Local)
+                initializer = arg
             }
+        }
+        private fun read(i: Int): FirExpression = temps[i]?.let { temp ->
+            generateResolvedAccessExpression(null, temp).also { it.replaceConeTypeOrNull(temp.returnTypeRef.coneType) }
+        } ?: args[i]
+
+        fun present(i: Int): FirExpression {
+            if (!nullable[i]) return read(i)
+            val target = args[i].resolvedType.lowerBoundIfFlexible().makeConeTypeDefinitelyNotNullOrNotNull(session.typeContext)
+            // Only the private val is proven non-null in the guarded arm, never the user's
+            // expression. An explicit Kotlin cast would incorrectly diagnose generic T & Any.
+            return buildSmartCastExpression {
+                coneTypeOrNull = target
+                originalExpression = read(i)
+                upperTypesFromSmartCast = listOf(target)
+                lowerTypesFromSmartCast = emptyList()
+                smartcastType = buildResolvedTypeRef { coneType = target }
+                smartcastStability = SmartcastStability.STABLE_VALUE
+            }
+        }
+
+        fun guard(selected: FirExpression): FirExpression {
+            if (nullable.none { it }) return selected
+            val boolean = session.builtinTypes.booleanType.coneType
+            val equality = eq.operation == FirOperation.EQ
+            fun truth(value: Boolean) = buildLiteralExpression(null, ConstantValueKind.Boolean, value, mutableListOf(), setType = true)
+            fun nullCheck(i: Int, equal: Boolean) = buildEqualityOperatorCall {
+                operation = if (equal) FirOperation.IDENTITY else FirOperation.NOT_IDENTITY
+                argumentList = buildArgumentList {
+                    arguments += read(i)
+                    arguments += buildLiteralExpression(null, ConstantValueKind.Null, null, mutableListOf(), setType = true)
+                }
+            }.also { it.replaceConeTypeOrNull(boolean) }
+            fun branch(test: FirExpression, value: FirExpression) = buildRegularWhenBranch {
+                condition = test
+                result = buildSingleExpressionBlock(value).also { it.replaceConeTypeOrNull(boolean) }
+            }
+            val guarded = buildWhenExpression {
+                coneTypeOrNull = boolean
+                usedAsExpression = true
+                exhaustivenessStatus = ExhaustivenessStatus.ProperlyExhaustive
+                if (nullable[0]) branches += branch(nullCheck(0, true),
+                    if (nullable[1]) nullCheck(1, equality) else truth(!equality))
+                if (nullable[1]) branches += branch(nullCheck(1, true), truth(!equality))
+                branches += branch(buildElseIfTrueCondition(), selected)
+            }
+            // A raw FIR block is a statement container, not a legal operand in all
+            // expression positions (notably &&). Give the temporaries a branch scope.
+            return buildWhenExpression {
+                source = eq.source
+                coneTypeOrNull = boolean
+                usedAsExpression = true
+                exhaustivenessStatus = ExhaustivenessStatus.ProperlyExhaustive
+                branches += buildRegularWhenBranch {
+                    condition = buildElseIfTrueCondition()
+                    result = buildBlock {
+                        coneTypeOrNull = boolean
+                        statements += temps.filterNotNull()
+                        statements += guarded
+                    }
+                }
+            }
+        }
     }
 }

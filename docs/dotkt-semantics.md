@@ -821,10 +821,12 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
   The primitive implementation uses upstream Kotlin's recursive quicksort, not the BCL's introsort:
   adversarial inputs can require quadratic comparisons and linear recursion depth.
 
-- Explicit Kotlin `==` / `!=` expressions on non-null operands select an applicable imported Boolean
+- Kotlin `==` / `!=` expressions select an applicable imported Boolean
   equality / inequality operator independently, even if a Kotlin subclass overrides `equals`. This is
-  static overload resolution, not a virtual call or a type test. Subject-based `when` matching,
-  explicit `equals`, identity and collection lookup retain Kotlin semantics. See
+  static overload resolution on the non-null operand types, not a virtual call or a type test.
+  If either operand is null the comparison uses null identity, without invoking the operator.
+  Subject-based `when` value conditions use the same equality rule. Explicit `equals`,
+  identity and collection lookup retain Kotlin semantics. See
   [CLR operator views](user/using-dotnet-from-kotlin.md) for applicability and comparison ordering.
 - Outside that interop extension, Kotlin `==` and `Any.equals` use the same virtual equality rule through concrete, Any, nullable, generic,
   stored, callable-reference and DLL boundaries. Calls to authored/inherited CLR Object-slot overrides run exactly

@@ -93,10 +93,21 @@ public class Key(int n)
     public static bool operator >=(Left a, Key b) => true;
     public int Number => n;
     public Key Oblivious() => this;
-    public static bool operator ==(Key x, object y) => true;
-    public static bool operator !=(Key x, object y) => true;
+    public static string Trace = "";
+    public static Key Observe(string mark, Key value) { Trace += mark; return value; }
+    public static bool operator ==(Key x, object y) { Trace += "="; return true; }
+    public static bool operator !=(Key x, object y) { Trace += "!"; return true; }
     public override bool Equals(object other) => false;
     public override int GetHashCode() => n;
+}
+
+public readonly struct ValueKey(int value)
+{
+    public static bool operator ==(ValueKey x, ValueKey y) => x.Value == y.Value;
+    public static bool operator !=(ValueKey x, ValueKey y) => x.Value == y.Value;
+    public int Value => value;
+    public override bool Equals(object other) => false;
+    public override int GetHashCode() => Value;
 }
 
 public sealed class Left

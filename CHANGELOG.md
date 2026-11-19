@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Nullable and platform operands now use the same imported CLR equality operators as non-null operands
+  when both values are present. Subject-based `when` value branches use the same rule as `==`.
 - `kotlin.reflect.typeOf<T>()` returns a Kotlin type descriptor instead of throwing. Reified calls
   across assemblies retain nested arguments, projections, and nullability.
 - Generic calls can capture the type represented by a star-projected `KClass<*>`, including across DLLs.
