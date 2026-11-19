@@ -173,6 +173,8 @@ static partial class KotlinOverrideSlotBridge
             var inheritedDefault = slot.IsInterface && definition.Kind == "class" && !reimplements && slot.HasDefault;
             if (slot.IsInterface && definition.Kind == "class" && !reimplements && !inheritedDefault) return;
             var typeParameters = SubstituteParameters(slot.TypeParameters, slot.SemanticSpec.Args ?? []);
+            var nativeMetadata = slot.IsInterface && slot.Referenced
+                && IsNativeSlotOwner(slot.SemanticSpec.Name, defs, refs.HasDotKtOwner) ? context.MetadataProjection : null;
             var fit = AssessFit(implementation, ownArguments, slot.Parameters, slot.Return, slot.UnitValueReturn,
                 slot.Signature, slot.IsInterface, slot.Referenced, slot.DescriptorSpec, slot.PropertyAccessor,
                 Phase.PhysicalBridges, selectedBody != null, isValue, refs, context.LocalNames, mapping,
@@ -182,25 +184,11 @@ static partial class KotlinOverrideSlotBridge
                 () => implementation.Source != null && context.Covariant?.Contains(new(
                     implementation.Source, CovariantInterfaceReturnBridge.DescriptorKey(slot.DescriptorSpec,
                         slot.DescriptorMember, implementation.Arity, slot.Parameters, slot.Return, refs, isValue))) == true,
-                context.HasClassifier);
+                context.HasClassifier, nativeMetadata);
             if (fit == null) return;
             ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                 Phase.PhysicalBridges, isValue, context.Annotation);
             var needsSignature = fit.Parameters.Contains(Fit.Bridge) || fit.Return == Fit.Bridge;
-            // Metadata mode retains source classifiers. Runtime-equivalent types can therefore
-            // require a separate MethodDef for an already selected external CLR slot.
-            if (!needsSignature && context.ReferenceBuild &&
-                IsNativeSlotOwner(slot.DescriptorSpec.Name, defs, refs.HasDotKtOwner))
-            {
-                bool Matches(TypeNode source, TypeNode target, BirTypeLowering.PhysicalSlotRole role) =>
-                    TypeNodeDataEquality.Equal(BirTypeLowering.CanonicalPhysicalSlotType(BirTypeLowering.LowerSlot(
-                        SupertypeGraph.SubstOwnerTvs(source, ownArguments), context.MetadataProjection, role)),
-                        BirTypeLowering.CanonicalPhysicalSlotType(target));
-                needsSignature = !Matches(implementation.Return, slot.Return, implementation.ReturnsValue
-                    ? BirTypeLowering.PhysicalSlotRole.Value : BirTypeLowering.PhysicalSlotRole.Return)
-                    || implementation.Parameters.Where((parameter, i) =>
-                        !Matches(parameter.Type, slot.Parameters[i], BirTypeLowering.PhysicalSlotRole.Value)).Any();
-            }
             var needsProperty = slot.IsInterface && slot.PropertyAccessor != null && slot.DescriptorMember != implementation.Name
                 && (definition.Kind != "class" || reimplements || inheritedDefault);
             var needsInterface = slot.IsInterface && (selectedBody != null
@@ -255,7 +243,8 @@ static partial class KotlinOverrideSlotBridge
             // replace an authored overridable DIM, or invent a forwarding body for an abstract one.
             if (definition.Kind == "interface" && implementation.Abstract) return;
             implementation.SetVirtual();
-            string PhysicalKey(TypeNode type) => SupertypeGraph.TypeKey(context.Physical(type));
+            string PhysicalKey(TypeNode type) => SupertypeGraph.TypeKey(nativeMetadata == null
+                ? context.Physical(type) : BirTypeLowering.CanonicalPhysicalSlotType(type));
             // CLR method generic arity is part of the slot identity (ECMA-335 I.8.6.1.6).
             // The selected BODY is part of sharing identity too: equal erased A<Int>/B<String>
             // slots can forward to different overloads, and must not share the first body's cast.

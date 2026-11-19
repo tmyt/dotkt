@@ -52,11 +52,18 @@ actual="$(dotnet "$OUT/runner/RuntimeProbe.dll" "$OUT/dll/SourceArrayProbe.dll" 
 # Reuse the frontend compilation. The internal metadata assembly needs both Kotlin
 # signatures and the exact CLR methods on its emitted (not runtime) interface types.
 metadata_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
-dotnet "$BIR2CIR_DLL" "$OUT/metadata-cir" --compile-refs "$metadata_refs" --build-stdlib=metadata \
+# Production lowers stdlib metadata without importing an earlier private stdlib. Only the
+# emitter needs that DLL here, because the fixture is emitted without the other source BIR.
+dotnet "$BIR2CIR_DLL" "$OUT/metadata-cir" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata \
     "$OUT/bir/NativeMetadataSlots.bir.json" > "$OUT/metadata-bir2cir.log" 2>&1
-jq -e 'any(.types[].methods[]; .name == "Clone" and .ret.name == "kotlin.Any") and
-    any(.types[].methods[]; .name == "Compare" and .ret.name == "kotlin.Int" and
-        [.params[].type.name] == ["kotlin.String", "kotlin.String"])' "$OUT/metadata-cir/NativeMetadataSlots.cir.json" >/dev/null
+jq -e 'any(.types[].methods[]?; .name == "Clone" and .ret.name == "kotlin.Any") and
+    any(.types[].methods[]?; .name == "Compare" and .ret.name == "kotlin.Int" and
+        [.params[].type.name] == ["kotlin.String", "kotlin.String"]) and
+    any(.types[].methods[]?; .name == "IsInterfaceImplemented" and .params[1].type.name == "kotlin.Boolean") and
+    any(.types[] | select(.name == "metadata.DualOrder");
+        [.methods[] | select(.ret.name == "System.Int32" and any(.clrInterfaceImpls[]?; .member == "Compare"))
+            | [.params[].type.name]] | sort == [["System.Object","System.Object"], ["kotlin.Any","kotlin.Any"]])' \
+    "$OUT/metadata-cir/NativeMetadataSlots.cir.json" >/dev/null
 dotnet "$ILEMIT_DLL" "$OUT/metadata-dll" NativeMetadataSlots --compile-refs "$metadata_refs" \
     --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=metadata \
     "$OUT/metadata-cir/NativeMetadataSlots.cir.json" > "$OUT/metadata-ilemit.log" 2>&1

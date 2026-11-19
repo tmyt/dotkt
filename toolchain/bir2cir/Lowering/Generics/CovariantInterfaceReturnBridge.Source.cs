@@ -28,7 +28,7 @@ static partial class CovariantInterfaceReturnBridge
     internal static IReadOnlySet<SourceBridgedSlot> ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized = null)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized = null, bool metadataBuild = false)
     {
         // The late hierarchy is last-declaration-wins, with the actual flat
         // file inventory. Appended adapters do not enter this captured view.
@@ -38,7 +38,7 @@ static partial class CovariantInterfaceReturnBridge
                 if (declaration.Name.HasValue) definitions[declaration.Name.Value] = new(file, declaration);
         var bridged = new HashSet<SourceBridgedSlot>(new SourceSlotComparer());
         foreach (var owner in definitions.Values.Where(value => value.Kind is "class" or "interface"))
-            ApplySourceOwner(owner, definitions, refs, isValue, representations, sourceParameters, bridged, onMaterialized);
+            ApplySourceOwner(owner, definitions, refs, isValue, representations, sourceParameters, bridged, onMaterialized, metadataBuild);
         return bridged;
     }
 
@@ -49,7 +49,7 @@ static partial class CovariantInterfaceReturnBridge
     static void ApplySourceOwner(SourceDefinition owner, IReadOnlyDictionary<string, SourceDefinition> definitions,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters, ISet<SourceBridgedSlot> bridged,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild)
     {
         if (!owner.Declaration.Methods.HasValue) return;
         var bridges = new Dictionary<SourceBridgedSlot, BirFunctionDeclaration>(new SourceSlotComparer());
@@ -108,7 +108,7 @@ static partial class CovariantInterfaceReturnBridge
             }
         }
         ApplySourceReferenced(owner, definitions, refs, isValue, representations, sourceParameters,
-            bridges, bridged, ref ordinal, onMaterialized);
+            bridges, bridged, ref ordinal, onMaterialized, metadataBuild);
     }
 
     static void PublishSourceBridge(SourceDefinition owner, BirFunctionDeclaration bridge,
@@ -131,7 +131,7 @@ static partial class CovariantInterfaceReturnBridge
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
         Dictionary<SourceBridgedSlot, BirFunctionDeclaration> bridges, ISet<SourceBridgedSlot> bridged, ref int ordinal,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild)
     {
         if (refs == null) return;
         var ownArguments = owner.OwnArguments;
@@ -155,6 +155,9 @@ static partial class CovariantInterfaceReturnBridge
             {
                 if (edge.Owner.OrDefault() is not TypeNode.Fqn semanticOwner || definitions.ContainsKey(semanticOwner.Name)
                     || !edge.Member.HasValue) continue;
+                // Native metadata MethodImpls have no forwarding body; the final slot pass binds
+                // them in the emitted owner's frame, including a covariant return.
+                if (metadataBuild && !refs.HasDotKtOwner(semanticOwner.Name)) continue;
                 var sourceMember = edge.Member.Value;
                 var ownerArguments = semanticOwner.Args ?? Array.Empty<TypeNode>();
                 var projectedOwner = BirTypeLowering.LowerPhysicalType(mapping.Slot(semanticOwner), refs.Aliases, isValue,

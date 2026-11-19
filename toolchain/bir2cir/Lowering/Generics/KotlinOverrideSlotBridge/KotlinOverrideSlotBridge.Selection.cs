@@ -452,7 +452,7 @@ static partial class KotlinOverrideSlotBridge
                             ps.Length, methodArity, implementationSignature, selectedArgs,
                             out var physicalOwner, out _, out var externalAccessor))
                     {
-                        var projectedOwner = (TypeNode.Fqn)(metadataProjection != null && nativeOwner != null
+                        var projectedOwner = (TypeNode.Fqn)(metadataProjection != null && nativeOwner?.IsInterface == true
                             ? BirTypeLowering.LowerSlot(descriptorOwner, metadataProjection, BirTypeLowering.PhysicalSlotRole.Owner)
                             : BirTypeLowering.LowerPhysicalType(descriptorOwner, refs.Aliases, isValue,
                                 refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
@@ -533,7 +533,7 @@ static partial class KotlinOverrideSlotBridge
                                 BirTypeLowering.PhysicalSlotRole.Owner) : null;
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
                                 null, refs, loweredOwner, descriptorMember, methodArity, comparableParams,
-                                MethodTypeParameterShapeKey(selectedSlotTypeParams, selectedSlotArgs),
+                                MethodTypeParameterShapeKey(selectedSlotTypeParams, metadataOwner != null ? loweredOwner.Args : selectedSlotArgs),
                                 out var declarationOwner, out var declarationMember,
                                 out var physicalParams, out var physicalRet,
                                 // Bindings such as Comparable deliberately collapse their owner arguments.
