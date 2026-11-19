@@ -48,7 +48,8 @@ sealed class ValueRepresentationSourcePolicy
                 aliases[source] = Argument(alias, 0);
             }
             if (binding != null)
-                bindings[source] = new(Argument(binding, 0), Argument(binding, 1), Argument(binding, 2), Argument(binding, 3));
+                bindings[source] = new(Argument(binding, 0), Argument(binding, 1), Argument(binding, 2), Argument(binding, 3),
+                    Attribute(ValueRepresentationLowering.CaptureAttribute) is { } witness ? Argument(witness, 0) : null);
         }
         Bindings = bindings;
         Aliases = aliases;

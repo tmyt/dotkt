@@ -26,7 +26,7 @@ static partial class BirTypeLowering
         var frames = new Dictionary<string, NullableRepresentationFrame> {
             ["AliasedFrame"] = new(1, new[] { 0 }, physicalOrder: new[] { 1, 0 }),
         };
-        var markers = new Dictionary<string, IReadOnlyList<string>> { ["Marker"] = new[] { "PhysicalMarker" } };
+        var markers = new Dictionary<string, IReadOnlyList<TypeNode.Fqn>> { ["Marker"] = new[] { Named("PhysicalMarker") } };
         bool Value(TypeNode.Fqn type) => type.Name is "kotlin.Int" or "System.Int32" or "System.DateTime";
         var actual = new PhysicalTypeContext(false, aliases, Value, names, locals, frames, markers, "actual.kt");
         var shadow = new PhysicalTypeContext(false, shadowAliases, Value, names, locals, frames, markers, "shadow.kt");

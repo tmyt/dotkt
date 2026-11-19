@@ -1280,7 +1280,7 @@ sealed class Pipeline
             capturedInvocations, physicalDocuments);
         loweredRoots.Clear();
         foreach (var root in physicalDocuments)
-            physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes);
+            physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes, valueRepresentations.CaptureConstruction);
         // Final resolution distinguished actual accessors from public fields.
         // Consume their receiver-dispatch facts on the same owning typed graph;
         // retain each exact MemberRef and each resolved file's own arity snapshot.

@@ -66,7 +66,7 @@ static partial class BirTypeLowering
             return types.Select(type => type == null ? null : ProjectType(type, role, force, context)).ToArray();
         return types.SelectMany(type => type is TypeNode.Fqn owner
                 && context.InterfaceMarkers.TryGetValue(owner.Name, out var markers)
-                    ? markers.Select(marker => (TypeNode)new TypeNode.Fqn(marker))
+                    ? markers.Select(marker => ProjectType(SupertypeGraph.SubstOwnerTvs(marker, owner.Args ?? []), BirPhysicalTypeRole.Owner, force, context))
                     : new[] { ProjectType(type, BirPhysicalTypeRole.Value, force, context) })
             .DistinctBy(type => SupertypeGraph.TypeKey((TypeNode.Fqn)type)).ToArray();
     }

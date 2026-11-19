@@ -13,14 +13,14 @@ static partial class BirTypeLowering
         internal IReadOnlyDictionary<string, string> PhysicalNames { get; }
         internal IReadOnlySet<string> LocalNames { get; }
         internal IReadOnlyDictionary<string, NullableRepresentationFrame> NullableFrames { get; }
-        internal IReadOnlyDictionary<string, IReadOnlyList<string>> InterfaceMarkers { get; }
+        internal IReadOnlyDictionary<string, IReadOnlyList<TypeNode.Fqn>> InterfaceMarkers { get; }
         internal string File { get; }
 
         internal PhysicalTypeContext(bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
             ValueTypeOracle isValue = null, IReadOnlyDictionary<string, string> physicalNames = null,
             IReadOnlySet<string> localTypes = null,
             IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
-            IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers = null, string file = null)
+            IReadOnlyDictionary<string, IReadOnlyList<TypeNode.Fqn>> interfaceMarkers = null, string file = null)
         {
             RefBuild = refBuild;
             Aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
@@ -28,7 +28,7 @@ static partial class BirTypeLowering
             PhysicalNames = physicalNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             LocalNames = localTypes ?? new HashSet<string>(StringComparer.Ordinal);
             NullableFrames = nullableFrames;
-            InterfaceMarkers = interfaceMarkers ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            InterfaceMarkers = interfaceMarkers ?? new Dictionary<string, IReadOnlyList<TypeNode.Fqn>>(StringComparer.Ordinal);
             File = string.IsNullOrEmpty(file) ? "<unknown>" : file;
         }
     }

@@ -18,7 +18,7 @@ static partial class BirTypeLowering
             ["LogicalAttribute"] = "PhysicalAttribute",
             ["kotlin.collections.List"] = "System.Collections.Generic.IReadOnlyList",
         };
-        var markers = new Dictionary<string, IReadOnlyList<string>> { ["Marker"] = new[] { "First", "Second" } };
+        var markers = new Dictionary<string, IReadOnlyList<TypeNode.Fqn>> { ["Marker"] = new[] { Named("First"), Named("Second") } };
         var app = new PhysicalTypeContext(false, aliases, interfaceMarkers: markers);
         var reference = new PhysicalTypeContext(true, aliases, interfaceMarkers: markers);
         var shadow = new PhysicalTypeContext(false, new Dictionary<string, string>(aliases) {

@@ -383,7 +383,9 @@ static class ReferenceMetadataReader
                             (string)valueRepresentation.ConstructorArguments[0].Value,
                             (string)valueRepresentation.ConstructorArguments[1].Value,
                             (string)valueRepresentation.ConstructorArguments[2].Value,
-                            (string)valueRepresentation.ConstructorArguments[3].Value));
+                            (string)valueRepresentation.ConstructorArguments[3].Value,
+                            (string)type.GetCustomAttributesData().SingleOrDefault(attribute =>
+                                attribute.AttributeType.FullName == ValueRepresentationLowering.CaptureAttribute)?.ConstructorArguments[0].Value));
                     var exactPhysicalOwner = ExactPhysicalMetadataName(type);
                     // A dedicated carrier describes operational dispatch, not a Kotlin supertype or value view.
                     // Its slot vector explicitly maps the interface's physical frame into the source owner frame.

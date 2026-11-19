@@ -16,6 +16,14 @@ static partial class CapturedGenericInvocation
     static readonly Dictionary<string, TypeNode[]> _parameterWitnesses = new(StringComparer.Ordinal);
     static readonly Dictionary<string, NullableRepresentationFrame> _methodWitnessFrames = new(StringComparer.Ordinal);
 
+    static TypeNode.Fqn CaptureOwner(TypeNode type) => type switch {
+        TypeNode.Nullable n => CaptureOwner(n.Of),
+        TypeNode.Oblivious o => CaptureOwner(o.Of),
+        TypeNode.Mod m => CaptureOwner(m.Of),
+        TypeNode.Fqn f => f,
+        _ => null,
+    };
+
     public static BirFileDeclaration[] PreserveSourceFacts(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         _next = 0;
@@ -32,6 +40,8 @@ static partial class CapturedGenericInvocation
             };
             if (name.HasValue) locals[name.Value] = parameters.OrDefault();
         }
+        IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy = null;
+        string OwnerIdentity(string name) => locals.ContainsKey(name) ? name : refs?.RecordedPhysicalTypeName(name) ?? name;
         return roots.Select(root => (BirFileDeclaration)root.Rewrite(Visit)).ToArray();
 
         CapturedGenericArgument[] Capture(IBirExpression[] arguments, TypeNode[] signature)
@@ -39,9 +49,22 @@ static partial class CapturedGenericInvocation
             var captures = new List<CapturedGenericArgument>();
             for (var index = 0; index < arguments.Length && index < signature.Length; index++)
             {
-                if (signature[index] is not TypeNode.Fqn { Args: { } formalArgs } formal
-                    || BirNodeType.Of(arguments[index] as BirGraphNode) is not TypeNode.Fqn { Args: { } actualArgs } actual
-                    || formal.Name != actual.Name || formalArgs.Length != actualArgs.Length) continue;
+                if (CaptureOwner(signature[index]) is not { Args: { } formalArgs } formal
+                    || !formalArgs.Any(type => type is TypeNode.Tv { Scope: "method" })
+                    || CaptureOwner(BirNodeType.Of(arguments[index] as BirGraphNode)) is not { Args: { } actualArgs } actual
+                    || !actualArgs.Any(type => type is TypeNode.Star)) continue;
+                var formalOwner = OwnerIdentity(formal.Name);
+                if (OwnerIdentity(actual.Name) != formalOwner)
+                {
+                    hierarchy ??= SupertypeGraph.CollectSource(roots);
+                    var seed = new SupertypeGraph.Def { Interfaces = new[] { actual } };
+                    var views = SupertypeGraph.Reachable(seed, hierarchy, refs, sourceFrames: true)
+                        .Where(edge => OwnerIdentity(edge.spec.Name) == formalOwner)
+                        .Select(edge => edge.spec with { Name = formalOwner }).DistinctBy(SupertypeGraph.TypeKey).Take(2).ToArray();
+                    if (views.Length != 1 || views[0].Args == null) continue;
+                    actualArgs = views[0].Args;
+                }
+                if (actualArgs.Length != formalArgs.Length) continue;
                 var local = locals.TryGetValue(formal.Name, out var localParameters);
                 var parameters = local ? localParameters : refs.OwnerTypeParametersInPhysicalFrame(formal.Name);
                 var frame = !local && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)

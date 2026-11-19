@@ -18,3 +18,8 @@ internal annotation class ClrValueRepresentation(
 
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 internal annotation class ClrValueMember(val adapter: String, val slot: String)
+
+// Unlike the dispatch marker, this empty interface carries the declared generic
+// construction, in source argument order, even when the value slot is erased.
+@Target(AnnotationTarget.CLASS)
+internal annotation class ClrCaptureMarker(val marker: String)

@@ -2,6 +2,14 @@ using System;
 
 namespace GenericValueInterop;
 
+public sealed class ObservedClassLookup : roundtrip.kclassvalues.ClassLookup
+{
+    public override string typeName<T>(object key) => typeof(T).FullName!;
+    public override string presentName<T>(object key) => typeof(T).FullName!;
+    public override Array emptyValues<T, N>(object key) => Array.Empty<N>();
+    public static bool SameRuntimeType(object left, object right) => left.GetType() == right.GetType();
+}
+
 public static class GenericFrameApi
 {
     public static bool IsStringConstruction<T>() =>
