@@ -58,7 +58,7 @@ open class AuthoredReadOnlyMap<K, V>(protected val backing: MutableMap<K, V>) : 
     override fun containsKey(key: K): Boolean { containsCalls++; lastKey = observeKey(key); return backing.containsKey(key) }
     override fun containsValue(value: V): Boolean { valueCalls++; lastValue = value; return backing.containsValue(value) }
     override fun get(key: K): V? { getCalls++; lastKey = observeKey(key); return backing[key] }
-    override fun getOrDefault(key: K, defaultValue: V): V {
+    open fun getOrDefault(key: K, defaultValue: V): V {
         defaultCalls++
         return backing.getOrDefault(key, defaultValue)
     }
@@ -75,14 +75,14 @@ class AuthoredMutableMap<K, V>(backing: MutableMap<K, V>) : AuthoredReadOnlyMap<
     override fun remove(key: K): V? { removeCalls++; lastKey = key; return backing.remove(key) }
     override fun putAll(from: Map<out K, V>) = backing.putAll(from)
     override fun clear() = backing.clear()
-    override fun putIfAbsent(key: K, value: V): V? { optionalCalls++; return backing.putIfAbsent(key, value) }
-    override fun replace(key: K, value: V): V? { optionalCalls++; return backing.replace(key, value) }
-    override fun replace(key: K, oldValue: V, newValue: V): Boolean {
+    fun putIfAbsent(key: K, value: V): V? { optionalCalls++; return backing.putIfAbsent(key, value) }
+    fun replace(key: K, value: V): V? { optionalCalls++; return backing.replace(key, value) }
+    fun replace(key: K, oldValue: V, newValue: V): Boolean {
         optionalCalls++
         return backing.replace(key, oldValue, newValue)
     }
-    override fun remove(key: K, value: V): Boolean { optionalCalls++; return backing.remove(key, value) }
-    override fun merge(key: K, value: V, remappingFunction: (V, V) -> V?): V? {
+    fun remove(key: K, value: V): Boolean { optionalCalls++; return backing.remove(key, value) }
+    fun merge(key: K, value: V, remappingFunction: (V, V) -> V?): V? {
         optionalCalls++
         return backing.merge(key, value, remappingFunction)
     }
