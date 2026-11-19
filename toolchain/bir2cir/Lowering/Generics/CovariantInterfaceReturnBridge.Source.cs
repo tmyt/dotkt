@@ -52,7 +52,7 @@ static partial class CovariantInterfaceReturnBridge
         Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized)
     {
         if (!owner.Declaration.Methods.HasValue) return;
-        var bridges = new Dictionary<string, BirFunctionDeclaration>(StringComparer.Ordinal);
+        var bridges = new Dictionary<SourceBridgedSlot, BirFunctionDeclaration>(new SourceSlotComparer());
         var ordinal = 0;
         foreach (var application in ReachableSourceInterfaces(owner, definitions))
         {
@@ -77,7 +77,7 @@ static partial class CovariantInterfaceReturnBridge
                     && KotlinOverrideSlotBridge.SameSourceMethodTypeParameterShape(slot.TypeParams.OrDefault(),
                         method.TypeParams.OrDefault(), arguments, owner.OwnArguments)
                     && method.Params.HasValue && ParametersEqual(SourceParameterTypes(method), slotParameters, owner.OwnArguments)
-                    && SourceOverrides(method, declaration.Name, property ?? slot.Name.Value,
+                    && SourceOverrides(method, slot.DeclarationId.OrDefault(), declaration.Name, property ?? slot.Name.Value,
                         accessor switch { "get" => "getter", "set" => "setter", _ => "method" })).ToArray();
                 if (candidates.Length != 1) continue;
                 var implementation = candidates[0];
@@ -88,7 +88,7 @@ static partial class CovariantInterfaceReturnBridge
                 // Allocate any function discriminator in the declaration's open frame before closing it.
                 var signature = slot.Params.Value.Select(FunctionSignatureIdentity.SignatureType)
                     .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, arguments)).ToArray();
-                var key = SourceBridgeKey(implementation.Name.Value, arity,
+                var key = SourceBridgeKey(implementation, arity,
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(slot.TypeParams.OrDefault(), arguments),
                     signature, slotReturn, valueReturn, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
@@ -130,7 +130,7 @@ static partial class CovariantInterfaceReturnBridge
     static void ApplySourceReferenced(SourceDefinition owner, IReadOnlyDictionary<string, SourceDefinition> definitions,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
-        Dictionary<string, BirFunctionDeclaration> bridges, ISet<SourceBridgedSlot> bridged, ref int ordinal,
+        Dictionary<SourceBridgedSlot, BirFunctionDeclaration> bridges, ISet<SourceBridgedSlot> bridged, ref int ordinal,
         Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized)
     {
         if (refs == null) return;
@@ -210,7 +210,7 @@ static partial class CovariantInterfaceReturnBridge
                         refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
                         nullableFrames: refs.NullableTypeFrames, leftReturnsValue: !suspend && declaration.ReturnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
-                var key = SourceBridgeKey(implementation.Name.Value, arity,
+                var key = SourceBridgeKey(implementation, arity,
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declarationParameters, physicalArguments),
                     slotParameters, slotReturn, valueReturn, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
@@ -230,11 +230,11 @@ static partial class CovariantInterfaceReturnBridge
         }
     }
 
-    static string SourceBridgeKey(string implementation, int arity, string constraints, TypeNode[] parameters,
+    static SourceBridgedSlot SourceBridgeKey(BirFunctionDeclaration implementation, int arity, string constraints, TypeNode[] parameters,
         TypeNode result, bool valueReturn, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
-        => implementation + "`" + arity + "<" + constraints + ">(" + string.Join(",", parameters.Select(type =>
+        => new(implementation, arity + "<" + constraints + ">(" + string.Join(",", parameters.Select(type =>
             ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->" + ReferencedPhysicalTypeKey(result, refs, isValue)
-            + (valueReturn ? "[value-return]" : "");
+            + (valueReturn ? "[value-return]" : ""));
 
     static BirFunctionDeclaration BuildSourceBridge(SourceDefinition owner, BirFunctionDeclaration implementation,
         TypeNode[] parameters, TypeNode result, TypeNode logicalResult, string name, bool valueReturn)
@@ -299,7 +299,8 @@ static partial class CovariantInterfaceReturnBridge
     static bool SameSourceIdentity(BirFunctionDeclaration method, string physicalName, string property, string accessor)
         => property != null ? KotlinPropertyAccessors.TryIdentity(method, out var name, out var kind) && name == property && kind == accessor
             : method.Name.OrDefault() == physicalName && !KotlinPropertyAccessors.TryIdentity(method, out _, out _);
-    static bool SourceOverrides(BirFunctionDeclaration method, string owner, string member, string kind)
+    static bool SourceOverrides(BirFunctionDeclaration method, string declarationId, string owner, string member, string kind)
         => method.Overrides.OrEmpty().Any(edge => edge.Owner.OrDefault() is TypeNode.Fqn named && named.Name == owner
-            && edge.Member.OrDefault() == member && edge.Kind.OrDefault() == kind);
+            && edge.Member.OrDefault() == member && edge.Kind.OrDefault() == kind
+            && (declarationId == null || edge.DeclarationId.OrDefault() == KotlinOverrideSlotBridge.SourceDeclarationId(declarationId)));
 }

@@ -307,7 +307,7 @@ static partial class KotlinOverrideSlotBridge
                     && BirTypeLowering.SamePhysicalSlotType(owner,slot.DescriptorSpec,context.References.Aliases,
                         context.IsValue,context.References.PhysicalTypeNames,false,nullableFrames:context.References.NullableTypeFrames)
                     && SameSourceMethodTypeParameterShape(descriptor.TypeParams.OrDefault(),parameters,[],[])
-                    && SamePhysicalSignature(descriptor.Params.Value,descriptor.Ret.Value,slot.Parameters,slot.Return,
+                    && SamePhysicalSignature(descriptor.Params.Value,descriptor.Ret.Value,slot.Signature ?? slot.Parameters,slot.Return,
                         context.References,context.IsValue,context.HasClassifier)) return true;
         return false;
     }
