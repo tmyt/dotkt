@@ -75,7 +75,7 @@ class AuthoredMutableMap<K, V>(backing: MutableMap<K, V>) : AuthoredReadOnlyMap<
     override fun remove(key: K): V? { removeCalls++; lastKey = key; return backing.remove(key) }
     override fun putAll(from: Map<out K, V>) = backing.putAll(from)
     override fun clear() = backing.clear()
-    fun putIfAbsent(key: K, value: V): V? { optionalCalls++; return backing.putIfAbsent(key, value) }
+    override fun putIfAbsent(key: K, value: V): V? { optionalCalls++; return backing.putIfAbsent(key, value) }
     fun replace(key: K, value: V): V? { optionalCalls++; return backing.replace(key, value) }
     fun replace(key: K, oldValue: V, newValue: V): Boolean {
         optionalCalls++
@@ -112,6 +112,15 @@ private class AuthoredComparableQueries<K : Comparable<K>> : AuthoredReadOnlyMap
     override fun containsKey(key: K): Boolean { boundedCalls++; return false }
 }
 
+// Kotlin permits an implicit platform override with an incompatible result. As on the JVM,
+// a use of that result fails with a checked cast, not an unverifiable call instruction.
+private class IncompatibleMapResult : AbstractMutableMap<String, String>() {
+    private val backing = mutableMapOf<String, String>()
+    override val entries get() = backing.entries
+    override fun put(key: String, value: String) = backing.put(key, value)
+    fun remove(key: String, value: String): String = "not a Boolean"
+}
+
 class AuthoredMapTests {
     @TestAttribute
     fun emptyReadOnlyImplementationLoads() {
@@ -128,6 +137,10 @@ class AuthoredMapTests {
 
     @TestAttribute
     fun interfaceCallsDispatchToAuthoredMembers() {
+        val incompatible = IncompatibleMapResult()
+        var castFailed = false
+        try { incompatible.remove("a", "b").length } catch (_: ClassCastException) { castFailed = true }
+        assertTrue(castFailed)
         val source = AuthoredReadOnlyMap(mutableMapOf(1 to "one"))
         val map: Map<Int, String> = source
         assertTrue(map[1] == "one" && source.getCalls == 1)

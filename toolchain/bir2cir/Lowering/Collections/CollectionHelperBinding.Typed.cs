@@ -19,6 +19,7 @@ static partial class CollectionHelperBinding
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value, context)));
             if (node is not BirCallInstance operation || operation.ClrOwnerResolved.OrDefault()
                 || operation.OwnerType.OrDefault() is not TypeNode.Fqn owner || !operation.Args.HasValue) return node;
+            bool rebindOverride = false;
             if (!operation.Super.OrDefault() && (!aliases.ContainsKey(owner.Name) || !IsInterface(owner.Name))
                 && (KotlinCollectionSlotSynthesis.ErasedQueryOverride(operation)
                     ?? operation.Overrides.OrEmpty().FirstOrDefault(marker =>
@@ -30,6 +31,7 @@ static partial class CollectionHelperBinding
                 // Keep the original graph untouched if an owner adjustment is
                 // selected without a helper; the returned call owns this copy.
                 operation = operation with { OwnerType = owner, Method = selected.Member, DeclarationId = selected.DeclarationId };
+                rebindOverride = true;
             }
             var arguments = operation.Args.Value;
             BirCallStatic call;
@@ -86,11 +88,23 @@ static partial class CollectionHelperBinding
                 call = RenderCollectionOperation(plan, operation, references, MemberCallSubstitution.CollectionOperationPhase.Source);
             }
             call.TypeArgs = call.TypeArgs.Value.Select(SourceHelperBinder.SourceArgument).ToArray();
-            call.DeclarationId = captured.Helpers.Select(((TypeNode.Fqn)call.Owner.Value).Name,
+            var declaration = captured.Helpers.Select(((TypeNode.Fqn)call.Owner.Value).Name,
                 call.Method.Value, call.TypeArgs.Value.Length, call.Sig.Value);
+            call.DeclarationId = declaration.Identity;
             // This binding preserves the source result; representation demand
             // and physical frame materialization have not run yet.
             var result = OptionalField<TypeNode>.Of(operation.Sty.OrDefault() ?? operation.Ret.OrDefault());
+            if (rebindOverride && result.OrDefault() is { } expected && declaration.Result is { } declared) {
+                var returned = TypedExecutableFrames.SubstituteType(declared, call.TypeArgs.Value,
+                    call.TypeArgs.Value.Length, null, false);
+                if (returned != expected) {
+                    // The helper implements the base slot. A call through the authored override
+                    // has its own static result; adapt the value, not the helper signature.
+                    call.Ret = returned;
+                    call.Sty = returned;
+                    return new BirCast { Type = expected, E = call };
+                }
+            }
             call.Ret = result;
             call.Sty = result;
             return call;

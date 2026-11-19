@@ -89,7 +89,7 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
-			resolveAndCheckClrFir(session, session.buildClrFirFromKtFiles(files, stdlibSource = true), diagnosticsReporter).also {
+			resolveAndCheckClrFir(session, session.buildClrFirFromKtFiles(files), diagnosticsReporter).also {
 				kotc.frontend.SelectedCallDeclarations.capture(it.fir)
 				normalizeClrStaticReceivers(session, it.fir)
 				kotc.frontend.ClrContextFnTypes.capture(it.fir)

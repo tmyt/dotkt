@@ -13,7 +13,6 @@ import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
 import org.jetbrains.kotlin.fir.declarations.FirTypeParameter
 import org.jetbrains.kotlin.fir.declarations.utils.isStatic
-import org.jetbrains.kotlin.fir.declarations.utils.isActual
 import org.jetbrains.kotlin.fir.declarations.builder.FirRegularClassBuilder
 import org.jetbrains.kotlin.fir.deserialization.FirDeserializationExtension
 import org.jetbrains.kotlin.fir.resolve.ScopeSession
@@ -46,26 +45,35 @@ import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.psi.KtFile
 
-private val clrTypeAlias = ClassId.fromString("kotlin/clr/ClrTypeAlias")
+// A CLR compilation sees its target's actual stdlib, not a platform-neutral
+// builtins surface. Preserve its declared platform defaults for FIR's ordinary
+// override checker, including when a scope is used to serialize the frontend KLIB.
+private fun FirScopeProvider.withPlatformDefaults(): FirScopeProvider {
+	if (this !is FirKotlinScopeProvider) return this
+	return FirKotlinScopeProvider { k, declared, session, scopes, phase ->
+		val scope = declaredMemberScopeDecorator(k, declared, session, scopes, phase)
+		(scope as? FirKotlinScopeProvider.PlatformDependentFilteringScope)?.declaredMemberScope ?: scope
+	}
+}
+
+@OptIn(SessionConfiguration::class)
+internal fun installClrPlatformDefaults(session: FirSession) {
+	session.register(FirDeserializationExtension::class, object : FirDeserializationExtension(session) {
+		override fun FirRegularClassBuilder.configureDeserializedClass(classId: ClassId) {
+			scopeProvider = scopeProvider.withPlatformDefaults()
+		}
+	})
+}
 
 /** CLR class qualifiers expose inherited static declarations without creating derived storage or methods. */
-private class ClrStaticScopeProvider(private val delegate: FirScopeProvider, stdlibSource: Boolean = false,
+private class ClrStaticScopeProvider(private val delegate: FirScopeProvider,
 	private val sourceView: (FirClass) -> String? = { null }) : FirScopeProvider() {
-	// FIR's metadata scope hides platform-dependent builtins. CLR actuals define the
-	// available platform members both while emitting the stdlib KLIB and when consuming it.
-	private val members = if (delegate !is FirKotlinScopeProvider) delegate else FirKotlinScopeProvider { k, declared, session, scopes, phase ->
-		val decorated = delegate.declaredMemberScopeDecorator(k, declared, session, scopes, phase)
-		if (decorated is FirKotlinScopeProvider.PlatformDependentFilteringScope &&
-			(if (k.origin.fromSource) stdlibSource && k.isActual else
-				k.annotations.any { (it.annotationTypeRef.coneType as? ConeClassLikeType)?.lookupTag?.classId == clrTypeAlias }))
-			decorated.declaredMemberScope else decorated
-	}
 	override fun getUseSiteMemberScope(klass: FirClass, useSiteSession: FirSession, scopeSession: ScopeSession,
 		memberRequiredPhase: FirResolvePhase?): FirTypeScope {
 		// Building a declaration scope always inherits native contracts, never use-site protocol aliases.
 		val nativeScope = withSourceInterfaceViewLookup(false) {
 			sourceInterfaceViewScope(klass, useSiteSession,
-				members.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView(klass))
+				delegate.getUseSiteMemberScope(klass, useSiteSession, scopeSession, memberRequiredPhase), sourceView(klass))
 		}
 		return sourceInterfaceLookupScope(klass, useSiteSession, scopeSession, nativeScope, memberRequiredPhase)
 	}
@@ -157,17 +165,17 @@ fun installClrStaticDeserialization(session: FirSession) {
 		override fun FirRegularClassBuilder.configureDeserializedClass(classId: ClassId) {
 			addClrArrayBase(classId)
 			// This callback precedes class-annotation loading; consume the completed declaration at scope use instead.
-			scopeProvider = ClrStaticScopeProvider(scopeProvider) { sourceInterfaceView(it.annotations) }
+			scopeProvider = ClrStaticScopeProvider(scopeProvider.withPlatformDefaults()) { sourceInterfaceView(it.annotations) }
 			declarations.forEach { prepareClrStaticVisibility(it, symbol.toLookupTag()) }
 		}
 	})
 }
 
 @OptIn(SessionConfiguration::class)
-fun FirSession.buildClrFirFromKtFiles(files: Collection<KtFile>, stdlibSource: Boolean = false) = (firProvider as FirProviderImpl).let { provider ->
+fun FirSession.buildClrFirFromKtFiles(files: Collection<KtFile>) = (firProvider as FirProviderImpl).let { provider ->
 	register(org.jetbrains.kotlin.fir.FirVisibilityChecker::class, ClrStaticVisibilityChecker)
 	register(org.jetbrains.kotlin.fir.resolve.calls.overloads.ConeCallConflictResolverFactory::class, ClrStaticConflictResolverFactory)
-	val builder = PsiRawFirBuilder(this, ClrStaticScopeProvider(provider.kotlinScopeProvider, stdlibSource))
+	val builder = PsiRawFirBuilder(this, ClrStaticScopeProvider(provider.kotlinScopeProvider.withPlatformDefaults()))
 	val equality = NativeEquality()
 	files.map { builder.buildFirFile(it).also(equality::prepare).also(provider::recordFile) }
 }

@@ -56,14 +56,15 @@ internal fun prepareClrNativeSessions(
                 createJsContext = { FirJsSessionFactory.Context(configuration) },
             )
         },
-        createSharedLibrarySession = { factory.createSharedLibrarySession(rootModuleName, configuration, extensionRegistrars) },
+        createSharedLibrarySession = { factory.createSharedLibrarySession(rootModuleName, configuration, extensionRegistrars).also(::installClrPlatformDefaults) },
         createLibrarySession = { shared -> factory.createLibrarySession(
-            tables.standard, shared, libraryList.moduleDataProvider, extensionRegistrars, configuration) },
+            tables.standard, shared, libraryList.moduleDataProvider, extensionRegistrars, configuration).also(::installClrPlatformDefaults) },
         createSourceSession = { moduleData, kind, configure ->
             fragmentTables.beforeSourceSessions()
             factory.createSourceSession(moduleData, extensionRegistrars, configuration, kind, icData = null, init = configure)
         },
         additionalProvidersForMetadataLibrarySessionsInHmppMode = { session, modules, scopes, libraries ->
+            installClrPlatformDefaults(session)
             fragmentTables.record(session, modules, scopes, libraries)
             FirNativeSessionFactory.createAdditionalDependencyProviders(session, modules, scopes, libraries)
         },
