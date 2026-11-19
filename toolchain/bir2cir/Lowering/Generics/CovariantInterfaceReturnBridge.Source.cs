@@ -95,8 +95,8 @@ static partial class CovariantInterfaceReturnBridge
                 {
                     var logicalResult = suspend ? SubstOwnerTvs(slot.SuspendResult.OrDefault()
                         ?? throw new InvalidOperationException($"suspend declaration '{slot.Name.OrDefault()}' has no preserved logical result"), arguments) : null;
-                    bridge = BuildSourceBridge(owner, implementation, signature, slotReturn, logicalResult,
-                        $"dotkt$covar${SafeName(slot.Name.Value)}${ordinal++}", valueReturn);
+                    bridge = BuildSourceBridge(owner, implementation, slotParameters, slotReturn, logicalResult,
+                        $"dotkt$covar${SafeName(slot.Name.Value)}${ordinal++}", valueReturn, signature);
                     bridges[key] = bridge;
                     PublishSourceBridge(owner, bridge, onMaterialized);
                     AssociateSourceProperty(owner, bridge, implementation, property, accessor, slotParameters, slotReturn);
@@ -237,11 +237,16 @@ static partial class CovariantInterfaceReturnBridge
             + (valueReturn ? "[value-return]" : ""));
 
     static BirFunctionDeclaration BuildSourceBridge(SourceDefinition owner, BirFunctionDeclaration implementation,
-        TypeNode[] parameters, TypeNode result, TypeNode logicalResult, string name, bool valueReturn)
+        TypeNode[] parameters, TypeNode result, TypeNode logicalResult, string name, bool valueReturn, TypeNode[] signature = null)
     {
         var source = implementation.Params.OrEmpty();
-        var bridgeParameters = parameters.Select((type, index) => new BirParameter {
-            Name = source[index].Name.OrDefault() ?? "p" + index, Type = BirGraphValue.CopyType(type),
+        var bridgeParameters = parameters.Select((type, index) => {
+            var parameter = new BirParameter { Name = source[index].Name.OrDefault() ?? "p" + index,
+                Type = BirGraphValue.CopyType(type) };
+            // State-machine spills consume the value type, not the slot's function discriminator.
+            if (signature?[index] is TypeNode.Mod { Req: false } discriminator && signature[index] != type)
+                parameter.FunctionSignatureType = BirGraphValue.CopyType(discriminator.M);
+            return parameter;
         }).ToArray();
         var ownerArguments = owner.OwnArguments;
         var call = new BirCallInstance { OwnerType = new TypeNode.Fqn(owner.Name, ownerArguments.Length == 0 ? null : ownerArguments),
