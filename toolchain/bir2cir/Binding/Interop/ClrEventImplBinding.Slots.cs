@@ -211,7 +211,11 @@ static partial class ClrEventImplBinding
                 declaration.EventRaiseDeclarationId = default;
             }
         }
-        foreach (var file in files) file.VisitChildSlots(slot => BindSourceRaise(slot, refs, signatures));
+        foreach (var file in files)
+        {
+            var names = new BirTemporaryNames(file);
+            file.VisitChildSlots(slot => BindSourceRaise(slot, refs, signatures, names));
+        }
     }
 
     static MethodInfo ReferencedRaise(TypeNode.Fqn owner, string name, ReferenceMetadataIndex refs)
@@ -226,45 +230,77 @@ static partial class ClrEventImplBinding
     }
 
     static void BindSourceRaise(BirGraphSlot slot, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<(string Owner, string Event), RaiseBinding> signatures)
+        IReadOnlyDictionary<(string Owner, string Event), RaiseBinding> signatures, BirTemporaryNames names)
     {
         var node = slot.Value;
         if (node == null || node is IBirExecutablePayload) return;
-        node.VisitChildSlots(child => BindSourceRaise(child, refs, signatures));
+        node.VisitChildSlots(child => BindSourceRaise(child, refs, signatures, names));
         if (node is not BirEventRaise raise) return;
         var owner = raise.Type.OrDefault() as TypeNode.Fqn
             ?? throw new InvalidOperationException("bir2cir: event raise has no declaring owner type");
         var name = raise.Event.OrDefault();
-        var arguments = raise.Args.OrDefault() ?? Array.Empty<IBirExpression>();
-        void CheckArgumentCount(int expected)
+        var prelude = new List<IBirStatement>();
+        var receiver = raise.Recv;
+        IBirExpression[] Arguments(int expected, TypeNode[] localTypes = null)
         {
-            if (arguments.Length != expected)
-                throw new InvalidOperationException($"event raise '{owner.Name}.{name}' expects {expected} argument(s), got {arguments.Length}");
+            if (!raise.PackedArgs.HasValue)
+            {
+                var direct = raise.Args.Value;
+                if (direct.Length != expected)
+                    throw new InvalidOperationException($"event raise '{owner.Name}.{name}' expects {expected} argument(s), got {direct.Length}");
+                return direct;
+            }
+
+            IBirExpression Bind(string stem, TypeNode type, IBirExpression value)
+            {
+                var id = names.Next(stem);
+                prelude.Add(new BirVariable { Name = id, Type = Copy(type), Init = OptionalField<IBirExpression>.Of(value) });
+                return new BirLocal { Name = id, Sty = Copy(type) };
+            }
+            if (receiver.HasValue && receiver.Value is not BirThis)
+                receiver = OptionalField<IBirExpression>.Of(Bind("dotkt$eventReceiver", owner, receiver.Value));
+            var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+            var packed = Bind("dotkt$eventArgs", new TypeNode.Array(element), raise.PackedArgs.Value);
+            BirLocal Read() => (BirLocal)((BirGraphValue)packed).DeepClone();
+            BirConstant Int(int n) => new() { Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(n) };
+            prelude.Add(new BirIf { Branches = new[] { new BirBranch {
+                Cond = new BirBinaryOperation { Op = "!=", Lhs = new BirArrayLength { Array = Read() }, Rhs = Int(expected) },
+                Body = new IBirStatement[] { new BirThrow { Value = new BirNew {
+                    Type = new TypeNode.Fqn("System.ArgumentException"), Args = Array.Empty<IBirExpression>(), ArgTypes = Array.Empty<TypeNode>(),
+                } } },
+            } } });
+            return Enumerable.Range(0, expected).Select(i => {
+                IBirExpression value = new BirArrayGet { Array = Read(), Index = Int(i), Elem = element };
+                return localTypes == null ? value : new BirCast {
+                    Type = SupertypeGraph.SubstOwnerTvs(localTypes[i], owner.Args ?? []), E = OptionalField<IBirExpression>.Of(value),
+                };
+            }).ToArray();
         }
 
         BirGraphValue call;
         if (signatures.TryGetValue((owner.Name, name), out var local))
         {
-            CheckArgumentCount(local.Signature.Length);
+            var arguments = Arguments(local.Signature.Length, local.Signature);
             call = local.IsStatic
                 ? new BirCallStatic { Owner = Copy(owner), Method = local.Name, Sig = local.Signature.Select(Copy).ToArray(),
                     DeclarationId = local.DeclarationId, Virtual = false, Args = arguments }
                 : new BirCallInstance { OwnerType = Copy(owner), Method = local.Name, Sig = local.Signature.Select(Copy).ToArray(),
-                    DeclarationId = local.DeclarationId, Virtual = true, Recv = raise.Recv.IsPresent ? raise.Recv : OptionalField<IBirExpression>.Null,
+                    DeclarationId = local.DeclarationId, Virtual = true, Recv = receiver.IsPresent ? receiver : OptionalField<IBirExpression>.Null,
                     Args = arguments };
         }
         else
         {
             var method = ReferencedRaise(owner, name, refs);
-            CheckArgumentCount(method.GetParameters().Length);
+            var arguments = Arguments(method.GetParameters().Length);
             call = method.IsStatic
                 ? ClrMemberResolution.ExactStaticCall(null, refs, method, owner, arguments)
-                : ClrMemberResolution.ExactInstanceCall(null, refs, method, owner, raise.Recv.OrDefault(), arguments);
+                : ClrMemberResolution.ExactInstanceCall(null, refs, method, owner, receiver.OrDefault(), arguments);
         }
         // Kotlin super access is an instance declaration access. Restore the
         // original derived this instead of the exact binder's base cast.
         if (raise.Super.OrDefault() && call is BirCallInstance instance)
-        { instance.Super = true; instance.Virtual = false; instance.Recv = raise.Recv.IsPresent ? raise.Recv : OptionalField<IBirExpression>.Null; }
-        slot.Replace(call);
+        { instance.Super = true; instance.Virtual = false; instance.Recv = receiver.IsPresent ? receiver : OptionalField<IBirExpression>.Null; }
+        slot.Replace(prelude.Count == 0 ? call : new BirValueBlock { Stmts = prelude.ToArray(),
+            Result = OptionalField<IBirExpression>.Of((IBirExpression)call), Sty = new TypeNode.Fqn("kotlin.Unit") });
     }
 }

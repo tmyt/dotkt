@@ -28,7 +28,7 @@ static partial class FBoundStarProjectionErasure
         var state = new SourceRewriteState(context, componentPredicate);
         foreach (var root in roots)
         {
-            var names = new TypedGenericArrayStorageLowering.FreshNames(root);
+            var names = new BirTemporaryNames(root);
             RewriteSource(new BirGraphSlot(() => root, replacement => {
                 if (!ReferenceEquals(replacement, root)) throw new InvalidOperationException("Carrier rewriting replaced a file declaration");
             }), new(), state, names, typesOnly: false);
@@ -104,7 +104,7 @@ static partial class FBoundStarProjectionErasure
     }
 
     static void RewriteSource(BirGraphSlot slot, SourceBodyScope scope, SourceRewriteState state,
-        TypedGenericArrayStorageLowering.FreshNames names, bool typesOnly)
+        BirTemporaryNames names, bool typesOnly)
     {
         var node = slot.Value;
         if (node is null or IBirExecutablePayload) return;

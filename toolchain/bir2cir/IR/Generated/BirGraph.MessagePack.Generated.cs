@@ -16559,12 +16559,13 @@ internal static class BirGraphMessagePack
         OptionalField<bool> field3 = default;
         OptionalField<IBirExpression> field4 = default;
         OptionalField<IBirExpression[]> field5 = default;
-        OptionalField<TypeNode> field6 = default;
+        OptionalField<IBirExpression> field6 = default;
+        OptionalField<TypeNode> field7 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 7); if (IrMessagePack.ReadString(ref reader) != "clrEventRaise") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 8); if (IrMessagePack.ReadString(ref reader) != "clrEventRaise") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -16589,9 +16590,13 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 5);
                     field5 = reader.TryReadNil() ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray<IBirExpression>(ref reader, (ref MessagePackReader reader) => ReadBirExpression(ref reader)));
                     break;
-                case "suspendFnTypePre":
+                case "packedArgs":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                case "suspendFnTypePre":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -16605,14 +16610,15 @@ internal static class BirGraphMessagePack
             Super = field3,
             Recv = field4,
             Args = field5,
-            SuspendFnTypePre = field6,
+            PackedArgs = field6,
+            SuspendFnTypePre = field7,
         };
     }
 
     internal static void WriteBirEventRaise(ref MessagePackWriter writer, BirEventRaise value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Event.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Event.IsPresent ? 1 : 0) + (value.Static.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.PackedArgs.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrEventRaise");
         if (value.Type.IsPresent)
@@ -16672,6 +16678,15 @@ internal static class BirGraphMessagePack
                 {
                     WriteBirExpression(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.PackedArgs.IsPresent)
+        {
+            writer.Write("packedArgs");
+            if (value.PackedArgs.IsNull) writer.WriteNil();
+            else
+            {
+                WriteBirExpression(ref writer, value.PackedArgs.Value, depth + 1);
             }
         }
         if (value.SuspendFnTypePre.IsPresent)

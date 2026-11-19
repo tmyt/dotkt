@@ -70,13 +70,28 @@ class EventRaiseTests {
         assertEquals(2, receiverCount)
         assertEquals(2, argumentCount)
 
+        var trace = ""
+        val spreadToken = source.Changed.subscribe { trace += it.toString() }
+        source.fireWithTail(3) { trace += "e"; emptyArray<Any?>() }
+        fun selected(): Publisher<String, Int> { trace += "r"; return source }
+        fun part(label: String, vararg args: Any?): Array<out Any?> { trace += label; return args }
+        selected().Changed(*part("a"), *part("b", 4))
+        try {
+            selected().Changed(*part("x", 5), *part("y", 6))
+            error("a dynamic raise must not discard extra arguments")
+        } catch (_: IllegalArgumentException) {}
+        spreadToken.close()
+        assertEquals("e3rab4rxy", trace)
+
         val nested = PublisherOuter<String>().NestedPublisher<Int>()
         var pair = ""
         val nestedToken = nested.Changed.subscribe { first, second -> pair = "$first:$second" }
         nested.Changed("payload", 42)
+        assertEquals("payload:42", pair)
+        nested.Changed("spread", *arrayOf<Any?>(43))
         nestedToken.close()
         nested.Changed("ignored", 100)
-        assertEquals("payload:42", pair)
+        assertEquals("spread:43", pair)
 
         val custom = ImportedPolicyChild()
         val customToken = custom.Changed.subscribe { result += it }

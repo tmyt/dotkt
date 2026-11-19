@@ -200,6 +200,25 @@ internal enum BirRepresentationParameterRole { Owner, Method, SharedCell }
 // from a target signature vector, and a nested synthetic declaration from its use.
 internal enum BirOwnershipRole { Lexical, ForeignVector, MemberDescriptor, SyntheticDeclaration, FrozenFact }
 
+internal sealed class BirTemporaryNames(BirGraphValue file)
+{
+    readonly HashSet<string> names = new(StringComparer.Ordinal);
+    BirGraphValue? seed = file;
+
+    internal void Reserve(BirGraphValue? root)
+    {
+        root?.Visit(value => value.VisitNameFields(name => names.Add(name)));
+    }
+
+    internal string Next(string stem)
+    {
+        if (seed != null) { Reserve(seed); seed = null; }
+        var index = 0;
+        while (!names.Add(stem + index)) index++;
+        return stem + index;
+    }
+}
+
 // A short-lived address into an owning typed graph, not a string-key property
 // view. Generated setters retain each declared child role. Replacements change
 // the owning occurrence; use Rewrite when taking an independent graph snapshot.

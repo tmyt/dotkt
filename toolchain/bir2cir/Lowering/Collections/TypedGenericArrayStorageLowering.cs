@@ -7,25 +7,6 @@ using DotKt.Cir;
 // still separate; this walker does not reinterpret their Kotlin type policy.
 static class TypedGenericArrayStorageLowering
 {
-    internal sealed class FreshNames(BirGraphValue file)
-    {
-        readonly HashSet<string> names = new(StringComparer.Ordinal);
-        BirGraphValue seed = file;
-
-        internal void Reserve(BirGraphValue root)
-        {
-            root?.Visit(value => value.VisitNameFields(name => names.Add(name)));
-        }
-
-        internal string Next(string stem)
-        {
-            if (seed != null) { Reserve(seed); seed = null; }
-            var index = 0;
-            while (!names.Add(stem + index)) index++;
-            return stem + index;
-        }
-    }
-
     static TypeNode.Fqn Type(string name) => new(name);
     // Synthetic local reads can occur at several use sites. Actual operands are
     // moved once: copying them would detach any captured callable declarations
@@ -75,7 +56,7 @@ static class TypedGenericArrayStorageLowering
     };
 
     internal static BirGraphValue LowerOperation(BirGraphValue node, ReferenceMetadataIndex refs,
-        FreshNames names, TypeNode receiverType = null)
+        BirTemporaryNames names, TypeNode receiverType = null)
     {
         var receiver = node switch {
             BirArrayGet value => value.Array.OrDefault(),
@@ -104,7 +85,7 @@ static class TypedGenericArrayStorageLowering
         };
     }
 
-    static BirValueBlock Store(BirArraySet store, IBirExpression receiver, ReferenceMetadataIndex refs, FreshNames names)
+    static BirValueBlock Store(BirArraySet store, IBirExpression receiver, ReferenceMetadataIndex refs, BirTemporaryNames names)
     {
         var arrayName = names.Next("$arrayStorage$");
         var indexName = names.Next("$arrayIndex$");
@@ -145,7 +126,7 @@ static class TypedGenericArrayStorageLowering
         };
     }
 
-    static BirBlock Loop(BirForArray loop, IBirExpression receiver, ReferenceMetadataIndex refs, FreshNames names)
+    static BirBlock Loop(BirForArray loop, IBirExpression receiver, ReferenceMetadataIndex refs, BirTemporaryNames names)
     {
         var arrayName = names.Next("$arrayStorage$");
         var indexName = names.Next("$arrayIndex$");
@@ -216,14 +197,14 @@ static class TypedGenericArrayStorageLowering
                     ParameterTypes.Value: [] } } }, "array mismatch lost its exact exception constructor");
         }
         var get = (BirArrayGet)source[0];
-        var read = (BirCast)LowerOperation(get, refs, new FreshNames(get));
+        var read = (BirCast)LowerOperation(get, refs, new BirTemporaryNames(get));
         Require(read.Type.Value == element && read.Sty.Value == element, "read lost the authored element cast");
         var readCall = Instance(read.E.Value, "System.Array", "GetValue", "object", "call", "System.Int32");
         Require(readCall.Recv.Value is BirLocal { Name.Value: "array" }
             && ReferenceEquals(readCall.Args.Value[0], get.Index.Value), "read lost receiver/index transport");
 
         var store = (BirArraySet)source[1];
-        var stored = (BirValueBlock)LowerOperation(store, refs, new FreshNames(store));
+        var stored = (BirValueBlock)LowerOperation(store, refs, new BirTemporaryNames(store));
         var spills = stored.Stmts.Value;
         Require(stored.Type.Value == Type("void") && spills.Length == 6, "store lost ordered spill/check block");
         var arraySpill = (BirVariable)spills[0]; var indexSpill = (BirVariable)spills[1];
@@ -262,12 +243,12 @@ static class TypedGenericArrayStorageLowering
                 .SequenceEqual(new[] { valueSpill.Name.Value, indexSpill.Name.Value }), "SetValue argument order changed");
 
         var length = (BirArrayLength)source[2];
-        var lengthCall = Instance((IBirExpression)LowerOperation(length, refs, new FreshNames(length)),
+        var lengthCall = Instance((IBirExpression)LowerOperation(length, refs, new BirTemporaryNames(length)),
             "System.Array", "get_Length", "System.Int32", "call");
         Require(lengthCall.Recv.Value is BirLocal { Name.Value: "array" } && lengthCall.Args.Value.Length == 0,
             "length lost its exact receiver/empty argument vector");
         var loop = (BirForArray)source[3];
-        var loweredLoop = (BirBlock)LowerOperation(loop, refs, new FreshNames(loop));
+        var loweredLoop = (BirBlock)LowerOperation(loop, refs, new BirTemporaryNames(loop));
         Require(loweredLoop.Body.Value is [BirVariable { Type.Value: var receiverType }, BirVariable { Type.Value: var lengthType },
             BirFor { Cmp.Value: "<", Step.Value: 1, From.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 0 } } }]
             && receiverType == array && lengthType == integer, "array loop lost counted receiver/length layout");
@@ -286,28 +267,28 @@ static class TypedGenericArrayStorageLowering
             "loop element read lost its captured array/index");
         var labelled = new BirForArray { Array = Local("array", array), Var = "element", Elem = element,
             Label = "outer", Body = Array.Empty<IBirStatement>() };
-        Require(((BirFor)((BirBlock)LowerOperation(labelled, refs, new FreshNames(labelled))).Body.Value[2]).Label.Value == "outer",
+        Require(((BirFor)((BirBlock)LowerOperation(labelled, refs, new BirTemporaryNames(labelled))).Body.Value[2]).Label.Value == "outer",
             "loop label was not retained");
         var file = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration {
             Name = "later", Params = new[] { new BirParameter { Name = "$arrayStorage$0", Type = array } },
             Body = new IBirStatement[] { new BirForArray { Var = "$arrayIndex$0" } },
         } } };
-        var names = new FreshNames(file);
+        var names = new BirTemporaryNames(file);
         if (names.Next("$arrayStorage$") != "$arrayStorage$1" || names.Next("$arrayIndex$") != "$arrayIndex$1")
             throw new InvalidOperationException("Typed array names missed a later parameter/loop declaration");
         names.Reserve(new BirLocal { Name = "$arrayStorage$2" });
         if (names.Next("$arrayStorage$") != "$arrayStorage$3"
-            || new FreshNames(new BirFileDeclaration()).Next("$arrayStorage$") != "$arrayStorage$0")
+            || new BirTemporaryNames(new BirFileDeclaration()).Next("$arrayStorage$") != "$arrayStorage$0")
             throw new InvalidOperationException("Typed array reservation leaked between rewrite/file lifetimes");
         var lazy = new BirFileDeclaration();
-        var lazyNames = new FreshNames(lazy);
+        var lazyNames = new BirTemporaryNames(lazy);
         lazy.Fields = new[] { new BirFieldDeclaration { Name = "$arrayValue$0", Type = element } };
         if (lazyNames.Next("$arrayValue$") != "$arrayValue$1")
             throw new InvalidOperationException("Typed array names seeded before their first allocation");
         var structural = new BirVariable { Name = "declared", Type = new TypeNode.Fqn("$arrayStorage$0"),
             Init = new BirCast { Type = new TypeNode.Array(new TypeNode.Fqn("$arrayStorage$1")),
                 E = new BirLocal { Name = "$arrayStorage$2" } } };
-        if (new FreshNames(structural).Next("$arrayStorage$") != "$arrayStorage$3")
+        if (new BirTemporaryNames(structural).Next("$arrayStorage$") != "$arrayStorage$3")
             throw new InvalidOperationException("Array allocation names omitted a structured type/name field");
         var callables = new List<BirFunctionDeclaration>();
         BirValueBlock Operand(TypeNode type)
@@ -328,7 +309,7 @@ static class TypedGenericArrayStorageLowering
         };
         var observed = new List<BirFunctionDeclaration>();
         foreach (var operation in operands)
-            LowerOperation(operation, refs, new FreshNames(operation), array).Visit(node => {
+            LowerOperation(operation, refs, new BirTemporaryNames(operation), array).Visit(node => {
                 if (node is BirFunctionDeclaration callable) observed.Add(callable);
             });
         if (observed.Count != callables.Count || callables.Any(callable =>

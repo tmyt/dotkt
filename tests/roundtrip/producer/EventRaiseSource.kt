@@ -22,6 +22,7 @@ class WidePublisher {
 
 open class Publisher<A, B> {
     val Changed: ClrEvent<System.Action1<B>> by clrEvent()
+    fun fireWithTail(value: B, tail: () -> Array<Any?>) { Changed(value, *tail()) }
 }
 
 class PublisherOuter<A> {

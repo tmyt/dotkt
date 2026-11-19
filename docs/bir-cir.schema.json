@@ -923,9 +923,10 @@
         "k": { "const": "clrEventRaise" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "event": { "type": "string" },
         "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
         "super": { "type": "boolean", "x-dotkt-kotlin-name": "superCall" },
-        "recv": { "$ref": "#/$defs/birExpressionNode" }, "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }
+        "recv": { "$ref": "#/$defs/birExpressionNode" }, "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "packedArgs": { "$ref": "#/$defs/birExpressionNode", "description": "The complete Kotlin vararg array when a spread makes its length dynamic." }
       },
-      "required": ["k", "type", "event", "static", "super", "args"], "additionalProperties": false
+      "required": ["k", "type", "event", "static", "super"], "oneOf": [{"required":["args"]},{"required":["packedArgs"]}], "additionalProperties": false
     },
     "birLambdaParameter": {
       "type": "object", "x-dotkt-model": { "name": "BirLambdaParameter", "domain": "birCoreValues", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },

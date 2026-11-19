@@ -2536,7 +2536,7 @@ internal object BirMessagePack {
 
     private fun writeBirEventRaise(value: BirEventRaise, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(6 + (if (value.recv == null) 0 else 1))
+        packer.packMapHeader(5 + (if (value.recv == null) 0 else 1) + (if (value.args == null) 0 else 1) + (if (value.packedArgs == null) 0 else 1))
         packer.packString("k")
         packer.packString("clrEventRaise")
         packer.packString("type")
@@ -2551,11 +2551,17 @@ internal object BirMessagePack {
             packer.packString("recv")
             write(child, packer, depth + 1)
         }
-        packer.packString("args")
-        checkDepth(depth + 1)
-        packer.packArrayHeader(value.args.size)
-        for (item0 in value.args) {
-            write(item0, packer, depth + 1 + 1)
+        value.args?.let { child ->
+            packer.packString("args")
+            checkDepth(depth + 1)
+            packer.packArrayHeader(child.size)
+            for (item0 in child) {
+                write(item0, packer, depth + 1 + 1)
+            }
+        }
+        value.packedArgs?.let { child ->
+            packer.packString("packedArgs")
+            write(child, packer, depth + 1)
         }
     }
 

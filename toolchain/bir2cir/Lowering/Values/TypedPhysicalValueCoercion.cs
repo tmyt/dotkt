@@ -32,7 +32,7 @@ static class TypedPhysicalValueCoercion
         foreach (var root in roots)
         {
             index.Document = root;
-            index.ArrayNames = new TypedGenericArrayStorageLowering.FreshNames(root);
+            index.ArrayNames = new BirTemporaryNames(root);
             RewriteMembers(root.Fields.OrEmpty(), [], root.Methods.OrEmpty(),
                 root.FileClass.HasValue ? new TypeNode.Fqn(root.FileClass.Value) : null, index);
             // Synthesis can append declarations while rewriting a member.
@@ -86,7 +86,7 @@ static class TypedPhysicalValueCoercion
         internal ReferenceMetadataIndex References;
         internal IReadOnlyDictionary<string, string> LocalCarriers;
         internal BirFileDeclaration Document;
-        internal TypedGenericArrayStorageLowering.FreshNames ArrayNames;
+        internal BirTemporaryNames ArrayNames;
         internal TypedPhysicalDelegateAdapter DelegateAdapters;
 
         internal Index(IReadOnlyList<BirFileDeclaration> roots, Func<IBirExpression> unitValue)
@@ -304,14 +304,14 @@ static class TypedPhysicalValueCoercion
     }
 
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, BirParameter[] parameters,
-        List<IBirStatement> prologue, TypedGenericArrayStorageLowering.FreshNames arrayNames = null,
+        List<IBirStatement> prologue, BirTemporaryNames arrayNames = null,
         bool genericParametersOnly = false)
         => AllocateNativeLocals(body, parameters.Cast<BirGraphValue>().ToArray(), prologue, arrayNames, genericParametersOnly);
 
     // Named functions and suspend lambdas supply their actual declarations to
     // the same storage decision; a lambda parameter is not a fabricated method parameter.
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, IReadOnlyList<BirGraphValue> parameters,
-        List<IBirStatement> prologue, TypedGenericArrayStorageLowering.FreshNames arrayNames = null,
+        List<IBirStatement> prologue, BirTemporaryNames arrayNames = null,
         bool genericParametersOnly = false)
     {
         var required = new Dictionary<BirGraphValue, TypeNode>(ReferenceEqualityComparer.Instance);

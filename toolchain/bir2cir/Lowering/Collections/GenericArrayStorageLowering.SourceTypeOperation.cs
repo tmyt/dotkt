@@ -12,7 +12,7 @@ static partial class GenericArrayStorageLowering
     internal static BirGraphValue LowerTypeOperation(BirGraphValue operation, TypeNode target,
         SourceTypeOperationFrame owner, SourceTypeOperationFrame method, ReferenceMetadataIndex refs,
         Func<TypeNode, TypeNode> projectBound, Func<TypeNode, bool> isInterface,
-        TypedGenericArrayStorageLowering.FreshNames names,
+        BirTemporaryNames names,
         Func<TypeNode, IBirExpression, IBirExpression> componentPredicate)
     {
         var nullable = target is TypeNode.Nullable;

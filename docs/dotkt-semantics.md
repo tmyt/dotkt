@@ -2201,6 +2201,10 @@ Iteration is unaffected because the backend enumerates through `IEnumerable<T>` 
 
 ## 8d. .NET event subscriptions and closeable tokens
 
+When raising a Kotlin-declared event, spread operands in `source.Changed(first, *rest)` follow Kotlin
+vararg evaluation order. The receiver and each operand are evaluated once. If the resulting array length
+does not match the selected raise accessor, the call throws `IllegalArgumentException` before dispatch.
+
 A .NET **event** (`ObservableCollection.CollectionChanged`, a WinForms/WPF `Button.Click`, a custom library
 `Widget.Changed`) is consumed through a closeable subscription token:
 

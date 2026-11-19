@@ -18,7 +18,7 @@ static partial class GenericArrayStorageLowering
         var file = new BirFileDeclaration { Methods = new[] { new BirFunctionDeclaration { Name = "owner",
             Params = new[] { new BirParameter { Name = "$arrayCast$0", Type = objectType } },
             Body = new IBirStatement[] { new BirExpressionStatement { Expr = source } } } } };
-        var names = new TypedGenericArrayStorageLowering.FreshNames(file);
+        var names = new BirTemporaryNames(file);
         bool Interface(TypeNode type) => type is TypeNode.Fqn named && refs.IsInterfaceType(named);
         var result = (BirValueBlock)LowerTypeOperation(source, source.Type.Value, null, null, refs,
             type => type, Interface, names, (_, _) => null);
