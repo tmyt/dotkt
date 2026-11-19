@@ -45,6 +45,25 @@ private interface CovariantGenericDefaultDerived : CovariantGenericDefaultBase {
 }
 private class CovariantGenericDefaultImpl : CovariantGenericDefaultDerived
 
+private interface CallbackSlot<K, V> {
+    fun visit(key: (K) -> Boolean, value: (V) -> Int): CallbackSlot<K, V>
+    fun visit(key: (Int) -> Boolean, value: (String) -> Int): CallbackSlot<K, V> = this
+}
+private interface NarrowCallbackSlot<V, K> : CallbackSlot<K, V> {
+    override fun visit(key: (K) -> Boolean, value: (V) -> Int): NarrowCallbackSlot<V, K>
+}
+private class CallbackEntry<V, K>(val v: V, val k: K, val answer: Int = 0) : NarrowCallbackSlot<V, K> {
+    override fun visit(key: (K) -> Boolean, value: (V) -> Int): NarrowCallbackSlot<V, K> =
+        CallbackEntry(v, k, if (key(k)) value(v) else -1)
+}
+
+private interface LeftCallback<T> { fun read(f: (T) -> Unit): CovariantBase }
+private interface RightCallback<T> { fun read(f: (T) -> Unit): CovariantBase }
+private class SplitCallback : LeftCallback<(Int) -> Int>, RightCallback<(String) -> Int> {
+    override fun read(f: ((Int) -> Int) -> Unit): CovariantDerived { f { it + 1 }; return CovariantDerived(1) }
+    override fun read(f: ((String) -> Int) -> Unit): CovariantDerived { f { it.length }; return CovariantDerived(2) }
+}
+
 // A covariant override whose return type is `Nothing` (#197). Legal Kotlin — `Nothing` is below every type, so it
 // satisfies any slot — and it is the LATE-SYNTHESIZED instance of the Nothing-value defect: the bridge above is
 // built by bir2cir out of the target declaration's return type, so it mints a fresh `Nothing`-typed call inside a
@@ -84,6 +103,16 @@ class CovariantInterfaceReturnTests {
         // concrete class has no implementation of the base interface's broad-returning slot.
         assertEquals(48, genericDefault.create("x").value)
 
+        val callbacks: CallbackSlot<String, Int> = CallbackEntry(7, "key")
+        val visited = callbacks.visit({ s: String -> s == "key" }, { i: Int -> i * 6 })
+        assertEquals(42, (visited as CallbackEntry).answer)
+        check(callbacks === callbacks.visit({ i: Int -> i == 3 }, { s: String -> s.length }))
+
+        val split = SplitCallback()
+        val left: LeftCallback<(Int) -> Int> = split
+        val right: RightCallback<(String) -> Int> = split
+        assertEquals(1, left.read { check(it(41) == 42) }.value)
+        assertEquals(2, right.read { check(it("abc") == 3) }.value)
     }
 
     // The formal half (ilverify over this assembly) is what regresses first: the bridge is only ever entered to
