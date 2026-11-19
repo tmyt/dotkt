@@ -362,7 +362,7 @@ enum class EnumSecondaryState(val value: Int, val label: String = "number:$value
     var path = "initialized"
 
     constructor(input: String, secondary: Boolean) : this(input.length) { path += if (secondary) ":int" else ":unused" }
-    constructor(__name: String) : this(__name.length, __name) { path += ":string" }
+    constructor(__name: String) : this(label = __name, value = __name.length) { path += ":string" }
     constructor(__ordinal: Boolean) : this(if (__ordinal) "yes" else "no") { path += ":bool" }
     constructor(label: String = "long", value: Long) : this(value.toInt(), label) { path += ":long" }
 

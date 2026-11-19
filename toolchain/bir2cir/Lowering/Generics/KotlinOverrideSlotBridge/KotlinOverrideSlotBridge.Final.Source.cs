@@ -273,7 +273,7 @@ static partial class KotlinOverrideSlotBridge
                 if (slot.PropertyAccessor != null)
                 {
                     var association = implementation.Source?.PropertyAssociation.OrDefault() ?? implementation.Header?.PropertyAssociation.OrDefault();
-                    if (!needsSignature && definition.Kind == "interface")
+                    if (definition.Kind == "interface")
                         KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(bridge,slot.IdentityName,slot.PropertyAccessor,association);
                     else KotlinPropertyAccessors.AssociateBridgeProperty(declaration,bridge,slot.IdentityName,
                         slot.PropertyAccessor,association,slot.Parameters,slot.Return);
@@ -307,7 +307,7 @@ static partial class KotlinOverrideSlotBridge
                     && BirTypeLowering.SamePhysicalSlotType(owner,slot.DescriptorSpec,context.References.Aliases,
                         context.IsValue,context.References.PhysicalTypeNames,false,nullableFrames:context.References.NullableTypeFrames)
                     && SameSourceMethodTypeParameterShape(descriptor.TypeParams.OrDefault(),parameters,[],[])
-                    && SamePhysicalSignature(descriptor.Params.Value,descriptor.Ret.Value,slot.Parameters,slot.Return,
+                    && SamePhysicalSignature(descriptor.Params.Value,descriptor.Ret.Value,slot.Signature ?? slot.Parameters,slot.Return,
                         context.References,context.IsValue,context.HasClassifier)) return true;
         return false;
     }

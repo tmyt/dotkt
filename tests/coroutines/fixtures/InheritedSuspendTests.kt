@@ -12,6 +12,10 @@ private class Gate<T> {
     fun resume(value: T) { pending!!.resume(value) }
 }
 private interface Slot<T> { suspend fun read(): T }
+private interface CallbackResult { suspend fun read(transform: (String) -> String): Any }
+private class NarrowCallbackResult(private val gate: Gate<String>) : CallbackResult {
+    override suspend fun read(transform: (String) -> String): String = transform(gate.await())
+}
 private open class Body<T>(private val gate: Gate<T>) {
     @ClrName("fetchSuspend")
     suspend fun read(): T = gate.await()
@@ -90,5 +94,9 @@ class InheritedSuspendTests {
         val baseGate = Gate<String>()
         val base: VirtualBody = DerivedOverride(baseGate)
         verifySuspension(baseGate, "base", "base!") { base.read() }
+
+        val callbackGate = Gate<String>()
+        val callback: CallbackResult = NarrowCallbackResult(callbackGate)
+        verifySuspension(callbackGate, "cold", "cold!") { callback.read { it + "!" } as String }
     }
 }

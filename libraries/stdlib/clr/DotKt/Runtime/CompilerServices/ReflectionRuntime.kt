@@ -22,6 +22,12 @@ internal interface KClassSlots {
     fun dotktIsInstance(value: Any?): Boolean
 }
 
+@PublishedApi
+internal interface RepresentedTypeConstruction
+
+@PublishedApi
+internal interface KClassConstruction<T : Any> : RepresentedTypeConstruction
+
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface NativeReflectionType {
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "Name") val name: String

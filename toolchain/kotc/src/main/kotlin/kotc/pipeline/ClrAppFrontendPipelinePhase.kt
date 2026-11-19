@@ -185,6 +185,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 				)
 			},
 			additionalProvidersForMetadataLibrarySessionsInHmppMode = { session, modules, scopes, libraries ->
+				installClrPlatformDefaults(session)
 				fragmentTables.record(session, modules, scopes, libraries)
 				emptyList()
 			},

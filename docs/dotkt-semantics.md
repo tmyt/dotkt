@@ -155,6 +155,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   an enclosing-frame check. Construction, inheritance, lexical receivers, and the hidden enclosing-instance slot
   retain their exact CLR class head; nested type arguments still use their ordinary physical value representation.
   Imported CLR declaration signatures do not change.
+- A CLR class constraint cannot be satisfied by an existential interface. For example, when
+  constructing `Queue<Frame<*>>` with `A : Item`, a shared CLR base such as `Item` can represent
+  the queue's element type if it satisfies the declared constraints for every frame. This does not
+  widen native constructor arguments: a CLR `List<Frame<Long>>` still requires its exact element type.
 - **Generic declarations retain exact dependent Kotlin relations in metadata and representable CLR proofs.**
   For `G<in T>.f<R : T>` and constructed bounds such as `R : I<T>`, the receiver's exact CLR construction need not
   express the source view's subtype relation, particularly when Kotlin variance crosses a value-type argument.
@@ -994,6 +998,11 @@ program needing literal matching uses `Regex.escape`).
 
 ## 5c. `Map` values preserve Kotlin covariance across invariant CLR dictionaries
 
+Map implementations may omit `override` on the CLR platform defaults: `getOrDefault`, two-argument
+`remove`, `putIfAbsent`, both `replace` overloads, and `merge`. Calls through the map interface
+still dispatch to the implementation. CLR's `merge` takes a Kotlin function, not a Java `BiFunction`.
+Ordinary members such as one-argument `remove` still require `override`.
+
 Kotlin declares `Map<K, out V>`, while CLR `IDictionary<K,V>` is invariant. A dictionary containing strings
 therefore cannot satisfy `IDictionary<K,object>`, and a dictionary containing mutable lists cannot satisfy
 `IDictionary<K,IReadOnlyList<V>>`. Neither an unchecked return nor an interface cast makes those constructions
@@ -1391,6 +1400,9 @@ kotc or ilemit.
 
 Ordinary `KClass<T>` values use Object slots: native tokens and Kotlin implementations retain their original
 identity, without wrapping. Type arguments remain in Kotlin metadata rather than becoming arguments of Object.
+When a call to `lookup<T>(key: KClass<T>)` captures `T` from a `KClass<*>`, the CLR method receives
+the represented type for a native token, or the declared `KClass<T>` argument for a Kotlin implementation.
+The implementation's own class and its other generic parameters do not determine `T`.
 Declaration-owned classifiers and nominal interface slots also preserve `KClassifier`, `KAnnotatedElement` and
 `KDeclarationContainer` membership. A CLR-only binding carrier names the unchanged common `KClassifier`
 declaration explicitly. Name/isInstance accessors dispatch to either the native type or the selected Kotlin

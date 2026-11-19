@@ -645,7 +645,9 @@ name or re-resolving an erased signature; representable properties otherwise use
 metadata. A synthesized override bridge carries its own physical-property association plus an explicit
 `sourceAssociation` back to the source accessor, and that source accessor carries its association as well. This
 relation lets a downstream class consume the frontend-selected default through the bridge even when their CLR
-signatures differ; no consumer compares those signatures or parses either opaque association.
+signatures differ; no consumer compares those signatures or parses either opaque association. On an interface,
+private MethodImpl bodies record this association on the method only. Distinct CLR slots may require separate
+bodies with the same signature; they do not add getters or setters to the authored Property row.
 
 A native event can also implement an ordinary Kotlin `ClrEvent<H>` property slot. Its getter returns the
 materialized event handle, while add/remove/raise remain native event accessors. The BIR event backing carries
@@ -1062,6 +1064,14 @@ borrows the original location rather than taking a value snapshot. Suspend or ca
 storage that outlives a direct call and are represented by shared cells instead.
 The enclosing variable, forwarding parameters, and materialized captures must agree on the same storage. The hint
 survives inline metadata and type substitution but is consumed before CIR; `ilemit` never decides capture sharing.
+
+A Kotlin IR composite is an ordered sequence, not a lexical scope. In statement
+position its statements are emitted in place; in value position a BIR
+`valueBlock` with `transparentScope: true` evaluates its prefix and returns
+its last value. Prefix variables remain visible to later expressions in the
+enclosing scope, including uses as CLR managed-reference arguments. An ordinary
+block keeps its own scope. Once physical local storage is selected, CIR needs
+only the ordered statements and result, not the Kotlin scope distinction.
 
 `InlineSplice` consumes the bindings rather than minting a local per parameter: it substitutes each `bindRef` into the
 payload body, and `CallEvalLowering` decides the physical form once, like any other plan. Two positions can only name

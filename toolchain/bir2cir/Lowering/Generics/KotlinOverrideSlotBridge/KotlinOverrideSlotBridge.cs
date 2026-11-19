@@ -349,7 +349,7 @@ static partial class KotlinOverrideSlotBridge
     // True iff this method declares itself an override of `supName`'s member — directly, or of some owner that
     // `supName` is a supertype of (a redeclared slot on a base interface is a DISTINCT CLR slot with the same shape).
 
-    static string SourceDeclarationId(string declarationId)
+    internal static string SourceDeclarationId(string declarationId)
     {
         if (declarationId == null) return null;
         var physicalOnly = declarationId.IndexOf(

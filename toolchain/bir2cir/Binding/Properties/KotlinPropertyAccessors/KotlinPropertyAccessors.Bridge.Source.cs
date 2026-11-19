@@ -64,6 +64,8 @@ static partial class KotlinPropertyAccessors
         property.KotlinAccessors = property.KotlinAccessors.Value.Append(accessorKind).ToArray();
     }
 
+    // Interface MethodImpl bodies are private forwarding methods, not additional Property accessors.
+    // Two distinct slot declarations can require separate bodies with identical physical signatures.
     internal static void MarkExactInterfaceBridgeProperty(BirFunctionDeclaration bridge, string propertyName,
         string accessorKind, string sourceAssociation)
     {

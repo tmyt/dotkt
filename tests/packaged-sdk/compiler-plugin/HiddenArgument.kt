@@ -7,7 +7,10 @@ import org.jetbrains.kotlin.ir.builders.declarations.addValueParameter
 import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
+import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -20,6 +23,16 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
     fun target(fn: IrSimpleFunction) = fn.hasAnnotation(marker)
     fun addToken(fn: IrSimpleFunction) = fn.addValueParameter("extraToken", context.irBuiltIns.intType)
     fun lower(fn: IrSimpleFunction) {
+        if (fn.name.asString() == "withCompositeLocal") {
+            val body = (fn.body as IrBlockBody).statements
+            val slot = body.removeAt(0) as IrVariable
+            val call = body.first() as IrCall
+            val argument = call.arguments.single()!!
+            call.arguments[0] = DeclarationIrBuilder(context, fn.symbol).irComposite(resultType = argument.type) {
+                +slot
+                +argument
+            }
+        }
         if (target(fn)) {
             val token = addToken(fn)
             fn.body = DeclarationIrBuilder(context, fn.symbol).irBlockBody { +irReturn(irGet(token)) }
@@ -30,6 +43,13 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
                 override fun visitCall(expression: IrCall): IrExpression {
                     expression.transformChildrenVoid(this)
                     val callee = expression.symbol.owner
+                    if (callee.name.asString() == "compositeDiscard") {
+                        val builder = DeclarationIrBuilder(context, fn.symbol, expression.startOffset, expression.endOffset)
+                        return builder.irComposite(resultType = expression.type) {
+                            val unit = context.irBuiltIns.unitType
+                            +typeOperator(unit, expression.arguments.single()!!, IrTypeOperator.IMPLICIT_COERCION_TO_UNIT, unit)
+                        }
+                    }
                     if (!target(callee)) return expression
                     check(callee.parameters.single { it.name.asString() == "content" }.type.hasAnnotation(marker))
                     val args = expression.arguments.toList()
@@ -45,7 +65,12 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
                     return builder.irCall(expression.symbol).also { call ->
                         expression.typeArguments.forEachIndexed { i, type -> call.typeArguments[i] = type }
                         args.forEachIndexed { i, arg -> call.arguments[i] = arg }
-                        call.arguments[args.size] = builder.irInt(73)
+                        // The consuming call must see the last value and execute the prefix.
+                        call.arguments[args.size] = builder.irComposite(resultType = context.irBuiltIns.intType) {
+                            val token = irTemporary(irComposite(origin = IrStatementOrigin.DEFAULT_VALUE,
+                                resultType = context.irBuiltIns.intType) { +irInt(73) })
+                            +irGet(token)
+                        }
                     }
                 }
             })

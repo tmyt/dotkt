@@ -15,7 +15,8 @@ EOF
 cp "$src"/{App.kt,Calls.kt,App.ktproj} app/
 cp "$src"/{Library.kt,Library.ktproj} library/
 cp "$src/../../interop/producer/InheritedStatics.cs" native/
-printf '%s\n' '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>' > native/Native.csproj
+cp "$src/CompositeRef.cs" native/
+printf '%s\n' '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><ProjectReference Include="../library/Library.ktproj"/></ItemGroup></Project>' > native/Native.csproj
 cp "$src"/Fixture.* fixture/
 # Build the plugin with the JVM compiler distributed by the package being tested.
 unzip -q "$feed/DotKt.Toolchain.$ver.nupkg" 'tools/kotc/*' 'tools/kotlin-stdlib-clr-frontend.klib'
@@ -33,7 +34,6 @@ for pkg in Plugin Consumer; do dotnet pack "fixture/Fixture.$pkg.nuspec" -o feed
 # Keep the native reference fixed; only plugin registrations may invalidate the
 # incremental checks below, not a ProjectReference rebuild with different globals.
 dotnet build native/Native.csproj
-dotnet build library/Library.ktproj
 dotnet restore app/App.ktproj --configfile NuGet.Config
 compile() { dotnet build app/App.ktproj --no-restore -v:minimal "$@"; }
 run() { dotnet app/bin/Debug/net10.0/App.dll; }

@@ -24297,6 +24297,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
 {
     public override string Tag => "valueBlock";
     public OptionalField<bool> JoinNullBranch { get; set; }
+    public OptionalField<bool> TransparentScope { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirStatement[]> Stmts { get; set; }
     public OptionalField<IBirExpression> Result { get; set; }
@@ -24480,6 +24481,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirValueBlock value
             && EqualField(JoinNullBranch, value.JoinNullBranch, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(TransparentScope, value.TransparentScope, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(Stmts, value.Stmts, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Result, value.Result, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -24491,6 +24493,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         writer.WriteStartObject();
         writer.WriteString("k", "valueBlock");
         WriteOptional(writer, "joinNullBranch", JoinNullBranch, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "transparentScope", TransparentScope, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "stmts", Stmts, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "result", Result, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -24504,6 +24507,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
         var result = new JsonObject();
         result["k"] = "valueBlock";
         if (JoinNullBranch.IsPresent) result["joinNullBranch"] = JoinNullBranch.IsNull ? null : JsonValue.Create(JoinNullBranch.Value);
+        if (TransparentScope.IsPresent) result["transparentScope"] = TransparentScope.IsNull ? null : JsonValue.Create(TransparentScope.Value);
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
         if (Stmts.IsPresent) result["stmts"] = Stmts.IsNull ? null : new JsonArray(Stmts.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (Result.IsPresent) result["result"] = Result.IsNull ? null : ((BirGraphValue)Result.Value).ToDom(projected);

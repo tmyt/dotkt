@@ -14,6 +14,7 @@ static partial class FBoundStarProjectionErasure
     {
         readonly Func<string, ProjectionDeclaration> declaration;
         readonly CurrentPhysicalTypeView currentPhysical;
+        readonly Dictionary<string, BirTypeParameter[]> referencedWitnessParameters = new(StringComparer.Ordinal);
         internal CurrentDeclarationPreparation Preparation { get; }
         internal IReadOnlyDictionary<string, Owner> Owners { get; }
         internal ReferenceMetadataIndex References { get; }
@@ -110,6 +111,66 @@ static partial class FBoundStarProjectionErasure
         {
             RequireSourceClock();
             return FBoundStarProjectionErasure.ProjectOrdinaryParameter(type, this);
+        }
+
+        internal TypeNode ClassConstrainedArgument(TypeNode.Fqn owner, int index, TypeNode source, TypeNode projected)
+        {
+            if (StripSourceNullability(source) is not TypeNode.Fqn { Args.Length: > 0 } application
+                || !TryExistentialCarrier(application.Name, out var carrier)
+                || StripSourceNullability(projected) is not TypeNode.Fqn p
+                || p.Name != carrier && !ContainsExistentialProjection(application)) return projected;
+            return SharedClassWitness(owner, index, application) ?? projected;
+        }
+
+        internal TypeNode.Fqn SharedClassWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application)
+        {
+            BirTypeParameter[] parameters;
+            if (Preparation.Bindings.SourceDefinitions.TryGetValue(owner.Name, out var local))
+                parameters = TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray();
+            else if (!referencedWitnessParameters.TryGetValue(owner.Name, out parameters))
+                referencedWitnessParameters[owner.Name] = parameters = References.PhysicalOwnerTypeParametersInPhysicalFrame(owner.Name);
+            if (parameters == null || index >= parameters.Length) return null;
+            var frame = Owners.TryGetValue(owner.Name, out var definition) ? OwnerFrame(definition)
+                : References.NullableTypeFrames.GetValueOrDefault(owner.Name);
+            var linked = new HashSet<int> { index };
+            if (frame != null && frame.PhysicalArity == parameters.Length)
+            {
+                var slot = frame.PhysicalSlot(index);
+                if (slot.Representation is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
+                    && frame.NullableIndices.Contains(slot.SourceIndex))
+                {
+                    var ordinary = frame.SourcePosition(slot.SourceIndex);
+                    var nullable = frame.NullableVariable(new TypeNode.Tv("type", slot.SourceIndex)).I;
+                    // A : nullableA is an edge between two physical slots for the same source A.
+                    // Closing both to one class satisfies that edge, not any unrelated B : A.
+                    if (parameters[ordinary].Constraints.OrEmpty().Contains(new TypeNode.Tv("type", nullable)))
+                    { linked.Add(ordinary); linked.Add(nullable); }
+                }
+            }
+            if (linked.Any(i => parameters[i].SpecialConstraints.OrEmpty().Any(special => special != "class"))) return null;
+            var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty())
+                .Where(bound => bound is not TypeNode.Tv { Scope: "type" } tv || !linked.Contains(tv.I))
+                .Select(bound => SupertypeGraph.SubstOwnerTvs(bound, owner.Args)).Distinct().ToArray();
+            if (bounds.Length == 0) return null;
+            TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
+                ? References.PhysicalConstraintType(type) : type;
+            if (!bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound)
+                && (Preparation.SourceSupertypes.TryGetValue(bound.Name, out var def) ? def.Kind == "class"
+                    : Identity(bound) is TypeNode.Fqn exact
+                        && References.PhysicalTypeForProof(exact.Name, exact.Args?.Length ?? 0)?.IsClass == true))) return null;
+
+            // A nominal Kotlin value interface cannot witness a CLR class bound. Use a real
+            // shared base of the possible constructions only if it proves every constraint.
+            // Prove the ancestor independently of hidden or variant Kotlin arguments. A
+            // Mid<object> inferred from the static view need not be a base of Mid<string>.
+            var common = application with { Args = application.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray() };
+            foreach (var (ancestor, isInterface) in SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = common },
+                Preparation.SourceSupertypes, References).Skip(1).Reverse())
+                if (!isInterface && !ContainsExistentialProjection(ancestor)
+                    && bounds.All(bound => IsObjectish(bound) || bound is TypeNode.Fqn required
+                        && SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = ancestor }, Preparation.SourceSupertypes,
+                            References).Any(edge => Identity(edge.spec) == Identity(required)))) return ancestor;
+            return null;
         }
 
         internal bool IsCapturedInner(TypeNode type)

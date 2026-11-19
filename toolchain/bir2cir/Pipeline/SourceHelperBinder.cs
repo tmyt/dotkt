@@ -8,7 +8,7 @@ using DotKt.Cir;
 sealed class SourceHelperBinder
 {
     sealed record Declaration(string Owner, string Name, bool Static, int Arity,
-        TypeNode[] Parameters, string Identity);
+        TypeNode[] Parameters, string Identity, TypeNode Result);
     readonly Declaration[] declarations;
     readonly ReferenceMetadataIndex references;
 
@@ -17,7 +17,7 @@ sealed class SourceHelperBinder
             root.FileClass.OrDefault(), method.Name.OrDefault(), method.Static.OrDefault(),
             method.TypeParams.OrEmpty().Length, method.Params.HasValue
                 ? method.Params.Value.Select(parameter => parameter.Type.OrDefault()).ToArray() : null,
-            method.DeclarationId.OrDefault()))), references) { }
+            method.DeclarationId.OrDefault(), method.Ret.OrDefault()))), references) { }
 
     SourceHelperBinder(IEnumerable<Declaration> declarations, ReferenceMetadataIndex references)
     {
@@ -25,7 +25,7 @@ sealed class SourceHelperBinder
         this.references = references;
     }
 
-    internal string Select(string owner, string name, int arity, TypeNode[] parameters)
+    internal (string Identity, TypeNode Result) Select(string owner, string name, int arity, TypeNode[] parameters)
     {
         var matches = declarations.Where(method => method.Owner == owner && method.Name == name
             && method.Static && method.Arity == arity && method.Parameters is { } declared
@@ -33,11 +33,12 @@ sealed class SourceHelperBinder
             && declared.Select((parameter, index) =>
                 ReferenceMetadataIndex.SourceDeclarationDescribesCall(parameter, parameters[index])).All(match => match)).ToArray();
         if (matches.Length == 1)
-            return matches[0].Identity ?? throw new InvalidOperationException("Collection helper has no declaration identity");
+            return (matches[0].Identity ?? throw new InvalidOperationException("Collection helper has no declaration identity"), matches[0].Result);
         if (matches.Length > 1)
             throw new InvalidOperationException("Ambiguous source collection helper declaration: " + owner + "." + name);
-        return references?.AuthoredKotlinHelper(owner, name, arity, parameters).DeclarationId
+        var binding = references?.AuthoredKotlinHelper(owner, name, arity, parameters)
             ?? throw new InvalidOperationException("Missing source collection helper declaration: " + owner + "." + name);
+        return (binding.DeclarationId, binding.DeclarationSemanticReturn);
     }
 
     internal static TypeNode SourceArgument(TypeNode argument) => argument switch {
@@ -48,7 +49,7 @@ sealed class SourceHelperBinder
 
     internal BirCallStatic Bind(BirCallStatic call) => call with {
         DeclarationId = Select(((TypeNode.Fqn)call.Owner.Value).Name, call.Method.Value,
-            call.TypeArgs.HasValue ? call.TypeArgs.Value.Length : 0, call.Sig.Value),
+            call.TypeArgs.HasValue ? call.TypeArgs.Value.Length : 0, call.Sig.Value).Identity,
         TypeArgs = call.TypeArgs.HasValue ? call.TypeArgs.Value.Select(SourceArgument).ToArray() : call.TypeArgs,
     };
 }

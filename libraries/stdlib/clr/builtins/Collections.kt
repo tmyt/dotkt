@@ -10,6 +10,8 @@
 
 package kotlin.collections
 
+import kotlin.internal.PlatformDependent
+
 @kotlin.clr.ClrTypeAlias("System.Collections.Generic.IEnumerable")
 public actual interface Iterable<out T> {
     public actual operator fun iterator(): Iterator<T>
@@ -126,6 +128,7 @@ public actual interface Map<K, out V> {
     // java.util.Map.getOrDefault leaks onto kotlin.collections.Map (the compiler injects it from the builtin). Give it a
     // DEFAULT body here so concrete CLR maps (EmptyMap/AbstractMutableMap) inherit it as a default interface method.
     @SinceKotlin("1.1")
+    @PlatformDependent
     public fun getOrDefault(key: K, defaultValue: @UnsafeVariance V): @UnsafeVariance V {
         val v = get(key)
         @Suppress("UNCHECKED_CAST")
@@ -150,16 +153,20 @@ public actual interface MutableMap<K, V> : Map<K, V> {
     // java.util.Map mutation defaults the compiler injects onto kotlin.collections.MutableMap (not in this source) as
     // ABSTRACT -> concrete maps would fail to load ("does not have an implementation"). Give them DEFAULT bodies (DIM).
     @SinceKotlin("1.1")
+    @PlatformDependent
     public fun remove(key: K, value: V): Boolean =
         if (containsKey(key) && get(key) == value) { remove(key); true } else false
     @SinceKotlin("1.1")
+    @PlatformDependent
     public fun putIfAbsent(key: K, value: V): V? {
         val v = get(key)
         return if (v == null) put(key, value) else v
     }
     @SinceKotlin("1.1")
+    @PlatformDependent
     public fun replace(key: K, value: V): V? = if (containsKey(key)) put(key, value) else null
     @SinceKotlin("1.1")
+    @PlatformDependent
     public fun replace(key: K, oldValue: V, newValue: V): Boolean =
         if (containsKey(key) && get(key) == oldValue) { put(key, newValue); true } else false
     // java.util.Map.merge leaks onto kotlin.collections.MutableMap as a member taking a `java.util.function.BiFunction`
@@ -169,6 +176,7 @@ public actual interface MutableMap<K, V> : Map<K, V> {
     // through with its precise `Func<V,V,object>` shape and no cast. DEFAULT body (DIM) so concrete CLR maps inherit it;
     // a BCL-aliased receiver (mutableMapOf) routes to ClrMapDefaults.clrMapMerge via bir2cir Rule 5m.
     @SinceKotlin("1.1")
+    @PlatformDependent
     public fun merge(key: K, value: V, remappingFunction: (V, V) -> V?): V? {
         val oldValue = get(key)
         val newValue = if (oldValue == null) value else remappingFunction(oldValue, value)

@@ -730,22 +730,21 @@ static partial class FBoundStarProjectionErasure
             // A retained generic head carries native witnesses as well as value
             // companions. Its recorded physical frame applies equally to a new,
             // its value slot, and an exact lexical declaration owner.
-            return application.Args.Select((argument, index) => RewriteType(
-                argument, context, boundDeclaration,
-                preserveArrayShape: nativeOwner || frame != null && frame.PhysicalSlot(index).Representation
-                    is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable,
-                // An exact declaration proof does not make an existential argument reifiable. Its existing
-                // constrained-storage projection must choose a valid bound, not manufacture G<Object> for G<*>.
-                preserveConstructedHead: (nativeArguments && PreservesNativeWitnessHead(argument, context)
-                        || context.NativeProofs?.ExactTypeArgument(application.Name, index) == true)
-                    && !ContainsExistentialProjection(argument)
-                    || frame != null && frame.PhysicalSlot(index).Representation
-                    is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
-                    // Kotlin declaration-site variance uses the nominal carrier
-                    // even as a nested witness. Keeping its concrete head here
-                    // would disagree with the argument's allocated value type.
-                    && !(StripSourceNullability(argument) is TypeNode.Fqn variant
-                        && context.ProjectionCanChangeConstruction(variant)))).ToArray();
+            return application.Args.Select((argument, index) =>
+            {
+                var ordinary = frame != null && frame.PhysicalSlot(index).Representation
+                    is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
+                var exact = nativeArguments && PreservesNativeWitnessHead(argument, context)
+                    || context.NativeProofs?.ExactTypeArgument(application.Name, index) == true;
+                // A variant Kotlin value keeps its carrier even as a nested ordinary witness.
+                var projected = RewriteType(argument, context, boundDeclaration,
+                    preserveArrayShape: nativeOwner || ordinary,
+                    preserveConstructedHead: exact && !ContainsExistentialProjection(argument)
+                        || ordinary && !(StripSourceNullability(argument) is TypeNode.Fqn variant
+                            && context.ProjectionCanChangeConstruction(variant)));
+                return nativeOwner || boundDeclaration ? projected
+                    : context.ClassConstrainedArgument(application, index, argument, projected);
+            }).ToArray();
         }
         switch (type)
         {
