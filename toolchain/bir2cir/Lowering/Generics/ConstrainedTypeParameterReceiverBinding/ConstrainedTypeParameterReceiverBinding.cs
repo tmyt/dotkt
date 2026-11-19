@@ -36,13 +36,6 @@ static partial class ConstrainedTypeParameterReceiverBinding
         _ => false,
     };
 
-    // Nullable/platform shells do not change the physical receiver variable.
-    static TypeNode Peel(TypeNode type) => type switch {
-        TypeNode.Oblivious value => Peel(value.Of),
-        TypeNode.Nullable value => Peel(value.Of),
-        _ => type,
-    };
-
     // A bare current local generic owner remains open. A bare nongeneric or
     // referenced owner has no missing construction for this pass to recover.
     static TypeNode.Fqn ClosedOwner(TypeNode.Fqn owner, Dictionary<string, int> arity)

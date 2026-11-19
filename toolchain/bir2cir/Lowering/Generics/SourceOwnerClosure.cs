@@ -4,6 +4,7 @@ using System.Linq;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
+using static ConstrainedReceiverPolicy;
 
 // Close the source input's receiver-bound owners before representation passes.
 // Late closing over physically erased frames remains a separate consumer.
@@ -56,20 +57,10 @@ static class SourceOwnerClosure
         if (!body.HasValue) return body;
         var locals = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         var ambiguous = new HashSet<string>(StringComparer.Ordinal);
-        void Record(string name, TypeNode type)
-        {
-            if (name == null || type == null) return;
-            if (locals.TryGetValue(name, out var previous) && previous != type)
-            {
-                ambiguous.Add(name);
-                locals.Remove(name);
-            }
-            else if (!ambiguous.Contains(name)) locals[name] = type;
-        }
-        foreach (var parameter in parameters) Record(parameter.Name.OrDefault(), parameter.Type.OrDefault());
+        foreach (var parameter in parameters) RecordLocal(locals, ambiguous, parameter.Name.OrDefault(), parameter.Type.OrDefault());
         foreach (var statement in body.Value)
             ((BirGraphValue)statement).Visit(value => {
-                if (value is BirVariable variable) Record(variable.Name.OrDefault(), variable.Type.OrDefault());
+                if (value is BirVariable variable) RecordLocal(locals, ambiguous, variable.Name.OrDefault(), variable.Type.OrDefault());
             });
 
         (TypeNode.Fqn Owner, bool Erased)? Select(TypeNode type, IBirExpression receiver)
@@ -79,10 +70,12 @@ static class SourceOwnerClosure
                 && locals.TryGetValue(local.Name.Value, out var declared)
                 ? declared : BirGraphStaticType.Surface(receiver, locals);
             if (Peel(receiverType) is not TypeNode.Tv variable) return null;
-            var matches = Constraints(variable, owner, method).Where(bound => bound.Owner.Name == named.Name).ToArray();
+            var matches = ConstraintDeclarations(variable, owner, method, static p =>
+                (p.Constraints.OrEmpty(), p.ErasedInnerConstraints.OrEmpty()))
+                .Where(bound => bound.Constraint.Name == named.Name).ToArray();
             if (matches.Length != 1) return null;
             var selected = matches[0];
-            return (named.Args == null || selected.Erased) && selected.Owner.Args != null
+            return (named.Args == null || selected.Erased) && selected.Constraint.Args != null
                 ? selected : (named, selected.Erased);
         }
 
@@ -112,43 +105,5 @@ static class SourceOwnerClosure
             return node.RewriteChildren(Rewrite);
         }
         return body.Value.Select(statement => (IBirStatement)Rewrite((BirGraphValue)statement)).ToArray();
-    }
-
-    static TypeNode Peel(TypeNode type) => type switch {
-        TypeNode.Nullable nullable => Peel(nullable.Of),
-        TypeNode.Oblivious oblivious => Peel(oblivious.Of),
-        _ => type,
-    };
-
-    static IEnumerable<(TypeNode.Fqn Owner, bool Erased)> Constraints(TypeNode.Tv start,
-        BirTypeParameter[] owner, BirTypeParameter[] method)
-    {
-        var result = new List<(TypeNode.Fqn Owner, bool Erased)>();
-        var path = new HashSet<(string Scope, int Index)>();
-        void Walk(TypeNode.Tv variable, bool erased)
-        {
-            var key = (variable.Scope, variable.I);
-            if (!path.Add(key)) return;
-            try
-            {
-                var frame = variable.Scope == "type" ? owner : variable.Scope == "method" ? method : null;
-                if (frame == null || variable.I < 0 || variable.I >= frame.Length) return;
-                var declaration = frame[variable.I];
-                void Follow(TypeNode[] constraints, bool removed)
-                {
-                    foreach (var constraint in constraints)
-                        switch (Peel(constraint))
-                        {
-                            case TypeNode.Fqn named: result.Add((named, erased || removed)); break;
-                            case TypeNode.Tv next: Walk(next, erased || removed); break;
-                        }
-                }
-                Follow(declaration.Constraints.OrEmpty(), false);
-                Follow(declaration.ErasedInnerConstraints.OrEmpty(), true);
-            }
-            finally { path.Remove(key); }
-        }
-        Walk(start, false);
-        return result.Distinct();
     }
 }
