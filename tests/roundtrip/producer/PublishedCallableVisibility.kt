@@ -38,6 +38,14 @@ class GenericHolder<T>(val value: T) {
     @PublishedApi internal val member: T get() = value
 }
 
+open class PublishedPair<A, B>(@PublishedApi internal var first: A, @PublishedApi internal val second: B)
+class ReorderedPair<X, Y>(x: X, y: Y) : PublishedPair<Y, X>(y, x) {
+    inline fun update(replace: (Y, X) -> Y): Y {
+        first = replace(first, second)
+        return first
+    }
+}
+
 inline fun publicProperties(block: (Int) -> Int): Int {
     stored = 8
     val holder = Holder(9)
@@ -74,8 +82,14 @@ inline fun publicStatics(block: (Int) -> Int): Int {
 
 open class InheritedVisibilityBase {
     @PublishedApi internal val secret: Int get() = 7
+    @PublishedApi internal fun score(input: Int): Int = input + 1
+    @PublishedApi internal fun score(input: String): Int = input.length + 10
     @PublishedApi @ClrField internal var secretField: Int = 9
     val publicValue: Int get() = 11
     @ClrField var publicField: Int = 12
     @ClrField protected var protectedField: Int = 13
+}
+
+class PublishedChild<T> : InheritedVisibilityBase() {
+    inline fun read(block: (Int) -> Int): Int = block(score(secret) + score("abc"))
 }

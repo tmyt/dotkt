@@ -2572,6 +2572,31 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return true;
     }
 
+    internal bool TryInheritedStarSlot(string receiverCarrier, string id, int arity, int parameterCount,
+        out string owner, out MemberBinding slot, out TypeNode sourceResult)
+    {
+        owner = null; slot = null; sourceResult = null;
+        if (!_declarationById.TryGetValue(id, out var source) || source.IsStatic
+            || source.MethodArity != arity || source.ParamCount != parameterCount) return false;
+        var receiver = new TypeNode.Fqn(receiverCarrier);
+        if (!TryReferenceTypeShape(receiver, out _, out _, out _, out var interfaces)) return false;
+        // Reflection's GetInterfaces already includes all transitive interfaces.
+        foreach (var application in interfaces.Prepend(receiver))
+        {
+            if (!TryExistentialSemanticOwner(application.Name, out var semantic)) continue;
+            var physicalId = FBoundStarProjectionErasure.ExistentialSlotIdentity(id, semantic);
+            if (_declarationById.TryGetValue(physicalId, out var member) && member.IsPublic && !member.IsStatic
+                && member.MethodArity == arity && member.ParamCount == parameterCount && member.ParamTypeNodes != null
+                && member.ReturnTypeNode != null && BareOwnerFqn(member.Owner) == BareOwnerFqn(application.Name))
+            {
+                if (slot != null) return false;
+                slot = member; owner = application.Name;
+            }
+        }
+        sourceResult = source.NullableGenericRet ?? source.SuspendReturnType ?? source.KotlinReturnType ?? source.ReturnTypeNode;
+        return slot != null && sourceResult != null;
+    }
+
     public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
