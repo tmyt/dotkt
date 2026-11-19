@@ -25,4 +25,8 @@ expected_paths="$(sed -n 's/^[0-9a-f]\{64\}  //p' "$MANIFEST" | LC_ALL=C sort)"
 # differences in other files remain separate work rather than source-body overlays.
 # Source: JetBrains/kotlin v2.4.21 (9180ce6a7a7d3627f88b424717583f28ddca052d).
 (cd "$ROOT" && sha256sum --check --strict "$ROOT/tests/stdlib-common-upstream/restored-v${EXPECTED_VERSION}.sha256")
+# UnsignedClr now has a CLR-specific radix tail. Its arithmetic, conversions, and
+# decimal UInt spelling are still lines 1–120 of v2.4.21 jvm/src/kotlin/util/UnsignedJVM.kt.
+head -n 120 "$ROOT/libraries/stdlib/clr/kotlin/util/UnsignedClr.kt" |
+	sha256sum --check --strict <(echo '1b1a66a00a270c6b17f53b2a134d95706d0734890a3e540bfba90936a1cd58ec  -')
 echo "stdlib-common-upstream: GREEN (Kotlin v$EXPECTED_VERSION)"

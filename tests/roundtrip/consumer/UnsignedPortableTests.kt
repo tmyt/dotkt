@@ -17,6 +17,7 @@ class UnsignedPortableTests {
         val g = savedULongFormatter()
         check(f(ui, 16) == "ffffffff")
         check(g(ul, 16) == "ffffffffffffffff")
+        check(savedLongFormatter()(Long.MIN_VALUE, 16) == "-8000000000000000")
         check(nativeUIntMax(ui, 1u) == ui)
         check(nativeULongMax(ul, 1uL) == ul)
     }

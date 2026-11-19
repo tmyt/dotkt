@@ -51,10 +51,10 @@ class SignedIntegerParsingTests {
                 val encoded = value.toString(radix)
                 check(encoded.toLong(radix) == value && encoded.toLongOrNull(radix) == value)
             }
-            check((-128).toString(radix).toByte(radix) == Byte.MIN_VALUE)
-            check(127.toString(radix).toByte(radix) == Byte.MAX_VALUE)
-            check((-32768).toString(radix).toShort(radix) == Short.MIN_VALUE)
-            check(32767.toString(radix).toShort(radix) == Short.MAX_VALUE)
+            check(Byte.MIN_VALUE.toString(radix).toByte(radix) == Byte.MIN_VALUE)
+            check(Byte.MAX_VALUE.toString(radix).toByte(radix) == Byte.MAX_VALUE)
+            check(Short.MIN_VALUE.toString(radix).toShort(radix) == Short.MIN_VALUE)
+            check(Short.MAX_VALUE.toString(radix).toShort(radix) == Short.MAX_VALUE)
             check(("+000" + 42.toString(radix)).toInt(radix) == 42)
             signedParsingRejectsNumber { 128.toString(radix).toByte(radix) }
             signedParsingRejectsNumber { (-129).toString(radix).toByte(radix) }
