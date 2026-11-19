@@ -99,13 +99,14 @@ semantic = {
     "t": "fqn",
     "name": "starprojection.ReferencedExistentialFlow`1",
     "args": [{"t": "tv", "scope": "method", "i": 0}],
+    "classifier": {"packageName": "starprojection", "ownerPath": [], "name": "ReferencedExistentialFlow"},
 }
 if casts[0].get("type") != physical or methods[0]["ret"] != physical:
     raise SystemExit(f"referenced result does not use the declared ordinary value carrier: {casts[0]!r}")
 for method_name in ("fuseReferencedExistential", "exactReferencedExistentialUpcast"):
     source_method = next(method for method in source["methods"] if method["name"] == method_name)
     physical_method = next(method for method in root["methods"] if method["name"] == method_name)
-    assert source_method["ret"] == semantic
+    assert source_method["ret"] == semantic, (method_name, source_method["ret"])
     assert return_types(physical_method) == [semantic], (method_name, physical_method.get("retAttrs"))
 
 referenced_exact = [
@@ -292,6 +293,7 @@ source_exact_nested = {
     "t": "fqn",
     "name": "starprojection.ReferencedStarNested`2",
     "args": [{"t": "fqn", "name": "kotlin.String"}],
+    "classifier": {"packageName": "starprojection", "ownerPath": [], "name": "ReferencedStarNested"},
 }
 source_exact_locals = [node for node in objects(source) if node.get("k") == "var"
                        and any(call.get("k") == "callInstance" and call.get("method") == "exactNested"
