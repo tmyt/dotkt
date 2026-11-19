@@ -21,6 +21,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   values contain star projections.
 - Local delegated properties can use extension `getValue` and `setValue`
   operators, including generic operators declared on a supertype of the delegate.
+- Generic member extension properties can be read and written in the same
+  module, including through an interface.
 - `super.toString()` reaches the inherited implementation even when the direct
   Kotlin superclass does not declare an override.
 - A generic subclass can occupy a class-bounded Kotlin type argument, including

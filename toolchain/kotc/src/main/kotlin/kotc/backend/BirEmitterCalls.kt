@@ -1906,12 +1906,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// extension), then the [isValueParameter] sequence — a `context(c: Ctx) val p` accessor's context
 			// parameters, and for a setter the `value` parameter that follows them.
 			val accArgs = listOfNotNull(pExt) + regularArgs(call).map { expr(it) }
+			val ta = typeArguments(call)
 			return if (callee === property.setter)
 				BirCallInstance(ownerType = ownerStr, virtual = virtual, recv = recv, method = property.name.asString(), prop = "set",
-					sig = overloadSignature(callee), args = accArgs, overrides = overrideDeclarations(callee),
+					sig = overloadSignature(callee), args = accArgs, typeArgs = ta, overrides = overrideDeclarations(callee),
 					superCall = true.takeIf { call.superQualifierSymbol != null })
 			else BirCallInstance(ownerType = ownerStr, virtual = virtual, recv = recv, method = property.name.asString(), prop = "get",
-				sig = overloadSignature(callee), args = accArgs, ret = if ((ownerStr as? TypeNode.Fqn)?.args != null) birType(call.type) else null,
+				sig = overloadSignature(callee), args = accArgs, typeArgs = ta,
+				ret = if (ta != null || (ownerStr as? TypeNode.Fqn)?.args != null) birType(call.type) else null,
 				overrides = overrideDeclarations(callee), superCall = true.takeIf { call.superQualifierSymbol != null })
 		}
 		// A fake override selects inherited storage, not a field declared by the receiver class. Preserve the
