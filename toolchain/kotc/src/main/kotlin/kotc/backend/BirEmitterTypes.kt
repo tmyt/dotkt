@@ -1,6 +1,8 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import org.jetbrains.kotlin.builtins.functions.FunctionTypeKind
+import org.jetbrains.kotlin.builtins.functions.FunctionTypeKindExtractor
 import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
@@ -87,20 +89,28 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
+private val standardFunctionClasses = FunctionTypeKindExtractor(listOf(
+    FunctionTypeKind.Function, FunctionTypeKind.KFunction, FunctionTypeKind.SuspendFunction, FunctionTypeKind.KSuspendFunction,
+))
+
+internal fun BirEmitter.functionClassifierOperand(type: IrType): TypeNode.Fn? {
+    val fqName = type.classFqName ?: return null
+    val (kind, arity) = standardFunctionClasses.getFunctionalClassKindWithArity(fqName.parent(), fqName.shortName().asString()) ?: return null
+    return TypeNode.Fn(kind == FunctionTypeKind.SuspendFunction || kind == FunctionTypeKind.KSuspendFunction,
+        TypeNode.Star, List(arity) { TypeNode.Star },
+        reflective = true.takeIf { kind == FunctionTypeKind.KFunction || kind == FunctionTypeKind.KSuspendFunction })
+}
+
 // Kotlin's erased classifier application has no lexical type-variable slots,
-// including those captured by an inner/local class. Function classifier stars
-// retain the same function vocabulary as ordinary Kotlin function types.
+// including those captured by an inner/local class.
 internal fun BirEmitter.erasedTypeOperand(type: IrType): TypeNode? {
     val parameter = (type.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.owner ?: return null
     if (parameter.isReified) return null
     val erased = type.eraseTypeParameters()
     val klass = (erased.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrClassSymbol)?.owner
-    val name = erased.classFqName?.asString()
-    val function = name != null && (name.startsWith("kotlin.Function") || name.startsWith("kotlin.reflect.KFunction")
-        || name.startsWith("kotlin.coroutines.SuspendFunction") || name.startsWith("kotlin.reflect.KSuspendFunction"))
+    val function = functionClassifierOperand(erased)
     val raw = when {
-        function -> TypeNode.Fn(name!!.contains("SuspendFunction"), TypeNode.Star,
-            List(klass!!.typeParameters.size - 1) { TypeNode.Star })
+        function != null -> function
         klass != null && (klass.isInner || liftedCaptureArgs(klass).isNotEmpty()) ->
             sourceClassifierType(klass, List(klass.typeParameters.size + innerEnclosingTypeParams(klass).size
                 + liftedCaptureArgs(klass).size) { TypeNode.Star })
@@ -180,34 +190,20 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// kotlin.CharSequence stays its plain `kotlin.CharSequence` FQN identity (the general interface branch below emits
 	// the same bare Fqn — it is non-generic with no clrName); bir2cir SUBSTITUTES it to the synthesized
 	// `dotkt_CharSequence` interface (no faithful .NET equivalent), exactly as it substitutes `kotlin.String`.
-	// A function type as a value (e.g. a `(P)->R` parameter): `kotlin.FunctionN` -> `fn` (Func/Action shape). A
-	// `kotlin.coroutines.SuspendFunctionN` (a `suspend (P)->R` value) — and its callable-REFERENCE twin
-	// `kotlin.reflect.KSuspendFunctionN` (the inferred type of `::suspendFn`) — set `fn.suspend=true`, the SAME delegate
-	// shape carrying the suspend FACT (which the newSuspendLambda SM builder needs). bir2cir ERASES a suspend `fn`
-	// to `object` wherever it lands in a TYPE slot (only the `funcType` node key keeps it), so kotc bakes no
-	// coroutine ABI here — behavior-preserving. (Mirrors the non-suspend `KFunctionN`->`fn` erasure further below.)
-	if (fqp != null && (fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.reflect.KSuspendFunction") || fqp.startsWith("kotlin.Function"))) {
-		val args = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
-		if (args.isNotEmpty()) {
-			val ret = args.last(); val ps = args.dropLast(1)
-			val suspend = fqp.startsWith("kotlin.coroutines.SuspendFunction") || fqp.startsWith("kotlin.reflect.KSuspendFunction")
-			// A RECEIVER function type `P.() -> R` is `FunctionN<P,…,R>` carrying the `kotlin.ExtensionFunctionType`
-			// annotation (a frontend fact). Kotlin flattens the receiver to the first delegate arg on the CLR, but that
-			// erases the "this was a receiver" bit — so a re-consuming DotKt assembly loses the implicit `this: P` in a
-			// `apply1 { … }` lambda (#145). Carry it in `fn.recv` (the FIRST type arg, dropped from params): the CLR
-			// delegate is unchanged (DelegateParams re-prepends recv), and bir2cir stamps [KotlinExtensionFunctionType]
-			// (non-suspend) / rides recv on [KotlinSuspendFunctionType] (suspend) so dll2klib restores
-			// `P.() -> R`. This covers `suspend P.() -> R` too (#47): the suspend arm keeps the recv in the erased
-			// carrier's `fn` node, and dll2klib restores the suspend extension-function type in KLIB metadata.
-			// Non-ext function type keeps the flat shape. bir2cir still
-			// erases the suspend fn slot to `object` (SuspendFnSlot ignores recv) — the SequenceScope hot path routes
-			// SequenceScope.yield/yieldAll BY NAME, not by the fn-type recv, so recv is inert there.
-			val isExt = (t as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" } == true
-			return if (isExt && ps.isNotEmpty())
-				TypeNode.Fn(suspend, funcRetTypeOf(ret), ps.drop(1).map { birTypeDeleg(it) }, birTypeDeleg(ps.first()))
-			else
-				TypeNode.Fn(suspend, funcRetTypeOf(ret), ps.map { birTypeDeleg(it) })
-		}
+	// Function applications retain every parameter and the result, even when a slot is a star.
+	// The receiver remains distinct so metadata can restore an extension function in another module.
+	val functionKind = t.classFqName?.let { standardFunctionClasses.getFunctionalClassKind(it.parent(), it.shortName().asString()) }
+	if (functionKind != null && t is IrSimpleType && t.arguments.isNotEmpty()) {
+		val args = t.arguments.map(::birTypeProjection)
+		val params = args.dropLast(1)
+		val suspend = functionKind == FunctionTypeKind.SuspendFunction || functionKind == FunctionTypeKind.KSuspendFunction
+		// An unbound KFunction reference (e.g. Char::uppercaseChar) takes its
+		// receiver as an ordinary first argument to the lifted reference target.
+		val extension = functionKind != FunctionTypeKind.KFunction && params.isNotEmpty() &&
+			t.annotations.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" }
+		return if (extension) TypeNode.Fn(suspend, args.last(), params.drop(1), params.first())
+		else TypeNode.Fn(suspend, args.last(), params, reflective = true.takeIf {
+			functionKind == FunctionTypeKind.KFunction || functionKind == FunctionTypeKind.KSuspendFunction })
 	}
 	// `by lazy` delegate: kotlin.Lazy<T> is a REAL emitted stdlib interface (its impl `UnsafeLazyImpl` is pure
 	// Kotlin, produced by the stdlib `lazy()` function) — kotc emits the plain Kotlin type identity and falls
@@ -226,17 +222,6 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// interface, the value from `Delegates.observable(…)`, and the getValue/setValue dispatch owner then
 	// all agree on one type identity (ilverify-clean). The real generic interface is used (as generic
 	// `kotlin.Lazy<T>` works with a value V).
-	// Kotlin function type `(A,B)->R` (kotlin.FunctionN<A,B,R>) and a callable-reference type `KFunctionN<…>`
-	// (the inferred type of `obj::method`/`::foo`) -> an `fn` (Func/Action delegate).
-	val fqn = t.classFqName?.asString()
-	if (fqn != null && (fqn.startsWith("kotlin.Function") || fqn.startsWith("kotlin.reflect.KFunction"))) {
-		val tys = (t as? IrSimpleType)?.arguments.orEmpty().mapNotNull { (it as? IrTypeProjection)?.type }
-		if (tys.isNotEmpty()) {
-			val retT = tys.last()
-			val ret = if (retT.isUnit()) TypeNode.Fqn("kotlin.Unit") else argElemNullable(retT)
-			return TypeNode.Fn(false, ret, tys.dropLast(1).map { birType(it) })
-		}
-	}
 	// kotc emits the Kotlin FQN identity as-is for a SOURCE TYPE — it knows nothing about the CLR. bir2cir lowers
 	// these (kotlin.Int -> System.Int32, kotlin.Unit -> System.Void, …). NO `int`/`void`/`System.Int32` here.
 	when (val kfq = t.classFqName?.asString()) {
@@ -263,7 +248,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 			if (simple.hasRawType()) TypeNode.Star
 			else birTypeProjection(arg)
 		}
-		val classifier = klass?.let { nestedSourceClassifier(it) }
+		val classifier = klass?.let { sourceClassifier(it, netName, imported = true) }
 		return when {
 			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args, classifier)
 			// A generic external classifier referenced raw still needs its semantic arity. This is Kotlin's
@@ -316,14 +301,16 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 
 private fun BirEmitter.sourceClassifierType(klass: IrClass, args: List<TypeNode>? = null): TypeNode.Fqn {
 	val name = typeName(klass)
-	return TypeNode.Fqn(name, args, nestedSourceClassifier(klass, name))
+	return TypeNode.Fqn(name, args, sourceClassifier(klass, name))
 }
 
-private fun nestedSourceClassifier(klass: IrClass, sourceBindingName: String? = null): TypeNode.SourceClassifier? {
+private fun sourceClassifier(klass: IrClass, bindingName: String, imported: Boolean = false): TypeNode.SourceClassifier? {
 	// The IR ClassId owns the package/class boundary. Keep it separate from the spelling
 	// used by the backend to bind the class; synthetic owners do not denote this ClassId.
-	val id = klass.classId?.takeIf { !it.isLocal && it.isNestedClass &&
-		(sourceBindingName == null || it.asSingleFqName().asString() == sourceBindingName) } ?: return null
+	val id = klass.classId?.takeUnless { it.isLocal } ?: return null
+	val sourceName = id.asSingleFqName().asString()
+	val needsIdentity = if (sourceName == bindingName) id.isNestedClass else imported
+	if (!needsIdentity) return null
 	val path = id.relativeClassName.pathSegments().map { it.asString() }
 	return TypeNode.SourceClassifier(id.packageFqName.asString(), path.dropLast(1), path.last())
 }

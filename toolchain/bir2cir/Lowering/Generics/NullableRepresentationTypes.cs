@@ -151,9 +151,10 @@ sealed class NullableRepresentationTypes
             // follows the ordinary/native argument frame, not a value slot's
             // independently demanded storage companion.
             TypeNode.ByRef byRef => new TypeNode.ByRef(NativeReferent(byRef.Of)),
-            TypeNode.Fn function => new TypeNode.Fn(function.Suspend, Argument(function.Ret),
-                function.Params.Select(Slot).ToArray(), function.Recv == null ? null : Slot(function.Recv),
-                function.Clr, function.Ctx?.Select(Slot).ToArray()),
+            TypeNode.Fn function => function with {
+                Ret = Argument(function.Ret), Params = function.Params.Select(Slot).ToArray(),
+                Recv = function.Recv == null ? null : Slot(function.Recv), Ctx = function.Ctx?.Select(Slot).ToArray(),
+            },
             _ => type,
         };
     }

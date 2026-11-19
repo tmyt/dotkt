@@ -231,6 +231,7 @@ public static class TypeNodeMessagePack
         TypeNode field_ret = default!;
         TypeNode[] field_params = default!;
         TypeNode? field_recv = default!;
+        bool? field_reflective = default!;
         TypeNode[]? field_ctx = default!;
         string? field_clr = default!;
         for (var i = 0; i < count; i++)
@@ -257,27 +258,31 @@ public static class TypeNodeMessagePack
                     Seen(ref seen, 16UL);
                     field_recv = Read_type(ref reader);
                     break;
-                case "ctx":
+                case "reflective":
                     Seen(ref seen, 32UL);
-                    field_ctx = Read_value21(ref reader);
+                    field_reflective = Read_value21(ref reader);
+                    break;
+                case "ctx":
+                    Seen(ref seen, 64UL);
+                    field_ctx = Read_value22(ref reader);
                     break;
                 case "clr":
-                    Seen(ref seen, 64UL);
-                    field_clr = Read_value22(ref reader);
+                    Seen(ref seen, 128UL);
+                    field_clr = Read_value23(ref reader);
                     break;
                 default: throw new FormatException();
             }
         }
         if ((seen & 15UL) != 15UL) throw new FormatException();
         reader.Depth--;
-        var value = new TypeNode.Fn(field_suspend, field_ret, field_params, field_recv, field_clr, field_ctx);
+        var value = new TypeNode.Fn(field_suspend, field_ret, field_params, field_recv, field_clr, field_ctx) { Reflective = field_reflective };
         return value;
     }
 
     private static void Write_tFn(ref MessagePackWriter writer, TypeNode.Fn node, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(4 + ((node.Recv) is null ? 0 : 1) + ((node.Ctx) is { Length: > 0 } ? 1 : 0) + ((node.Clr) is null ? 0 : 1));
+        writer.WriteMapHeader(4 + ((node.Recv) is null ? 0 : 1) + ((node.Reflective) is null ? 0 : 1) + ((node.Ctx) is { Length: > 0 } ? 1 : 0) + ((node.Clr) is null ? 0 : 1));
         writer.Write("t");
         writer.Write("fn");
         writer.Write("suspend");
@@ -291,15 +296,20 @@ public static class TypeNodeMessagePack
             writer.Write("recv");
             Write_type(ref writer, child_recv, depth + 1);
         }
+        if ((node.Reflective) is { } child_reflective)
+        {
+            writer.Write("reflective");
+            Write_value21(ref writer, child_reflective, depth + 1);
+        }
         if ((node.Ctx) is { Length: > 0 } child_ctx)
         {
             writer.Write("ctx");
-            Write_value21(ref writer, child_ctx, depth + 1);
+            Write_value22(ref writer, child_ctx, depth + 1);
         }
         if ((node.Clr) is { } child_clr)
         {
             writer.Write("clr");
-            Write_value22(ref writer, child_clr, depth + 1);
+            Write_value23(ref writer, child_clr, depth + 1);
         }
     }
 
@@ -395,7 +405,7 @@ public static class TypeNodeMessagePack
                     break;
                 case "rank":
                     Seen(ref seen, 4UL);
-                    field_rank = Read_value23(ref reader);
+                    field_rank = Read_value24(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -418,7 +428,7 @@ public static class TypeNodeMessagePack
         if ((node.SzArray ? (int?)null : node.Rank) is { } child_rank)
         {
             writer.Write("rank");
-            Write_value23(ref writer, child_rank, depth + 1);
+            Write_value24(ref writer, child_rank, depth + 1);
         }
     }
 
@@ -513,7 +523,7 @@ public static class TypeNodeMessagePack
                     break;
                 case "cc":
                     Seen(ref seen, 2UL);
-                    field_cc = Read_value24(ref reader);
+                    field_cc = Read_value25(ref reader);
                     break;
                 case "genericArity":
                     Seen(ref seen, 4UL);
@@ -548,7 +558,7 @@ public static class TypeNodeMessagePack
         writer.Write("t");
         writer.Write("fnPtr");
         writer.Write("cc");
-        Write_value24(ref writer, node.CallingConvention, depth + 1);
+        Write_value25(ref writer, node.CallingConvention, depth + 1);
         writer.Write("genericArity");
         Write_value17(ref writer, node.GenericArity, depth + 1);
         writer.Write("requiredParams");
@@ -576,7 +586,7 @@ public static class TypeNodeMessagePack
                     break;
                 case "req":
                     Seen(ref seen, 2UL);
-                    field_req = Read_value25(ref reader);
+                    field_req = Read_value26(ref reader);
                     break;
                 case "m":
                     Seen(ref seen, 4UL);
@@ -602,7 +612,7 @@ public static class TypeNodeMessagePack
         writer.Write("t");
         writer.Write("mod");
         writer.Write("req");
-        Write_value25(ref writer, node.Req, depth + 1);
+        Write_value26(ref writer, node.Req, depth + 1);
         writer.Write("m");
         Write_type(ref writer, node.M, depth + 1);
         writer.Write("of");
@@ -649,15 +659,15 @@ public static class TypeNodeMessagePack
             {
                 case "packageName":
                     Seen(ref seen, 1UL);
-                    field_packageName = Read_value26(ref reader);
+                    field_packageName = Read_value27(ref reader);
                     break;
                 case "ownerPath":
                     Seen(ref seen, 2UL);
-                    field_ownerPath = Read_value27(ref reader);
+                    field_ownerPath = Read_value28(ref reader);
                     break;
                 case "name":
                     Seen(ref seen, 4UL);
-                    field_name = Read_value28(ref reader);
+                    field_name = Read_value29(ref reader);
                     break;
                 default: throw new FormatException();
             }
@@ -673,11 +683,11 @@ public static class TypeNodeMessagePack
         CheckDepth(depth);
         writer.WriteMapHeader(3);
         writer.Write("packageName");
-        Write_value26(ref writer, node.PackageName, depth + 1);
+        Write_value27(ref writer, node.PackageName, depth + 1);
         writer.Write("ownerPath");
-        Write_value27(ref writer, node.OwnerPath, depth + 1);
+        Write_value28(ref writer, node.OwnerPath, depth + 1);
         writer.Write("name");
-        Write_value28(ref writer, node.Name, depth + 1);
+        Write_value29(ref writer, node.Name, depth + 1);
     }
 
     private static string Read_value16(ref MessagePackReader reader)
@@ -746,13 +756,24 @@ public static class TypeNodeMessagePack
         }
     }
 
-    private static TypeNode[] Read_value21(ref MessagePackReader reader)
+    private static bool Read_value21(ref MessagePackReader reader)
+    {
+        var value = reader.ReadBoolean();
+        return value;
+    }
+
+    private static void Write_value21(ref MessagePackWriter writer, bool node, int depth)
+    {
+        writer.Write(node);
+    }
+
+    private static TypeNode[] Read_value22(ref MessagePackReader reader)
     {
         var value = ReadArray<TypeNode>(ref reader, Read_type);
         return value;
     }
 
-    private static void Write_value21(ref MessagePackWriter writer, TypeNode[] node, int depth)
+    private static void Write_value22(ref MessagePackWriter writer, TypeNode[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
@@ -762,20 +783,20 @@ public static class TypeNodeMessagePack
         }
     }
 
-    private static string Read_value22(ref MessagePackReader reader)
+    private static string Read_value23(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value is not ("System.Func" or "System.Action" or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction")) throw new FormatException();
         return value;
     }
 
-    private static void Write_value22(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value23(ref MessagePackWriter writer, string node, int depth)
     {
         if (node is not ("System.Func" or "System.Action" or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction")) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static int Read_value23(ref MessagePackReader reader)
+    private static int Read_value24(ref MessagePackReader reader)
     {
         var value = reader.ReadInt32();
         if (value < 1) throw new FormatException();
@@ -783,14 +804,14 @@ public static class TypeNodeMessagePack
         return value;
     }
 
-    private static void Write_value23(ref MessagePackWriter writer, int node, int depth)
+    private static void Write_value24(ref MessagePackWriter writer, int node, int depth)
     {
         if (node < 1) throw new FormatException();
         if (node > 32) throw new FormatException();
         writer.Write(node);
     }
 
-    private static int Read_value24(ref MessagePackReader reader)
+    private static int Read_value25(ref MessagePackReader reader)
     {
         var value = reader.ReadInt32();
         if (value < 0) throw new FormatException();
@@ -798,59 +819,59 @@ public static class TypeNodeMessagePack
         return value;
     }
 
-    private static void Write_value24(ref MessagePackWriter writer, int node, int depth)
+    private static void Write_value25(ref MessagePackWriter writer, int node, int depth)
     {
         if (node < 0) throw new FormatException();
         if (node > 255) throw new FormatException();
         writer.Write(node);
     }
 
-    private static bool Read_value25(ref MessagePackReader reader)
+    private static bool Read_value26(ref MessagePackReader reader)
     {
         var value = reader.ReadBoolean();
         return value;
     }
 
-    private static void Write_value25(ref MessagePackWriter writer, bool node, int depth)
+    private static void Write_value26(ref MessagePackWriter writer, bool node, int depth)
     {
         writer.Write(node);
     }
 
-    private static string Read_value26(ref MessagePackReader reader)
+    private static string Read_value27(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         return value;
     }
 
-    private static void Write_value26(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value27(ref MessagePackWriter writer, string node, int depth)
     {
         IrMessagePack.WriteString(ref writer, node);
     }
 
-    private static string[] Read_value27(ref MessagePackReader reader)
+    private static string[] Read_value28(ref MessagePackReader reader)
     {
-        var value = ReadArray<string>(ref reader, Read_value28);
+        var value = ReadArray<string>(ref reader, Read_value29);
         return value;
     }
 
-    private static void Write_value27(ref MessagePackWriter writer, string[] node, int depth)
+    private static void Write_value28(ref MessagePackWriter writer, string[] node, int depth)
     {
         CheckDepth(depth);
         writer.WriteArrayHeader(node.Length);
         foreach (var child in node)
         {
-            Write_value28(ref writer, child, depth + 1);
+            Write_value29(ref writer, child, depth + 1);
         }
     }
 
-    private static string Read_value28(ref MessagePackReader reader)
+    private static string Read_value29(ref MessagePackReader reader)
     {
         var value = IrMessagePack.ReadString(ref reader);
         if (value.Length < 1) throw new FormatException();
         return value;
     }
 
-    private static void Write_value28(ref MessagePackWriter writer, string node, int depth)
+    private static void Write_value29(ref MessagePackWriter writer, string node, int depth)
     {
         if (node.Length < 1) throw new FormatException();
         IrMessagePack.WriteString(ref writer, node);

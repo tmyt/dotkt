@@ -62,19 +62,13 @@ static partial class ReifiedNullabilityWitnessLowering
         SourceCheck(!ReferenceEquals(flags.Recv.Value, classifier.Recv.Value) && !ReferenceEquals(classifier.Recv.Value, predicate.Recv.Value)
             && flags.Type.HasValue && flags.Sty.HasValue && test.NullWitness.HasValue, "independent witness operands and exact field facts");
         SourceCheck(call.NullablePendingWitnesses.Value is [BirNew nullableKnown]
-            && nullableKnown.Args.Value[0] is BirBinaryOperation { Op.Value: "|",
-                Lhs.Value: BirFieldGet { Name.Value: "Item1", Recv.Value: BirNew flagsKnown },
-                Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } }
-            && nullableKnown.Args.Value[1] is BirFieldGet { Name.Value: "Item2", Recv.Value: BirNew classifierKnown }
-            && nullableKnown.Args.Value[2] is BirFieldGet { Name.Value: "Item3", Recv.Value: BirNew predicateKnown }
-            && flagsKnown.Args.Value is [BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 0 } },
+            && nullableKnown.Args.Value is [
+                BirBinaryOperation { Op.Value: "|",
+                    Lhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 0 } },
+                    Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } },
                 BirClassReference { Type.Value: TypeNode.Fqn { Name: "kotlin.String" }, KotlinClassifierRef.Value: true },
-                BirConstant { Value.Value: BirLiteral.NullLiteral }]
-            && flagsKnown.StructurallyEquals(classifierKnown) && flagsKnown.StructurallyEquals(predicateKnown)
-            && !ReferenceEquals(flagsKnown, classifierKnown) && !ReferenceEquals(flagsKnown, predicateKnown)
-            && !ReferenceEquals(classifierKnown, predicateKnown)
-            && !ReferenceEquals(flagsKnown.Args.Value[1], classifierKnown.Args.Value[1])
-            && !ReferenceEquals(classifierKnown.Args.Value[1], predicateKnown.Args.Value[1]), "known nullable flags/classifier/predicate");
+                BirConstant { Value.Value: BirLiteral.NullLiteral },
+                BirConstant { Value.Value: BirLiteral.NullLiteral }], "known nullable flags/classifier/predicate and absent reflection");
         var pending = call.NullablePendingWitnesses.Value[0];
         var originalArgument = call.Args.Value[0];
         var pendingFile = (BirFileDeclaration)file.DeepClone();
@@ -249,7 +243,11 @@ static partial class ReifiedNullabilityWitnessLowering
         Apply(SourceFile(method), demand, null, null, null);
         SourceCheck(method.NullableWitnessIndices.Value.SequenceEqual(new[] { 0 }) && method.Params.Value.Length == 1
             && ((BirFieldGet)ordinary.KotlinTypeWitness.Value).Recv.Value is BirLocal
-            && ((BirFieldGet)nullable.KotlinTypeWitness.Value).Recv.Value is BirNew tuple
-            && tuple.Args.Value[0] is BirBinaryOperation { Op.Value: "|" }, "explicit physical-order nullable companion mapping");
+            && nullable.KotlinTypeWitness.Value is BirBinaryOperation { Op.Value: "|",
+                Lhs.Value: BirFieldGet { Name.Value: "Item1", Recv.Value: BirLocal },
+                Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } }
+            && nullable.KotlinRuntimeTypeWitness.Value is BirFieldGet { Name.Value: "Item2", Recv.Value: BirLocal }
+            && nullable.KotlinClassifierPredicate.Value is BirFieldGet { Name.Value: "Item3", Recv.Value: BirLocal },
+            "nullable scalar tests project the corresponding witness fields without constructing a reflected type");
     }
 }

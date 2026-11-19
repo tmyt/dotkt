@@ -62,6 +62,10 @@ internal object TypeNodeJson {
                     sb.append(",\"recv\":")
                     write(recv, sb)
                 }
+                if (reflective != null) {
+                    sb.append(",\"reflective\":")
+                    sb.append(reflective)
+                }
                 sb.append('}')
             }
             is TypeNode.Nullable -> with(value) {

@@ -1357,6 +1357,14 @@ mangled `-impl` statics, no .NET `struct`. Structural equality survives; what is
 (identityless-ness is not enforced). Kotlin/CLR does not require the JVM-specific `@JvmInline` opt-in annotation.
 See §10.3 for the round-trip view.
 
+### Reflecting Kotlin types
+
+`typeOf<List<String?>>()` returns a `KType` with the `List::class` classifier and one
+invariant argument whose classifier is `String::class` and whose `isMarkedNullable` is true.
+The same information crosses a separately compiled `inline fun <reified T>` call: it describes the
+Kotlin type, not the CLR type used to store the value. Star projections have no argument type.
+This does not add runtime discovery of arbitrary declaration members or type-use annotations.
+
 ## 5g. `KClass.simpleName`/`qualifiedName` report Kotlin names for the statically-known `::class` case (#138)
 
 `T::class` produces a native `System.Type` token (`Foo::class`→`typeof` = an UNBOUND

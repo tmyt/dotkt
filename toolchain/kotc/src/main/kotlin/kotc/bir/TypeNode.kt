@@ -11,7 +11,7 @@ sealed class TypeNode : BirValue {
 
     data class Projection(val variance: String, val of: TypeNode) : TypeNode()
 
-    data class Fn(val suspend: Boolean, val ret: TypeNode, val params: List<TypeNode>, val recv: TypeNode? = null) : TypeNode()
+    data class Fn(val suspend: Boolean, val ret: TypeNode, val params: List<TypeNode>, val recv: TypeNode? = null, val reflective: Boolean? = null) : TypeNode()
 
     data class Nullable(val of: TypeNode) : TypeNode()
 

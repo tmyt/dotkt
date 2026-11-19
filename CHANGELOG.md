@@ -5,8 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Custom mutable map entry sets now work both through delegation and through a
-  generic base class, retaining write-through access to the original map.
+- `kotlin.reflect.typeOf<T>()` returns a Kotlin type descriptor instead of throwing. Reified calls
+  across assemblies retain nested arguments, projections, and nullability.
 - Generic calls can capture the type represented by a star-projected `KClass<*>`, including across DLLs.
 - Source files with case-insensitively colliding basenames can be compiled in the same module.
 - Kotlin collection slot bridges preserve the declared result when an override
@@ -19,6 +19,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Compiler plugins can pass a sequence of IR expressions as a call argument;
   the prefix executes in order and the final expression supplies the value.
 
+- Custom mutable map entry sets now work both through delegation and through a
+  generic base class, retaining write-through access to the original map.
 - Specialized map interfaces can dispatch inherited Kotlin implementations even
   when their keys or values have nested generic arguments.
 - Internal overrides now use the same virtual-slot bridges as public overrides

@@ -152,7 +152,8 @@ public abstract partial record TypeNode
                     ReadArray(e.GetProperty("params")),
                     e.TryGetProperty("recv", out var recv) ? Read(recv) : null,
                     e.TryGetProperty("clr", out var clr) ? clr.GetString() : null,
-                    e.TryGetProperty("ctx", out var ctxA) ? ReadArray(ctxA) : null);
+                    e.TryGetProperty("ctx", out var ctxA) ? ReadArray(ctxA) : null)
+                    { Reflective = e.TryGetProperty("reflective", out var reflective) ? reflective.GetBoolean() : null };
             case "nullable":
                 return new Nullable(Read(e.GetProperty("of")));
             case "oblivious":
@@ -228,7 +229,8 @@ public abstract partial record TypeNode
                     ReadArray(Required(e, "params")),
                     TryProperty(e, "recv", out var recv) ? Read(recv) : null,
                     TryProperty(e, "clr", out var clr) ? ReadString(clr) : null,
-                    TryProperty(e, "ctx", out var ctx) ? ReadArray(ctx) : null);
+                    TryProperty(e, "ctx", out var ctx) ? ReadArray(ctx) : null)
+                    { Reflective = TryProperty(e, "reflective", out var reflective) ? ReadBoolean(reflective) : null };
             case "nullable":
                 return new Nullable(Read(Required(e, "of")));
             case "oblivious":
@@ -378,6 +380,7 @@ public abstract partial record TypeNode
                     ["params"] = WriteArray(fn.Params),
                 };
                 if (fn.Recv is not null) o["recv"] = Write(fn.Recv);
+                if (fn.Reflective is bool reflective) o["reflective"] = reflective;
                 if (fn.Clr is not null) o["clr"] = fn.Clr;
                 if (fn.Ctx is { Length: > 0 }) o["ctx"] = WriteArray(fn.Ctx);
                 return o;
@@ -528,6 +531,8 @@ public static class TypeNodeSelfTest
                 "{\"t\":\"fqn\",\"name\":\"Producer\",\"args\":[{\"t\":\"projection\",\"variance\":\"out\",\"of\":{\"t\":\"fqn\",\"name\":\"kotlin.String\"}}]}"),
             (new TypeNode.Fn(false, new TypeNode.Fqn("kotlin.String"), new TypeNode[] { new TypeNode.Fqn("kotlin.Int") }),
                 "{\"t\":\"fn\",\"suspend\":false,\"ret\":{\"t\":\"fqn\",\"name\":\"kotlin.String\"},\"params\":[{\"t\":\"fqn\",\"name\":\"kotlin.Int\"}]}"),
+            (new TypeNode.Fn(false, new TypeNode.Star(), []) { Reflective = true },
+                """{"t":"fn","suspend":false,"ret":{"t":"star"},"params":[],"reflective":true}"""),
             // suspend Foo<T>.()->T?
             (new TypeNode.Fn(true,
                     new TypeNode.Nullable(new TypeNode.Tv("type", 0)),

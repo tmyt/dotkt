@@ -16,7 +16,10 @@ public abstract partial record TypeNode
 
     public sealed partial record Projection(string Variance, TypeNode Of) : TypeNode;
 
-    public sealed partial record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null, string? Clr = null, TypeNode[]? Ctx = null) : TypeNode;
+    public sealed partial record Fn(bool Suspend, TypeNode Ret, TypeNode[] Params, TypeNode? Recv = null, string? Clr = null, TypeNode[]? Ctx = null) : TypeNode
+    {
+        public bool? Reflective { get; init; }
+    }
 
     public sealed partial record Nullable(TypeNode Of) : TypeNode;
 
@@ -44,7 +47,7 @@ internal static class TypeNodeWireContract
         ("tv", ["t", "scope", "i"]),
         ("star", ["t"]),
         ("projection", ["t", "variance", "of"]),
-        ("fn", ["t", "suspend", "ret", "params", "recv", "ctx", "clr"]),
+        ("fn", ["t", "suspend", "ret", "params", "recv", "reflective", "ctx", "clr"]),
         ("nullable", ["t", "of"]),
         ("oblivious", ["t", "of"]),
         ("array", ["t", "elem", "rank"]),
@@ -65,7 +68,7 @@ internal static class TypeNodeDataEquality
             (TypeNode.Tv a, TypeNode.Tv b) => a.Scope == b.Scope && a.I == b.I,
             (TypeNode.Star a, TypeNode.Star b) => true,
             (TypeNode.Projection a, TypeNode.Projection b) => a.Variance == b.Variance && Equal(a.Of, b.Of),
-            (TypeNode.Fn a, TypeNode.Fn b) => a.Suspend == b.Suspend && Equal(a.Ret, b.Ret) && Items(a.Params, b.Params, (left0, right0) => Equal(left0, right0)) && Equal(a.Recv, b.Recv) && Items(a.Ctx, b.Ctx, (left0, right0) => Equal(left0, right0)) && a.Clr == b.Clr,
+            (TypeNode.Fn a, TypeNode.Fn b) => a.Suspend == b.Suspend && Equal(a.Ret, b.Ret) && Items(a.Params, b.Params, (left0, right0) => Equal(left0, right0)) && Equal(a.Recv, b.Recv) && a.Reflective == b.Reflective && Items(a.Ctx, b.Ctx, (left0, right0) => Equal(left0, right0)) && a.Clr == b.Clr,
             (TypeNode.Nullable a, TypeNode.Nullable b) => Equal(a.Of, b.Of),
             (TypeNode.Oblivious a, TypeNode.Oblivious b) => Equal(a.Of, b.Of),
             (TypeNode.Array a, TypeNode.Array b) => Equal(a.Elem, b.Elem) && a.Rank == b.Rank && a.SzArray == b.SzArray,

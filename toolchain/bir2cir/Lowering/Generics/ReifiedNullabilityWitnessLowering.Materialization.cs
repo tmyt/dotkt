@@ -12,8 +12,7 @@ static partial class ReifiedNullabilityWitnessLowering
     };
 
     static BirNewClosure MaterializeSourceDelegate(BirNewDelegate node, SourceGeneratedTarget target,
-        SourceWitnessFrame caller, Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk,
-        ValueRepresentationLowering values)
+        Func<int, TypeNode, IBirExpression> capture, Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk)
     {
         var arguments = node.TypeArgs.HasValue ? node.TypeArgs.Value
             : throw new InvalidOperationException($"bir2cir: nullable-sensitive generated delegate '{node.Method.OrDefault()}' has no type arguments");
@@ -26,7 +25,7 @@ static partial class ReifiedNullabilityWitnessLowering
                 throw new InvalidOperationException($"bir2cir: nullable-sensitive generated delegate '{node.Method.OrDefault()}' has no type argument at index {index}");
             var name = Prefix + index;
             fields.Add(new() { Name = name, Type = KotlinRuntimeTypeWitness.Type });
-            captures.Add(SourceWitnessFor(arguments[index], caller, values));
+            captures.Add(capture(index, arguments[index]));
             witnesses[index] = SourceWitnessField(target.ClosureName, name);
         }
         // The old generated target ceases to be a declaration; its independently owned body/parameters become
@@ -54,8 +53,8 @@ static partial class ReifiedNullabilityWitnessLowering
         };
     }
 
-    static void MaterializeSourceClosure(BirNewClosure node, int[] indices, SourceWitnessFrame caller,
-        Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk, ValueRepresentationLowering values)
+    static void MaterializeSourceClosure(BirNewClosure node, int[] indices, SourceWitnessFrame caller, Func<int, TypeNode, IBirExpression> capture,
+        Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk)
     {
         var source = node.SynthClass.Value;
         var arguments = node.TypeArgs.Value;
@@ -72,7 +71,7 @@ static partial class ReifiedNullabilityWitnessLowering
                 throw new InvalidOperationException($"bir2cir: nullable-sensitive closure has no type argument at index {index}");
             var fieldName = SourceWitnessName(index, used);
             fields.Add(new() { Name = fieldName, Type = KotlinRuntimeTypeWitness.Type });
-            captures.Add(SourceWitnessFor(arguments[index], caller, values));
+            captures.Add(capture(index, arguments[index]));
             var field = SourceWitnessField(name, fieldName);
             if (ClosureSynthesis.HasPreboundFrame(source)) typeWitnesses[index] = field;
             else BindSourceWitness(arguments[index], field, methodWitnesses, typeWitnesses);
@@ -82,8 +81,8 @@ static partial class ReifiedNullabilityWitnessLowering
         SourceBody(source.Body, new(methodWitnesses, typeWitnesses), walk);
     }
 
-    static void MaterializeSourceSam(BirNewSam node, int[] indices, SourceWitnessFrame caller,
-        Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk, ValueRepresentationLowering values)
+    static void MaterializeSourceSam(BirNewSam node, int[] indices, SourceWitnessFrame caller, Func<int, TypeNode, IBirExpression> capture,
+        Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk)
     {
         var source = node.SynthClass.Value;
         var arguments = node.TypeArgs.Value;
@@ -99,7 +98,7 @@ static partial class ReifiedNullabilityWitnessLowering
                 throw new InvalidOperationException($"bir2cir: nullable-sensitive SAM has no type argument at index {index}");
             var fieldName = SourceWitnessName(index, used);
             fields.Add(new() { Name = fieldName, Type = KotlinRuntimeTypeWitness.Type });
-            captures.Add(SourceWitnessFor(arguments[index], caller, values));
+            captures.Add(capture(index, arguments[index]));
             AppendSourceWitnessConstructors(source, name, fieldName);
             var field = SourceWitnessField(name, fieldName);
             if (ClosureSynthesis.HasPreboundFrame(source)) typeWitnesses[index] = field;
@@ -110,8 +109,8 @@ static partial class ReifiedNullabilityWitnessLowering
         foreach (var method in source.Methods.OrEmpty()) SourceBody(method.Body, new(methodWitnesses, typeWitnesses), walk);
     }
 
-    static void MaterializeSourceSuspend(BirNewSuspendLambda node, int[] indices, SourceWitnessFrame caller,
-        Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk, ValueRepresentationLowering values, bool dense)
+    static void MaterializeSourceSuspend(BirNewSuspendLambda node, int[] indices, SourceWitnessFrame caller, Func<int, TypeNode, IBirExpression> capture,
+        Func<BirGraphValue, SourceWitnessFrame, BirGraphValue> walk, bool dense)
     {
         var parameters = node.TypeParams.OrEmpty();
         if (dense && !node.TypeArgs.HasValue && parameters.Length == 0)
@@ -141,7 +140,7 @@ static partial class ReifiedNullabilityWitnessLowering
                     : $"bir2cir: nullable-sensitive suspend lambda has no type argument at index {index}");
             var name = SourceWitnessName(index, used);
             captures.Add(new() { Name = name, Type = KotlinRuntimeTypeWitness.Type });
-            capValues.Add(SourceWitnessFor(arguments[index], caller, values));
+            capValues.Add(capture(index, arguments[index]));
             var local = new BirLocal { Name = name };
             var declaration = declarations == null ? arguments[index] : declarations[index];
             if (dense)

@@ -356,6 +356,7 @@ class TypeNodeTest {
             TypeNode.Star to """{"t":"star"}""",
             TypeNode.Projection("out", t) to """{"t":"projection","variance":"out","of":{"t":"fqn","name":"T"}}""",
             TypeNode.Fn(false, t, listOf(t)) to """{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"T"},"params":[{"t":"fqn","name":"T"}]}""",
+            TypeNode.Fn(false, t, emptyList(), reflective = true) to """{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"T"},"params":[],"reflective":true}""",
             TypeNode.Nullable(t) to """{"t":"nullable","of":{"t":"fqn","name":"T"}}""",
             TypeNode.Oblivious(t) to """{"t":"oblivious","of":{"t":"fqn","name":"T"}}""",
             TypeNode.Array(t) to """{"t":"array","elem":{"t":"fqn","name":"T"}}""",

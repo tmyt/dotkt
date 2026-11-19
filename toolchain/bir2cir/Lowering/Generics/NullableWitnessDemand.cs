@@ -15,6 +15,11 @@ sealed partial class NullableWitnessDemand
 {
     readonly IReadOnlyDictionary<string, int[]> _localDeclarations;
     readonly ReferenceMetadataIndex _refs;
+    bool reflectedOnly;
+    internal NullableWitnessDemand Reflected { get; private set; }
+
+    internal int[] Indices(string id) => _localDeclarations.TryGetValue(id, out var local) ? local
+        : (reflectedOnly ? _refs?.ReflectedWitnessIndices(id) : _refs?.NullableWitnessTypeParameterIndices(id)) ?? [];
 
     NullableWitnessDemand(IReadOnlyDictionary<string, int[]> localDeclarations, ReferenceMetadataIndex refs)
     {
