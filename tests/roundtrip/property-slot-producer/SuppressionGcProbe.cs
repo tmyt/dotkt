@@ -7,11 +7,13 @@ public static class SuppressionGcProbe
 {
     // Finish the frame holding the only strong references before the caller collects.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static WeakReference[] CreateCycle(Action<Exception, Exception> suppress)
+    public static WeakReference[] CreateCycleWithLeaf(Exception leaf, Action<Exception, Exception> suppress)
     {
         var primary = new InvalidOperationException("primary");
         var child = new ArgumentException("child", primary);
         suppress(primary, child);
+        suppress(child, primary);
+        suppress(primary, leaf);
         return new[] { new WeakReference(primary), new WeakReference(child) };
     }
 

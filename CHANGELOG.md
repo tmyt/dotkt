@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Building and rendering deep chains of suppressed exceptions now takes less time in garbage collection.
 - Nullable and platform operands now use the same imported CLR equality operators as non-null operands
   when both values are present. Subject-based `when` value branches use the same rule as `==`.
 - `kotlin.reflect.typeOf<T>()` returns a Kotlin type descriptor instead of throwing. Reified calls
