@@ -196,7 +196,10 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		val args = t.arguments.map(::birTypeProjection)
 		val params = args.dropLast(1)
 		val suspend = functionKind == FunctionTypeKind.SuspendFunction || functionKind == FunctionTypeKind.KSuspendFunction
-		val extension = params.isNotEmpty() && t.annotations.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" }
+		// An unbound KFunction reference (e.g. Char::uppercaseChar) takes its
+		// receiver as an ordinary first argument to the lifted reference target.
+		val extension = functionKind != FunctionTypeKind.KFunction && params.isNotEmpty() &&
+			t.annotations.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" }
 		return if (extension) TypeNode.Fn(suspend, args.last(), params.drop(1), params.first())
 		else TypeNode.Fn(suspend, args.last(), params)
 	}
