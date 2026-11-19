@@ -4,6 +4,22 @@ import NUnit.Framework.TestAttribute
 import roundtrip.portableregex.*
 
 class PortableRegexTests {
+    @TestAttribute fun foreignRegexKeepsNativeMatchingAndDistinctReplacementSyntax() {
+        val native = RegexInterop.NativeRegexes.Sparse()
+        val regex = (native as Any) as Regex
+        check(replaceFromLibrary(regex, "a", "<\$10:\$1:\${named}>") == "<a::>")
+        var missing = false
+        try { replaceFromLibrary(regex, "a", "\$2") }
+        catch (_: IndexOutOfBoundsException) { missing = true }
+        check(missing)
+        check(native.Replace("a", "<\$&>") == "<a>")
+        val backwards = (RegexInterop.NativeRegexes.Backwards("a.") as Any) as Regex
+        check(backwards.replaceFirst("a1/a2", "<\$0>") == "a1/<a2>")
+        check(replaceFromLibrary(backwards, "a1/a2", "<\$0>") == "<a1>/<a2>")
+        val zeroWidth = RegexInterop.NativeRegexes.Backwards("a|")
+        check(replaceFromLibrary((zeroWidth as Any) as Regex, "baa", "<\$0>") == zeroWidth.Replace("baa", "<\$&>"))
+    }
+
     @TestAttribute fun librarySequencesCanOutliveTheProducerCallAndBeReiterated() {
         val sequence = splitLazily(Regex(","), "a,b,c", 2)
         check(sequence.toList() == listOf("a", "b,c"))
