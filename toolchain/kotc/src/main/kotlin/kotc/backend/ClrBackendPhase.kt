@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import java.io.File
+import java.util.TreeMap
 
 /** Final artifact of the CLR pipeline. Carries the process exit code. */
 class ClrBackendArtifact(
@@ -55,10 +56,16 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		// declaration's expression can be emitted in another file's frame (an omitted default argument is inlined at
 		// the caller). Decide it ONCE over the whole module, before any file is emitted, so every emission root agrees.
 		bir.initRefCells(moduleFragment)
-		// The BIR file name is derived from the source file's BASENAME — but the stdlib has several same-named files in
-		// different dirs (3x Collections.kt: src/kotlin, src/kotlin/collections, clr/builtins). Disambiguate with a
-		// per-basename counter so they don't OVERWRITE each other (clr/builtins/Collections.kt's interface defs were lost).
-		val usedNames = HashMap<String, Int>()
+		// MSBuild treats artifact paths case-insensitively even on Linux. Reserve each emitted stem,
+		// including generated suffixes: another source can itself be named Foo__2.kt.
+		val usedNames = TreeMap<String, Int>(String.CASE_INSENSITIVE_ORDER)
+		fun artifactStem(base: String): String {
+			var index = usedNames.putIfAbsent(base, 1) ?: return base
+			var candidate: String
+			do { candidate = "${base}__${++index}" } while (usedNames.putIfAbsent(candidate, 1) != null)
+			usedNames[base] = index
+			return candidate
+		}
 		// Per-FILE resilience: an unexpected exception while emitting ONE file must NOT abort the whole loop. The loop
 		// walks `moduleFragment.files` in order, so a raw throw (e.g. a mis-shaped-call NPE) silently dropped EVERY file
 		// after the offender — the stdlib build lost ~120 type-defs (Sequence/PrimitiveIterators/Continuation/… all live
@@ -67,12 +74,10 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		// emit and the failure is a single clear diagnostic instead of a catastrophic cascade.
 		var crashed = false
 		for (irFile in moduleFragment.files) {
-			var baseName = File(irFile.fileEntry.name).name.removeSuffix(".kt")
-			val seen = usedNames.merge(baseName, 1) { a, b -> a + b }!!
-			if (seen > 1) baseName = "${baseName}__$seen"
 			try {
 				val birFile = bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
 				if (birFile != null) {
+					val baseName = artifactStem(File(irFile.fileEntry.name).name.removeSuffix(".kt"))
 					val sources = sourceCallables?.invoke(irFile, bir::declarationIdForPhysicalAllocation).orEmpty()
 					kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"),
 						if (sources.isEmpty()) birFile else birFile.copy(sourceCallables = sources), format)

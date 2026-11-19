@@ -430,6 +430,7 @@ enum class PackagedEntries(val score: Int) { VALUE(7) }
 inline fun <reified E : Enum<E>> packagedEntries(): kotlin.enums.EnumEntries<E> = kotlin.enums.enumEntries<E>()
 fun main() {
     checkUnsignedPlatformOptIn()
+    check(a.One().value() + b.Two().value() + c.Three().value() == "ABC")
     val entries = packagedEntries<PackagedEntries>()
     check(entries[0].score == 7 && entries === PackagedEntries.entries)
     check(packagedEntries<CharCategory>()[0] == CharCategory.UNASSIGNED)
@@ -445,6 +446,11 @@ fun main() {
 }
 EOF
 	cp "$ROOT/tests/packaged-sdk/fixtures/UnsignedOptIn.kt" "$d/UnsignedOptIn.kt"
+	# Distinct directories keep these valid source paths even on a case-insensitive filesystem.
+	mkdir -p "$d/a" "$d/b" "$d/c"
+	printf '%s\n' 'package a' 'class One { fun value() = "A" }' > "$d/a/Probe.kt"
+	printf '%s\n' 'package b' 'class Two { fun value() = "B" }' > "$d/b/probe.kt"
+	printf '%s\n' 'package c' 'class Three { fun value() = "C" }' > "$d/c/Probe__2.kt"
 	local expected="packaged exe ok: 5" actual rc=0 manifest_error="" projected_klib=""
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?
 	projected_klib="$(find "$d/obj/Debug/net10.0/klib" -maxdepth 1 -name '*.klib' -print -quit 2>/dev/null)"
