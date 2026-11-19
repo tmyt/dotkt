@@ -45,6 +45,17 @@ private interface CovariantGenericDefaultDerived : CovariantGenericDefaultBase {
 }
 private class CovariantGenericDefaultImpl : CovariantGenericDefaultDerived
 
+private interface CallbackSlot<K, V> {
+    fun visit(key: (K) -> Boolean, value: (V) -> Int): CallbackSlot<K, V>
+}
+private interface NarrowCallbackSlot<V, K> : CallbackSlot<K, V> {
+    override fun visit(key: (K) -> Boolean, value: (V) -> Int): NarrowCallbackSlot<V, K>
+}
+private class CallbackEntry<V, K>(val v: V, val k: K, val answer: Int = 0) : NarrowCallbackSlot<V, K> {
+    override fun visit(key: (K) -> Boolean, value: (V) -> Int): NarrowCallbackSlot<V, K> =
+        CallbackEntry(v, k, if (key(k)) value(v) else -1)
+}
+
 // A covariant override whose return type is `Nothing` (#197). Legal Kotlin — `Nothing` is below every type, so it
 // satisfies any slot — and it is the LATE-SYNTHESIZED instance of the Nothing-value defect: the bridge above is
 // built by bir2cir out of the target declaration's return type, so it mints a fresh `Nothing`-typed call inside a
@@ -84,6 +95,9 @@ class CovariantInterfaceReturnTests {
         // concrete class has no implementation of the base interface's broad-returning slot.
         assertEquals(48, genericDefault.create("x").value)
 
+        val callbacks: CallbackSlot<String, Int> = CallbackEntry(7, "key")
+        val visited = callbacks.visit({ it == "key" }, { it * 6 })
+        assertEquals(42, (visited as CallbackEntry).answer)
     }
 
     // The formal half (ilverify over this assembly) is what regresses first: the bridge is only ever entered to

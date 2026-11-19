@@ -84,21 +84,25 @@ static partial class CovariantInterfaceReturnBridge
                 if (SourceReturn(implementation) is not { } implementationReturn) continue;
                 implementationReturn = SubstOwnerTvs(implementationReturn, owner.OwnArguments);
                 if (implementationReturn == slotReturn || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
+                // The slot is a declaration signature, not the storage type of its arguments.
+                // Allocate any function discriminator in the declaration's open frame before closing it.
+                var signature = slot.Params.Value.Select(FunctionSignatureIdentity.SignatureType)
+                    .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, arguments)).ToArray();
                 var key = SourceBridgeKey(implementation.Name.Value, arity,
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(slot.TypeParams.OrDefault(), arguments),
-                    slotParameters, slotReturn, valueReturn, refs, isValue);
+                    signature, slotReturn, valueReturn, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
                     var logicalResult = suspend ? SubstOwnerTvs(slot.SuspendResult.OrDefault()
                         ?? throw new InvalidOperationException($"suspend declaration '{slot.Name.OrDefault()}' has no preserved logical result"), arguments) : null;
-                    bridge = BuildSourceBridge(owner, implementation, slotParameters, slotReturn, logicalResult,
+                    bridge = BuildSourceBridge(owner, implementation, signature, slotReturn, logicalResult,
                         $"dotkt$covar${SafeName(slot.Name.Value)}${ordinal++}", valueReturn);
                     bridges[key] = bridge;
                     PublishSourceBridge(owner, bridge, onMaterialized);
                     AssociateSourceProperty(owner, bridge, implementation, property, accessor, slotParameters, slotReturn);
                 }
                 bridge.ClrInterfaceImpls = bridge.ClrInterfaceImpls.Value.Append(SourceDescriptor(application, slot.Name.Value,
-                    arity, slotParameters, slotReturn, KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
+                    arity, signature, slotReturn, KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
                         slot.TypeParams.OrDefault(), arguments), valueReturn)).ToArray();
                 bridged.Add(new(implementation, DescriptorKey(application, slot.Name.Value, arity, slotParameters, slotReturn, refs, isValue)));
             }
@@ -242,7 +246,7 @@ static partial class CovariantInterfaceReturnBridge
         var ownerArguments = owner.OwnArguments;
         var call = new BirCallInstance { OwnerType = new TypeNode.Fqn(owner.Name, ownerArguments.Length == 0 ? null : ownerArguments),
             Virtual = true, ClrOwnerResolved = true, Recv = new BirThis(), Method = implementation.Name,
-            Sig = source.Select(parameter => BirGraphValue.CopyType(parameter.Type.OrDefault())).ToArray(),
+            Sig = source.Select(FunctionSignatureIdentity.SignatureType).ToArray(),
             DynRet = BirGraphValue.CopyType(implementation.Ret.OrDefault()), Ret = BirGraphValue.CopyType(implementation.Ret.OrDefault()),
             Args = bridgeParameters.Select(parameter => (IBirExpression)new BirLocal { Name = parameter.Name }).ToArray() };
         if (SourceSuspend(implementation)) call.SuspendCall = true;
