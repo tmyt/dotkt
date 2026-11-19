@@ -15,17 +15,16 @@ static partial class CovariantInterfaceReturnBridge
         TypeNode Box(TypeNode argument) => new TypeNode.Fqn("CovariantBox", new[] { argument });
         var methodVariable = new TypeNode.Tv("method", 0);
         var ownerVariable = new TypeNode.Tv("type", 0);
-        BirOverride Edge(string owner, string member, string kind = "method") => new() {
-            Owner = new TypeNode.Fqn(owner, owner == "GenericContract" ? new TypeNode[] { ownerVariable } : null),
-            Member = member, Kind = kind,
-        };
         BirTypeParameter[] MethodFrame() => new[] { new BirTypeParameter { Name = "M",
             Constraints = new TypeNode[] { new TypeNode.Fqn("System.IComparable", new TypeNode[] { ownerVariable }) } } };
         var slot = new BirFunctionDeclaration { Name = "map", DeclarationId = "generic-slot", Ret = Box(broad),
             Params = new[] { new BirParameter { Name = "value", Type = methodVariable } }, TypeParams = MethodFrame(), Abstract = true };
         var implementation = new BirFunctionDeclaration { Name = "map", DeclarationId = "generic-body", Ret = Box(narrow),
             Params = new[] { new BirParameter { Name = "input", Type = methodVariable } }, TypeParams = MethodFrame(),
-            Body = Array.Empty<IBirStatement>(), Overrides = new[] { Edge("GenericContract", "map") } };
+            Body = Array.Empty<IBirStatement>(), Overrides = new[] { new BirOverride {
+                Owner = new TypeNode.Fqn("GenericContract", new TypeNode[] { ownerVariable }),
+                Member = "map", Kind = "method", DeclarationId = slot.DeclarationId,
+            } } };
         var contract = new BirInterfaceDefinition { Kind = "interface", Name = "GenericContract",
             TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Methods = new[] { slot } };
         var owner = new BirClassDefinition { Kind = "class", Name = "GenericOwner",
