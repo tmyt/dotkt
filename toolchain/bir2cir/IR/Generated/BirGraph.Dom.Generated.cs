@@ -3727,6 +3727,7 @@ internal static class BirGraphDom
             {
                 case "k": if (field.Value?.GetValue<string>() != "valueBlock") throw new FormatException(); break;
                 case "joinNullBranch": break;
+                case "transparentScope": break;
                 case "type": break;
                 case "stmts": break;
                 case "result": break;
@@ -3738,6 +3739,7 @@ internal static class BirGraphDom
         return new BirValueBlock
         {
             JoinNullBranch = Field<bool>(fields, "joinNullBranch", value => value!.GetValue<bool>()),
+            TransparentScope = Field<bool>(fields, "transparentScope", value => value!.GetValue<bool>()),
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
             Stmts = Field<IBirStatement[]>(fields, "stmts", value => ((JsonArray)value!).Select(item0 => ReadBirStatement(item0!)).ToArray()),
             Result = Field<IBirExpression>(fields, "result", value => ReadBirExpression(value!)),

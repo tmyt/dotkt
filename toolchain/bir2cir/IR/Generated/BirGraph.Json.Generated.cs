@@ -8784,12 +8784,13 @@ internal static partial class BirGraphJson
         Require(reader, JsonTokenType.StartObject);
         ulong seen = 0;
         OptionalField<bool> field0 = default;
-        OptionalField<TypeNode> field1 = default;
-        OptionalField<IBirStatement[]> field2 = default;
-        OptionalField<IBirExpression> field3 = default;
-        OptionalField<TypeNode> field4 = default;
+        OptionalField<bool> field1 = default;
+        OptionalField<TypeNode> field2 = default;
+        OptionalField<IBirStatement[]> field3 = default;
+        OptionalField<IBirExpression> field4 = default;
         OptionalField<TypeNode> field5 = default;
         OptionalField<TypeNode> field6 = default;
+        OptionalField<TypeNode> field7 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -8797,34 +8798,38 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 7); if (ReadString(ref reader) != "valueBlock") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 8); if (ReadString(ref reader) != "valueBlock") throw new FormatException(); break;
                 case "joinNullBranch":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "type":
+                case "transparentScope":
                     Seen(ref seen, 1UL << 1);
-                    field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
+                case "type":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 case "stmts":
-                    Seen(ref seen, 1UL << 2);
-                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "result":
-                    Seen(ref seen, 1UL << 3);
-                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 case "_erasedValueVariable":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 5);
-                    field5 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(ReadFrozenType(ref reader));
                     break;
                 case "sty":
-                    Seen(ref seen, 1UL << 6);
-                    field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -8833,12 +8838,13 @@ internal static partial class BirGraphJson
         return new BirValueBlock
         {
             JoinNullBranch = field0,
-            Type = field1,
-            Stmts = field2,
-            Result = field3,
-            _erasedValueVariable = field4,
-            SuspendFnTypePre = field5,
-            Sty = field6,
+            TransparentScope = field1,
+            Type = field2,
+            Stmts = field3,
+            Result = field4,
+            _erasedValueVariable = field5,
+            SuspendFnTypePre = field6,
+            Sty = field7,
         };
     }
 

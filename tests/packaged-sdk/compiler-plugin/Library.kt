@@ -10,6 +10,7 @@ fun <T> render(content: @Marker () -> T): Int = -1
 fun render(content: Int): Int = content
 
 class Tag
+class CompositeBox<T>(var value: T)
 @Marker
 companion fun Tag.marked(content: @Marker () -> Int): Int = -1
 

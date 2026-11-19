@@ -1065,6 +1065,14 @@ storage that outlives a direct call and are represented by shared cells instead.
 The enclosing variable, forwarding parameters, and materialized captures must agree on the same storage. The hint
 survives inline metadata and type substitution but is consumed before CIR; `ilemit` never decides capture sharing.
 
+A Kotlin IR composite is an ordered sequence, not a lexical scope. In statement
+position its statements are emitted in place; in value position a BIR
+`valueBlock` with `transparentScope: true` evaluates its prefix and returns
+its last value. Prefix variables remain visible to later expressions in the
+enclosing scope, including uses as CLR managed-reference arguments. An ordinary
+block keeps its own scope. Once physical local storage is selected, CIR needs
+only the ordered statements and result, not the Kotlin scope distinction.
+
 `InlineSplice` consumes the bindings rather than minting a local per parameter: it substitutes each `bindRef` into the
 payload body, and `CallEvalLowering` decides the physical form once, like any other plan. Two positions can only name
 a SLOT — a closure/state-machine capture DESCRIPTOR and an assignment target — so a value left as a `bindRef` is

@@ -40,6 +40,7 @@ import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.expressions.IrWhen
 import org.jetbrains.kotlin.ir.expressions.IrComposite
+import org.jetbrains.kotlin.ir.expressions.IrContainerExpression
 import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
@@ -460,22 +461,25 @@ internal fun BirEmitter.blockExpr(block: IrBlock): BirExpression {
 		return if (subjVar == null) result
 		else sourceValueBlock(type = birType(whenExpr.type), stmts = listOf(subjVar), result = result)
 	}
+	return containerValue(block)
+}
+
+// A composite introduces no source scope. Its prefix runs in order and its
+// last expression supplies the value, just like the ordinary tail of a block.
+internal fun BirEmitter.containerValue(block: IrContainerExpression): BirExpression {
 	val last = block.statements.lastOrNull()
 	// After the specialized paths, a Unit-valued block executes every statement and produces Unit.
 	// A Nothing tail never produces that value, even if IR gives its enclosing block the Unit type;
 	// retain the terminal expression below. Physical Unit representation belongs to bir2cir.
-	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing())) return sourceValueBlock(
-		type = birType(block.type),
-		stmts = bodyStmts(block),
-		result = BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral),
-		yieldsNull = false,
-	)
+	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing()))
+		return sourceUnitAfter(if (block is IrComposite) block.statements.flatMap { stmt(it) } else bodyStmts(block),
+			transparentScope = block is IrComposite)
 	// A value or terminal block: emit its preceding statements, then the last expression.
 	// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
 	// leading statements would lose the temp + the assignment.
 	if (block.statements.size > 1 && last is IrExpression) {
 		val pre = block.statements.dropLast(1).flatMap { stmt(it) }
-		return sourceValueBlock(stmts = pre, result = expr(last))
+		return sourceValueBlock(stmts = pre, result = expr(last), transparentScope = block is IrComposite)
 	}
 	return (last as? IrExpression)?.let { expr(it) } ?: BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral)
 }

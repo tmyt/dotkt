@@ -418,6 +418,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 	} else
 		kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(clrExternalOwner(node.symbol.owner) ?: typeName(node.symbol.owner)), name = "INSTANCE")
 	is IrBlock -> blockExpr(node)
+	is IrComposite -> containerValue(node)
 	is IrGetField -> {
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
 		val ownerClass = node.symbol.owner.parent as? IrClass
@@ -576,7 +577,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 		// (the SAM method = the lambda body), NOT a Func delegate -- a delegate has no `compare` so a call site that
 		// uses the value by interface (`comparator.compare(...)`) throws EntryPointNotFound. See samConversion.
 		IrTypeOperator.SAM_CONVERSION -> samConversion(node)
-		// Coercions to Unit / not-null pass the value through.
+		IrTypeOperator.IMPLICIT_COERCION_TO_UNIT -> sourceUnitAfter(stmt(node.argument), transparentScope = true)
 		else -> expr(node.argument)
 	}
 	is IrWhen -> ternary(node)

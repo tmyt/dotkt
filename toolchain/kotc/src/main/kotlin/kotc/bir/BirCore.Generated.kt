@@ -3883,12 +3883,17 @@ data class BirValueBlock(
     val stmts: List<BirStatement>,
     val result: BirExpression,
     val joinNullBranch: Boolean? = null,
+    val transparentScope: Boolean? = null,
     val type: TypeNode? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"valueBlock\"")
         joinNullBranch?.let { value ->
             output.append(",\"joinNullBranch\":")
+            output.append(value)
+        }
+        transparentScope?.let { value ->
+            output.append(",\"transparentScope\":")
             output.append(value)
         }
         type?.let { value ->

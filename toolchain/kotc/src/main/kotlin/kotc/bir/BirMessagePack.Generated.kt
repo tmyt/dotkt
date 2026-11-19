@@ -3114,11 +3114,15 @@ internal object BirMessagePack {
 
     private fun writeBirValueBlock(value: BirValueBlock, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.joinNullBranch == null) 0 else 1) + (if (value.type == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.joinNullBranch == null) 0 else 1) + (if (value.transparentScope == null) 0 else 1) + (if (value.type == null) 0 else 1))
         packer.packString("k")
         packer.packString("valueBlock")
         value.joinNullBranch?.let { child ->
             packer.packString("joinNullBranch")
+            packer.packBoolean(child)
+        }
+        value.transparentScope?.let { child ->
+            packer.packString("transparentScope")
             packer.packBoolean(child)
         }
         value.type?.let { child ->

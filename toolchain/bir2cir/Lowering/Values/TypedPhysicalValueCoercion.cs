@@ -337,8 +337,10 @@ static class TypedPhysicalValueCoercion
                     references.Add(node);
                 }
             }
-            if (node is BirBlock or BirValueBlock or BirConditional or BirTry or BirForRange or BirForArray or BirForIn)
+            if (node is BirBlock or BirConditional or BirTry or BirForRange or BirForArray or BirForIn
+                || node is BirValueBlock block && !block.TransparentScope.OrDefault())
                 declarations = new(declarations, StringComparer.Ordinal);
+            node.VisitChildren(child => Visit(child, declarations));
             if (node is BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance
                     or BirGenericStatic or BirGenericInstance or BirNew or BirNewClr
                 && Arguments(node) is { } arguments && ParameterTypes(node) is { } callParameters
@@ -357,7 +359,6 @@ static class TypedPhysicalValueCoercion
                         throw new InvalidOperationException($"bir2cir: local '{local.Name.Value}' is required by distinct CLR managed-reference element types");
                     required[declaration] = element;
                 }
-            node.VisitChildren(child => Visit(child, declarations));
             if (node is BirVariable { Name.HasValue: true } variable) declarations[variable.Name.Value] = variable;
         }
         var declarations = new Dictionary<string, BirGraphValue>(StringComparer.Ordinal);
