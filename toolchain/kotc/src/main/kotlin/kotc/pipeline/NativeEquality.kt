@@ -9,11 +9,15 @@ import org.jetbrains.kotlin.fir.declarations.utils.isStatic
 import org.jetbrains.kotlin.fir.expressions.*
 import org.jetbrains.kotlin.fir.expressions.builder.*
 import org.jetbrains.kotlin.fir.references.FirReference
+import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
 import org.jetbrains.kotlin.fir.references.builder.buildSimpleNamedReference
 import org.jetbrains.kotlin.fir.resolve.*
 import org.jetbrains.kotlin.fir.resolve.calls.candidate.FirNamedReferenceWithCandidate
 import org.jetbrains.kotlin.fir.resolve.calls.candidate.FirErrorReferenceWithCandidate
 import org.jetbrains.kotlin.fir.resolve.diagnostics.ConeAmbiguityError
+import org.jetbrains.kotlin.fir.resolve.dfa.Operation
+import org.jetbrains.kotlin.fir.resolve.dfa.OperationStatement
+import org.jetbrains.kotlin.fir.resolve.dfa.SyntheticVariable
 import org.jetbrains.kotlin.fir.resolve.transformers.body.resolve.FirAbstractBodyResolveTransformer
 import org.jetbrains.kotlin.fir.scopes.impl.FirLocalScope
 import org.jetbrains.kotlin.fir.scopes.impl.declaredMemberScope
@@ -45,6 +49,25 @@ import org.jetbrains.kotlin.types.SmartcastStability
 /** Select while the surrounding body is being resolved: a native predicate's true result
  * proves nothing about the operand types. Replacing equality after DFA would leave invalid smart casts. */
 internal class NativeEquality {
+    companion object {
+        private object NativeConditions : FirDeclarationDataKey()
+        private var FirFile.hasNativeConditions: Boolean? by FirDeclarationDataRegistry.data(NativeConditions)
+        /** Body resolution checks when coverage against source conditions. Diagnostics and
+         * FIR2IR must instead see the selected operator (and, if needed, its null guards). */
+        fun materialize(files: List<FirFile>) {
+            val transformer = object : FirTransformer<Unit>() {
+                override fun <E : FirElement> transformElement(element: E, data: Unit): E {
+                    element.transformChildren(this, data)
+                    return element
+                }
+                override fun transformEqualityOperatorCall(equalityOperatorCall: FirEqualityOperatorCall, data: Unit): FirStatement {
+                    val native = (equalityOperatorCall as? AtBodyResolution)?.native
+                    return native?.transform(this, data) ?: transformElement(equalityOperatorCall, data)
+                }
+            }
+            for (file in files) if (file.hasNativeConditions == true) file.transformChildren(transformer, Unit)
+        }
+    }
     private object LiftedOperand : GeneratedDeclarationKey()
     private val external = ClassId.topLevel(FqName("kotlin.clr.ClrExternal"))
     private val cache = mutableMapOf<Pair<FirRegularClassSymbol, Name>, List<FirNamedFunction>>()
@@ -82,10 +105,17 @@ internal class NativeEquality {
     }, Unit) }
 
     private inner class AtBodyResolution(val original: FirEqualityOperatorCall) : FirEqualityOperatorCall() {
+        var native: FirExpression? = null
+            private set
+        private var flowArguments: FirArgumentList? = null
         // The built-in equality resolver approximates integer literals to Int without an expected
         // type. Keep their original form so ordinary overload resolution can choose a native parameter.
         private val literals = original.argumentList.arguments.map { arg ->
-            (arg as? FirLiteralExpression)?.takeIf { it.kind == ConstantValueKind.IntegerLiteral ||
+            val value = if (arg is FirWhenSubjectExpression) {
+                val subject = (arg.calleeReference as? FirResolvedNamedReference)?.resolvedSymbol?.fir as? FirVariable
+                subject?.takeIf { it.origin == FirDeclarationOrigin.Synthetic.ImplicitWhenSubject }?.initializer
+            } else arg
+            (value as? FirLiteralExpression)?.takeIf { it.kind == ConstantValueKind.IntegerLiteral ||
                 it.kind == ConstantValueKind.UnsignedIntegerLiteral }?.let {
                 buildLiteralExpression(it.source, it.kind, it.value, it.annotations.toMutableList(), setType = false, prefix = it.prefix)
             }
@@ -93,7 +123,7 @@ internal class NativeEquality {
         override val source get() = original.source
         override val annotations get() = original.annotations
         @UnresolvedExpressionTypeAccess override val coneTypeOrNull get() = original.coneTypeOrNull
-        override val argumentList get() = original.argumentList
+        override val argumentList get() = flowArguments ?: original.argumentList
         override val calleeReference get() = original.calleeReference
         override val operation get() = original.operation
         override fun replaceConeTypeOrNull(newConeTypeOrNull: ConeKotlinType?) = original.replaceConeTypeOrNull(newConeTypeOrNull)
@@ -106,18 +136,49 @@ internal class NativeEquality {
         override fun <D> transformCalleeReference(transformer: FirTransformer<D>, data: D) = apply { original.transformCalleeReference(transformer, data) }
         @Suppress("UNCHECKED_CAST")
         override fun <E : FirElement,D> transform(transformer: FirTransformer<D>, data: D): E {
+            if (native != null) return if (transformer is FirAbstractBodyResolveTransformer) this as E
+                else super.transform(transformer, data)
             val result = original.transform<FirElement,D>(transformer, data)
             if (result !== original) return result as E
             if (transformer !is FirAbstractBodyResolveTransformer || data !is ResolutionMode) return this as E
-            return select(original, transformer, literals) as E
+            val analyzer = transformer.components.dataFlowAnalyzer
+            val sourceFlow = analyzer.currentSmartCastPosition
+            val selected = select(original, transformer, literals)
+            if (selected === original) return original as E
+            native = selected
+            transformer.context.file.hasNativeConditions = true
+
+            // An equal pair with exactly one possibly-null operand proves only presence.
+            // Reuse K2's stability check, including whether evaluating the RHS reassigned
+            // the LHS. Never copy its operand type, singleton or identity implications.
+            val operand = original.arguments.singleOrNull { it.resolvedType.canBeNull(transformer.session) }
+            val condition = if (operation == FirOperation.EQ) Operation.EqTrue else Operation.EqFalse
+            if (operand != null && sourceFlow?.getImplications(SyntheticVariable(original)).orEmpty().any {
+                val effect = it.effect as? OperationStatement
+                it.condition.operation == condition && effect?.operation == Operation.NotEqNull &&
+                    effect.variable == analyzer.getOrCreateVariable(operand)
+            }) {
+                // A flow-only Any witness has no identity or narrower type to propagate.
+                // Neither this argument list nor the witness is emitted.
+                val present = buildBlock { coneTypeOrNull = transformer.session.builtinTypes.anyType.coneType }
+                flowArguments = buildArgumentList { arguments += operand; arguments += present }
+                try {
+                    analyzer.enterEqualityOperatorCall()
+                    analyzer.exitEqualityOperatorLhs()
+                    analyzer.exitEqualityOperatorCall(this, true)
+                } finally {
+                    flowArguments = null
+                }
+            }
+            return this as E
         }
     }
 
-    private fun select(eq: FirEqualityOperatorCall, resolver: FirAbstractBodyResolveTransformer, literals: List<FirLiteralExpression?>): FirStatement {
+    private fun select(eq: FirEqualityOperatorCall, resolver: FirAbstractBodyResolveTransformer, literals: List<FirLiteralExpression?>): FirExpression {
         val session = resolver.session
         val name = Name.identifier(if (eq.operation == FirOperation.EQ) "op_Equality" else "op_Inequality")
         val args = eq.argumentList.arguments
-        if (args.any { !it.hasResolvedType || it is FirLiteralExpression && it.kind == ConstantValueKind.Null }) return eq
+        if (args.any { !it.hasResolvedType || it.resolvedType.isNullableNothing }) return eq
         val functions = args.flatMap { arg ->
             owners(arg.resolvedType, session, mutableSetOf()).flatMap { candidates(session, it, name) }
         }.distinct()

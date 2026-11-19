@@ -825,7 +825,9 @@ largest value with `NaN == NaN` structurally and `NaN.compareTo(NaN) == 0`. On t
   equality / inequality operator independently, even if a Kotlin subclass overrides `equals`. This is
   static overload resolution on the non-null operand types, not a virtual call or a type test.
   If either operand is null the comparison uses null identity, without invoking the operator.
-  Subject-based `when` value conditions use the same equality rule. Explicit `equals`,
+  Subject-based `when` value conditions use the same equality rule and retain Kotlin's
+  source exhaustiveness checks. Comparing a nullable value with a non-null value can
+  prove non-nullness (`==` true or `!=` false), but not identity or a narrower class. Explicit `equals`,
   identity and collection lookup retain Kotlin semantics. See
   [CLR operator views](user/using-dotnet-from-kotlin.md) for applicability and comparison ordering.
 - Outside that interop extension, Kotlin `==` and `Any.equals` use the same virtual equality rule through concrete, Any, nullable, generic,
