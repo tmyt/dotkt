@@ -30,14 +30,26 @@ internal sealed partial class AssemblyScanner
     static void RemoveShadowedComparisonViews(Package package, NameTable names)
     {
         var compare = package.Function.Where(f => names.StringValue(f.Name) == "compareTo" && f.ReceiverType != null)
-            .Select(f => (View: f, Role: f.FunctionAnnotation.Where(a => a.Id == names.Class("kotlin.clr.ClrExternal"))
-                .SelectMany(a => a.Argument).Where(arg => names.StringValue(arg.NameId) == "operatorRole")
-                .Select(arg => names.StringValue(arg.Value.StringValue)).SingleOrDefault()))
+            .Select(f => {
+                var args = f.FunctionAnnotation.Where(a => a.Id == names.Class("kotlin.clr.ClrExternal"))
+                    .SelectMany(a => a.Argument);
+                var role = args.SingleOrDefault(arg => names.StringValue(arg.NameId) == "operatorRole");
+                var mask = args.SingleOrDefault(arg => names.StringValue(arg.NameId) == "readonlyOperands");
+                return (View: f, Role: role == null ? null : names.StringValue(role.Value.StringValue),
+                    Mask: (int)(mask?.Value.IntValue ?? 0));
+            })
             .Where(x => x.Role is "strictOrder" or "nonStrictOrder")
             .GroupBy(x => (TypeKey(x.View.ReceiverType), FunctionShapeKey(x.View, names)));
         foreach (var g in compare.ToArray())
-            if (g.Any(x => x.Role == "strictOrder"))
-                foreach (var x in g.Where(x => x.Role == "nonStrictOrder")) package.Function.Remove(x.View);
+        {
+            var role = g.Any(x => x.Role == "strictOrder") ? "strictOrder" : "nonStrictOrder";
+            var masks = g.Where(x => x.Role == role).Select(x => x.Mask).Distinct().ToArray();
+            // Identical Kotlin signatures have the same callable ID. Prefer a pair needing
+            // no additional borrows. Incomparable passing modes have no unique value view.
+            var best = masks.Where(m => masks.All(other => (m & other) == m)).ToArray();
+            foreach (var x in g)
+                if (x.Role != role || best.Length == 0 || x.Mask != best[0]) package.Function.Remove(x.View);
+        }
     }
 
     // Both predicates must accept each operand. Never erase mismatching generic arguments

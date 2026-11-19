@@ -40,6 +40,10 @@ public readonly struct ReadonlyOrder(int key)
     public static bool operator >(in ReadonlyOrder a, in ReadonlyOrder b) { Trace += ">"; return a.Key > b.Key; }
     public static bool operator <=(int a, in ReadonlyOrder b) { Trace += "L"; return a <= b.Key; }
     public static bool operator >=(int a, in ReadonlyOrder b) { Trace += "G"; return a >= b.Key; }
+    public static bool operator <(in ReadonlyOrder a, int b) => throw new System.Exception();
+    public static bool operator >(in ReadonlyOrder a, int b) => throw new System.Exception();
+    public static bool operator <(ReadonlyOrder a, int b) => a.Key < b;
+    public static bool operator >(ReadonlyOrder a, int b) => a.Key > b;
 }
 
 public readonly struct PartialOrder<T>(int key)

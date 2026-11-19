@@ -61,6 +61,7 @@ class OperatorViewTests {
         check(2 < ReadonlyOrder.Make(3) && ReadonlyOrder.Trace == "32<>3LG")
         var first = ReadonlyOrder(1)
         var second = ReadonlyOrder(2)
+        check(first < 2)
         check(ReadonlyOrder.op_LessThan(byref(first), byref(second)))
     }
 
