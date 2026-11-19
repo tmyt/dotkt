@@ -202,8 +202,8 @@ public actual class Regex {
         return match.success && match.index == index
     }
 
-    @kotlin.clr.ClrIntrinsic("Replace")
-    public actual fun replace(input: CharSequence, replacement: String): String = TODO("clr binding should be implemented")
+    public actual fun replace(input: CharSequence, replacement: String): String =
+        replaceString(input.toString(), replacement, firstOnly = false)
 
     // Walk the matches over the System...Match adapter, splicing in transform()'s result for each match (mirrors Kotlin/JVM;
     // avoids bridging a Kotlin lambda to a System...MatchEvaluator delegate).
@@ -228,15 +228,78 @@ public actual class Regex {
         return sb.toString()
     }
 
-    // The native count-limited Replace overload consumes a String snapshot.
     public actual fun replaceFirst(input: CharSequence, replacement: String): String =
-        nativeReplaceFirst(input.toString(), replacement, 1)
+        replaceString(input.toString(), replacement, firstOnly = true)
 
-    // Thin wrapper for the count-limited overload Regex.Replace(string input, string replacement, int count).
-    // The `input` param is String (not CharSequence) so the @ClrIntrinsic binds the exact 3-arg String overload.
-    @kotlin.clr.ClrIntrinsic("Replace")
-    private fun nativeReplaceFirst(input: String, replacement: String, count: Int): String =
-        TODO("@Clr System.Text.RegularExpressions.Regex.Replace(string,string,int)")
+    private fun replaceString(text: String, replacement: String, firstOnly: Boolean): String {
+        val first = nativeFirstMatch(text)
+        if (!first.success) return text
+        val matches = generateSequence(first) { m ->
+            if (firstOnly) null else m.nextMatch().takeIf { it.success }
+        }
+        // A foreign Regex can search backwards. Select in engine order, splice in text order.
+        val ordered = if (!firstOnly && nativeRightToLeft) matches.toList().asReversed().asSequence() else matches
+        val result = StringBuilder(text.length)
+        var start = 0
+        for (match in ordered) {
+            result.append(text, start, match.index)
+            appendReplacement(result, replacement, match.groups)
+            start = match.index + match.length
+        }
+        return result.append(text, start, text.length).toString()
+    }
+
+    // Kotlin/Native-Wasm replacement grammar; CLR group numbers need not be contiguous.
+    private fun appendReplacement(out: StringBuilder, replacement: String, groups: ClrGroupCollection) {
+        var index = 0
+        var literalStart = 0
+        while (index < replacement.length) {
+            val c = replacement[index++]
+            if (c != '\\' && c != '$') continue
+            out.append(replacement, literalStart, index - 1)
+            require(index < replacement.length) { "Incomplete replacement" }
+            if (c == '\\') {
+                out.append(replacement[index++])
+            } else if (replacement[index] == '{') {
+                val start = ++index
+                while (index < replacement.length) {
+                    val ch = replacement[index]
+                    if (ch !in 'a'..'z' && ch !in 'A'..'Z' && ch !in '0'..'9') break
+                    index++
+                }
+                require(index > start && replacement[start] !in '0'..'9' &&
+                        index < replacement.length && replacement[index] == '}') { "Invalid named group reference" }
+                val name = replacement.substring(start, index++)
+                require(groups.containsKey(name)) { "No group with name <$name>" }
+                out.append(groups[name].value)
+            } else {
+                require(replacement[index] in '0'..'9') { "Invalid capturing group reference" }
+                var number = replacement[index++] - '0'
+                while (index < replacement.length && replacement[index] in '0'..'9') {
+                    val digit = replacement[index] - '0'
+                    if (number > (Int.MAX_VALUE - digit) / 10) break
+                    val next = number * 10 + digit
+                    if (nativeGroupNameFromNumber(next).isEmpty()) break
+                    number = next
+                    index++
+                }
+                if (nativeGroupNameFromNumber(number).isEmpty())
+                    throw IndexOutOfBoundsException("Group with index $number does not exist")
+                out.append(groups[number].value)
+            }
+            literalStart = index
+        }
+        out.append(replacement, literalStart, replacement.length)
+    }
+
+    @kotlin.clr.ClrIntrinsic("GroupNameFromNumber")
+    private fun nativeGroupNameFromNumber(number: Int): String = TODO("clr binding should be implemented")
+
+    @kotlin.clr.ClrIntrinsic("RightToLeft")
+    private val nativeRightToLeft: Boolean get() = TODO("clr binding should be implemented")
+
+    @kotlin.clr.ClrIntrinsic("Match")
+    private fun nativeFirstMatch(input: String): ClrMatch = TODO("clr binding should be implemented")
 
     // Native matching remains the CLR engine's responsibility.
     @kotlin.clr.ClrIntrinsic("Match")
@@ -313,8 +376,15 @@ public actual class Regex {
          * Returns a literal replacement expression for the specified [literal] string.
          * No characters of that string will have special meaning when it is used as a replacement string in [Regex.replace] function.
          */
-        // In .NET replacement strings only `$` is special (e.g. `$1`, `$$`); escape it to `$$` for a literal replacement.
-        public actual fun escapeReplacement(literal: String): String = literal.replace("\$", "\$\$", false)
+        public actual fun escapeReplacement(literal: String): String {
+            if ('\\' !in literal && '$' !in literal) return literal
+            val result = StringBuilder(literal.length)
+            for (c in literal) {
+                if (c == '\\' || c == '$') result.append('\\')
+                result.append(c)
+            }
+            return result.toString()
+        }
 
         // #162: the STATIC 3-arg overload System...Regex.Match(string input, string pattern, RegexOptions options) — used
         // by [matchEntire] to run an anchored `\A(?:...)\z` re-match with the instance's own compiled options. Static (a

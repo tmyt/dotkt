@@ -10,4 +10,7 @@ fun capturedMatch(input: String): MatchResult = Regex("(?<word>a)(?<tail>b)?").f
 
 fun capturedGroup(match: MatchResult, name: String): MatchGroup? = match.groups[name]
 
+fun replaceFromLibrary(regex: Regex, input: String, replacement: String): String =
+    regex.replace(input, replacement)
+
 inline fun observeCapturedGroups(input: String, block: (MatchResult) -> String): String = block(capturedMatch(input))

@@ -154,7 +154,7 @@ class RegexTests {
         // semantic Regex alias; the latter must remain an instance method on the nested companion carrier.
         assertEquals("a\\+b", Regex.escape("a+b"))
         assertTrue(Regex.fromLiteral("a+b").matches("a+b"))
-        assertEquals("\$\$1", Regex.escapeReplacement("\$1"))
+        assertEquals("\\\$1", Regex.escapeReplacement("\$1"))
         // A bound callable reference must use the member's binding too: the companion carrier contains a TODO stub,
         // while the authored intrinsic targets the BCL static Regex.Escape method.
         val escapeRef: (String) -> String = Regex.Companion::escape

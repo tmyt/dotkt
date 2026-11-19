@@ -970,6 +970,12 @@ alternation and preserves the user's capture-group NUMBERS — with the instance
 engine backtracks to a full-input match when one exists (alternation branch order, lazy quantifiers, `(?i)` options,
 and coexisting `^…$` anchors all behave as Kotlin/JVM). `matches` delegates to `matchEntire != null`.
 
+`Regex.replace` and `replaceFirst` use Kotlin replacement strings: `$0` is the whole match,
+`$1` and `${name}` refer to groups, and a backslash quotes the next character. Use
+`Regex.escapeReplacement` for literal text. The native CLR `Regex.Replace` method
+continues to accept .NET replacement strings (for example, `$&` for the whole match).
+Both APIs operate on the same CLR Regex and use its engine for matching.
+
 ## 5b-quater. `Regex.options` decodes the compiled `RegexOptions`; three `RegexOption`s have no CLR bit (deliberate CLR choice)
 
 `Regex.options` reads the instance's compiled `System.Text.RegularExpressions.RegexOptions` `[Flags]` bitmask (the enum
