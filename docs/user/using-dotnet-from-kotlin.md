@@ -198,8 +198,9 @@ ordinary .NET platform rules and remain the application's responsibility.
   `Comparable<T>` conformance or preserve every individual native predicate.
   A C# `in T` operand is a Kotlin value in this adapter: both operands are
   evaluated once, left to right, and the predicates borrow those values.
-  If pairs would expose the same Kotlin signature, the pair that requires no
-  additional borrows wins; incomparable passing modes have no unique value view.
+  Among pairs of the same kind with the same Kotlin signature, prefer the
+  one requiring no additional borrows. Incomparable passing modes do not
+  supply a unique pair. Writable `ref`/`out` operands are not value views.
   An explicit call to the native operator method retains its CLR parameter signature.
 - A non-conversion CLR operator is also callable by its exact method name. For example,
   `SqlInt32.op_Equality(a, b)` returns a `SqlBoolean`, including SQL null. Call static

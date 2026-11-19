@@ -39,16 +39,20 @@ internal sealed partial class AssemblyScanner
                     Mask: (int)(mask?.Value.IntValue ?? 0));
             })
             .Where(x => x.Role is "strictOrder" or "nonStrictOrder")
-            .GroupBy(x => (TypeKey(x.View.ReceiverType), FunctionShapeKey(x.View, names)));
+            .GroupBy(x => (TypeKey(x.View.ReceiverType), FunctionShapeKey(x.View, names, ignoreParameterNames: true)));
         foreach (var g in compare.ToArray())
         {
-            var role = g.Any(x => x.Role == "strictOrder") ? "strictOrder" : "nonStrictOrder";
-            var masks = g.Where(x => x.Role == role).Select(x => x.Mask).Distinct().ToArray();
-            // Identical Kotlin signatures have the same callable ID. Prefer a pair needing
-            // no additional borrows. Incomparable passing modes have no unique value view.
-            var best = masks.Where(m => masks.All(other => (m & other) == m)).ToArray();
+            // Prefer strict when that role can supply an unambiguous passing mode.
+            var keep = new HashSet<Function>(ReferenceEqualityComparer.Instance);
+            foreach (var role in new[] { "strictOrder", "nonStrictOrder" })
+            {
+                var pairs = g.Where(x => x.Role == role).ToArray();
+                foreach (var x in pairs.Where(x => pairs.All(other => (x.Mask & other.Mask) == x.Mask)))
+                    keep.Add(x.View);
+                if (keep.Count != 0) break;
+            }
             foreach (var x in g)
-                if (x.Role != role || best.Length == 0 || x.Mask != best[0]) package.Function.Remove(x.View);
+                if (!keep.Contains(x.View)) package.Function.Remove(x.View);
         }
     }
 
@@ -100,6 +104,10 @@ internal sealed partial class AssemblyScanner
                 var second = byName[greater].Single();
                 var mask = ReadonlyOperands(first);
                 if (mask != ReadonlyOperands(second)) continue;
+                // A writable location cannot be a value operand of the comparison adapter.
+                // Its original CLR method remains available for explicit ref/out calls.
+                if (declaration.ValueParameter.Where((p, i) => (mask & (1 << i)) == 0 &&
+                        signatures.ByRefElement(p.Type) != null).Any()) continue;
                 KType Input(ProjectedFunction predicate, int i) => (mask & (1 << i)) != 0
                     ? signatures.ByRefElement(predicate.Declaration.ValueParameter[i].Type)!
                     : predicate.Declaration.ValueParameter[i].Type;
@@ -118,7 +126,6 @@ internal sealed partial class AssemblyScanner
                         new Annotation.Types.Argument { NameId = names.String("readonlyOperands"),
                             Value = new Annotation.Types.Argument.Types.Value {
                                 Type = Annotation.Types.Argument.Types.Value.Types.Type.Int, IntValue = mask } });
-                break;
             }
         }
         int ReadonlyOperands(ProjectedFunction predicate)

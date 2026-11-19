@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import OperatorViews.*
+import ExplicitOperators.*
 import kotlin.clr.byref
 
 private infix fun Bits.and(right: Operand<Double>): Double = right.Value + 1.0
@@ -62,7 +63,11 @@ class OperatorViewTests {
         var first = ReadonlyOrder(1)
         var second = ReadonlyOrder(2)
         check(first < 2)
+        val left = BorrowLeft<Int>()
+        check(first < Ticket(2) && left < BorrowRight<Int>() && left < left)
         check(ReadonlyOrder.op_LessThan(byref(first), byref(second)))
+        var counter = 0L
+        check(ReadonlyOrder.op_LessThan(byref(first), byref(counter)) && counter == 1L)
     }
 
     @TestAttribute
