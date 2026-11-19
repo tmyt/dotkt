@@ -40,6 +40,7 @@ import org.jetbrains.kotlin.ir.expressions.IrTypeOperatorCall
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.expressions.IrWhen
 import org.jetbrains.kotlin.ir.expressions.IrComposite
+import org.jetbrains.kotlin.ir.expressions.IrContainerExpression
 import org.jetbrains.kotlin.ir.expressions.IrDoWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrVararg
 import org.jetbrains.kotlin.ir.expressions.IrSpreadElement
@@ -460,13 +461,19 @@ internal fun BirEmitter.blockExpr(block: IrBlock): BirExpression {
 		return if (subjVar == null) result
 		else sourceValueBlock(type = birType(whenExpr.type), stmts = listOf(subjVar), result = result)
 	}
+	return containerValue(block)
+}
+
+// A composite introduces no source scope. Its prefix runs in order and its
+// last expression supplies the value, just like the ordinary tail of a block.
+internal fun BirEmitter.containerValue(block: IrContainerExpression): BirExpression {
 	val last = block.statements.lastOrNull()
 	// After the specialized paths, a Unit-valued block executes every statement and produces Unit.
 	// A Nothing tail never produces that value, even if IR gives its enclosing block the Unit type;
 	// retain the terminal expression below. Physical Unit representation belongs to bir2cir.
 	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing())) return sourceValueBlock(
 		type = birType(block.type),
-		stmts = bodyStmts(block),
+		stmts = if (block is IrComposite) block.statements.flatMap { stmt(it) } else bodyStmts(block),
 		result = BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral),
 		yieldsNull = false,
 	)

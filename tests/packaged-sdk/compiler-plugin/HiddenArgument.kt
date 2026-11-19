@@ -8,6 +8,7 @@ import org.jetbrains.kotlin.ir.builders.declarations.buildFun
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.util.hasAnnotation
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -45,7 +46,12 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
                     return builder.irCall(expression.symbol).also { call ->
                         expression.typeArguments.forEachIndexed { i, type -> call.typeArguments[i] = type }
                         args.forEachIndexed { i, arg -> call.arguments[i] = arg }
-                        call.arguments[args.size] = builder.irInt(73)
+                        // The consuming call must see the last value and execute the prefix.
+                        call.arguments[args.size] = builder.irComposite(resultType = context.irBuiltIns.intType) {
+                            val token = irTemporary(irComposite(origin = IrStatementOrigin.DEFAULT_VALUE,
+                                resultType = context.irBuiltIns.intType) { +irInt(73) })
+                            +irGet(token)
+                        }
                     }
                 }
             })

@@ -418,6 +418,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 	} else
 		kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(clrExternalOwner(node.symbol.owner) ?: typeName(node.symbol.owner)), name = "INSTANCE")
 	is IrBlock -> blockExpr(node)
+	is IrComposite -> containerValue(node)
 	is IrGetField -> {
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
 		val ownerClass = node.symbol.owner.parent as? IrClass
