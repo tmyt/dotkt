@@ -72,6 +72,11 @@ class InheritedCovariantSlotTests {
         val genericReading: Reading<Double> = reading
         val starReading: Reading<*> = reading
         check(reading.value == 4.5 && genericReading.value == 4.5 && starReading.value == 4.5)
+        // Both Kotlin base views can use the erased entry. Invoke each CLR declaration independently.
+        val typedSlot = (reading as System.Object).GetType().GetInterfaces().single { it.IsGenericType }
+        val erasedSlot = typedSlot.GetInterfaces().single()
+        check(typedSlot.GetProperty("value")!!.GetValue(reading) == 4.5)
+        check(erasedSlot.GetMethods().single().Invoke(reading, null) == 4.5)
 
         val strings = Derived("before")
         val producer: Producer<String> = strings
