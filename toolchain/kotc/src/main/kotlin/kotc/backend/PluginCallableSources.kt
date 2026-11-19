@@ -26,7 +26,7 @@ import org.jetbrains.kotlin.util.metadataVersion
 
 /** Join the frontend signature to its physical function across the IR plugin boundary. */
 class PluginCallableSources internal constructor(private val frontend: MetadataFrontendPipelineArtifact) : IrGenerationExtension {
-    private data class Original(val function: IrSimpleFunction, val owners: List<FirClass>)
+    private data class Original(val function: IrSimpleFunction, val property: IrProperty?, val owners: List<FirClass>)
     private val originals = mutableMapOf<FirCallableDeclaration, Original>()
 
     private fun IrSimpleFunction.fir(): FirCallableDeclaration? {
@@ -57,7 +57,7 @@ class PluginCallableSources internal constructor(private val frontend: MetadataF
 
     override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
         for (file in moduleFragment.files) visit(file, emptyList()) { fn, owners ->
-            fn.fir()?.let { originals[it] = Original(fn, owners) }
+            fn.fir()?.let { originals[it] = Original(fn, fn.correspondingPropertySymbol?.owner, owners) }
         }
     }
 
@@ -70,7 +70,9 @@ class PluginCallableSources internal constructor(private val frontend: MetadataF
         }
         val selected = originals.mapNotNull { (source, original) ->
             val candidates = representatives[source].orEmpty()
+            val livePropertyGetter = original.property?.getter?.takeIf { it in live && it.correspondingPropertySymbol == original.property.symbol }
             val fn = when {
+                livePropertyGetter != null -> livePropertyGetter
                 original.function in candidates -> original.function // A helper may have copied its metadata.
                 candidates.size == 1 -> candidates.single() // A replacement may have moved the metadata.
                 candidates.isEmpty() -> original.function.takeIf { it in live } ?: return@mapNotNull null

@@ -78,6 +78,9 @@ internal sealed class KotlinSourceMetadata
         return function;
     }
 
+    public bool HasProperty(string? getterIdentity) =>
+        getterIdentity != null && _callables.TryGetValue(getterIdentity, out var source) && source.PropertyAccessors != null;
+
     public Property? Property(string? getterIdentity, NameTable names)
     {
         if (getterIdentity == null || !_callables.TryGetValue(getterIdentity, out var source) ||

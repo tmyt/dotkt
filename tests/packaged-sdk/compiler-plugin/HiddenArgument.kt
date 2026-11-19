@@ -12,6 +12,7 @@ import org.jetbrains.kotlin.ir.expressions.IrExpression
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.util.hasAnnotation
+import org.jetbrains.kotlin.ir.util.deepCopyWithSymbols
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.ir.visitors.*
@@ -81,7 +82,17 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
         for (declaration in container.declarations) when (declaration) {
             is IrClass -> visit(declaration)
             is IrSimpleFunction -> lower(declaration)
-                is IrProperty -> declaration.getter?.let(::lower)
+            is IrProperty -> declaration.getter?.let { current ->
+                val getter = if (target(current) && declaration.parent is IrClass && declaration.backingField == null) {
+                    // Keep the property symbol, but replace the getter and drop the FIR metadata.
+                    declaration.metadata = null
+                    current.deepCopyWithSymbols(current.parent).also {
+                        it.correspondingPropertySymbol = declaration.symbol
+                        declaration.getter = it
+                    }
+                } else current
+                lower(getter)
+            }
         }
     }
     module.files.forEach(::visit)
