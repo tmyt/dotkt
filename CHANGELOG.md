@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- `kotlin.reflect.typeOf<T>()` returns a Kotlin type descriptor instead of throwing. Reified calls
+  across assemblies retain nested arguments, projections, and nullability.
 - Generic calls can capture the type represented by a star-projected `KClass<*>`, including across DLLs.
 - Source files with case-insensitively colliding basenames can be compiled in the same module.
 - Kotlin collection slot bridges preserve the declared result when an override

@@ -254,6 +254,7 @@ static partial class RoundtripMetadata
                 if (value.DeclarationSemanticSignature.HasValue) { writer.WritePropertyName("signature"); value.DeclarationSemanticSignature.Value.WritePayload(writer); }
                 WriteIndices(writer, "reified", value.SemanticReifiedIndices);
                 WriteIndices(writer, "nullableWitness", value.NullableWitnessIndices);
+                WriteIndices(writer, "reflectedWitness", value.ReflectedWitnessIndices);
                 if (value.NullableRepresentationFrame.HasValue)
                 { writer.WritePropertyName(NullableRepresentationFrame.MetadataKey); value.NullableRepresentationFrame.Value.WriteJson(writer); }
             }

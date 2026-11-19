@@ -136,6 +136,11 @@ public abstract partial record TypeNode
                     }
                     writer.WriteEndArray();
                 }
+                if ((node.Reflective) is { } value_reflective)
+                {
+                    writer.WritePropertyName("reflective");
+                    writer.WriteBooleanValue(value_reflective);
+                }
                 writer.WriteEndObject();
                 break;
             }
@@ -342,6 +347,7 @@ public abstract partial record TypeNode
         TypeNode? value_ret = null;
         TypeNode[]? value_params = null;
         TypeNode? value_recv = null;
+        bool? value_reflective = null;
         TypeNode[]? value_ctx = null;
         string? value_clr = null;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
@@ -363,6 +369,9 @@ public abstract partial record TypeNode
                 case "recv":
                     value_recv = ReadJson(ref reader);
                     break;
+                case "reflective":
+                    value_reflective = reader.GetBoolean();
+                    break;
                 case "ctx":
                     value_ctx = ReadTypeArrayJson(ref reader);
                     break;
@@ -374,7 +383,7 @@ public abstract partial record TypeNode
             }
         }
         RequireToken(reader, JsonTokenType.EndObject);
-        return new Fn(value_suspend ?? throw new FormatException(), value_ret ?? throw new FormatException(), value_params ?? throw new FormatException(), value_recv, value_clr, value_ctx);
+        return new Fn(value_suspend ?? throw new FormatException(), value_ret ?? throw new FormatException(), value_params ?? throw new FormatException(), value_recv, value_clr, value_ctx) { Reflective = value_reflective };
     }
 
     private static Nullable ReadNullableJson(ref Utf8JsonReader reader)

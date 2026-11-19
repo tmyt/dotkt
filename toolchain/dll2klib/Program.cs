@@ -6195,11 +6195,11 @@ internal sealed partial class AssemblyScanner : IDisposable
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is < 2 or > 8 ||
+        if (propertyCount is < 2 or > 9 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             root.EnumerateObject().Any(property => property.Name is not (
-                "id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or "signatureAllocation" or "constructorPrimary")) ||
+                "id" or "name" or "signature" or "reified" or "nullableWitness" or "reflectedWitness" or NullableRepresentationFrame.MetadataKey or "signatureAllocation" or "constructorPrimary")) ||
             root.TryGetProperty("constructorPrimary", out var primaryNode)
                 && primaryNode.ValueKind is not (JsonValueKind.True or JsonValueKind.False) ||
             root.TryGetProperty("signatureAllocation", out var allocationNode)

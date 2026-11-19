@@ -251,8 +251,8 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:
-- **Nested Kotlin classifier identity.** The BIR `fqn.classifier` is the exact Kotlin package name, ordered enclosing
-  class names, and simple class name from the frontend's ClassId. Kotlin type carriers preserve it even when CLR
+- **Kotlin classifier identity.** The BIR `fqn.classifier` is the exact Kotlin package name, ordered enclosing
+  class names (empty for a top-level class), and simple class name from the frontend's ClassId. Kotlin type carriers preserve it even when CLR
   representation changes or erases the type. It is not a physical type or member signature and does not change
   the lowering lookup key `fqn.name`. dll2klib uses the classifier's stated package/class boundary directly.
 - **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) allow CIR to spell physical shapes

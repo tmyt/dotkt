@@ -43,6 +43,7 @@ for method in declarations(document):
         assert identity["reified"] == [1], (name, identity)
         witnesses = [] if name == "witnessFreeCheck" else [1]
         assert identity.get("nullableWitness", []) == witnesses, (name, identity)
+        assert not identity.get("reflectedWitness"), (name, "is-only operations do not request a KType")
         assert len(identity["signature"]["params"]) == expected[name], (name, identity)
         assert len(method["params"]) == expected[name] + len(witnesses), (name, method["params"])
         if witnesses:
@@ -52,6 +53,7 @@ for method in declarations(document):
                     {"t": "fqn", "name": "System.Func", "args": [
                         {"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"},
                     ]},
+                    {"t": "fqn", "name": "System.Object"},
                 ],
             }
         assert method["ret"] == {
@@ -90,11 +92,12 @@ for call in objects(consumer):
     assert len(target["parameterTypes"]) == parameter_count, (name, target)
     if witness_count:
         assert target["parameterTypes"][-2] == {
-            "t": "fqn", "name": "System.ValueTuple`3", "args": [
+            "t": "fqn", "name": "System.ValueTuple`4", "args": [
                 {"t": "fqn", "name": "System.Int32"}, {"t": "fqn", "name": "System.Type"},
                 {"t": "fqn", "name": "System.Func`2", "args": [
                     {"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"},
                 ]},
+                {"t": "fqn", "name": "System.Object"},
             ],
         }
     assert target["parameterTypes"][-1]["name"] == "kotlin.coroutines.Continuation$star"

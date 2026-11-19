@@ -586,7 +586,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 	is IrTry -> tryExpr(node)
 	// `T::class` / `Foo::class` -> a System.Type token. For a generic param `T` this is `ldtoken !!0` in the
 	// generic method (CLR reified generics); `Foo::class` is a concrete `ldtoken Foo`.
-	is IrClassReference -> kotc.bir.BirClassReference(birType(node.classType))
+	is IrClassReference -> kotc.bir.BirClassReference(functionClassifierOperand(node.classType) ?: birType(node.classType))
 	// `x::class` (runtime class of an instance) -> `x.GetType()` (a System.Type); `.simpleName`/`.qualifiedName`
 	// on the result route to Type.Name/FullName, same as the `T::class` literal path.
 	is IrGetClass -> kotc.bir.BirRuntimeClass(e = expr(node.argument))

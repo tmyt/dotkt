@@ -53,6 +53,7 @@ static partial class RoundtripMetadata
                     DeclarationSemanticSignature = method.DeclarationSemanticSignature,
                     SemanticReifiedIndices = method.SemanticReifiedIndices,
                     NullableWitnessIndices = method.NullableWitnessIndices,
+                    ReflectedWitnessIndices = method.ReflectedWitnessIndices,
                     NullableRepresentationFrame = method.NullableRepresentationFrame,
                 };
                 if (IdentityPresent(identity)) method.RoundtripDeclarationIdentity = identity;
@@ -65,6 +66,7 @@ static partial class RoundtripMetadata
                 method.DeclarationSemanticSignature = default;
                 method.SemanticReifiedIndices = default;
                 method.NullableWitnessIndices = default;
+                method.ReflectedWitnessIndices = default;
                 method.NullableRepresentationFrame = default;
                 if (runtimeMode) method.MethodTypeParameterBoundsPre = default;
                 else if (method.MethodTypeParameterBoundsPre.IsPresent)
