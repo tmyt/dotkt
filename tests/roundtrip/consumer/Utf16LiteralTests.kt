@@ -12,6 +12,22 @@ private fun assertImportedUnits(text: String, vararg expected: Int) {
 }
 
 class Utf16LiteralTests {
+    @TestAttribute fun importedSlicesSeparateRawStorageFromTranscoding() {
+        val chars = charArrayOf('!', '\ud800', '\u0000', '\udfff', '?')
+        val raw = textWindow(chars, 1, 4)
+        chars[1] = 'A'
+        assertImportedUnits(raw, 0xd800, 0, 0xdfff)
+        check(textWindow(chars, chars.size, chars.size).isEmpty())
+        val text = "\ud800\udc00"
+        val bytes = encodedWindow(text, 1, 2)
+        check(bytes.contentEquals(byteArrayOf(0xef.toByte(), 0xbf.toByte(), 0xbd.toByte())))
+        val padded = byteArrayOf(0xff.toByte(), 0xc2.toByte(), 0x80.toByte(), 0xff.toByte())
+        val decoded = decodedWindow(padded, 1, 3)
+        assertImportedUnits(decoded, 0x80)
+        try { decodedWindow(padded, 1, 2); error("Expected strict slice failure") }
+        catch (e: CharacterCodingException) { check(e.message?.substringAfterLast(' ') == "1") }
+    }
+
     @TestAttribute
     fun dllLiteralBodiesAndDefaultsPreserveCodeUnits() {
         assertEquals(0xd800, HIGH_CHAR.code)

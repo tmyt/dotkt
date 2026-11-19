@@ -17,3 +17,7 @@ inline fun inlineChar(): Char = '\ud800'
 inline fun inlineText(): String = "\udfff\ud800"
 fun defaultChar(value: Char = '\udbff'): Char = value
 fun defaultText(value: String = "\udc00"): String = value
+
+fun textWindow(chars: CharArray, start: Int, end: Int): String = chars.concatToString(start, end)
+fun encodedWindow(text: String, start: Int, end: Int): ByteArray = text.encodeToByteArray(start, end)
+fun decodedWindow(bytes: ByteArray, start: Int, end: Int): String = bytes.decodeToString(start, end, true)
