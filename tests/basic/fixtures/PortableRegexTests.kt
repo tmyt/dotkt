@@ -1,12 +1,13 @@
 import NUnit.Framework.TestAttribute
 
-private class RegexObservedInput(private val text: String) : CharSequence {
+private class RegexObservedInput(private val text: String, private val failure: Throwable? = null) : CharSequence {
     var snapshots: Int = 0
     override val length: Int get() = text.length
     override fun get(index: Int): Char = text[index]
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = text.substring(startIndex, endIndex)
     override fun toString(): String {
         snapshots++
+        if (failure != null) throw failure
         return text
     }
 }
@@ -23,13 +24,46 @@ private fun expectRegexBounds(action: () -> Unit) {
     check(rejected)
 }
 
-private fun expectRegexLimitFailure(action: () -> Unit) {
+private fun expectRegexArgumentFailure(action: () -> Unit) {
     var rejected = false
     try { action() } catch (e: IllegalArgumentException) { rejected = true }
     check(rejected)
 }
 
 class PortableRegexTests {
+    @TestAttribute fun stringReplacementsUseKotlinGroupsAndOneInputSnapshot() {
+        val pattern = Regex("(?<head>a)(?<tail>b)?")
+        val input = RegexObservedInput("a ab")
+        val template = "\$0:\$12:\${tail}:\$2"
+        check(pattern.replace(input, template) == "a:a2:: ab:a2:b:b")
+        check(input.snapshots == 1)
+        check(pattern.replaceFirst(input, template) == "a:a2:: ab")
+        check(input.snapshots == 2)
+        check(Regex("a|$").replace("a", "<\$0>") == "<a><>")
+        check(Regex("").replace("", "!") == "!")
+        check(Regex("").replace("ab", "-") == "-a-b-")
+        for (literal in listOf("", "abc", "\$1\\", "\\\${head}", "\$\$")) {
+            check(pattern.replace("ab", Regex.escapeReplacement(literal)) == literal)
+        }
+        check(pattern.replace("a", "\\x\\\$0") == "x\$0")
+    }
+
+    @TestAttribute fun invalidReferencesFailOnlyAfterAMatch() {
+        val pattern = Regex("(a)")
+        for (bad in listOf("\\", "\$", "\$\$", "\$&", "\${missing}", "\${}", "\${a", "\${1a}", "\${a_b}")) {
+            check(pattern.replace("z", bad) == "z")
+            expectRegexArgumentFailure { pattern.replace("a", bad) }
+            expectRegexArgumentFailure { pattern.replaceFirst("a", bad) }
+        }
+        expectRegexBounds { pattern.replace("a", "\$2") }
+        check(pattern.replace("a", "\$00001") == "a")
+        val failure = IllegalStateException("snapshot")
+        val input = RegexObservedInput("a", failure)
+        var observed: Throwable? = null
+        try { pattern.replace(input, "\$") } catch (e: Throwable) { observed = e }
+        check(observed === failure && input.snapshots == 1)
+    }
+
     @TestAttribute fun splitSequenceDefersInputWorkAndCanBeReiterated() {
         val input = RegexObservedInput("a,b,")
         val parts = Regex(",").splitToSequence(input)
@@ -65,8 +99,8 @@ class PortableRegexTests {
         check(empty.splitToSequence("").toList() == listOf("", ""))
         check(Regex("z").splitToSequence("").toList() == listOf(""))
         val input = RegexObservedInput("a,b")
-        expectRegexLimitFailure { delimiter.splitToSequence(input, -1) }
-        expectRegexLimitFailure { delimiter.split(input, -1) }
+        expectRegexArgumentFailure { delimiter.splitToSequence(input, -1) }
+        expectRegexArgumentFailure { delimiter.split(input, -1) }
         check(input.snapshots == 0)
     }
 
