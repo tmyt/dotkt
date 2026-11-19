@@ -32,6 +32,13 @@ interface ImportedDefault : KClass<Any> {
     override val members: Collection<KCallable<*>> get() = emptyList()
     override fun isInstance(value: Any?): Boolean = value is Long
 }
+open class ImportedToken<Noise, Value : Any>(value: Noise) : ImportedPlainBase<Noise>(value), KClass<Value>
+abstract class ClassLookup {
+    abstract fun <T : Any> typeName(key: KClass<T>): String
+    abstract fun <T : Any> presentName(key: KClass<T>?): String
+    abstract fun <T : Any> emptyValues(key: KClass<T>): Array<T?>
+}
+fun capturedName(lookup: ClassLookup, key: KClass<*>): String = lookup.typeName(key)
 fun makeTyped(): ImportedTyped = ImportedTyped(String::class)
 fun classIdentity(value: KClass<*>): KClass<*> = value
 fun annotatedIdentity(value: KAnnotatedElement): KAnnotatedElement = value

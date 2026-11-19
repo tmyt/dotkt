@@ -3,6 +3,7 @@
 package kotlin.reflect
 
 @kotlin.clr.ClrTypeAlias("System.Object")
+@kotlin.clr.ClrCaptureMarker("DotKt.Runtime.CompilerServices.KClassConstruction")
 @kotlin.clr.ClrValueRepresentation(
     "DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.kClassMatches",
     "DotKt.Runtime.CompilerServices.ReflectionRuntimeKt.kClassClassifier",

@@ -12,7 +12,8 @@ sealed partial class ReferenceMetadataIndex
 
     // Value slots may be nominal carriers while a captured method still needs its source constructor's frame.
     // Consume the producer's KotlinType correspondence, not the carrier name or a method body.
-    internal TypeNode[] CapturedParameterWitnesses(string identity, IReadOnlyList<TypeNode> physical)
+    internal TypeNode[] CapturedParameterWitnesses(string identity, IReadOnlyList<TypeNode> physical,
+        Func<TypeNode, TypeNode.Fqn> captureConstruction = null)
     {
         if (identity == null || !_declarationById.TryGetValue(identity, out var binding)) return physical.ToArray();
         var frames = new InnerApplicationFrames(Array.Empty<JsonNode>(), this)
@@ -30,6 +31,8 @@ sealed partial class ReferenceMetadataIndex
         return physical.Select((type, index) =>
         {
             var source = binding.KotlinParameterTypes?.ElementAtOrDefault(index);
+            if (captureConstruction?.Invoke(source) is { } marker)
+                return BirTypeLowering.LowerPhysicalType(types.Slot(marker), Aliases, IsValueType, PhysicalTypeNames, typeArg: false);
             if (Core(type) is not TypeNode.Fqn actual || Core(source) is not TypeNode.Fqn logical) return type;
             var carrierValue = TryExistentialPhysicalOwner(logical.Name, out var carrier) && actual.Name == carrier;
             // Opaque transport does not erase the producer's declared alias construction.

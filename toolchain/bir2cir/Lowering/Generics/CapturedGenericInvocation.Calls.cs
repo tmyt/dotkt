@@ -9,7 +9,7 @@ static partial class CapturedGenericInvocation
     static readonly TypeNode String = new TypeNode.Fqn("string");
     static readonly TypeNode Type = new TypeNode.Fqn("System.Type");
     static readonly TypeNode[] RuntimeSignature = { Type, Int, String, new TypeNode.Array(String), new TypeNode.Array(Type),
-        new TypeNode.Array(Int), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Object) };
+        new TypeNode.Array(Int), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Object) };
 
     internal static BirLocal Local(int index) => new() { Name = "p" + index };
     internal static BirCast Cast(TypeNode type, IBirExpression value) => new() { Type = type, E = OptionalField<IBirExpression>.Of(value) };

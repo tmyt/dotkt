@@ -5,13 +5,14 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
-sealed record ValueRepresentationBinding(string Classifier, string ClassifierFactory, string ComponentClassifier, string InterfaceMarker);
+sealed record ValueRepresentationBinding(string Classifier, string ClassifierFactory, string ComponentClassifier, string InterfaceMarker, string CaptureMarker = null);
 
 // Declaration-owned Kotlin classifiers can be narrower than their CLR alias face.
 // The trusted stdlib supplies all type/member/classifier choices. No source name selects a rule.
 sealed partial class ValueRepresentationLowering
 {
     internal const string TypeAttribute = "kotlin.clr.ClrValueRepresentation";
+    internal const string CaptureAttribute = "kotlin.clr.ClrCaptureMarker";
     internal const string MemberAttribute = "kotlin.clr.ClrValueMember";
     readonly IReadOnlyDictionary<string, ValueRepresentationBinding> bindings;
     readonly IReadOnlyDictionary<string, string> aliases;
@@ -21,7 +22,7 @@ sealed partial class ValueRepresentationLowering
     readonly Dictionary<string, (string Owner, LiveMethod Method, string Slot)> members = new(StringComparer.Ordinal);
     readonly Dictionary<string, (string Owner, LiveMethod Method)> locals = new(StringComparer.Ordinal);
     readonly IReadOnlyDictionary<string, SupertypeGraph.Def> sourceHierarchy;
-    IReadOnlyDictionary<string, IReadOnlyList<string>> interfaceMarkers;
+    IReadOnlyDictionary<string, IReadOnlyList<TypeNode.Fqn>> interfaceMarkers;
     readonly ReferenceMetadataIndex refs;
     readonly bool referenceBuild;
 
@@ -52,25 +53,41 @@ sealed partial class ValueRepresentationLowering
 
     internal bool HasClassifier(TypeNode type) => Classifier(type).Binding != null;
 
-    internal IReadOnlyDictionary<string, IReadOnlyList<string>> InterfaceMarkers
+    int Arity(string name) => sourceHierarchy.TryGetValue(name, out var declaration) ? declaration.Arity : refs?.OwnerArity(name) ?? 0;
+
+    internal TypeNode.Fqn CaptureConstruction(TypeNode type)
+    {
+        if (type is TypeNode.Nullable nullable) return CaptureConstruction(nullable.Of);
+        if (type is TypeNode.Oblivious oblivious) return CaptureConstruction(oblivious.Of);
+        if (type is not TypeNode.Fqn { Args: { Length: > 0 } arguments } named
+            || !bindings.TryGetValue(named.Name, out var binding) || binding.CaptureMarker == null) return null;
+        return new TypeNode.Fqn(binding.CaptureMarker, arguments);
+    }
+
+    internal IReadOnlyDictionary<string, IReadOnlyList<TypeNode.Fqn>> InterfaceMarkers
     {
         get
         {
             if (interfaceMarkers != null) return interfaceMarkers;
-            var direct = bindings.Where(entry => !string.IsNullOrEmpty(entry.Value.InterfaceMarker))
-                .ToDictionary(entry => entry.Key, entry => entry.Value.InterfaceMarker, StringComparer.Ordinal);
-            var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
-            foreach (var source in direct.Keys)
+            IEnumerable<TypeNode.Fqn> Markers(TypeNode.Fqn edge)
             {
-                var arity = sourceHierarchy.TryGetValue(source, out var declaration) ? declaration.Arity : refs?.OwnerArity(source) ?? 0;
+                if (!bindings.TryGetValue(edge.Name, out var binding)) yield break;
+                if (!string.IsNullOrEmpty(binding.InterfaceMarker)) yield return new TypeNode.Fqn(binding.InterfaceMarker);
+                if (CaptureConstruction(edge) is { } witness) yield return witness;
+            }
+            var result = new Dictionary<string, IReadOnlyList<TypeNode.Fqn>>(StringComparer.Ordinal);
+            foreach (var (source, binding) in bindings)
+            {
+                if (string.IsNullOrEmpty(binding.InterfaceMarker) && binding.CaptureMarker == null) continue;
+                var arity = Arity(source);
                 var arguments = arity == 0 ? null : Enumerable.Range(0, arity).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
                 // Seed the shared source-graph walk with the declaration itself. A logical interface edge owes
                 // every mapped ancestor facet, not a fresh copy of an ancestor's CLR method declarations.
                 var seed = new SupertypeGraph.Def { Name = source,
                     Interfaces = new[] { new TypeNode.Fqn(source, arguments) } };
                 result[source] = SupertypeGraph.Reachable(seed, sourceHierarchy, refs)
-                    .Select(edge => direct.GetValueOrDefault(edge.spec.Name)).Where(marker => marker != null)
-                    .Distinct(StringComparer.Ordinal).ToArray();
+                    .SelectMany(edge => Markers(edge.spec))
+                    .DistinctBy(SupertypeGraph.TypeKey).ToArray();
             }
             return interfaceMarkers = result;
         }
@@ -328,7 +345,7 @@ sealed partial class ValueRepresentationLowering
         externalRoot["types"][0]["name"] = "Carrier.Tag";
         externalRoot["types"][0]["attrs"][1]["args"][4]["value"] = "Tag";
         var external = FixturePolicy(externalRoot, false);
-        if (!external.InterfaceMarkers["Tag"].SequenceEqual(new[] { "Slots.Tag" })
+        if (!external.InterfaceMarkers["Tag"].Select(marker => marker.Name).SequenceEqual(new[] { "Slots.Tag" })
             || external.InterfaceMarkers.ContainsKey("Carrier.Tag")
             || external.AliasFace(new TypeNode.Fqn("Tag")) != new TypeNode.Fqn("System.Object"))
             throw new InvalidOperationException("CLR-only binding carrier lost its explicit common classifier target");
@@ -339,7 +356,7 @@ sealed partial class ValueRepresentationLowering
         derivedMarker["attrs"][1]["args"][3]["value"] = "Slots.DerivedTag";
         inheritedMarkerRoot["types"].AsArray().Add(derivedMarker);
         var inheritedMarkers = FixturePolicy(inheritedMarkerRoot, false).InterfaceMarkers;
-        if (!inheritedMarkers["DerivedTag"].SequenceEqual(new[] { "Slots.DerivedTag", "Slots.Tag" }))
+        if (!inheritedMarkers["DerivedTag"].Select(marker => marker.Name).SequenceEqual(new[] { "Slots.DerivedTag", "Slots.Tag" }))
             throw new InvalidOperationException("A mapped interface lost its source ancestor facets");
         var arguments = new TypeNode[] { new TypeNode.Fqn("kotlin.String") };
         if (BirTypeLowering.PhysicalHead("Logical", "System.Object", arguments) != new TypeNode.Fqn("System.Object")

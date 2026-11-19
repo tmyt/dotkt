@@ -1400,6 +1400,9 @@ kotc or ilemit.
 
 Ordinary `KClass<T>` values use Object slots: native tokens and Kotlin implementations retain their original
 identity, without wrapping. Type arguments remain in Kotlin metadata rather than becoming arguments of Object.
+When a call to `lookup<T>(key: KClass<T>)` captures `T` from a `KClass<*>`, the CLR method receives
+the represented type for a native token, or the declared `KClass<T>` argument for a Kotlin implementation.
+The implementation's own class and its other generic parameters do not determine `T`.
 Declaration-owned classifiers and nominal interface slots also preserve `KClassifier`, `KAnnotatedElement` and
 `KDeclarationContainer` membership. A CLR-only binding carrier names the unchanged common `KClassifier`
 declaration explicitly. Name/isInstance accessors dispatch to either the native type or the selected Kotlin
