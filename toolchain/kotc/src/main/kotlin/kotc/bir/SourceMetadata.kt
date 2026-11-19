@@ -25,10 +25,19 @@ data class SourceCallable(
     val valueParameters: List<SourceValueParameter>,
     val returnType: SourceType,
     val annotations: List<SourceAnnotation>,
-    val receiverAnnotations: List<SourceAnnotation>
+    val receiverAnnotations: List<SourceAnnotation>,
+    val propertyAccessors: SourcePropertyAccessors? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) = SourceMetadataJson.write(this, output)
 }
+
+data class SourcePropertyAccessors(
+    val getterFlags: Int? = null,
+    val setterFlags: Int? = null,
+    val getterAnnotations: List<SourceAnnotation>,
+    val setterAnnotations: List<SourceAnnotation>,
+    val setterParameter: SourceValueParameter? = null
+)
 
 data class SourceValueParameter(
     val name: String,

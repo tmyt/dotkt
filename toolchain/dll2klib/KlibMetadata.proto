@@ -150,6 +150,9 @@ message Property {
   repeated ValueParameter context_parameter = 17;
   repeated Annotation property_annotation = 170;
   optional Annotation.Argument.Value compile_time_value = 173;
+  repeated Annotation property_getter_annotation = 177;
+  repeated Annotation property_setter_annotation = 178;
+  repeated Annotation property_extension_receiver_annotation = 183;
 }
 
 message Class {

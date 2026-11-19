@@ -5,7 +5,9 @@ namespace DotKt.Bir;
 
 public sealed record SourceTypeAlias(string PackageName, string[] OwnerPath, string Name, string Visibility, SourceTypeParameter[] TypeParameters, SourceType UnderlyingType, SourceType ExpandedType, SourceAnnotation[] Annotations);
 
-public sealed record SourceCallable(string DeclarationId, string Name, int Flags, SourceTypeParameter[] TypeParameters, int[] ReifiedParameters, SourceValueParameter[] ContextParameters, SourceValueParameter[] ValueParameters, SourceType ReturnType, SourceAnnotation[] Annotations, SourceAnnotation[] ReceiverAnnotations, SourceType? ReceiverType = null);
+public sealed record SourceCallable(string DeclarationId, string Name, int Flags, SourceTypeParameter[] TypeParameters, int[] ReifiedParameters, SourceValueParameter[] ContextParameters, SourceValueParameter[] ValueParameters, SourceType ReturnType, SourceAnnotation[] Annotations, SourceAnnotation[] ReceiverAnnotations, SourceType? ReceiverType = null, SourcePropertyAccessors? PropertyAccessors = null);
+
+public sealed record SourcePropertyAccessors(SourceAnnotation[] GetterAnnotations, SourceAnnotation[] SetterAnnotations, int? GetterFlags = null, int? SetterFlags = null, SourceValueParameter? SetterParameter = null);
 
 public sealed record SourceValueParameter(string Name, int Flags, SourceType Type, SourceAnnotation[] Annotations, SourceType? VarargElementType = null);
 
@@ -78,7 +80,17 @@ internal static class SourceMetadataDataEquality
             && Equal(left.ReturnType, right.ReturnType)
             && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0))
             && ArrayEqual(left.ReceiverAnnotations, right.ReceiverAnnotations, (left0, right0) => Equal(left0, right0))
-            && Equal(left.ReceiverType, right.ReceiverType);
+            && Equal(left.ReceiverType, right.ReceiverType)
+            && Equal(left.PropertyAccessors, right.PropertyAccessors);
+
+    internal static bool Equal(SourcePropertyAccessors? left, SourcePropertyAccessors? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && ArrayEqual(left.GetterAnnotations, right.GetterAnnotations, (left0, right0) => Equal(left0, right0))
+            && ArrayEqual(left.SetterAnnotations, right.SetterAnnotations, (left0, right0) => Equal(left0, right0))
+            && left.GetterFlags == right.GetterFlags
+            && left.SetterFlags == right.SetterFlags
+            && Equal(left.SetterParameter, right.SetterParameter);
 
     internal static bool Equal(SourceValueParameter? left, SourceValueParameter? right) =>
         global::System.Object.ReferenceEquals(left, right)

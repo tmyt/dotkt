@@ -29,7 +29,18 @@
         "contextParameters": {"type": "array", "items": {"$ref": "#/$defs/valueParameter"}},
         "valueParameters": {"type": "array", "items": {"$ref": "#/$defs/valueParameter"}},
         "returnType": {"$ref": "#/$defs/type"}, "annotations": {"$ref": "#/$defs/annotations"},
-        "receiverAnnotations": {"$ref": "#/$defs/annotations"}
+        "receiverAnnotations": {"$ref": "#/$defs/annotations"},
+        "propertyAccessors": {"$ref": "#/$defs/propertyAccessors"}
+      }
+    },
+    "propertyAccessors": {
+      "x-dotkt-model": {"name": "SourcePropertyAccessors"},
+      "type": "object", "additionalProperties": false,
+      "required": ["getterAnnotations", "setterAnnotations"],
+      "properties": {
+        "getterFlags": {"type": "integer"}, "setterFlags": {"type": "integer"},
+        "getterAnnotations": {"$ref": "#/$defs/annotations"}, "setterAnnotations": {"$ref": "#/$defs/annotations"},
+        "setterParameter": {"$ref": "#/$defs/valueParameter"}
       }
     },
     "valueParameter": {

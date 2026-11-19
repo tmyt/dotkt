@@ -1761,22 +1761,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				// below. (A plain field-backed property's accessor takes none.)
 				val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver || isValueParameter(it) } == true
 				if (!isExt) {
-					// #103: a field-backed prop with a CUSTOM getter/setter must INVOKE the accessor (a static
-					// accessor method on the file class, like the extension-property path below but without a
-					// receiver), not read/write the raw static field. bir2cir binds the explicit get/set role to the
-					// associated method. Read/write customness is independent (a `var` may pair a
-					// custom setter with a default getter, or vice versa); a default accessor stays a raw field access.
-					// dll2klib preserves the standard getter_flags/setter_flags IS_NOT_DEFAULT bit.
-					val customGet = !hasDefaultGetter(p)
-					val customSet = !hasDefaultSetter(p)
+					// A FIR-default accessor can still have an exported MethodDef (e.g. its other half
+					// is custom). A carried ID binds this role to that method, not to private storage.
+					val methodSurface = carriedDeclarationId(callee) != null
 					if (callee === p.setter) {
-						return if (customSet)
+						return if (methodSurface || !hasDefaultSetter(p))
 							BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "set",
 								sig = overloadSignature(callee), typeArgs = ta, argTypes = listOf(birType(regularArgs(call).first().type)),
 								ret = TypeNode.Fqn("kotlin.Unit"), args = listOf(expr(regularArgs(call).first())))
 						else kotc.bir.BirStaticFieldSet(ownerType = TypeNode.Fqn(fileClass), name = p.name.asString(), value = expr(regularArgs(call).first()))
 					}
-					return if (customGet)
+					return if (methodSurface || !hasDefaultGetter(p))
 						BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "get",
 							sig = overloadSignature(callee), typeArgs = ta, argTypes = emptyList(), ret = birType(callee.returnType), args = emptyList())
 					else kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(fileClass), name = p.name.asString())
@@ -2513,6 +2508,9 @@ internal fun BirEmitter.fieldRoutedProperty(prop: IrProperty): Boolean =
 internal fun BirEmitter.accessorRoutedTopLevelProperty(prop: IrProperty): Boolean =
 	fieldRoutedProperty(prop) &&
 		((isLateinitProperty(prop) && companionReceiverType(prop) == null) ||
+			// A transformed getter with call arguments cannot be implemented by a direct field read,
+			// even if the plugin retained its original DEFAULT_PROPERTY_ACCESSOR origin.
+			prop.getter?.parameters?.any { it.kind == IrParameterKind.Regular } == true ||
 			prop.getter?.let { !hasDefaultGetter(prop) } == true ||
 			prop.setter?.let { !hasDefaultSetter(prop) } == true ||
 			// A physical method name requires a MethodDef even when the Kotlin accessor body is default. A

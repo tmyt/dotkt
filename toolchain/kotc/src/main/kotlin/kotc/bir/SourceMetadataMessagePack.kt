@@ -48,7 +48,7 @@ internal object SourceMetadataMessagePack {
 
     private fun writeSourceCallable(value: SourceCallable, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(10 + (if (value.receiverType == null) 0 else 1))
+        packer.packMapHeader(10 + (if (value.receiverType == null) 0 else 1) + (if (value.propertyAccessors == null) 0 else 1))
         packer.packString("declarationId")
         MessagePackText.write(packer, value.declarationId)
         packer.packString("name")
@@ -96,6 +96,39 @@ internal object SourceMetadataMessagePack {
         packer.packArrayHeader(value.receiverAnnotations.size)
         value.receiverAnnotations.forEach { item ->
             writeSourceAnnotation(item, packer, depth + 2)
+        }
+        value.propertyAccessors?.let { child ->
+            packer.packString("propertyAccessors")
+            writeSourcePropertyAccessors(child, packer, depth + 1)
+        }
+    }
+
+    private fun writeSourcePropertyAccessors(value: SourcePropertyAccessors, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(2 + (if (value.getterFlags == null) 0 else 1) + (if (value.setterFlags == null) 0 else 1) + (if (value.setterParameter == null) 0 else 1))
+        value.getterFlags?.let { child ->
+            packer.packString("getterFlags")
+            packer.packInt(child)
+        }
+        value.setterFlags?.let { child ->
+            packer.packString("setterFlags")
+            packer.packInt(child)
+        }
+        packer.packString("getterAnnotations")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.getterAnnotations.size)
+        value.getterAnnotations.forEach { item ->
+            writeSourceAnnotation(item, packer, depth + 2)
+        }
+        packer.packString("setterAnnotations")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.setterAnnotations.size)
+        value.setterAnnotations.forEach { item ->
+            writeSourceAnnotation(item, packer, depth + 2)
+        }
+        value.setterParameter?.let { child ->
+            packer.packString("setterParameter")
+            writeSourceValueParameter(child, packer, depth + 1)
         }
     }
 

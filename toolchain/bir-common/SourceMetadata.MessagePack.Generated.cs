@@ -122,6 +122,7 @@ public static class SourceMetadataMessagePack
         SourceAnnotation[]? annotations = default;
         SourceAnnotation[]? receiverAnnotations = default;
         SourceType? receiverType = default;
+        SourcePropertyAccessors? propertyAccessors = default;
         for (var i = 0; i < count; i++)
         {
             switch (ReadText(ref reader))
@@ -170,18 +171,22 @@ public static class SourceMetadataMessagePack
                     Seen(ref seen, 1024UL);
                     receiverAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
                     break;
+                case "propertyAccessors":
+                    Seen(ref seen, 2048UL);
+                    propertyAccessors = ReadSourcePropertyAccessors(ref reader);
+                    break;
                 default: throw new FormatException();
             }
         }
         if ((seen & 2015UL) != 2015UL) throw new FormatException();
         reader.Depth--;
-        return new SourceCallable(declarationId!, name!, flags, typeParameters!, reifiedParameters!, contextParameters!, valueParameters!, returnType!, annotations!, receiverAnnotations!, receiverType);
+        return new SourceCallable(declarationId!, name!, flags, typeParameters!, reifiedParameters!, contextParameters!, valueParameters!, returnType!, annotations!, receiverAnnotations!, receiverType, propertyAccessors);
     }
 
     private static void WriteSourceCallable(ref MessagePackWriter writer, SourceCallable value, int depth)
     {
         if (depth >= BirJson.MaxDepth) throw new FormatException();
-        writer.WriteMapHeader(10 + (value.ReceiverType is null ? 0 : 1));
+        writer.WriteMapHeader(10 + (value.ReceiverType is null ? 0 : 1) + (value.PropertyAccessors is null ? 0 : 1));
         writer.Write("declarationId");
         IrMessagePack.WriteString(ref writer, value.DeclarationId);
         writer.Write("name");
@@ -236,6 +241,87 @@ public static class SourceMetadataMessagePack
         foreach (var item in value.ReceiverAnnotations)
         {
             WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+        if (value.PropertyAccessors is { } propertyAccessors)
+        {
+            writer.Write("propertyAccessors");
+            WriteSourcePropertyAccessors(ref writer, propertyAccessors, depth + 1);
+        }
+    }
+
+    private static SourcePropertyAccessors ReadSourcePropertyAccessors(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        SourceAnnotation[]? getterAnnotations = default;
+        SourceAnnotation[]? setterAnnotations = default;
+        int? getterFlags = default;
+        int? setterFlags = default;
+        SourceValueParameter? setterParameter = default;
+        for (var i = 0; i < count; i++)
+        {
+            switch (ReadText(ref reader))
+            {
+                case "getterFlags":
+                    Seen(ref seen, 1UL);
+                    getterFlags = reader.ReadInt32();
+                    break;
+                case "setterFlags":
+                    Seen(ref seen, 2UL);
+                    setterFlags = reader.ReadInt32();
+                    break;
+                case "getterAnnotations":
+                    Seen(ref seen, 4UL);
+                    getterAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "setterAnnotations":
+                    Seen(ref seen, 8UL);
+                    setterAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "setterParameter":
+                    Seen(ref seen, 16UL);
+                    setterParameter = ReadSourceValueParameter(ref reader);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        if ((seen & 12UL) != 12UL) throw new FormatException();
+        reader.Depth--;
+        return new SourcePropertyAccessors(getterAnnotations!, setterAnnotations!, getterFlags, setterFlags, setterParameter);
+    }
+
+    private static void WriteSourcePropertyAccessors(ref MessagePackWriter writer, SourcePropertyAccessors value, int depth)
+    {
+        if (depth >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteMapHeader(2 + (value.GetterFlags is null ? 0 : 1) + (value.SetterFlags is null ? 0 : 1) + (value.SetterParameter is null ? 0 : 1));
+        if (value.GetterFlags is { } getterFlags)
+        {
+            writer.Write("getterFlags");
+            writer.Write(getterFlags);
+        }
+        if (value.SetterFlags is { } setterFlags)
+        {
+            writer.Write("setterFlags");
+            writer.Write(setterFlags);
+        }
+        writer.Write("getterAnnotations");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.GetterAnnotations.Length);
+        foreach (var item in value.GetterAnnotations)
+        {
+            WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+        writer.Write("setterAnnotations");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.SetterAnnotations.Length);
+        foreach (var item in value.SetterAnnotations)
+        {
+            WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+        if (value.SetterParameter is { } setterParameter)
+        {
+            writer.Write("setterParameter");
+            WriteSourceValueParameter(ref writer, setterParameter, depth + 1);
         }
     }
 

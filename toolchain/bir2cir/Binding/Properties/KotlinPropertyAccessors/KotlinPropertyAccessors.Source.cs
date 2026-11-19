@@ -9,7 +9,7 @@ static partial class KotlinPropertyAccessors
 
     // The readers describe existing declaration facts. Both owning representations
     // use this one association/signature/carrier decision, including late bridges.
-    sealed record AccessorFacts(string Name, string Association, string Role, int Arity,
+    sealed record AccessorFacts(string Name, string Association, string Role, int Arity, int ParameterCount,
         string SourceAssociation, string Event, bool Inherited);
     sealed record AccessorPlan(int Index, string Role, bool StampCarrier);
     sealed record PropertyPlan(string Name, string Association, bool Representable, AccessorPlan[] Accessors);
@@ -28,6 +28,14 @@ static partial class KotlinPropertyAccessors
             resolved.Add((matches[0], role));
         }
         var representable = resolved.All(item => methods[item.Index].Arity == 0);
+        if (representable && resolved.Count == 2)
+        {
+            var getter = methods[resolved.Single(item => item.Role == "get").Index];
+            var setter = methods[resolved.Single(item => item.Role == "set").Index];
+            // Lowering the parameter types cannot reconcile two different index counts.
+            // Keep those methods, linked by their Kotlin association, without a Property row.
+            representable = setter.ParameterCount == getter.ParameterCount + 1;
+        }
         var bridgeSource = methods.Any(method => method.SourceAssociation == association);
         if (resolved.Count == 0) throw new InvalidOperationException($"Kotlin property record '{name}' has no accessor roles");
         foreach (var (index, _) in resolved)
@@ -38,7 +46,7 @@ static partial class KotlinPropertyAccessors
     }
 
     static AccessorFacts Facts(BirFunctionDeclaration method) => new(method.Name.OrDefault(), method.PropertyAssociation.OrDefault(),
-        method.PropertyAccessor.OrDefault(), method.TypeParams.OrEmpty().Length,
+        method.PropertyAccessor.OrDefault(), method.TypeParams.OrEmpty().Length, method.Params.OrEmpty().Length,
         method.KotlinPropertyAccessorCarrier.OrDefault()?.SourceAssociation.OrDefault(),
         method.KotlinPropertyAccessorCarrier.OrDefault()?.Event.OrDefault(),
         method.KotlinPropertyAccessorCarrier.OrDefault()?.Inherited.OrDefault() == true);

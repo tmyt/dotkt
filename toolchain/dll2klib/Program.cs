@@ -2674,6 +2674,13 @@ internal sealed partial class AssemblyScanner : IDisposable
             // declaration. Project it below from the authoritative interface Property/MethodSemantics row so NRT,
             // defaults, parameter names and generic metadata cannot drift with the private implementation signature.
             if (explicitInterfaceProperty || !IsPublicOrProtected(representative.Attributes)) continue;
+            if (PluginSourceProperty(accessors.Getter, accessors.Setter, names) is { } sourceProperty)
+            {
+                result.Property.Add(sourceProperty);
+                if (sourceProperty.ReceiverType == null && sourceProperty.ContextParameter.Count == 0)
+                    propertyNames.Add(sourcePropertyName);
+                continue;
+            }
             var context = new GenericContext(handle, accessors.Getter.IsNil ? accessors.Setter : accessors.Getter, typeParameterIds);
             var signature = property.DecodeProjectedSignature(signatures, context);
             var name = explicitInterfaceProperty
@@ -5581,6 +5588,14 @@ internal sealed partial class AssemblyScanner : IDisposable
             if (separatelyProjectedPropertyAccessors.Contains(methodHandle)) continue;
             var method = _md.GetMethodDefinition(methodHandle);
             if (!IsPublicOrProtected(method.Attributes)) continue;
+            if (PluginSourceProperty(accessors.Getter, accessors.Setter, names) is { } sourceProperty)
+            {
+                sourceProperty.PropertyAnnotation.Add(ClrExternalAnnotation(names, handle));
+                package.Property.Add(sourceProperty);
+                if (sourceProperty.ReceiverType == null && sourceProperty.ContextParameter.Count == 0)
+                    propertyNames.Add(KotlinPropertySourceName(property, accessors));
+                continue;
+            }
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
             var sig = property.DecodeProjectedSignature(signatures, context);
             var type = !accessors.Getter.IsNil
@@ -5794,6 +5809,16 @@ internal sealed partial class AssemblyScanner : IDisposable
                 return null;
         }
         return value;
+    }
+
+    private Property? PluginSourceProperty(MethodDefinitionHandle getterHandle, MethodDefinitionHandle setterHandle, NameTable names)
+    {
+        if (getterHandle.IsNil || KotlinDeclarationIdentityCarrier(getterHandle)?.Id is not { } getter ||
+            _sourceMetadata.Property(getter, names) is not { } property) return null;
+        var setter = setterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(setterHandle)?.Id;
+        property.PropertyAnnotation.Add(KotlinDeclarationIdentityAnnotation(names, getter, setter ?? ""));
+        property.Flags |= 1;
+        return property;
     }
 
     private void ApplyAccessorFlags(
@@ -6042,6 +6067,13 @@ internal sealed partial class AssemblyScanner : IDisposable
         {
             var representativeHandle = pair.Getter.IsNil ? pair.Setter : pair.Getter;
             if (representativeHandle.IsNil || pair.Name is null) continue;
+            // The accessor association supplies the pairing even without a Property row. Its
+            // plugin-added parameters need not match the source receiver/context signature.
+            if (!pair.Getter.IsNil && _sourceMetadata.HasProperty(KotlinDeclarationIdentityCarrier(pair.Getter)?.Id))
+            {
+                result.Add((pair.Name, default, pair.Getter, pair.Setter));
+                continue;
+            }
             var representative = _md.GetMethodDefinition(representativeHandle);
             var representativeSignature = representative.DecodeProjectedSignature(
                 RawSignatureTypeProvider.Instance,
@@ -6279,6 +6311,12 @@ internal sealed partial class AssemblyScanner : IDisposable
         var representativeHandle = getterHandle.IsNil ? setterHandle : getterHandle;
         if (representativeHandle.IsNil)
             throw new InvalidDataException($"Kotlin accessor property '{propertyName}' has no accessor");
+        if (PluginSourceProperty(getterHandle, setterHandle, names) is { } sourceProperty)
+        {
+            if (companionReceiver != null) sourceProperty.ReceiverType = companionReceiver;
+            AddEventAssociation(sourceProperty);
+            return sourceProperty;
+        }
         var representative = _md.GetMethodDefinition(representativeHandle);
         var declarationIdentity = KotlinDeclarationIdentityCarrier(representativeHandle);
         var semanticPropertyName = PropertyAccessorAssociation(representativeHandle)?.Name ?? propertyName;
@@ -6314,13 +6352,15 @@ internal sealed partial class AssemblyScanner : IDisposable
                 : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
         };
         ApplyAccessorFlags(property, getterHandle, setterHandle);
-        if (!getterHandle.IsNil && KotlinPropertyAccessorCarrier(getterHandle)?.Event is string nativeEvent)
+        void AddEventAssociation(Property projected)
         {
+            if (getterHandle.IsNil || KotlinPropertyAccessorCarrier(getterHandle)?.Event is not string nativeEvent) return;
             if (!_md.GetTypeDefinition(owner).GetEvents().Any(eventHandle =>
                 _md.GetString(_md.GetEventDefinition(eventHandle).Name) == nativeEvent))
                 throw new InvalidDataException("Kotlin property accessor names a missing native event");
-            property.PropertyAnnotation.Add(new Annotation { Id = names.Class("kotlin.clr.ClrEventDeclaration") });
+            projected.PropertyAnnotation.Add(new Annotation { Id = names.Class("kotlin.clr.ClrEventDeclaration") });
         }
+        AddEventAssociation(property);
         var getterIdentity = getterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(getterHandle)?.Id;
         var setterIdentity = setterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(setterHandle)?.Id;
         if (getterIdentity is not null || setterIdentity is not null)

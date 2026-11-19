@@ -147,7 +147,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			}
 		}
 
-	private fun carriedDeclarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
+	internal fun carriedDeclarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
 		val property = (fn as? IrSimpleFunction)?.correspondingPropertySymbol?.owner
 		val annotations: List<IrConstructorCall> = fn.annotations + property?.annotations.orEmpty()
 		val identity = annotations.singleOrNull {
