@@ -32,7 +32,7 @@ static partial class GenericArrayStorageLowering
                 new BirVariable { Name = "$arrayCast$0", Type = objectType },
                 new BirVariable { Name = "$arrayCastType$0", Type = objectType } },
         } } };
-        var names = new TypedGenericArrayStorageLowering.FreshNames(file);
+        var names = new BirTemporaryNames(file);
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         var loweredInner = (BirBlock)TypedGenericArrayStorageLowering.LowerOperation(inner, refs, names);
         outer.Body = new IBirStatement[] { loweredInner };
@@ -67,13 +67,13 @@ static partial class GenericArrayStorageLowering
             "detached rewrite lost destination names");
         method.Body.Value[0] = new BirBlock { Body = Array.Empty<IBirStatement>() };
         Expect(names.Next("$arrayStorage$") == "$arrayStorage$6", "removed/generated reservations were reused");
-        var secondFile = new TypedGenericArrayStorageLowering.FreshNames(new BirFileDeclaration());
+        var secondFile = new BirTemporaryNames(new BirFileDeclaration());
         Expect(secondFile.Next("$arrayStorage$") == "$arrayStorage$0", "allocator leaked across files");
         var lazyFile = new BirFileDeclaration();
-        var lazyNames = new TypedGenericArrayStorageLowering.FreshNames(lazyFile);
+        var lazyNames = new BirTemporaryNames(lazyFile);
         lazyFile.Fields = new[] { new BirFieldDeclaration { Name = "$arrayStorage$0", Type = arrayType } };
         Expect(lazyNames.Next("$arrayStorage$") == "$arrayStorage$1", "file was not seeded at first allocation");
-        var nextPhase = new TypedGenericArrayStorageLowering.FreshNames(file);
+        var nextPhase = new BirTemporaryNames(file);
         Expect(nextPhase.Next("$arrayStorage$") == "$arrayStorage$1", "new phase retained removed names");
         EntryPointFreshNamesSelfTest(refs);
         TypedGenericArrayStorageLowering.SelfTest(refs);

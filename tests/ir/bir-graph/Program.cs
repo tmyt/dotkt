@@ -94,7 +94,7 @@ foreach (var line in samples)
     Same(json, BirFileCodec.Decode(BirFileCodec.Encode(graph)), "C# MessagePack rewrite");
     binarySamples++;
 }
-if (binarySamples != 29) throw new Exception($"Expected 29 actual Kotlin binary files, got {binarySamples}");
+if (binarySamples != 30) throw new Exception($"Expected 30 actual Kotlin binary files, got {binarySamples}");
 Console.WriteLine($"Kotlin -> C# BIR MessagePack: {binarySamples} files preserve literals, aliases, UTF16, source IDs and generic frames");
 var nullReader = Reader("{\"k\":\"const\",\"value\":null}");
 if (BirGraphJson.ReadNode(ref nullReader) is not BirConstant { Value.HasValue: true, Value.Value: BirLiteral.NullLiteral })

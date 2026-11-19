@@ -3137,8 +3137,9 @@ data class BirEventRaise(
     val event: String,
     val isStatic: Boolean,
     val superCall: Boolean,
-    val args: List<BirExpression>,
-    val recv: BirExpression? = null
+    val recv: BirExpression? = null,
+    val args: List<BirExpression>? = null,
+    val packedArgs: BirExpression? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"clrEventRaise\"")
@@ -3154,13 +3155,19 @@ data class BirEventRaise(
             output.append(",\"recv\":")
             value.writeJson(output)
         }
-        output.append(",\"args\":")
-        output.append('[')
-        args.forEachIndexed { index0, item0 ->
-            if (index0 > 0) output.append(',')
-            item0.writeJson(output)
+        args?.let { value ->
+            output.append(",\"args\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
         }
-        output.append(']')
+        packedArgs?.let { value ->
+            output.append(",\"packedArgs\":")
+            value.writeJson(output)
+        }
         output.append('}')
     }
 }
