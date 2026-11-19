@@ -377,23 +377,23 @@ static partial class KotlinOverrideSlotBridge
                     selectedSlotTypeParams = suspendDeclaration.TypeParams;
                     slotReturnsValue = !IsVoid(slotRet0);
                 }
-                else if (accessorKind != null && phase == Phase.PhysicalBridges)
+                else if (phase == Phase.PhysicalBridges && (accessorKind != null || selectedClassDeclaration != null))
                 {
-                    // The late MethodImpl must use the referenced MethodDef, not
-                    // the property's semantic return (which can contain a star
-                    // application whose CLR value is an existential carrier).
-                    if (!refs.TrySelectedOverrideDeclarationByShape(selectedSpec.Name, member, accessorKind,
+                    // A late MethodImpl names the referenced MethodDef, not its
+                    // Kotlin metadata view (e.g. a constructed result stored as a carrier).
+                    var declaration = selectedClassDeclaration;
+                    if (declaration == null && !refs.TrySelectedOverrideDeclarationByShape(selectedSpec.Name, member, accessorKind,
                             methodArity, implementationSignature, selectedArgs,
                             MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: false,
-                            out var propertyDeclaration,
+                            out declaration,
                             semanticConstraints: false, selectedDeclarationId: o.PhysicalDeclarationId
                                 ?? o.DeclarationId)) continue;
-                    slotRet0 = propertyDeclaration.PhysicalReturn;
-                    slotParams0 = propertyDeclaration.PhysicalParameters;
-                    selectedPhysicalMember = propertyDeclaration.PhysicalMember;
-                    signatureParameters = propertyDeclaration.SignatureParameters;
-                    selectedSlotTypeParams = propertyDeclaration.TypeParams is { Length: > 0 }
-                        ? propertyDeclaration.TypeParams : null;
+                    slotRet0 = declaration.PhysicalReturn;
+                    slotParams0 = declaration.PhysicalParameters;
+                    selectedPhysicalMember = declaration.PhysicalMember;
+                    signatureParameters = declaration.SignatureParameters;
+                    selectedSlotTypeParams = declaration.TypeParams is { Length: > 0 } ? declaration.TypeParams : null;
+                    slotReturnsValue = declaration.ReturnsValue;
                     refused = null;
                 }
                 else
@@ -422,11 +422,11 @@ static partial class KotlinOverrideSlotBridge
                 // A null PARAMETER fact is a slot this reader cannot state, and inventing one from the physical
                 // signature is the derivation its silence exists to prevent — so the member is left alone.
                 if (slotParams0.Any(t => t == null)) continue;
-                // A native accessor and an explicitly selected hot/cold MethodDef state exact CLR signatures.
-                // Ordinary Kotlin reference lookups may restore nullable-generic carriers even in the late phase.
-                // Never erase a native Nullable<V> nested in a reified slot into an unrelated Kotlin object slot.
+                // The late reference lookup returns the actual MethodDef header, including
+                // when the selected declaration is reached through an inherited interface.
+                var physicalSignature = physicalProjection != null || nativeOwner != null || phase == Phase.PhysicalBridges;
                 var slotParams = slotParams0
-                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalProjection != null || nativeOwner != null),
+                    .Select(t => SupertypeGraph.SubstOwnerTvs(DeclaredSlot(t, isValue, physical: physicalSignature),
                         accessorKind != null ? physicalSelectedArgs : selectedSlotArgs))
                     .ToArray();
                 // A null RETURN fact is the opposite: the reader states a return only while it still says something a
@@ -435,7 +435,7 @@ static partial class KotlinOverrideSlotBridge
                 // `compareTo(T): Int` is exactly that — the parameter is the whole divergence.
                 var slotRet = slotRet0 == null
                     ? SupertypeGraph.SubstOwnerTvs(impl.Return, ownArgs)
-                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalProjection != null || nativeOwner != null),
+                    : SupertypeGraph.SubstOwnerTvs(DeclaredSlot(slotRet0, isValue, physical: physicalSignature),
                         accessorKind != null ? physicalSelectedArgs : selectedSlotArgs);
                 if (slotRet == null) continue;
                 if (accessorKind != null) slotReturnsValue = slotRet0 != null && !IsVoid(slotRet0);

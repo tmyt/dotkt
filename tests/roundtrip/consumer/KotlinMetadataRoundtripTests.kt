@@ -72,6 +72,7 @@ import roundtrip.nothingret.BaseNullSource
 import roundtrip.nothingret.NullSource
 import roundtrip.nothingret.fail as nothingretFail
 import roundtrip.covariantreference.ReferencedCovariantRoot
+import roundtrip.covariantreference.EntrySource
 import roundtrip.covariantreference.ReferencedCovariantSlot
 import roundtrip.covariantreference.ReferencedCovariantValue
 import roundtrip.covariantreference.ReferencedNarrowCovariantValue
@@ -208,6 +209,10 @@ private interface CrossModuleRedeclaredCovariantDim : ReferencedRedeclaredCovari
 }
 
 private class CrossModuleRedeclaredCovariantImplementation : CrossModuleRedeclaredCovariantDim
+
+private class MissingEntry : EntrySource() {
+    override fun entry(): Nothing = error("missing entry")
+}
 
 private class CrossModuleNothingCovariantImplementation : ReferencedCovariantSlot {
     override val item: Nothing
@@ -649,6 +654,9 @@ class KotlinApiShapeRoundtripTests {
 
         val nothing: ReferencedCovariantRoot<ReferencedCovariantValue> =
             CrossModuleNothingCovariantImplementation()
+        val entries: EntrySource = MissingEntry()
+        ClassicAssert.AreEqual("missing entry",
+            try { entries.entry(); "returned" } catch (e: IllegalStateException) { e.message })
         ClassicAssert.AreEqual("referenced-item",
             try { nothing.item.value.toString() } catch (e: IllegalStateException) { e.message })
         ClassicAssert.AreEqual("referenced-make",

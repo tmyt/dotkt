@@ -3948,7 +3948,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 selectedShape: selectedShape,
                 semanticConstraints: semanticConstraints,
                 selectedPhysicalMember: selectedPhysicalMember,
-                selectedDeclarationId: selectedDeclarationId) != SlotLookup.Declared
+                selectedDeclarationId: selectedDeclarationId, physicalOverride: !semanticConstraints) != SlotLookup.Declared
             || declaration == null)
             return false;
         declaredRet = ret.Node;
@@ -3983,7 +3983,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         TypeNode methodReturn = null, BirTypeParameter[] selectedTypeParams = null,
         TypeNode[] selectedOwnerTypeArguments = null, bool semanticConstraints = false,
         string selectedPhysicalMember = null, string selectedDeclarationId = null,
-        bool includeUnchangedMethodReturn = true, string selectedShape = null)
+        bool includeUnchangedMethodReturn = true, string selectedShape = null, bool physicalOverride = false)
     {
         declaredRet = default;
         declaredParams = null;
@@ -4039,7 +4039,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 // result carrier belongs to the source declaration, not to the Task-returning MethodImpl row.
                 // The exact unchecked-cast getter has an independent consumer projection. Reporting the closed
                 // Object slot as a nullable erasure would overwrite the instantiated Kotlin expression type.
-                declaredRet = propertyName != null && !includeClosedPropertyReturn && IsUncheckedGenericObjectGetter(member)
+                declaredRet = physicalOverride ? new SlotFact(member.ReturnTypeNode, false)
+                    : propertyName != null && !includeClosedPropertyReturn && IsUncheckedGenericObjectGetter(member)
                     ? default
                     : (includeUnchangedMethodReturn || includeClosedPropertyReturn)
                         && member.KotlinReturnType is TypeNode.Tv && IsObjectType(member.ReturnTypeNode)
@@ -4056,7 +4057,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                         : DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = propertyName == null && IsExistentialValueParameter(member.ParamTypeNodes[i])
+                    declaredParams[i] = physicalOverride || propertyName == null && IsExistentialValueParameter(member.ParamTypeNodes[i])
                         ? new SlotFact(member.ParamTypeNodes[i], false)
                         : explicitNullableFrame
                         ? FramedSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i], selectedPhysicalMember == null)
@@ -4107,7 +4108,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
                 methodSignature, methodReturn, selectedTypeParams, selectedOwnerTypeArguments, semanticConstraints,
-                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn, selectedShape);
+                selectedPhysicalMember, selectedDeclarationId, includeUnchangedMethodReturn, selectedShape, physicalOverride);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;

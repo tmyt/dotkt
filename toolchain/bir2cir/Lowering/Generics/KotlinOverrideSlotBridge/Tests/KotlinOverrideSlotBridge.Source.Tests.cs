@@ -47,8 +47,12 @@ static partial class KotlinOverrideSlotBridge
             || !ReferenceEquals(implementation.Body.Value, originalBody) || implementation.DeclarationId.Value != "body-move"
             || !ReferenceEquals(owner.Methods.Value[0], implementation)
             || suspend.SuspendTaskResult.Value != objectType || suspend.Ret.Value != sourceParameter
-            || !getter.Virtual.OrDefault() || getter.ClrInterfaceImpls.Value.Single().Member.Value != "exactGetter")
-            throw new InvalidOperationException("Typed override propagation lost current declaration identity, nullable facts, suspend result, or exact property slot");
+            || !getter.Virtual.OrDefault() || getter.ClrInterfaceImpls.OrEmpty().Length != 0)
+            throw new InvalidOperationException("Override preparation lost declaration facts or committed a physical property slot before projection");
+        ApplyAll(new[] { root }, type => type.Name == "kotlin.Int", references,
+            new HashSet<string> { "Base", "Derived" }, true, policy, null, null, _ => false);
+        if (getter.ClrInterfaceImpls.OrEmpty().Single().Member.Value != "exactGetter")
+            throw new InvalidOperationException("Final reference binding lost the renamed property slot");
 
         // Exercise the same declaration-edit function for an ordinary-function
         // source signature, including null/present source metadata semantics.
