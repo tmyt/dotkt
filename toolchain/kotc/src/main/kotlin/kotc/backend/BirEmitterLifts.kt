@@ -1563,7 +1563,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 		val externalCompanion = true.takeIf { companionCaptureClass?.let { clrExternalOwner(it) != null } == true }
 		return BirCallInstance(ownerType = memberOwner, virtual = virtual, recv = recvExprIn(), method = name, prop = kind,
 			sig = overloadSignature(fn), args = args, companionCall = externalCompanion,
-			declarationId = declarationIdentity, overrides = overrideDeclarations(fn))
+			declarationId = declarationIdentity, overrides = inMemberDeclarationFrame(fn) { overrideDeclarations(fn) })
 	}
 	// A field-backed member property (`@ClrField`) reads/writes its backing field directly — the SAME
 	// `field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver

@@ -95,25 +95,25 @@ for method, owner in cir_expected.items():
 
 # Bound and unbound property references must carry the same selected accessor and
 # instantiated override edges as the direct calls, even when all three dispatch correctly.
-def slot_calls(declaration):
-    bindings = {}
-    for node in objects(declaration["methods"]):
-        if (node.get("k") == "callInstance" and node.get("method") == "slotValue"
-                and node["ownerType"].get("name") == "RuntimeTypesStringSlot"):
-            binding = (node["declarationId"], node.get("overrides"))
-            assert bindings.setdefault(node["prop"], binding) == binding, "get and invoke disagree"
-    return bindings
+def slot_calls(method):
+    return [(node["prop"], node["declarationId"], node.get("overrides"))
+            for node in objects(method) if node.get("k") == "callInstance"
+            and node.get("method") == "slotValue" and node["ownerType"].get("name") == "RuntimeTypesSlotImpl"]
 
-direct = slot_calls(type_decl(bir, "RuntimeTypeAndSuperDispatchTests"))
+caller = next(m for m in type_decl(bir, "RuntimeTypesSlotImpl")["methods"] if m["name"] == "exercise")
+direct = {call[0]: call for call in slot_calls(caller)}
 assert set(direct) == {"get", "set"}
-for _, edges in direct.values():
+for _, _, edges in direct.values():
     assert len(edges) == 1 and edges[0]["owner"] == {
-        "t": "fqn", "name": "RuntimeTypesSlot", "args": [{"t": "fqn", "name": "kotlin.String"}]}
+        "t": "fqn", "name": "RuntimeTypesSlot", "args": [{"t": "tv", "scope": "type", "i": 1}]}
 for arity in (0, 1):
     protocol = f"kotlin.reflect.KMutableProperty{arity}"
-    matches = [calls for decl in bir["types"]
+    matches = [decl for decl in bir["types"]
                if any(i.get("name") == protocol for i in decl.get("interfaces", []))
-               and (calls := slot_calls(decl))]
-    assert matches == [direct], f"{protocol}: selected accessor or override edge differs from direct access"
+               and any(slot_calls(method) for method in decl["methods"])]
+    assert len(matches) == 1, f"expected a {protocol} reference to slotValue"
+    methods = {m["name"]: m for m in matches[0]["methods"]}
+    for method, prop in (("get", "get"), ("invoke", "get"), ("set", "set")):
+        assert slot_calls(methods[method]) == [direct[prop]], f"{protocol}.{method}: wrong accessor or override edge"
 
 print("abstract slots, class-super calls and lifted accessor bindings OK")

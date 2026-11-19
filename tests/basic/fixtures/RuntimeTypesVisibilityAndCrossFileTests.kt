@@ -143,7 +143,18 @@ abstract class RuntimeTypesAbstractBodylessContract {
 }
 
 private interface RuntimeTypesSlot<T> { var slotValue: T }
-private class RuntimeTypesStringSlot(override var slotValue: String) : RuntimeTypesSlot<String>
+private class RuntimeTypesSlotImpl<A, B>(override var slotValue: B) : RuntimeTypesSlot<B> {
+    fun exercise(slot: RuntimeTypesSlotImpl<B, String>): String {
+        val bound = slot::slotValue
+        val unbound = RuntimeTypesSlotImpl<B, String>::slotValue
+        slot.slotValue = "direct"
+        assertEquals(slot.slotValue, bound())
+        bound.set("bound")
+        assertEquals("bound", unbound(slot))
+        unbound.set(slot, "unbound")
+        return bound.get()
+    }
+}
 
 open class RuntimeTypesA { open fun name() = "A" }
 open class RuntimeTypesB : RuntimeTypesA() { override fun name() = super.name() + "B" }
@@ -331,15 +342,7 @@ class RuntimeTypeAndSuperDispatchTests {
         assertEquals("impl+hi-default", RuntimeTypesImpl().hi())  // impl+hi-default
         assertEquals("method-derived>method-base:call", RuntimeTypesSuperMethodDerived().inheritedMethod("call"))
         assertEquals("property-derived>property-base", RuntimeTypesSuperPropertyDerived().inheritedProperty)
-        val slot = RuntimeTypesStringSlot("initial")
-        val bound = slot::slotValue
-        val unbound = RuntimeTypesStringSlot::slotValue
-        slot.slotValue = "direct"
-        assertEquals("direct", bound.get())
-        bound.set("bound")
-        assertEquals("bound", unbound.get(slot))
-        unbound.set(slot, "unbound")
-        assertEquals("unbound", slot.slotValue)
+        assertEquals("unbound", RuntimeTypesSlotImpl<Int, Double>(0.0).exercise(RuntimeTypesSlotImpl("initial")))
         val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11
