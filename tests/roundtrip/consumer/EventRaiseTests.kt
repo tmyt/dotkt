@@ -26,7 +26,7 @@ private class ImportedSuperChild : SuperPublisher() {
     val policy = RaiseCountingPolicy()
     override val Changed: ClrEvent<System.Action1<Int>> by clrEvent(policy)
     fun fireBase(value: Int) { super.Changed(value) }
-    fun later(value: Int): () -> Unit = { super.Changed(value) }
+    fun later(value: Int): () -> Unit = { super.Changed(*arrayOf<Any?>(value)) }
 }
 
 private fun <A, B> raiseGeneric(source: Publisher<A, B>, value: B) { source.Changed(value) }

@@ -60,7 +60,7 @@ private class LocalSuperChild : SuperPublisher() {
     val policy = RaiseCountingPolicy()
     override val Changed: ClrEvent<System.Action1<Int>> by clrEvent(policy)
     fun fireBase(value: Int) { super.Changed(value) }
-    fun later(value: Int): () -> Unit = { super.Changed(value) }
+    fun later(value: Int): () -> Unit = { super.Changed(*arrayOf<Any?>(value)) }
 }
 
 fun localInheritedRaises(): Int {
@@ -80,5 +80,12 @@ fun localInheritedRaises(): Int {
     customToken.close()
     custom.fire(100)
     check(custom.policy.adds == 1 && custom.policy.removes == 1)
+    val wide = Publisher<Unit, Any?>()
+    val projected: Publisher<Unit, in Int> = wide
+    var received: Any? = null
+    val wideToken = wide.Changed.subscribe { received = it }
+    projected.Changed(*arrayOf<Any?>("payload"))
+    wideToken.close()
+    check(received == "payload")
     return result
 }

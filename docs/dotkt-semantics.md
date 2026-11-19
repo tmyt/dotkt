@@ -2201,10 +2201,6 @@ Iteration is unaffected because the backend enumerates through `IEnumerable<T>` 
 
 ## 8d. .NET event subscriptions and closeable tokens
 
-When raising a Kotlin-declared event, spread operands in `source.Changed(first, *rest)` follow Kotlin
-vararg evaluation order. The receiver and each operand are evaluated once. If the resulting array length
-does not match the selected raise accessor, the call throws `IllegalArgumentException` before dispatch.
-
 A .NET **event** (`ObservableCollection.CollectionChanged`, a WinForms/WPF `Button.Click`, a custom library
 `Widget.Changed`) is consumed through a closeable subscription token:
 
@@ -2262,6 +2258,9 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   legal from **outside** the declaring type when the event is public (it calls a synthesized `raise_`
   accessor — the `.event`'s `.fire` — with the event's visibility). Private/protected/internal events
   retain their source access restrictions; returning a retained handle grants subscription, not raising.
+  In `source.Changed(first, *rest)` the receiver and each operand are evaluated once, in Kotlin
+  vararg order. If the resulting array length does not match the selected raise accessor, the
+  call throws `IllegalArgumentException` before dispatch.
   This is exactly the raiser .NET libraries hand-roll as `protected virtual void OnPropertyChanged(...)`, promoted to a
   part of the event declaration — it is what lets the idiomatic property-delegate MVVM pattern
   (`ViewModelProperty.setValue` raising a base class's `PropertyChanged`) work. Consumer handles support subscription;

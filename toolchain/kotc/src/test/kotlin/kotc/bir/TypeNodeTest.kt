@@ -128,6 +128,8 @@ class TypeNodeTest {
             println("IR_BIR_CORE_SAMPLE ${sample.toJson()}")
             reportBinaryNode(sample)
         }
+        reportBinaryNode(BirEventRaise(TypeNode.Fqn("Publisher"), "Changed", isStatic = false,
+            superCall = false, recv = BirLocal("source"), packedArgs = BirLocal("arguments")))
     }
 
     @Test

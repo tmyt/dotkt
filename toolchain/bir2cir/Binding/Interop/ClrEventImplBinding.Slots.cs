@@ -241,7 +241,7 @@ static partial class ClrEventImplBinding
         var name = raise.Event.OrDefault();
         var prelude = new List<IBirStatement>();
         var receiver = raise.Recv;
-        IBirExpression[] Arguments(int expected, TypeNode[] localTypes = null)
+        IBirExpression[] Arguments(int expected)
         {
             if (!raise.PackedArgs.HasValue)
             {
@@ -258,7 +258,8 @@ static partial class ClrEventImplBinding
                 return new BirLocal { Name = id, Sty = Copy(type) };
             }
             if (receiver.HasValue && receiver.Value is not BirThis)
-                receiver = OptionalField<IBirExpression>.Of(Bind("dotkt$eventReceiver", owner, receiver.Value));
+                receiver = OptionalField<IBirExpression>.Of(Bind("dotkt$eventReceiver",
+                    ((BirGraphValue)receiver.Value).ResultTypeStamp ?? owner, receiver.Value));
             var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
             var packed = Bind("dotkt$eventArgs", new TypeNode.Array(element), raise.PackedArgs.Value);
             BirLocal Read() => (BirLocal)((BirGraphValue)packed).DeepClone();
@@ -269,18 +270,15 @@ static partial class ClrEventImplBinding
                     Type = new TypeNode.Fqn("System.ArgumentException"), Args = Array.Empty<IBirExpression>(), ArgTypes = Array.Empty<TypeNode>(),
                 } } },
             } } });
-            return Enumerable.Range(0, expected).Select(i => {
-                IBirExpression value = new BirArrayGet { Array = Read(), Index = Int(i), Elem = element };
-                return localTypes == null ? value : new BirCast {
-                    Type = SupertypeGraph.SubstOwnerTvs(localTypes[i], owner.Args ?? []), E = OptionalField<IBirExpression>.Of(value),
-                };
+            return Enumerable.Range(0, expected).Select(i => (IBirExpression)new BirArrayGet {
+                Array = Read(), Index = Int(i), Elem = element,
             }).ToArray();
         }
 
         BirGraphValue call;
         if (signatures.TryGetValue((owner.Name, name), out var local))
         {
-            var arguments = Arguments(local.Signature.Length, local.Signature);
+            var arguments = Arguments(local.Signature.Length);
             call = local.IsStatic
                 ? new BirCallStatic { Owner = Copy(owner), Method = local.Name, Sig = local.Signature.Select(Copy).ToArray(),
                     DeclarationId = local.DeclarationId, Virtual = false, Args = arguments }
