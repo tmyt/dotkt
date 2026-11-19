@@ -238,8 +238,7 @@ static partial class ReifiedNullabilityWitnessLowering
 
     static IBirExpression Reflect(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder helpers) =>
         ReflectedKotlinType.Value(type, helpers, (tv, nullable) => witnesses?.Parameters?.IsDeclared(tv) == true
-            ? witnesses.Parameters.Value(tv, nullable, helpers, (bound, marked) =>
-                ReflectedKotlinType.Read(SourceWitnessFor(bound, witnesses, values), marked, helpers))
+            ? witnesses.Parameters.Value(tv, nullable, helpers)
             : ReflectedKotlinType.Read(SourceWitnessFor(tv, witnesses, values), nullable, helpers));
 
     static IBirExpression SourceWitnessFor(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder reflection = null) => type switch {

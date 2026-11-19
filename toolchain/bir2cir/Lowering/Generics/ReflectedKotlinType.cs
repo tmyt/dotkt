@@ -95,9 +95,10 @@ static class ReflectedKotlinType
         BirConstant Text(string value) => new() { Type = String, Value = new BirLiteral.TextLiteral(value) };
         return helpers.Bind(new BirCallStatic {
             Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectedTypeRuntimeKt"), Method = "reflectedParameter",
-            Sig = new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), String, new TypeNode.Fqn("kotlin.Int"), String, String, Boolean, new TypeNode.Array(KType) },
+            Sig = new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), String, new TypeNode.Fqn("kotlin.Int"), String, String, Boolean, Boolean, new TypeNode.Array(KType) },
             Args = new IBirExpression[] { new BirClassReference { Type = new TypeNode.Fqn(owner) }, Text(id),
                 KotlinTypeWitness.ConstantValue(index), Text(parameter.Name.Value), Text(parameter.Variance.OrDefault() ?? ""),
+                new BirConstant { Type = Boolean, Value = new BirLiteral.BooleanLiteral(parameter.Reified.OrDefault()) },
                 new BirConstant { Type = Boolean, Value = new BirLiteral.BooleanLiteral(nullable) },
                 new BirNewArray { Elem = KType, Elems = bounds } }, Ret = KType, Sty = KType,
         });

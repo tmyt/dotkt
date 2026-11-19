@@ -44,9 +44,9 @@ internal class ClrDeclaredParameter(
     private val index: Int,
     override val name: String,
     override val variance: KVariance,
+    override val isReified: Boolean,
     override val upperBounds: List<KType>,
 ) : KTypeParameter {
-    override val isReified: Boolean get() = false
     override fun equals(other: Any?): Boolean = other is ClrDeclaredParameter &&
         module == other.module && declaration == other.declaration && index == other.index
     override fun hashCode(): Int = (31 * module.hashCode() + declaration.hashCode()) * 31 + index

@@ -45,8 +45,7 @@ sealed class ReflectedDeclarationParameters
             return decl != null && i >= 0 && i < decl.Parameters.Length && !decl.Parameters[i].Reified.OrDefault();
         }
 
-        internal IBirExpression Value(TypeNode.Tv physical, bool nullable, SourceHelperBinder helpers,
-            Func<TypeNode.Tv, bool, IBirExpression> reified)
+        internal IBirExpression Value(TypeNode.Tv physical, bool nullable, SourceHelperBinder helpers)
         {
             var frame = physical.Scope == "method" ? MethodFrame : TypeFrame;
             var slot = frame?.PhysicalSlot(physical.I);
@@ -58,11 +57,8 @@ sealed class ReflectedDeclarationParameters
             {
                 var decl = tv.Scope == "method" ? Method : Type;
                 var p = decl.Parameters[tv.I];
-                if (p.Reified.OrDefault())
-                {
-                    var boundFrame = tv.Scope == "method" ? MethodFrame : TypeFrame;
-                    return reified(boundFrame?.Variable(tv, NullableRepresentationFrame.Role.Ordinary) ?? tv, marked);
-                }
+                // Inside a declared bound even a reified R denotes the declaration R,
+                // not the argument supplied at this invocation.
                 if (!active.Add((tv.Scope, tv.I)))
                     throw new InvalidOperationException($"bir2cir: typeOf: recursive bounds of non-reified type parameter '{p.Name.Value}' are not supported");
                 TypeNode[] constraints = p.Constraints.OrEmpty();

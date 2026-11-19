@@ -141,6 +141,15 @@ sealed partial class NullableWitnessDemand
     HashSet<TypeVariable> AnalyzeTyped(BirGraphValue root, IReadOnlyList<TypedFrameDemands> frames)
     {
         var required = new HashSet<TypeVariable>();
+        void Require(TypeNode operand)
+        {
+            if (operand == null) return;
+            if (reflectedOnly)
+                BirGraphNameFields.VisitTypeNodes(operand, node => {
+                    if (node is TypeNode.Tv tv) required.Add(new(tv.Scope, tv.I));
+                });
+            else if (KotlinTypeWitness.Variable(operand) is { } tv) required.Add(new(tv.Scope, tv.I));
+        }
         int[] GeneratedDemand(string name, bool target) => frames.Select(frame =>
             (target ? frame.Targets : frame.Types).TryGetValue(name, out var demand) ? demand : null)
             .FirstOrDefault(demand => demand != null) ?? Array.Empty<int>();
@@ -150,9 +159,7 @@ sealed partial class NullableWitnessDemand
             {
                 if (index < 0 || index >= arguments.Count)
                     throw new InvalidOperationException($"bir2cir: {context} has no type argument at demanded nullable-witness position {index}");
-                if (reflectedOnly)
-                    TypedExecutableFrames.RewriteType(arguments[index], tv => { required.Add(new(tv.Scope, tv.I)); return null; });
-                else if (KotlinTypeWitness.Variable(arguments[index]) is { } variable) required.Add(new(variable.Scope, variable.I));
+                Require(arguments[index]);
             }
         }
         void Frame(BirGraphValue declaration, TypeNode[] arguments, TypeNode[] declarationArguments, string context, bool dense)
@@ -196,7 +203,7 @@ sealed partial class NullableWitnessDemand
                 _ => null,
             };
             if (reflectedOnly) tested = (node as BirReflectedType)?.Operand.OrDefault();
-            if (KotlinTypeWitness.Variable(tested) is { } variable) required.Add(new(variable.Scope, variable.I));
+            Require(tested);
             var call = node switch {
                 BirCallStatic value => (value.DeclarationId.OrDefault(), value.TypeArgs.OrEmpty()),
                 BirCallInstance value => (value.DeclarationId.OrDefault(), value.TypeArgs.OrEmpty()),

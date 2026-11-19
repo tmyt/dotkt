@@ -246,7 +246,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 			if (simple.hasRawType()) TypeNode.Star
 			else birTypeProjection(arg)
 		}
-		val classifier = klass?.let { nestedSourceClassifier(it) }
+		val classifier = klass?.let { sourceClassifier(it, netName, imported = true) }
 		return when {
 			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args, classifier)
 			// A generic external classifier referenced raw still needs its semantic arity. This is Kotlin's
@@ -299,14 +299,16 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 
 private fun BirEmitter.sourceClassifierType(klass: IrClass, args: List<TypeNode>? = null): TypeNode.Fqn {
 	val name = typeName(klass)
-	return TypeNode.Fqn(name, args, nestedSourceClassifier(klass, name))
+	return TypeNode.Fqn(name, args, sourceClassifier(klass, name))
 }
 
-private fun nestedSourceClassifier(klass: IrClass, sourceBindingName: String? = null): TypeNode.SourceClassifier? {
+private fun sourceClassifier(klass: IrClass, bindingName: String, imported: Boolean = false): TypeNode.SourceClassifier? {
 	// The IR ClassId owns the package/class boundary. Keep it separate from the spelling
 	// used by the backend to bind the class; synthetic owners do not denote this ClassId.
-	val id = klass.classId?.takeIf { !it.isLocal && it.isNestedClass &&
-		(sourceBindingName == null || it.asSingleFqName().asString() == sourceBindingName) } ?: return null
+	val id = klass.classId?.takeUnless { it.isLocal } ?: return null
+	val sourceName = id.asSingleFqName().asString()
+	val needsIdentity = if (sourceName == bindingName) id.isNestedClass else imported
+	if (!needsIdentity) return null
 	val path = id.relativeClassName.pathSegments().map { it.asString() }
 	return TypeNode.SourceClassifier(id.packageFqName.asString(), path.dropLast(1), path.last())
 }

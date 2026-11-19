@@ -13,10 +13,10 @@ internal fun reflectedType(name: String, classifier: KClassifier?, nullable: Boo
 
 @PublishedApi
 internal fun reflectedParameter(owner: Any, declaration: String, index: Int, name: String,
-                               variance: String, nullable: Boolean, bounds: Array<KType>): KType {
+                               variance: String, reifiedParameter: Boolean, nullable: Boolean, bounds: Array<KType>): KType {
     val parameter = ClrDeclaredParameter((owner as StarProjectionType).module, declaration, index, name,
         when (variance) { "in" -> KVariance.IN; "out" -> KVariance.OUT; else -> KVariance.INVARIANT },
-        bounds.asList())
+        reifiedParameter, bounds.asList())
     return ClrReflectedType(name, parameter, emptyList(), nullable)
 }
 
