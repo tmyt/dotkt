@@ -10,17 +10,8 @@ private fun unsignedPortableHelper(name: String, vararg args: Any?): Any? {
     return owner.GetMethod(name, flags, null, types, null)!!.Invoke(null, Array<Any?>(args.size) { args[it] })
 }
 
-private fun unsignedPortableDigits(value: ULong, radix: Int): String {
-    var remaining = value
-    val base = radix.toULong()
-    var result = ""
-    do {
-        val digit = (remaining % base).toInt()
-        result = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + result
-        remaining /= base
-    } while (remaining != 0uL)
-    return result
-}
+private fun isCanonicalMagnitude(text: String): Boolean = text == "0" ||
+    (text.isNotEmpty() && text[0] != '0' && text.all { it in '0'..'9' || it in 'a'..'z' })
 
 class UnsignedPortableTests {
     @TestAttribute fun narrowUnsignedParsingChecksExactLiteralWidths() {
@@ -38,18 +29,23 @@ class UnsignedPortableTests {
         for (radix in 2..36) {
             for (raw in intArrayOf(0, 1, Int.MAX_VALUE, Int.MIN_VALUE, -1)) {
                 val value = raw.toUInt()
-                val expected = unsignedPortableDigits((raw.toLong() and 0xffffffffL).toULong(), radix)
-                check(value.toString(radix) == expected)
-                check(unsignedPortableHelper("uintToString", raw, radix) as String == expected)
-                check(expected.toUInt(radix) == value)
+                val text = value.toString(radix)
+                check(isCanonicalMagnitude(text) && text.toUInt(radix) == value)
+                check(unsignedPortableHelper("uintToString", raw, radix) as String == text)
             }
             for (raw in longArrayOf(0L, 1L, Long.MAX_VALUE, Long.MIN_VALUE, -1L)) {
                 val value = raw.toULong()
-                val expected = unsignedPortableDigits(value, radix)
-                check(value.toString(radix) == expected)
-                check(unsignedPortableHelper("ulongToString", raw, radix) as String == expected)
-                check(expected.toULong(radix) == value)
+                val text = value.toString(radix)
+                check(isCanonicalMagnitude(text) && text.toULong(radix) == value)
+                check(unsignedPortableHelper("ulongToString", raw, radix) as String == text)
             }
+            check(UByte.MAX_VALUE.toString(radix).toUByte(radix) == UByte.MAX_VALUE)
+            check(UShort.MAX_VALUE.toString(radix).toUShort(radix) == UShort.MAX_VALUE)
+            val square = radix * radix
+            check(square.toUInt().toString(radix) == "100" && (-square).toString(radix) == "-100")
+            check((square + 1).toULong().toString(radix) == "101")
+            val last = "0123456789abcdefghijklmnopqrstuvwxyz"[radix - 1]
+            check((square - 1).toString(radix) == "$last$last")
         }
         check(unsignedPortableHelper("uintToString", -1) as String == "4294967295")
         check(unsignedPortableHelper("ulongToString", -1L) as String == "18446744073709551615")
@@ -122,6 +118,12 @@ class UnsignedPortableTests {
             check(rejected)
             rejected = false
             try { ULong.MAX_VALUE.toString(radix) } catch (_: IllegalArgumentException) { rejected = true }
+            check(rejected)
+            rejected = false
+            try { 0.toString(radix) } catch (_: IllegalArgumentException) { rejected = true }
+            check(rejected)
+            rejected = false
+            try { Long.MIN_VALUE.toString(radix) } catch (_: IllegalArgumentException) { rejected = true }
             check(rejected)
         }
         check((-35).toString(36) == "-z" && Long.MIN_VALUE.toString(16) == "-8000000000000000")

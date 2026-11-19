@@ -14,10 +14,6 @@
 
 package kotlin.text
 
-// Maps a digit value 0..35 to its character: 0..9 then a..z.
-private fun clrDigitToChar(digit: Int): Char =
-    if (digit < 10) '0' + digit else 'a' + (digit - 10)
-
 private fun clrNumberFormatError(input: String): Nothing =
     throw NumberFormatException("For input string: \"$input\"")
 
@@ -29,36 +25,16 @@ public actual fun Short.toString(radix: Int): String = this.toInt().toString(rad
 
 @SinceKotlin("1.1")
 public actual fun Int.toString(radix: Int): String {
-    checkRadix(radix)
-    if (this == 0) return "0"
     val negative = this < 0
-    var n = this
-    val sb = StringBuilder()
-    // Accumulate least-significant digit first using negative-side arithmetic so that Int.MIN_VALUE
-    // (which has no positive counterpart) is handled without overflow; digits are prepended.
-    do {
-        val rem = n % radix
-        sb.insert(0, clrDigitToChar(if (rem < 0) -rem else rem))
-        n /= radix
-    } while (n != 0)
-    if (negative) sb.insert(0, '-')
-    return sb.toString()
+    val magnitude = if (negative) 0u - toUInt() else toUInt()
+    return formatUIntMagnitude(magnitude, checkRadix(radix), negative)
 }
 
 @SinceKotlin("1.1")
 public actual fun Long.toString(radix: Int): String {
-    checkRadix(radix)
-    if (this == 0L) return "0"
     val negative = this < 0
-    var n = this
-    val sb = StringBuilder()
-    do {
-        val rem = (n % radix).toInt()
-        sb.insert(0, clrDigitToChar(if (rem < 0) -rem else rem))
-        n /= radix
-    } while (n != 0L)
-    if (negative) sb.insert(0, '-')
-    return sb.toString()
+    val magnitude = if (negative) 0uL - toULong() else toULong()
+    return formatULongMagnitude(magnitude, checkRadix(radix), negative)
 }
 
 @SinceKotlin("1.4")

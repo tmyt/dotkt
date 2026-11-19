@@ -4,6 +4,7 @@ fun formatUInt(value: UInt, radix: Int): String = value.toString(radix)
 fun formatULong(value: ULong, radix: Int): String = value.toString(radix)
 fun savedUIntFormatter(): (UInt, Int) -> String = UInt::toString
 fun savedULongFormatter(): (ULong, Int) -> String = ULong::toString
+fun savedLongFormatter(): (Long, Int) -> String = Long::toString
 fun nativeUIntMax(a: UInt, b: UInt): UInt = System.Math.Max(a, b)
 fun nativeULongMax(a: ULong, b: ULong): ULong = System.Math.Max(a, b)
 inline fun observedFormat(value: ULong, radix: Int, block: (String) -> String): String = block(value.toString(radix))

@@ -120,19 +120,35 @@ internal actual fun doubleToULong(value: Double): ULong = when {
 internal actual inline fun uintToString(value: Int): String = uintToLong(value).toString()
 
 @InlineOnly
-internal actual inline fun uintToString(value: Int, base: Int): String = ulongToString(uintToLong(value), base)
+internal actual inline fun uintToString(value: Int, base: Int): String = formatUIntMagnitude(value.toUInt(), base, false)
 
 @InlineOnly
 internal actual inline fun ulongToString(value: Long): String = ulongToString(value, 10)
 
-internal actual fun ulongToString(value: Long, base: Int): String {
-    if (value >= 0) return value.toString(base)
+internal actual fun ulongToString(value: Long, base: Int): String = formatULongMagnitude(value.toULong(), base, false)
 
-    var quotient = ((value ushr 1) / base) shl 1
-    var rem = value - quotient * base
-    if (rem >= base) {
-        rem -= base
-        quotient += 1
-    }
-    return quotient.toString(base) + rem.toString(base)
+internal fun formatUIntMagnitude(value: UInt, base: Int, negative: Boolean): String {
+    val radix = base.toUInt()
+    return radixDigits(value, UInt.SIZE_BITS, negative, { it.toInt() != 0 }, { (it % radix).toInt() }, { it / radix })
+}
+
+internal fun formatULongMagnitude(value: ULong, base: Int, negative: Boolean): String {
+    val radix = base.toULong()
+    return radixDigits(value, ULong.SIZE_BITS, negative, { it.toLong() != 0L }, { (it % radix).toInt() }, { it / radix })
+}
+
+// As in UnsignedWasm, fill from the end using arithmetic at the operand's width.
+// The radix is already checked at the public entry point; zero emits one digit.
+private inline fun <T> radixDigits(value: T, width: Int, negative: Boolean, nonzero: (T) -> Boolean,
+                                   remainder: (T) -> Int, quotient: (T) -> T): String {
+    val buffer = CharArray(width + if (negative) 1 else 0)
+    var index = buffer.size
+    var remaining = value
+    do {
+        val digit = remainder(remaining)
+        buffer[--index] = if (digit < 10) '0' + digit else 'a' + (digit - 10)
+        remaining = quotient(remaining)
+    } while (nonzero(remaining))
+    if (negative) buffer[--index] = '-'
+    return buffer.concatToString(index, buffer.size)
 }
