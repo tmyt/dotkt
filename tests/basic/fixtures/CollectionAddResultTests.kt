@@ -43,9 +43,24 @@ private class CollectionAddResultDefaultCollection : CollectionAddResultDefault 
 
 private fun <T> collectionAddResultGeneric(receiver: MutableCollection<T>, element: T): Boolean = receiver.add(element)
 
+private class RejectingSet<E>(items: MutableSet<E>) : MutableSet<E> by items {
+    override fun add(element: E): Nothing = throw UnsupportedOperationException("add")
+    override fun addAll(elements: Collection<E>): Nothing = throw UnsupportedOperationException("addAll")
+}
+private class RejectingIndex<E>(items: List<E>) : List<E> by items {
+    override fun indexOf(element: E): Nothing = throw UnsupportedOperationException("indexOf")
+}
+
 class CollectionAddResultTests {
     @TestAttribute
     fun authoredAddResultSurvivesEveryCollectionView() {
+        val rejecting: MutableSet<Int> = RejectingSet(mutableSetOf(1))
+        try { rejecting.add(2); error("add returned") } catch (e: UnsupportedOperationException) { check(e.message == "add") }
+        try { rejecting.addAll(listOf(2)); error("addAll returned") } catch (e: UnsupportedOperationException) { check(e.message == "addAll") }
+        val list: List<Int> = RejectingIndex(listOf(1))
+        try { list.indexOf(1); error("indexOf returned") } catch (e: UnsupportedOperationException) { check(e.message == "indexOf") }
+        check(rejecting.size == 1)
+
         val value = CollectionAddResultList(mutableListOf(1))
         check(value.add(2))
         val exact: MutableList<Int> = value

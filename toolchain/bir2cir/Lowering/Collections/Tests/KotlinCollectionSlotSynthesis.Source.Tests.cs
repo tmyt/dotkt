@@ -39,7 +39,12 @@ static partial class KotlinCollectionSlotSynthesis
             TypeParams = new[] { new BirTypeParameter { Name = "Element" } }, Methods = new[] { contains, all, indexed } };
         var originals = queryOwner.Methods.Value;
         var omitted = new BirClassDefinition { Name = "NoMethods", Kind = "class", Methods = OptionalField<BirFunctionDeclaration[]>.Null };
-        var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { queryOwner, omitted } };
+        BirInterfaceDefinition Carrier(string owner, TypeNode result, params string[] members) => new() {
+            Name = owner, Kind = "interface", Methods = members.Select(member => new BirFunctionDeclaration {
+                Name = member, Ret = result, Abstract = true }).ToArray() };
+        var collectionCarrier = Carrier(CollectionDefaultSlots, boolean, "dotktContains", "dotktContainsAll");
+        var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { queryOwner, omitted, collectionCarrier,
+            Carrier(ListSlots, boolean, "dotktAddAllAt") } };
         var types = file.Types.Value;
         var publications = 0;
         ApplyAll(new[] { file }, refs, _ => false, null, (owner, appended) => {
@@ -75,6 +80,16 @@ static partial class KotlinCollectionSlotSynthesis
             && omitted.Methods.IsNull && queryOwner.Interfaces.Value.Length == 2,
             "repeated execution replaced declarations, changed absence or duplicated interface obligations");
 
+        var never = new BirClassDefinition { Name = "NeverIndex", Kind = "class", Methods = new[] {
+            Method(List, "indexOf", "indexOf", "method", T("kotlin.Nothing"), Parameter(text)) } };
+        ApplyAll(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            never, Carrier(ListDefaultSlots, integer, "dotktIndexOf") } } }, refs, _ => false, null);
+        var index = Bridge(never, "dotkt$slot$indexOf");
+        Require(index.Ret.Value == integer && index.ClrInterfaceImpls.Value.Single().Ret.Value == integer
+            && index.Body.Value is [BirReturn { Value.Value: BirConditional {
+                Then.Value: BirThrowExpression, Else.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: -1 } } } }],
+            "the local slot declares Int, the selected Nothing arm terminates, and a query miss returns -1");
+
         var optionalAny = new TypeNode.Nullable(any);
         var remapping = new TypeNode.Fn(false, optionalAny, new TypeNode[] { optionalAny, optionalAny });
         var merge = Method(MutableMap, "merge", "selectedMerge", "method", optionalAny,
@@ -104,18 +119,22 @@ static partial class KotlinCollectionSlotSynthesis
                 new BirTypeParameter { Name = "Outer" }, new BirTypeParameter { Name = "Element" } }, Methods = new[] { inheritedMethod } };
         var child = new BirClassDefinition { Name = "Child", Kind = "class", Base = new TypeNode.Fqn("Parent", new[] { text, integer }),
             Methods = Array.Empty<BirFunctionDeclaration>() };
-        ApplyAll(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] { child, baseType } } }, refs, _ => false, null);
+        ApplyAll(new[] { new BirFileDeclaration { Types = new IBirTypeDeclaration[] { child, baseType, collectionCarrier } } }, refs, _ => false, null);
         Require(child.Methods.Value.Length == 0 && baseType.Methods.Value.Length == 2,
             "a not-yet-visited local base no longer supplies its exact inherited slot");
 
-        var selected = Method(Collection, "contains", "selectedReference", "method", boolean, Parameter(any));
+        var objectResult = T("System.Object");
+        var selected = Method(Collection, "contains", "selectedReference", "method", objectResult, Parameter(any));
+        selected.RetKotlinType = T("kotlin.Nothing");
         var row = new SourceTarget(new TypeNode.Fqn("ReferenceOwner", new[] { text }), SelectedMethodHeader.FromSource(selected), true,
             selected.Overrides.Value, new TypeNode[] { new TypeNode.Tv("type", 0) }, "reference-exact-id", new TypeNode[] { new TypeNode.Nullable(text) });
         var closedBridge = SourceBridge(new SourceDefinition(queryOwner), Slots.Single(slot => slot.SlotMember == "dotktContains"), row,
-            new Dictionary<string, SourceDefinition>(), refs, null);
+            new Dictionary<string, SourceDefinition> { [CollectionDefaultSlots] = new(collectionCarrier) }, refs, null);
         var closedCall = Forward(closedBridge);
         var closedGuard = (BirConditional)((BirConditional)((BirReturn)closedBridge.Body.Value[0]).Value.Value).Cond.Value;
-        Require(closedCall.CalleeParams.Value.Single() == new TypeNode.Tv("type", 0) && closedCall.DynRet.Value == boolean
+        Require(closedCall.CalleeParams.Value.Single() == new TypeNode.Tv("type", 0) && closedCall.DynRet.Value == objectResult
+            && closedBridge.Ret.Value == boolean
+            && closedBridge.Body.Value is [BirReturn { Value.Value: BirConditional { Then.Value: BirThrowExpression } }]
             && closedCall.DeclarationId.Value == "reference-exact-id" && closedGuard.Then.Value is BirConstant { Value.Value: BirLiteral.BooleanLiteral { Value: true } }
             && closedGuard.Else.Value is BirIsInstance { Type.Value: TypeNode.Nullable { Of: TypeNode.Fqn { Name: "System.String" } } },
             "closed selected-header signature, identity or query source bound was reconstructed from physical slots");

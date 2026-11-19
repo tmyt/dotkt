@@ -181,6 +181,18 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    readonly Dictionary<(string Owner, string Member), TypeNode> _collectionSlotReturns = new();
+
+    internal TypeNode CollectionSlotReturn(string owner, string member)
+    {
+        if (_collectionSlotReturns.TryGetValue((owner, member), out var result)) return result;
+        // The slot belongs to the non-generic TypeDef in the stdlib, not to other
+        // references exposing an identically spelled owner at a different arity.
+        var carrier = ResolveRefTypeIn(owner, CompileStdlibName);
+        var method = carrier?.GetMethod(member, BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+        return _collectionSlotReturns[(owner, member)] = method == null ? null : DeclarationTypeNode(method.ReturnType);
+    }
+
     internal bool IsGenericScalarReturn(string id) =>
         _declarationById.TryGetValue(id, out var binding) && binding.KotlinReturnType is TypeNode.Tv
         && binding.ReturnTypeNode is TypeNode.Fqn { Name: "object" or "System.Object" };

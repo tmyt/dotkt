@@ -262,13 +262,14 @@ static partial class KotlinOverrideSlotBridge
                         !collectionQueries ? null : Enumerable.Range(0, source.PhysicalParameters.Length).Select(index =>
                             KotlinCollectionSlotSynthesis.IsErasedQueryParameter(fact.Header.Overrides.OrEmpty(), index)
                                 ? source.QueryParameterBound?.Invoke(index) : null).ToArray(), logical,
-                        new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args), null);
+                        new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args), null,
+                        collectionQueries ? SupertypeGraph.SubstOwnerTvs(source.Return, args) : null);
                 }
 
                 void Publish(SelectedMethodHeader selectedSource, TypeNode[] physicalParams, TypeNode physicalRet,
                     bool returnsValue, string physicalMember, BirTypeParameter[] typeParams, NullableRepresentationFrame frame,
                     byte[][] nullableFlags, TypeNode[] signature, string declarationId, TypeNode[] queryBounds,
-                    TypeNode logicalResult, TypeNode.Fqn callOwner, OverrideOwner sourceOwner)
+                    TypeNode logicalResult, TypeNode.Fqn callOwner, OverrideOwner sourceOwner, TypeNode selectedKotlinReturn = null)
                 {
                     var projected = selectedSource?.SuspendSourceParameters.HasValue == true;
                     var header = new SelectedMethodHeader {
@@ -279,7 +280,8 @@ static partial class KotlinOverrideSlotBridge
                         Mods = logicalResult != null ? fact.Header.Mods : default,
                         Overrides = fact.Header.Overrides, PropertyName = fact.Header.PropertyName,
                         PropertyAccessor = fact.Header.PropertyAccessor, PropertyAssociation = fact.Header.PropertyAssociation,
-                        NullableGenericRet = fact.Header.NullableGenericRet, RetKotlinType = fact.Header.RetKotlinType,
+                        NullableGenericRet = fact.Header.NullableGenericRet,
+                        RetKotlinType = selectedKotlinReturn != null ? OptionalField<TypeNode>.Of(selectedKotlinReturn) : fact.Header.RetKotlinType,
                         MethodTypeParameterBoundsPre = fact.Header.MethodTypeParameterBoundsPre,
                         KotlinSourceMember = projected ? fact.Header.Name : default,
                     };
