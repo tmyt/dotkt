@@ -17,7 +17,8 @@ static partial class CapturedGenericInvocation
             Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType)
         { this.declarations = declarations; this.definitions = definitions; flattenMissingOwners = flatten; this.physicalType = physicalType; }
 
-        internal void Apply(BirFileDeclaration file, ReferenceMetadataIndex refs, HashSet<string> emittedLocalTypes)
+        internal void Apply(BirFileDeclaration file, ReferenceMetadataIndex refs, HashSet<string> emittedLocalTypes,
+            Func<TypeNode, TypeNode.Fqn> captureConstruction = null)
         {
             var generated = new List<IBirTypeDeclaration>();
             BirGraphValue root = file;
@@ -84,7 +85,7 @@ static partial class CapturedGenericInvocation
                 var call = new Invocation(node);
                 if (!call.TypeArguments.HasValue || !call.Arguments.HasValue) return;
                 var result = capture.Result ?? BirNodeType.Of(node as BirGraphNode);
-                slot.Replace(Expand(call, capture, result, ownerFrame, methodFrame, lexicalOwner, scope, refs, emittedLocalTypes, generated));
+                slot.Replace(Expand(call, capture, result, ownerFrame, methodFrame, lexicalOwner, scope, refs, emittedLocalTypes, generated, captureConstruction));
             }
         }
 
@@ -93,7 +94,8 @@ static partial class CapturedGenericInvocation
 
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,
             BirTypeParameter[] ownerFrame, BirTypeParameter[] methodFrame, string lexicalOwner,
-            Dictionary<string, TypeNode> scope, ReferenceMetadataIndex refs, HashSet<string> emitted, List<IBirTypeDeclaration> generated)
+            Dictionary<string, TypeNode> scope, ReferenceMetadataIndex refs, HashSet<string> emitted, List<IBirTypeDeclaration> generated,
+            Func<TypeNode, TypeNode.Fqn> captureConstruction)
         {
             var captureIndices = capture.Arguments.Value.Select(value => value.Argument.Value).ToArray();
             var captureSlots = capture.Arguments.Value.SelectMany(value => value.Slots.Value).Distinct().ToArray();
@@ -123,8 +125,9 @@ static partial class CapturedGenericInvocation
             }
             if (selectedFrame == null) throw new InvalidOperationException("Captured invocation has no selected generic frame");
             var parameterWitnesses = capture.Target != null && _parameterWitnesses.TryGetValue(capture.Target, out var witnesses)
-                ? witnesses.Select(type => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
-                : refs.CapturedParameterWitnesses(capture.Target, declarationParameters);
+                ? witnesses.Select(type => BirTypeLowering.LowerPhysicalType(captureConstruction?.Invoke(type) ?? type,
+                    refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
+                : refs.CapturedParameterWitnesses(capture.Target, declarationParameters, captureConstruction);
             var witnessFrame = capture.Target != null && _methodWitnessFrames.TryGetValue(capture.Target, out var frame) ? frame : refs.NullableMethodFrame(capture.Target);
             captureSlots = captureSlots.Select(index => witnessFrame?.SourcePosition(index) ?? index).ToArray();
             if (captureIndices.Any(index => index < 0 || index >= arguments.Length) || declarationParameters.Length != arguments.Length)

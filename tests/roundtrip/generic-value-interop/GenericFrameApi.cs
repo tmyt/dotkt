@@ -2,6 +2,11 @@ using System;
 
 namespace GenericValueInterop;
 
+public sealed class ObservedClassLookup : roundtrip.kclassvalues.ClassLookup
+{
+    public override string typeName<T>(object key) => typeof(T).FullName!;
+}
+
 public static class GenericFrameApi
 {
     public static bool IsStringConstruction<T>() =>

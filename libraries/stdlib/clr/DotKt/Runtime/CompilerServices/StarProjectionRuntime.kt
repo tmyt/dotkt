@@ -532,10 +532,13 @@ internal fun starProjectionInvokeCapturedHelper(
     var capture = 0
     while (capture < capturedArgumentIndices.size) {
         val argument = arguments[capturedArgumentIndices[capture]]
-        val view = if (argument == null) null
-            else starProjectionClosedView(argument.starProjectionRuntimeType(), capturedOwners[capture])
-        if (view != null) {
-            val actual = view.getGenericArguments()[capturedOwnerPositions[capture]]
+        val owner = capturedOwners[capture]
+        // Native class tokens represent T directly. Authored implementations expose
+        // their declared construction, which need not match the receiver's own type arguments.
+        val actual = if (argument is StarProjectionType && (RepresentedTypeConstruction::class as StarProjectionType).isAssignableFrom(owner)) argument
+            else if (argument == null) null
+            else starProjectionClosedView(argument.starProjectionRuntimeType(), owner)?.getGenericArguments()?.get(capturedOwnerPositions[capture])
+        if (actual != null) {
             val slot = capturedMethodSlots[capture]
             val previous = inferred[slot]
             if (previous != null && previous != actual)
