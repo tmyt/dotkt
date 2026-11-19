@@ -5,6 +5,11 @@ import kotlin.clr.byref
 
 private infix fun Bits.and(right: Operand<Double>): Double = right.Value + 1.0
 
+private sealed class NativeCase : Key(0) {
+    object First : NativeCase()
+    object Second : NativeCase()
+}
+
 class OperatorViewTests {
     @TestAttribute
     fun equalitySelectsTheTwoNativeOperatorsIndependently() {
@@ -12,10 +17,16 @@ class OperatorViewTests {
         val right = Right<String>()
         check(left == right && left != right)
         check(42 == right && 41 != right)
+        fun literal(rhs: Right<String>?) = 42 == rhs
+        check(literal(right) && !literal(null))
+        fun literalSubject(rhs: Right<String>?) = when (42) { rhs -> true; else -> false }
+        check(literalSubject(right) && !literalSubject(null))
         val negated = !(left == right)
         check(!negated)
         val k = Key(3)
         val other = Key(3)
+        fun nullSubject(rhs: Key?) = when (null) { rhs -> -1; else -> rhs.Number }
+        check(nullSubject(k) == k.Number && nullSubject(null) == -1)
         check(k == other && k != other && !k.equals(other) && k !== other)
         val erased: Any = k
         val erasedOther: Any = other
@@ -26,17 +37,60 @@ class OperatorViewTests {
         fun <T : Key> bounded(a: T, b: T): Boolean = a == b
         check(bounded(k, other))
         fun <T> maybe(a: Key, b: T): Boolean = a == b
-        check(!maybe(k, other) && !maybe(k, null))
-        check(!(k.Oblivious() == other))
+        check(maybe(k, other) && !maybe(k, null))
+        check(k.Oblivious() == other)
         fun nullable(a: Key?, b: Key): Boolean {
             val before = a == b
             if (a == null) return !before
-            return !before && a == b && a != b
+            return before && a == b && a != b
         }
         check(nullable(k, other) && nullable(null, other))
         var calls = 0
         fun next(): Key { calls++; return k }
         check(next() != next() && calls == 2)
+
+        fun lifted(a: Key?, b: Key?): Boolean {
+            val equal = a == b
+            val unequal = a != b
+            return if (a === null || b === null) equal == (a === b) && unequal == (a !== b)
+                   else equal && unequal
+        }
+        Key.Trace = ""
+        check(lifted(null, null) && lifted(k, null) && lifted(null, other) && Key.Trace == "")
+        check(lifted(k, other) && Key.Trace == "=!")
+        fun numberIfEqual(a: Key?, b: Key) = if (a == b) a.Number else -1
+        fun numberUnlessDifferent(a: Key, b: Key?): Int {
+            if (a != b) return -1
+            return b.Number
+        }
+        check(numberIfEqual(k, other) == 3 && numberIfEqual(null, other) == -1)
+        check(numberUnlessDifferent(k, other) == -1)
+        fun classify(value: NativeCase?) = when (value) {
+            null -> 0
+            NativeCase.First -> 1
+            NativeCase.Second -> 2
+        }
+        Key.Trace = ""
+        check(classify(null) == 0 && classify(NativeCase.Second) == 1 && Key.Trace == "=")
+        Key.Trace = ""
+        check(Key.Observe("a", null) != Key.Observe("b", other) && Key.Trace == "ab")
+        Key.Trace = ""
+        val branch = when (Key.Observe("s", k)) {
+            Key.Observe("a", null) -> 0
+            Key.Observe("b", other) -> 1
+            Key.Observe("c", k) -> 2
+            else -> 3
+        }
+        check(branch == 1 && Key.Trace == "sab=")
+        Key.Trace = ""
+        val nullBranch = when (Key.Observe("s", null)) {
+            Key.Observe("a", null) -> 0
+            null -> 1
+            else -> 2
+        }
+        check(nullBranch == 0 && Key.Trace == "sa")
+        fun value(a: ValueKey?, b: ValueKey?): Boolean = a == b && a != b
+        check(value(ValueKey(7), ValueKey(7)) && !value(ValueKey(7), null) && !value(null, null))
     }
 
     @TestAttribute

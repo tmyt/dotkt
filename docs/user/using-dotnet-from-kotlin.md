@@ -171,18 +171,21 @@ ordinary .NET platform rules and remain the application's responsibility.
   (a `when` needs an `else` — .NET enums are open). An enum carrying the exact CLR `[Flags]` attribute also exposes
   typed `or`, `and`, `xor`, `inv`, and `in` operations without leaving its enum type.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
-- For two statically non-null operands, Kotlin `==` and `!=` can select the
-  corresponding imported Boolean CLR operator from either operand type. Each
+- Kotlin `==` and `!=` can select the corresponding imported Boolean CLR
+  operator from either operand's static type, considered non-null. Each
   operator is selected independently by overload resolution: `a != b` need not
   mean `!(a == b)`. Equally applicable declarations are ambiguous. A native
   comparison is not a type test and cannot smart-cast the other operand.
-  With no applicable native operator, or with a nullable operand (including
-  a platform type that may be null), Kotlin equality is unchanged. A null check
-  may first narrow a variable to its non-null type. Static types matter: two
+  Nullable and platform operands are evaluated once, left to right. If either
+  is null, two nulls compare equal and a single null compares unequal; no CLR
+  operator runs. A null literal is always an ordinary Kotlin null check. With
+  no applicable native operator, Kotlin equality is unchanged. Static types matter: two
   operands widened to `Any` or to an unconstrained `T` use ordinary equality.
   A non-null type parameter's upper bound can supply an operator, as can a base
-  CLR class for a Kotlin subclass. Subject-based `when (a) { b -> … }` still
-  uses Kotlin equality. Explicit `equals`, identity (`===`), hashing and collection lookup are unaffected.
+  CLR class for a Kotlin subclass. A value branch in `when (a) { b -> … }`
+  compares the subject with `b` using the same rule as `a == b`; the subject is
+  evaluated once and later conditions are skipped after a match. Explicit
+  `equals`, identity (`===`), hashing and collection lookup are unaffected.
 - Import the declaring CLR namespace (for example, `import MyLibrary.*`) to use
   logical negation (`!x`), ones' complement (`x.inv()`), and the infix
   `and`, `or`, `xor`, `shl`, `shr` and `ushr` views of native operators.

@@ -57,6 +57,7 @@ internal fun <T> withSourceInterfaceViewLookup(enabled: Boolean, action: () -> T
 /** The stock resolve/check pipeline, with protocol vocabulary available only during expression resolution. */
 internal fun resolveAndCheckClrFir(session: FirSession, files: List<FirFile>, reporter: BaseDiagnosticsCollector): SingleModuleFrontendOutput {
     val (scopeSession, resolved) = withSourceInterfaceViewLookup(true) { session.resolveWithClrArrayRelations(files) }
+    NativeEquality.materialize(resolved)
     if (!session.languageVersionSettings.getFlag(AnalysisFlags.headerMode))
         session.runClrArrayCheckers(scopeSession, resolved, reporter, MppCheckerKind.Common)
     session.normalizeClrArrayReceivers(resolved) { normalizeSourceInterfaceViewReceivers(session, resolved) }
