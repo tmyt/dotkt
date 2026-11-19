@@ -19,13 +19,15 @@ private class ConsumerCause(private val local: Throwable?, parent: Throwable?, n
 class SuppressedExceptionsRoundtripTests {
     @TestAttribute
     fun aSuppressedBackReferenceDoesNotKeepThePrimaryAlive() {
-        val weak = SuppressionGcProbe.CreateCycle(System.Action2<System.Exception, System.Exception> { primary, child ->
+        val leaf = System.Exception("independently rooted child")
+        val weak = SuppressionGcProbe.CreateCycleWithLeaf(leaf, System.Action2<System.Exception, System.Exception> { primary, child ->
             val error = primary as Throwable
             val suppressed = child as Throwable
             error.addSuppressed(suppressed)
-            check(error.suppressedExceptions.single() === suppressed)
+            check(error.suppressedExceptions.last() === suppressed)
         })
         check(SuppressionGcProbe.AreCollected(weak))
+        System.GC.KeepAlive(leaf)
     }
 
     @TestAttribute
