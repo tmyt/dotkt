@@ -521,6 +521,7 @@ internal fun starProjectionInvokeCapturedHelper(
     capturedOwners: Array<StarProjectionType>,
     capturedOwnerPositions: IntArray,
     capturedMethodSlots: IntArray,
+    capturedNullableSlots: IntArray,
     arguments: Array<Any?>,
 ): Any? {
     val method = starProjectionOpenMethod(declaringType, metadataToken, memberName,
@@ -544,6 +545,12 @@ internal fun starProjectionInvokeCapturedHelper(
             if (previous != null && previous != actual)
                 throw IllegalStateException("Conflicting projected declaration type argument")
             inferred[slot] = actual
+            val nullableSlot = capturedNullableSlots[capture]
+            if (nullableSlot >= 0) {
+                // Nullable generic arguments box value types; a nullable reference
+                // retains the same CLR type as its non-null counterpart.
+                inferred[nullableSlot] = if (actual.isValueType) Any::class as StarProjectionType else actual
+            }
         }
         capture++
     }
@@ -569,10 +576,11 @@ internal fun starProjectionInvokeCapturedHelperUnit(
     capturedOwners: Array<StarProjectionType>,
     capturedOwnerPositions: IntArray,
     capturedMethodSlots: IntArray,
+    capturedNullableSlots: IntArray,
     arguments: Array<Any?>,
 ) {
     starProjectionInvokeCapturedHelper(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authoredTypeArguments, capturedArgumentIndices, capturedOwners, capturedOwnerPositions, capturedMethodSlots, arguments)
+        authoredTypeArguments, capturedArgumentIndices, capturedOwners, capturedOwnerPositions, capturedMethodSlots, capturedNullableSlots, arguments)
 }
 
 // A boxed generic value receiver must be written back even when its method throws. Keep the invoke result separate

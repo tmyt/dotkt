@@ -129,6 +129,9 @@ static partial class CapturedGenericInvocation
                     refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
                 : refs.CapturedParameterWitnesses(capture.Target, declarationParameters, captureConstruction);
             var witnessFrame = capture.Target != null && _methodWitnessFrames.TryGetValue(capture.Target, out var frame) ? frame : refs.NullableMethodFrame(capture.Target);
+            var nullableSlots = captureSlots.Where(index => witnessFrame?.NullableIndices.Contains(index) == true)
+                .ToDictionary(index => witnessFrame.SourcePosition(index),
+                    index => witnessFrame.NullableVariable(new TypeNode.Tv("method", index)).I);
             captureSlots = captureSlots.Select(index => witnessFrame?.SourcePosition(index) ?? index).ToArray();
             if (captureIndices.Any(index => index < 0 || index >= arguments.Length) || declarationParameters.Length != arguments.Length)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
@@ -140,7 +143,8 @@ static partial class CapturedGenericInvocation
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.
-            if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, captureSlots))) return call.Node;
+            var closedSlots = captureSlots.Concat(nullableSlots.Values).ToArray();
+            if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, closedSlots))) return call.Node;
 
             if (call.Super)
             {
@@ -181,7 +185,7 @@ static partial class CapturedGenericInvocation
             var witnessPositions = new List<int>(); var witnessSlots = new List<int>();
             foreach (var argument in captureIndices)
             {
-                if (argument >= parameterWitnesses.Length || SignatureValueTypes.Of(CloseDeclaration(parameterWitnesses[argument])) is not TypeNode.Fqn { Args: { } parts } witness)
+                if (argument >= parameterWitnesses.Length || CaptureOwner(SignatureValueTypes.Of(CloseDeclaration(parameterWitnesses[argument]))) is not { Args: { } parts } witness)
                     throw new InvalidOperationException("Captured argument has no declaration-owned construction witness");
                 for (var position = 0; position < parts.Length; position++)
                     if (parts[position] is TypeNode.Tv { Scope: "method" } variable && captureSlots.Contains(variable.I))
@@ -229,7 +233,8 @@ static partial class CapturedGenericInvocation
             var runtimeArguments = new IBirExpression[] { ClassRef(new TypeNode.Fqn(name)), Number(0), Text("Invoke"),
                 NewArray(String, parameterTypes.Select(type => (IBirExpression)Text(RuntimeKey(type, refs)))), NewArray(Type, fallback.Select(type => (IBirExpression)ClassRef(type))),
                 NewArray(Int, witnessArguments.Select(index => (IBirExpression)Number(index + (call.Instance ? 1 : 0)))), NewArray(Type, witnessOwners.Select(type => (IBirExpression)ClassRef(type))),
-                NewArray(Int, witnessPositions.Select(index => (IBirExpression)Number(index))), NewArray(Int, witnessSlots.Select(index => (IBirExpression)Number(index))), NewArray(Object, values) };
+                NewArray(Int, witnessPositions.Select(index => (IBirExpression)Number(index))), NewArray(Int, witnessSlots.Select(index => (IBirExpression)Number(index))),
+                NewArray(Int, witnessSlots.Select(index => (IBirExpression)Number(nullableSlots.GetValueOrDefault(index, -1)))), NewArray(Object, values) };
             var runtimeCall = RuntimeCall(runtimeMethod, runtimeArguments, returnsVoid && receiverPlan == null, refs);
             ForeignStarProjectionBinding.RequireRuntimeFallback();
             var invocation = receiverPlan == null ? runtimeCall : CapturedValueReceiverInvocation.Invoke(receiverPlan, call.Receiver, runtimeCall, name, RuntimeSignature.Length - 1);
@@ -252,7 +257,7 @@ static partial class CapturedGenericInvocation
             var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
             var signature = new TypeNode[] { runtimeType, new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"), new TypeNode.Array(new TypeNode.Fqn("kotlin.String")),
                 new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"),
-                new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
+                new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
             if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, name, 0, true, signature, null, out _, out var declaration, out var declaringType))
                 throw new InvalidOperationException("Captured invocation runtime helper has no exact declaration");
             var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, declaration, "method", declaringType, null));

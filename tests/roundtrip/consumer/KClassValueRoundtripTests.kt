@@ -15,11 +15,15 @@ import roundtrip.kclassvalues.matches
 import roundtrip.kclassvalues.ImportedPlainBase
 import roundtrip.kclassvalues.ImportedDefault
 import roundtrip.kclassvalues.ClassLookup
+import roundtrip.kclassvalues.ImportedToken
 import roundtrip.kclassvalues.capturedName
 import GenericValueInterop.ObservedClassLookup
 
-private class ManualToken<Noise, Value : Any>(value: Noise) : ImportedPlainBase<Noise>(value), KClass<Value>
+private class ManualToken<Noise, Value : Any>(value: Noise) : ImportedToken<Noise, Value>(value)
 private fun capturedNameHere(lookup: ClassLookup, key: KClass<*>): String = lookup.typeName(key)
+private fun subtypeName(lookup: ClassLookup, key: ManualToken<Int, *>): String = lookup.typeName(key)
+private fun presentName(lookup: ClassLookup, key: KClass<*>?): String = lookup.presentName(key)
+private fun capturedValues(lookup: ClassLookup, key: KClass<*>): Any = lookup.emptyValues(key)
 
 open class KClassValueImportedPlain : ImportedPlainBase<String>("plain"), KClass<Any>
 class KClassValueImportedPlainOverride : KClassValueImportedPlain() {
@@ -87,12 +91,16 @@ class KClassValueRoundtripTests {
         assertTrue(matches<KClass<*>>(value))
         assertTrue(matches<KClassifier>(value))
         assertEquals(false, matches<KClass<*>>("other"))
-        val lookup = ObservedClassLookup()
+        val lookup: ClassLookup = ObservedClassLookup()
         val custom = ManualToken<Int, String>(42)
         assertEquals("System.Int32", capturedName(lookup, Int::class))
         assertEquals("System.String", capturedName(lookup, custom))
         assertEquals("System.Int32", capturedNameHere(lookup, Int::class))
         assertEquals("System.String", capturedNameHere(lookup, custom))
+        assertEquals("System.String", subtypeName(lookup, custom))
+        assertEquals("System.Int32", presentName(lookup, Int::class))
+        assertTrue(ObservedClassLookup.SameRuntimeType(lookup.emptyValues(String::class), capturedValues(lookup, String::class)))
+        assertTrue(ObservedClassLookup.SameRuntimeType(lookup.emptyValues(Int::class), capturedValues(lookup, Int::class)))
     }
 
     @TestAttribute
