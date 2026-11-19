@@ -450,6 +450,8 @@ EOF
 	mkdir -p "$d/a" "$d/b" "$d/c"
 	printf '%s\n' 'package a' 'class One { fun value() = "A" }' > "$d/a/Probe.kt"
 	printf '%s\n' 'package b' 'class Two { fun value() = "B" }' > "$d/b/probe.kt"
+	# Where the filesystem permits it, also cover case-only source paths in kotc's response file.
+	if [[ ! -e "$d/a/probe.kt" ]]; then mv "$d/b/probe.kt" "$d/a/probe.kt"; fi
 	printf '%s\n' 'package c' 'class Three { fun value() = "C" }' > "$d/c/Probe__2.kt"
 	local expected="packaged exe ok: 5" actual rc=0 manifest_error="" projected_klib=""
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?

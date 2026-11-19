@@ -59,7 +59,10 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		// MSBuild treats artifact paths case-insensitively even on Linux. Reserve each emitted stem,
 		// including generated suffixes: another source can itself be named Foo__2.kt.
 		val usedNames = TreeMap<String, Int>(String.CASE_INSENSITIVE_ORDER)
-		fun artifactStem(base: String): String {
+		fun artifactStem(source: String): String {
+			// Leave room for the suffix and codec extension in a 255-byte path component.
+			// Non-ASCII case pairs can differ between the JDK, .NET and the filesystem.
+			val base = if (source.length <= 220 && source.all { it.code < 128 }) source else "source"
 			var index = usedNames.putIfAbsent(base, 1) ?: return base
 			var candidate: String
 			do { candidate = "${base}__${++index}" } while (usedNames.putIfAbsent(candidate, 1) != null)
