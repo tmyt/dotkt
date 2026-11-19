@@ -65,7 +65,7 @@ static partial class NullableRepresentationMaterialization
                 var ordinary = frame.Variable(new TypeNode.Tv(scope, sourceIndex), NullableRepresentationFrame.Role.Ordinary);
                 var constraints = expanded[ordinary.I].Constraints.OrEmpty();
                 expanded[ordinary.I].Constraints = constraints.Concat(projected.Except(constraints)).ToArray();
-                expanded[variable.I].Constraints = projected;
+                policy.SetStorageBounds(expanded[variable.I], projected);
             }
             else expanded[variable.I].ErasedInnerConstraints = projected;
         }

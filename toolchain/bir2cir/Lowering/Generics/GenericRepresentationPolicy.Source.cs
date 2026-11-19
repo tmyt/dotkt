@@ -24,6 +24,7 @@ sealed partial class GenericRepresentationPolicy
         IReadOnlyDictionary<string, string> aliases, ReferenceMetadataIndex references)
     {
         var policy = new GenericRepresentationPolicy(aliases, references, sourceOwned: true);
+        policy._sourceHierarchy = SupertypeGraph.CollectSource(roots);
         foreach (var root in roots)
         {
             foreach (var declaration in root.Types.OrEmpty())
