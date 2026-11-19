@@ -5,9 +5,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- A Kotlin interface may supply a default getter when specializing an inherited
-  generic property. Its implementation remains callable through a star projection.
-
 - Named arguments in `this(...)` and `super(...)` constructor delegation now evaluate in Kotlin source order.
 - Kotlin callers in another assembly see a function's source signature and
   annotations when an IR compiler plugin adds hidden parameters.
@@ -16,6 +13,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   when their keys or values have nested generic arguments.
 - Internal overrides now use the same virtual-slot bridges as public overrides
   within an assembly, including when a method or getter narrows its return type.
+- A Kotlin interface may supply a default getter when specializing an inherited
+  generic property. Its implementation remains callable through a star projection.
 - A subclass of `AbstractMap` can narrow the return type of `entries` and
   still be used through either the subclass or the base class.
 - Inline collection operations such as `mapValues` can enumerate maps whose
