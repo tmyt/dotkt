@@ -94,8 +94,13 @@ private class SuppressedExceptionsTable<K : Any, V : Any> {
 }
 
 private class SuppressedExceptionsCell public constructor() {
-    val exceptions = ArrayList<Throwable>()
+    val entries = ArrayList<SuppressedExceptionEntry>()
 }
+
+// Keep the child's suppression state reachable along the same edge as the child.
+// Otherwise tracing a long chain requires propagating liveness through successive
+// ConditionalWeakTable entries. The table is still the only root for these cells.
+private class SuppressedExceptionEntry(val exception: Throwable, val childState: SuppressedExceptionsCell)
 
 private val suppressedExceptionsTable = SuppressedExceptionsTable<Throwable, SuppressedExceptionsCell>()
 
@@ -110,9 +115,10 @@ public actual fun Throwable.addSuppressed(exception: Throwable) {
     // Match the Kotlin extension's self-suppression policy, not Java's raw member.
     if (this === exception) return
     val cell = suppressedExceptionsTable.get(this)
+    val entry = SuppressedExceptionEntry(exception, suppressedExceptionsTable.get(exception))
     enterSuppressedExceptions(cell)
     try {
-        cell.exceptions.add(exception)
+        cell.entries.add(entry)
     } finally { exitSuppressedExceptions(cell) }
 }
 
@@ -122,6 +128,6 @@ public actual val Throwable.suppressedExceptions: List<Throwable>
         val cell = suppressedExceptionsTable.get(this)
         enterSuppressedExceptions(cell)
         try {
-            return cell.exceptions.toList()
+            return cell.entries.map { it.exception }
         } finally { exitSuppressedExceptions(cell) }
     }

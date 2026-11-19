@@ -23,7 +23,9 @@ class SuppressedExceptionsRoundtripTests {
             val error = primary as Throwable
             val suppressed = child as Throwable
             error.addSuppressed(suppressed)
+            suppressed.addSuppressed(error)
             check(error.suppressedExceptions.single() === suppressed)
+            check(suppressed.suppressedExceptions.single() === error)
         })
         check(SuppressionGcProbe.AreCollected(weak))
     }
