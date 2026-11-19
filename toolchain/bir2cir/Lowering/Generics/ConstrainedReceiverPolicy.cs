@@ -24,7 +24,7 @@ static class ConstrainedReceiverPolicy
             {
                 var frame = variable.Scope == "type" ? owner : variable.Scope == "method" ? method : null;
                 if (frame == null || variable.I < 0 || variable.I >= frame.Count) return;
-                void Follow(IEnumerable<TypeNode> constraints, bool removed)
+                void Follow(TypeNode[] constraints, bool removed)
                 {
                     foreach (var constraint in constraints)
                         switch (Peel(constraint))

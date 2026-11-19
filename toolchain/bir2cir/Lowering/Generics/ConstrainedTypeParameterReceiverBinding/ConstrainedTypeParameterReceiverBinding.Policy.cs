@@ -28,5 +28,4 @@ static partial class ConstrainedTypeParameterReceiverBinding
                         frame != null && variable.Scope == "type"
                             ? new TypeNode.Tv("type", frame.SourcePosition(variable.I)) : null)).ToArray());
     }
-
 }
