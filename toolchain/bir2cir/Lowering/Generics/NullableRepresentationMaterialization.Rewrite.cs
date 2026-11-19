@@ -139,7 +139,7 @@ static partial class NullableRepresentationMaterialization
             var parameters = NullableRepresentationViews.TypeParameters(synthetic).Value;
             foreach (var (index, bounds) in storageBounds)
             {
-                SetStorageBounds(parameters[index], bounds, mapping.IsNominalStorageBound);
+                mapping.SetStorageBounds(parameters[index], bounds);
                 var ordinary = capturedFrame.SourcePosition(capturedFrame.PhysicalSlot(index).SourceIndex);
                 parameters[ordinary].Constraints = parameters[ordinary].Constraints.OrEmpty().Concat(bounds).Distinct().ToArray();
             }

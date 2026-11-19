@@ -33,9 +33,9 @@ static partial class FBoundStarProjectionErasure
                     else retained.Add(bound);
                 if (removed.Count == 0) continue;
                 recorded[index] = parameter.Constraints.Value.Select(BirGraphValue.CopyType).ToArray();
-                dispatch[index] = removed.Select(BirGraphValue.CopyType).ToArray();
+                dispatch[index] = parameter.ErasedInnerConstraints.OrEmpty().Concat(removed).Distinct().Select(BirGraphValue.CopyType).ToArray();
                 parameter.Constraints = retained.Distinct().Select(BirGraphValue.CopyType).ToArray();
-                parameter.ErasedInnerConstraints = removed.Select(BirGraphValue.CopyType).ToArray();
+                parameter.ErasedInnerConstraints = dispatch[index].ToArray();
                 if (!changedSlots.TryGetValue(name, out var slots)) changedSlots[name] = slots = new();
                 slots.Add(index);
             }
@@ -113,7 +113,7 @@ static partial class FBoundStarProjectionErasure
                         .Add(BirGraphValue.CopyType(bound));
                 if (removed.Count == 0) continue;
                 recorded[index] = parameter.Constraints.Value.Select(BirGraphValue.CopyType).ToArray();
-                parameter.ErasedInnerConstraints = removed.ToArray();
+                parameter.ErasedInnerConstraints = parameter.ErasedInnerConstraints.OrEmpty().Concat(removed).Distinct().ToArray();
                 parameter.Constraints = retained.ToArray();
                 if (!result.TryGetValue(inner.Name, out var changed)) result[inner.Name] = changed = new();
                 changed.Add(index);

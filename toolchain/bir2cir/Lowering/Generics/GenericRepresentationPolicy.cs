@@ -15,7 +15,7 @@ sealed partial class GenericRepresentationPolicy
     readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
     readonly HashSet<string> _localOwners = new(StringComparer.Ordinal);
-    readonly HashSet<string> _localClasses = new(StringComparer.Ordinal);
+    IReadOnlyDictionary<string, SupertypeGraph.Def> _sourceHierarchy = new Dictionary<string, SupertypeGraph.Def>();
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
     bool _sourceContinuationPending;
@@ -108,10 +108,32 @@ sealed partial class GenericRepresentationPolicy
     // The storage witness may be an existential interface even when the value's concrete
     // class derives from this bound. A projected generic Kotlin bound is itself an
     // existential interface; it is the nominal class constraints that cannot be copied.
-    internal bool IsNominalStorageBound(TypeNode bound) => bound is TypeNode.Fqn named
-        && !(OwnsValueSlots(named.Name) && named.Args is { Length: > 0 })
-        && (_localClasses.Contains(named.Name)
-            || !_localOwners.Contains(named.Name) && _references?.IsClassType(named) == true);
+    bool IsNominalStorageBound(TypeNode bound)
+    {
+        if (bound is not TypeNode.Fqn named || OwnsValueSlots(named.Name) && named.Args is { Length: > 0 }) return false;
+        var physical = BindingAlias(named.Name);
+        if (physical == null && _references?.TryResolveClrOwner(named.Name, out var alias, out _) == true) physical = alias;
+        if (physical != null) return _references?.IsClassType(new TypeNode.Fqn(physical, named.Args)) == true;
+        return _sourceHierarchy.TryGetValue(named.Name, out var local) ? local.Kind == "class"
+            : _references?.IsClassType(named) == true;
+    }
+
+    internal void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds)
+    {
+        var physical = new List<TypeNode>();
+        var erased = new List<TypeNode>();
+        foreach (var bound in bounds)
+        {
+            if (!IsNominalStorageBound(bound)) { physical.Add(bound); continue; }
+            erased.Add(bound);
+            // Forward the base class's interface proofs when R : Base flows into R : Interface.
+            var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
+            foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
+                if (isInterface && StorageConstraint(parent) is { } proof) physical.Add(proof);
+        }
+        if (physical.Count != 0) parameter.Constraints = physical.Distinct().ToArray();
+        if (erased.Count != 0) parameter.ErasedInnerConstraints = erased.ToArray();
+    }
 
     internal bool OwnsMethodValueSlots(bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>
         !intrinsic && !overrideOwners.Any(owner => !OwnsValueSlots((owner as TypeNode.Fqn)?.Name));

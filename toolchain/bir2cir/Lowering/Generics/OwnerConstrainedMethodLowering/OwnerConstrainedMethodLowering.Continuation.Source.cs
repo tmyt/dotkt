@@ -35,7 +35,8 @@ static partial class OwnerConstrainedMethodLowering
             if (plan[index] is { } row)
             {
                 parameters[index].Constraints = row.Retained;
-                if (row.Removed.Length > 0) parameters[index].ErasedInnerConstraints = row.Removed;
+                if (row.Removed.Length > 0)
+                    parameters[index].ErasedInnerConstraints = parameters[index].ErasedInnerConstraints.OrEmpty().Concat(row.Removed).Distinct().ToArray();
             }
     }
 

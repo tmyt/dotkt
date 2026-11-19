@@ -24,6 +24,7 @@ sealed partial class GenericRepresentationPolicy
         IReadOnlyDictionary<string, string> aliases, ReferenceMetadataIndex references)
     {
         var policy = new GenericRepresentationPolicy(aliases, references, sourceOwned: true);
+        policy._sourceHierarchy = SupertypeGraph.CollectSource(roots);
         foreach (var root in roots)
         {
             foreach (var declaration in root.Types.OrEmpty())
@@ -31,7 +32,6 @@ sealed partial class GenericRepresentationPolicy
                 var owner = Owner(declaration);
                 if (owner.Name == null || !owner.HasKind) continue;
                 policy._localOwners.Add(owner.Name);
-                if (declaration is BirClassDefinition) policy._localClasses.Add(owner.Name);
                 var alias = owner.Attributes.Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" });
                 if (FBoundStarProjectionErasure.IsSourceGeneric(owner.Name, owner.Generated, alias, owner.Parameters.Length))
                     policy._existentialOwners.Add(owner.Name);
