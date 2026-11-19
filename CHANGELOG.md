@@ -8,8 +8,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Kotlin collection slot bridges preserve the declared result when an override
   returns `Nothing`, including `MutableSet.add`, `addAll`, and `List.indexOf`.
 - Named arguments in `this(...)` and `super(...)` constructor delegation now evaluate in Kotlin source order.
-- Cross-assembly inline code can access inherited `@PublishedApi` properties on generic receivers
-  even when the property's declaring class uses a different type-parameter order.
 - Kotlin callers in another assembly see a function's source signature and
   annotations when an IR compiler plugin adds hidden parameters.
 
@@ -27,6 +25,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   operators, including generic operators declared on a supertype of the delegate.
 - Generic member extension properties can be read and written in the same
   module, including through an interface.
+- Cross-assembly inline code can access inherited `@PublishedApi` properties on generic receivers
+  even when the property's declaring class uses a different type-parameter order.
 - `super.toString()` reaches the inherited implementation even when the direct
   Kotlin superclass does not declare an override.
 - A generic subclass can occupy a class-bounded Kotlin type argument, including

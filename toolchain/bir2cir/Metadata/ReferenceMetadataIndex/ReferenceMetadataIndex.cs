@@ -2578,12 +2578,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         owner = null; slot = null; sourceResult = null;
         if (!_declarationById.TryGetValue(id, out var source) || source.IsStatic
             || source.MethodArity != arity || source.ParamCount != parameterCount) return false;
-        var pending = new Queue<TypeNode.Fqn>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        pending.Enqueue(new TypeNode.Fqn(receiverCarrier));
-        while (pending.TryDequeue(out var application))
+        var receiver = new TypeNode.Fqn(receiverCarrier);
+        if (!TryReferenceTypeShape(receiver, out _, out _, out _, out var interfaces)) return false;
+        // Reflection's GetInterfaces already includes all transitive interfaces.
+        foreach (var application in interfaces.Prepend(receiver))
         {
-            if (!seen.Add(application.Name) || !TryExistentialSemanticOwner(application.Name, out var semantic)) continue;
+            if (!TryExistentialSemanticOwner(application.Name, out var semantic)) continue;
             var physicalId = FBoundStarProjectionErasure.ExistentialSlotIdentity(id, semantic);
             if (_declarationById.TryGetValue(physicalId, out var member) && member.IsPublic && !member.IsStatic
                 && member.MethodArity == arity && member.ParamCount == parameterCount && member.ParamTypeNodes != null
@@ -2592,8 +2592,6 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 if (slot != null) return false;
                 slot = member; owner = application.Name;
             }
-            if (TryReferenceTypeShape(application, out _, out _, out _, out var interfaces))
-                foreach (var parent in interfaces) pending.Enqueue(parent);
         }
         sourceResult = source.NullableGenericRet ?? source.SuspendReturnType ?? source.KotlinReturnType ?? source.ReturnTypeNode;
         return slot != null && sourceResult != null;

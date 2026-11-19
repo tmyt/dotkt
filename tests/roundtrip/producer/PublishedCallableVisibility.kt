@@ -82,6 +82,8 @@ inline fun publicStatics(block: (Int) -> Int): Int {
 
 open class InheritedVisibilityBase {
     @PublishedApi internal val secret: Int get() = 7
+    @PublishedApi internal fun score(input: Int): Int = input + 1
+    @PublishedApi internal fun score(input: String): Int = input.length + 10
     @PublishedApi @ClrField internal var secretField: Int = 9
     val publicValue: Int get() = 11
     @ClrField var publicField: Int = 12
@@ -89,5 +91,5 @@ open class InheritedVisibilityBase {
 }
 
 class PublishedChild<T> : InheritedVisibilityBase() {
-    inline fun read(block: (Int) -> Int): Int = block(secret)
+    inline fun read(block: (Int) -> Int): Int = block(score(secret) + score("abc"))
 }

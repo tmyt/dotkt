@@ -54,7 +54,8 @@ class PublishedCallableVisibilityTests {
         val pair = ReorderedPair(42, "value")
         check(pair.update { text, number -> text + number } == "value42")
         check(pair.update { prior, _ -> prior } == "value42")
-        check(PublishedChild<String>().read { it + 1 } == 8)
+        check(ReorderedPair("hi", 40).update { number, text -> number + text.length } == 42)
+        check(PublishedChild<String>().read { it + 1 } == 22)
         check(publicStatics { it } == 43)
     }
 

@@ -154,20 +154,24 @@ static partial class FBoundStarProjectionErasure
         // A fake override can name the child as its receiver while its selected
         // declaration and its physical forwarding slot belong to different ancestors.
         if (call.Identity is { } id && refs.TryExistentialPhysicalOwner(owner.Name, out var carrier)
-            && refs.TryDeclarationIdentity(id, out _, out var declaringName, out _, out _))
+            && refs.TryDeclarationIdentity(id, out _, out var declaringName, out _, out _)
+            && refs.TryInheritedStarSlot(carrier, id, arity, count, out var slotOwner, out var referenceSlot, out var sourceResult))
         {
             var frames = SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = owner },
                 context.Preparation.SourceSupertypes, refs, sourceFrames: true, physicalSourceApplications: true)
                 .Where(edge => edge.spec.Name == declaringName).Select(edge => edge.spec).Take(2).ToArray();
-            if (frames.Length == 1 && refs.TryInheritedStarSlot(carrier, id, arity, count,
-                    out var slotOwner, out var slot, out var sourceResult))
+            if (frames.Length == 1)
             {
-                var frame = frames[0].Args ?? Array.Empty<TypeNode>();
+                // Reachable yields the physical start unchanged and source applications for its referenced parents.
+                // Inner applications are own-first, whereas the declaration's type variables are enclosing-first.
+                var application = ReferenceEquals(frames[0], owner)
+                    ? owner with { Args = refs.SourceArgumentsOfPhysicalOwner(owner) } : frames[0];
+                var frame = refs.SourceDeclarationArguments(application) ?? Array.Empty<TypeNode>();
                 CloseResult(sourceResult, frame);
-                call.BindOwner(slotOwner); call.Name = slot.Name;
-                call.Parameters(slot.ParamTypeNodes, slot.SignatureParameters);
-                MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor, slot.DeclarationId);
-                return Align(slot.SuspendReturnType ?? slot.ReturnTypeNode, sourceResult, frame);
+                call.BindOwner(slotOwner); call.Name = referenceSlot.Name;
+                call.Parameters(referenceSlot.ParamTypeNodes, referenceSlot.SignatureParameters);
+                MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor, referenceSlot.DeclarationId);
+                return Align(referenceSlot.SuspendReturnType ?? referenceSlot.ReturnTypeNode, sourceResult, frame);
             }
         }
         if (count == 0 && !call.Signature.HasValue) call.Signature = Array.Empty<TypeNode>();
