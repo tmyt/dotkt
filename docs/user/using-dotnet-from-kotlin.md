@@ -196,6 +196,9 @@ ordinary .NET platform rules and remain the application's responsibility.
   non-strict pair yield 0, as does an unordered strict result. Both direct
   `compareTo` and Kotlin relational syntax use this ordering. It does not add
   `Comparable<T>` conformance or preserve every individual native predicate.
+  A C# `in T` operand is a Kotlin value in this adapter: both operands are
+  evaluated once, left to right, and the predicates borrow those values.
+  An explicit call to the native operator method retains its CLR parameter signature.
 - A non-conversion CLR operator is also callable by its exact method name. For example,
   `SqlInt32.op_Equality(a, b)` returns a `SqlBoolean`, including SQL null. Call static
   operators on the declaring type and mutating instance operators on the receiver.

@@ -409,7 +409,8 @@ data class BirObjectMethod(
 data class BirExternalMemberBinding(
     val owner: String,
     val member: String,
-    val pairedMember: String? = null
+    val pairedMember: String? = null,
+    val readonlyOperands: Int? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -421,6 +422,10 @@ data class BirExternalMemberBinding(
         pairedMember?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"pairedMember\":")
             TypeNodeJson.writeString(value, output)
+        }
+        readonlyOperands?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"readonlyOperands\":")
+            output.append(value)
         }
         output.append('}')
     }

@@ -85,9 +85,14 @@ internal sealed partial class AssemblyScanner
                 if (byName[less].Count() != 1 || byName[greater].Count() != 1) continue;
                 var first = byName[less].Single();
                 var declaration = first.Declaration.Clone();
-                var second = byName[greater].Single().Declaration;
-                var receiver = CommonComparisonInput(declaration.ValueParameter[0].Type, second.ValueParameter[0].Type);
-                var operand = CommonComparisonInput(declaration.ValueParameter[1].Type, second.ValueParameter[1].Type);
+                var second = byName[greater].Single();
+                var mask = ReadonlyOperands(first);
+                if (mask != ReadonlyOperands(second)) continue;
+                KType Input(ProjectedFunction predicate, int i) => (mask & (1 << i)) != 0
+                    ? signatures.ByRefElement(predicate.Declaration.ValueParameter[i].Type)!
+                    : predicate.Declaration.ValueParameter[i].Type;
+                var receiver = CommonComparisonInput(Input(first, 0), Input(second, 0));
+                var operand = CommonComparisonInput(Input(first, 1), Input(second, 1));
                 if (receiver == null || operand == null) continue;
                 declaration.ValueParameter[0].Type = receiver;
                 declaration.ValueParameter[1].Type = operand;
@@ -96,8 +101,26 @@ internal sealed partial class AssemblyScanner
                 view.ReturnType = signatures.NamedType("kotlin.Int");
                 SetOperatorFact(view, names, "pairedMember", greater);
                 SetOperatorFact(view, names, "operatorRole", less == "op_LessThan" ? "strictOrder" : "nonStrictOrder");
+                if (mask != 0)
+                    view.FunctionAnnotation.Single(a => a.Id == names.Class("kotlin.clr.ClrExternal")).Argument.Add(
+                        new Annotation.Types.Argument { NameId = names.String("readonlyOperands"),
+                            Value = new Annotation.Types.Argument.Types.Value {
+                                Type = Annotation.Types.Argument.Types.Value.Types.Type.Int, IntValue = mask } });
                 break;
             }
+        }
+        int ReadonlyOperands(ProjectedFunction predicate)
+        {
+            var mask = 0;
+            foreach (var (handle, row) in PhysicalParameters(_md.GetMethodDefinition(predicate.Handle)))
+            {
+                int i = row.SequenceNumber - 1;
+                if (signatures.ByRefElement(predicate.Declaration.ValueParameter[i].Type) != null &&
+                    (row.Attributes & (ParameterAttributes.In | ParameterAttributes.Out)) == ParameterAttributes.In &&
+                    _attrs.Has(handle, "System.Runtime.CompilerServices.IsReadOnlyAttribute", requireTrust: false))
+                    mask |= 1 << i;
+            }
+            return mask;
         }
     }
 

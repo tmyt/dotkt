@@ -31,6 +31,17 @@ public sealed class StrictOrder(int key)
     public static bool operator >=(StrictOrder a, StrictOrder b) => throw new System.Exception();
 }
 
+public readonly struct ReadonlyOrder(int key)
+{
+    public int Key => key;
+    public static string Trace = "";
+    public static ReadonlyOrder Make(int n) { Trace += n; return new(n); }
+    public static bool operator <(in ReadonlyOrder a, in ReadonlyOrder b) { Trace += "<"; return a.Key < b.Key; }
+    public static bool operator >(in ReadonlyOrder a, in ReadonlyOrder b) { Trace += ">"; return a.Key > b.Key; }
+    public static bool operator <=(int a, in ReadonlyOrder b) { Trace += "L"; return a <= b.Key; }
+    public static bool operator >=(int a, in ReadonlyOrder b) { Trace += "G"; return a >= b.Key; }
+}
+
 public readonly struct PartialOrder<T>(int key)
 {
     public int Key => key;

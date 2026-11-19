@@ -2843,6 +2843,7 @@ internal static class BirGraphMessagePack
         OptionalField<SourceDeclarationType> field0 = default;
         OptionalField<string> field1 = default;
         OptionalField<string> field2 = default;
+        OptionalField<int> field3 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -2859,6 +2860,10 @@ internal static class BirGraphMessagePack
                     Seen(ref seen, 1UL << 2);
                     field2 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
+                case "readonlyOperands":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -2868,13 +2873,14 @@ internal static class BirGraphMessagePack
             Owner = field0,
             Member = field1,
             PairedMember = field2,
+            ReadonlyOperands = field3,
         };
     }
 
     internal static void WriteBirExternalMemberBinding(ref MessagePackWriter writer, BirExternalMemberBinding value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.PairedMember.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.PairedMember.IsPresent ? 1 : 0) + (value.ReadonlyOperands.IsPresent ? 1 : 0));
         if (value.Owner.IsPresent)
         {
             writer.Write("owner");
@@ -2900,6 +2906,15 @@ internal static class BirGraphMessagePack
             else
             {
                 IrMessagePack.WriteString(ref writer, value.PairedMember.Value);
+            }
+        }
+        if (value.ReadonlyOperands.IsPresent)
+        {
+            writer.Write("readonlyOperands");
+            if (value.ReadonlyOperands.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.ReadonlyOperands.Value);
             }
         }
     }
