@@ -998,6 +998,11 @@ program needing literal matching uses `Regex.escape`).
 
 ## 5c. `Map` values preserve Kotlin covariance across invariant CLR dictionaries
 
+Map implementations may omit `override` on the CLR platform defaults: `getOrDefault`, two-argument
+`remove`, `putIfAbsent`, both `replace` overloads, and `merge`. Calls through the map interface
+still dispatch to the implementation. CLR's `merge` takes a Kotlin function, not a Java `BiFunction`.
+Ordinary members such as one-argument `remove` still require `override`.
+
 Kotlin declares `Map<K, out V>`, while CLR `IDictionary<K,V>` is invariant. A dictionary containing strings
 therefore cannot satisfy `IDictionary<K,object>`, and a dictionary containing mutable lists cannot satisfy
 `IDictionary<K,IReadOnlyList<V>>`. Neither an unchecked return nor an interface cast makes those constructions

@@ -12,8 +12,10 @@ if os.name == "nt":
 with TemporaryDirectory() as tmp:
     work = Path(tmp)
     hidden, common, leaf = (work / name for name in ("Hidden.kt", "Common.kt", "Leaf.kt"))
-    hidden.write_text('package roundtrip.utf16literals\ninternal const val LOW_TEXT = "hidden"\n')
-    common.write_text('const val imported = roundtrip.utf16literals.LOW_TEXT\n')
+    # Both KLIB creation and separate common-fragment lookup consume the CLR stdlib.
+    map_default = 'fun drop(m: MutableMap<String, Int>): Boolean = m.remove("item", 1)\n'
+    hidden.write_text('package roundtrip.utf16literals\ninternal const val LOW_TEXT = "hidden"\n' + map_default)
+    common.write_text('const val imported = roundtrip.utf16literals.LOW_TEXT\n' + map_default)
     leaf.write_text('fun result(): String = imported\n')
     library = work / "hidden.klib"
     subprocess.run([compiler, hidden, "-classpath", stdlib, "-module-name", "hidden", "-d", library],
