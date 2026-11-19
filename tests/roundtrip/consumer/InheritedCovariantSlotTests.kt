@@ -3,6 +3,8 @@ package inheritedcovariantroundtrip
 import NUnit.Framework.TestAttribute
 import inheritedcovariantreference.*
 
+private class ImportedReading(override val number: Double) : DoubleReading
+
 class Derived<T>(value: T) : Base<T>(value), Producer<T>
 class Concrete : Base<String>("before"), Producer<String>
 interface LocalProducer<in T> { val channel: Sink<T> }
@@ -66,6 +68,11 @@ class InheritedCovariantSlotTests {
 
     @TestAttribute
     fun importedBaseFillsImportedGenericAndConcreteInterfaceGetters() {
+        val reading: DoubleReading = ImportedReading(4.5)
+        val genericReading: Reading<Double> = reading
+        val starReading: Reading<*> = reading
+        check(reading.value == 4.5 && genericReading.value == 4.5 && starReading.value == 4.5)
+
         val strings = Derived("before")
         val producer: Producer<String> = strings
         check(producer.channel === strings)
