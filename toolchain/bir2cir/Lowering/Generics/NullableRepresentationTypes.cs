@@ -76,6 +76,7 @@ sealed class NullableRepresentationTypes
     public TypeNode StorageArgument(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Argument, storage: true);
     internal TypeNode StorageConstraint(TypeNode.Fqn bound) =>
         _policy?.StorageConstraint(bound) is { } constraint ? Argument(constraint) : null;
+    internal bool IsNominalStorageBound(TypeNode bound) => _policy?.IsNominalStorageBound(bound) == true;
     public bool IsNativeField(BirGraphValue node) => _policy?.IsNativeField(node) == true;
     public TypeNode ArgumentForRole(TypeNode type, NullableRepresentationFrame.Role role) => role switch {
         NullableRepresentationFrame.Role.Ordinary => Argument(type),

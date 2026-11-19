@@ -65,11 +65,19 @@ static partial class NullableRepresentationMaterialization
                 var ordinary = frame.Variable(new TypeNode.Tv(scope, sourceIndex), NullableRepresentationFrame.Role.Ordinary);
                 var constraints = expanded[ordinary.I].Constraints.OrEmpty();
                 expanded[ordinary.I].Constraints = constraints.Concat(projected.Except(constraints)).ToArray();
-                expanded[variable.I].Constraints = projected;
+                SetStorageBounds(expanded[variable.I], projected, policy.IsNominalStorageBound);
             }
             else expanded[variable.I].ErasedInnerConstraints = projected;
         }
         NullableRepresentationViews.SetTypeParameters(declaration, expanded);
+    }
+
+    static void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds, Func<TypeNode, bool> nominal)
+    {
+        var physical = bounds.Where(bound => !nominal(bound)).ToArray();
+        var erased = bounds.Where(nominal).ToArray();
+        if (physical.Length != 0) parameter.Constraints = physical;
+        if (erased.Length != 0) parameter.ErasedInnerConstraints = erased;
     }
 
     static IEnumerable<BirGraphValue> PublishedSlots(BirGraphValue declaration)

@@ -15,6 +15,7 @@ sealed partial class GenericRepresentationPolicy
     readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
     readonly HashSet<string> _localOwners = new(StringComparer.Ordinal);
+    readonly HashSet<string> _localClasses = new(StringComparer.Ordinal);
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
     bool _sourceContinuationPending;
@@ -103,6 +104,14 @@ sealed partial class GenericRepresentationPolicy
         ? bound.Args is { Length: > 0 }
             ? new TypeNode.Fqn(bound.Name, bound.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray()) : bound
         : HasNativeConstraint(bound) ? bound : null;
+
+    // The storage witness may be an existential interface even when the value's concrete
+    // class derives from this bound. A projected generic Kotlin bound is itself an
+    // existential interface; it is the nominal class constraints that cannot be copied.
+    internal bool IsNominalStorageBound(TypeNode bound) => bound is TypeNode.Fqn named
+        && !(OwnsValueSlots(named.Name) && named.Args is { Length: > 0 })
+        && (_localClasses.Contains(named.Name)
+            || !_localOwners.Contains(named.Name) && _references?.IsClassType(named) == true);
 
     internal bool OwnsMethodValueSlots(bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>
         !intrinsic && !overrideOwners.Any(owner => !OwnsValueSlots((owner as TypeNode.Fqn)?.Name));

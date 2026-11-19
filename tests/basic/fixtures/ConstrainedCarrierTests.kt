@@ -114,9 +114,19 @@ class OwnerBoundBox<T>(private var field: T) {
     fun get(): T = field
 }
 
+private abstract class CarrierBase(val id: Int)
+private class CarrierPayload<T>(val payload: T) : CarrierBase(7)
+private fun <R : CarrierBase> preserveCarrier(r: R): R = r
+private fun <R : CarrierBase> R.carrierId(): Int = id
+private fun <T> openCarrier(value: T): T = preserveCarrier(CarrierPayload(value)).payload
+
 class ConstrainedCarrierTests {
     @TestAttribute
     fun ownerBoundsKeepIndependentProofsAndValueConversions() {
+        val payload = CarrierPayload(3)
+        check(preserveCarrier(payload) === payload)
+        assertEquals(7, payload.carrierId())
+        assertEquals("open", openCarrier("open"))
         val tagged = OwnerBoundTagged()
         assertEquals(tagged, OwnerBoundTaggedSink<OwnerBoundTag>().retain(tagged))
         val boxed = OwnerBoundBox<Any>("before")

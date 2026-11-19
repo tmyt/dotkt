@@ -1808,6 +1808,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     }
 
     public bool IsEnumType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "enum";
+    public bool IsClassType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "class";
 
     public bool IsInterfaceType(TypeNode.Fqn type)
     {
