@@ -61,8 +61,8 @@ class ResourceAndUtf8Tests {
         malformed("\ufffdA\ufffd", 0xe2, 0x82, 65, 0xf0, 0x9f, 0x92)
         val unpaired = "\ud800A\udfff"
         check(unpaired.encodeToByteArray().contentEquals(octets(0xef, 0xbf, 0xbd, 65, 0xef, 0xbf, 0xbd)))
-        try { unpaired.encodeToByteArray(throwOnInvalidSequence = true); error("Expected strict encode failure") }
-        catch (_: CharacterCodingException) {}
+        try { unpaired.encodeToByteArray(1, 3, true); error("Expected strict encode failure") }
+        catch (e: CharacterCodingException) { check(e.message?.substringAfterLast(' ') == "2") }
     }
 
     @TestAttribute fun invalidRangesTakePrecedenceOverMalformedContent() {
@@ -72,6 +72,8 @@ class ResourceAndUtf8Tests {
         try { "\ud800".encodeToByteArray(Int.MIN_VALUE, 0, true); error("Expected bounds failure") }
         catch (_: IndexOutOfBoundsException) {}
         try { bytes.decodeToString(1, 0, true); error("Expected inverted range failure") }
+        catch (_: IllegalArgumentException) {}
+        try { "x".encodeToByteArray(1, 0, true); error("Expected inverted range failure") }
         catch (_: IllegalArgumentException) {}
         try { charArrayOf('a').concatToString(0, Int.MAX_VALUE); error("Expected bounds failure") }
         catch (_: IndexOutOfBoundsException) {}

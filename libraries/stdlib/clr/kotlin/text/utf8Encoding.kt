@@ -152,9 +152,10 @@ private const val MAX_BYTES_PER_CHAR = 3
 
 private fun utf8Capacity(string: String, start: Int, end: Int, strict: Boolean): Int {
     val length = end - start
-    if (length <= Int.MAX_VALUE / MAX_BYTES_PER_CHAR) return length * MAX_BYTES_PER_CHAR
+    val maxBytes = System.Array.MaxLength
+    if (length <= maxBytes / MAX_BYTES_PER_CHAR) return length * MAX_BYTES_PER_CHAR
 
-    // Only the upper bound overflowed; a large ASCII result may still fit.
+    // Only the upper bound exceeds the CLR array limit; a large ASCII result may still fit.
     var count = 0L
     var index = start
     while (index < end) {
@@ -169,7 +170,7 @@ private fun utf8Capacity(string: String, start: Int, end: Int, strict: Boolean):
             else -> 3
         }
     }
-    if (count > Int.MAX_VALUE) throw System.OutOfMemoryException()
+    if (count > maxBytes) throw System.OutOfMemoryException()
     return count.toInt()
 }
 

@@ -23,10 +23,9 @@ class Utf16LiteralTests {
         check(bytes.contentEquals(byteArrayOf(0xef.toByte(), 0xbf.toByte(), 0xbd.toByte())))
         val padded = byteArrayOf(0xff.toByte(), 0xc2.toByte(), 0x80.toByte(), 0xff.toByte())
         val decoded = decodedWindow(padded, 1, 3)
-        padded[2] = 65
         assertImportedUnits(decoded, 0x80)
         try { decodedWindow(padded, 1, 2); error("Expected strict slice failure") }
-        catch (_: CharacterCodingException) {}
+        catch (e: CharacterCodingException) { check(e.message?.substringAfterLast(' ') == "1") }
     }
 
     @TestAttribute
