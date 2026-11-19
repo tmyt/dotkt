@@ -169,9 +169,9 @@ static partial class KotlinPropertyAccessors
         propertyRoles.Add(accessorKind);
     }
 
-    // An exact-signature interface bridge exists only because the source accessor and external CLR accessor have
-    // different physical names. Preserve its Kotlin role for round-trip de-duplication without emitting a second,
-    // duplicate CLR Property row for the same source property shape.
+    // Private interface MethodImpl bodies carry their source accessor identity on the method.
+    // Distinct inherited slots (including an erased view) can have the same property signature;
+    // their forwarding bodies must not compete for the authored property's getter or setter.
     internal static void MarkExactInterfaceBridgeProperty(JsonObject bridge, string propertyName,
         string accessorKind, string sourceAssociation)
     {

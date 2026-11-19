@@ -1,5 +1,11 @@
 package inheritedcovariantreference
 
+interface Reading<out T> { val value: T }
+interface DoubleReading : Reading<Double> {
+    override val value: Double get() = number
+    val number: Double
+}
+
 interface Sink<in T> { fun send(value: T) }
 interface Channel<T> : Sink<T> { val last: T }
 interface Producer<in T> { val channel: Sink<T> }
