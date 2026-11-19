@@ -7,6 +7,9 @@
 
 package kotlin.text
 
+import System.Text.RegularExpressions.Match
+import System.Text.RegularExpressions.MatchEvaluator
+
 /**
  * Provides enumeration values to use to set regular expression options.
  */
@@ -232,34 +235,35 @@ public actual class Regex {
         replaceString(input.toString(), replacement, firstOnly = true)
 
     private fun replaceString(text: String, replacement: String, firstOnly: Boolean): String {
-        val first = nativeFirstMatch(text)
-        if (!first.success) return text
-        val matches = generateSequence(first) { m ->
-            if (firstOnly) null else m.nextMatch().takeIf { it.success }
+        val count = if (firstOnly) 1 else -1
+        // This text is literal in both grammars; the native literal path doesn't materialize captures.
+        if ('$' !in replacement && '\\' !in replacement) return nativeReplace(text, replacement, count)
+        var parsed: List<ReplacementPart>? = null
+        val evaluator = MatchEvaluator { match ->
+            // No match means no validation. Reuse the same program for every subsequent match.
+            val parts = parsed ?: parseReplacement(replacement).also { parsed = it }
+            when (parts.size) {
+                0 -> ""
+                1 -> parts[0].value(match)
+                else -> buildString { for (part in parts) append(part.value(match)) }
+            }
         }
-        // A foreign Regex can search backwards. Select in engine order, splice in text order.
-        val ordered = if (!firstOnly && nativeRightToLeft) matches.toList().asReversed().asSequence() else matches
-        val result = StringBuilder(text.length)
-        var start = 0
-        for (match in ordered) {
-            result.append(text, start, match.index)
-            appendReplacement(result, replacement, match.groups)
-            start = match.index + match.length
-        }
-        return result.append(text, start, text.length).toString()
+        return nativeReplace(text, evaluator, count)
     }
 
     // Kotlin/Native-Wasm replacement grammar; CLR group numbers need not be contiguous.
-    private fun appendReplacement(out: StringBuilder, replacement: String, groups: ClrGroupCollection) {
+    private fun parseReplacement(replacement: String): List<ReplacementPart> {
+        val parts = ArrayList<ReplacementPart>()
         var index = 0
         var literalStart = 0
         while (index < replacement.length) {
             val c = replacement[index++]
             if (c != '\\' && c != '$') continue
-            out.append(replacement, literalStart, index - 1)
+            if (index - 1 > literalStart) parts.add(ReplacementPart(replacement.substring(literalStart, index - 1)))
             require(index < replacement.length) { "Incomplete replacement" }
             if (c == '\\') {
-                out.append(replacement[index++])
+                literalStart = index++
+                continue
             } else if (replacement[index] == '{') {
                 val start = ++index
                 while (index < replacement.length) {
@@ -270,8 +274,9 @@ public actual class Regex {
                 require(index > start && replacement[start] !in '0'..'9' &&
                         index < replacement.length && replacement[index] == '}') { "Invalid named group reference" }
                 val name = replacement.substring(start, index++)
-                require(groups.containsKey(name)) { "No group with name <$name>" }
-                out.append(groups[name].value)
+                val number = nativeGroupNumberFromName(name)
+                require(number >= 0) { "No group with name <$name>" }
+                parts.add(ReplacementPart(null, number))
             } else {
                 require(replacement[index] in '0'..'9') { "Invalid capturing group reference" }
                 var number = replacement[index++] - '0'
@@ -285,21 +290,27 @@ public actual class Regex {
                 }
                 if (nativeGroupNameFromNumber(number).isEmpty())
                     throw IndexOutOfBoundsException("Group with index $number does not exist")
-                out.append(groups[number].value)
+                parts.add(ReplacementPart(null, number))
             }
             literalStart = index
         }
-        out.append(replacement, literalStart, replacement.length)
+        if (literalStart < replacement.length) parts.add(ReplacementPart(replacement.substring(literalStart)))
+        return parts
     }
 
     @kotlin.clr.ClrIntrinsic("GroupNameFromNumber")
     private fun nativeGroupNameFromNumber(number: Int): String = TODO("clr binding should be implemented")
 
-    @kotlin.clr.ClrIntrinsic("RightToLeft")
-    private val nativeRightToLeft: Boolean get() = TODO("clr binding should be implemented")
+    @kotlin.clr.ClrIntrinsic("GroupNumberFromName")
+    private fun nativeGroupNumberFromName(name: String): Int = TODO("clr binding should be implemented")
 
-    @kotlin.clr.ClrIntrinsic("Match")
-    private fun nativeFirstMatch(input: String): ClrMatch = TODO("clr binding should be implemented")
+    @kotlin.clr.ClrIntrinsic("Replace")
+    private fun nativeReplace(input: String, evaluator: MatchEvaluator, count: Int): String =
+        TODO("clr binding should be implemented")
+
+    @kotlin.clr.ClrIntrinsic("Replace")
+    private fun nativeReplace(input: String, literal: String, count: Int): String =
+        TODO("clr binding should be implemented")
 
     // Native matching remains the CLR engine's responsibility.
     @kotlin.clr.ClrIntrinsic("Match")
@@ -424,6 +435,10 @@ internal enum class ClrRegexOptions(value: Int) {
 // bound to BCL members (properties → bare name, methods/indexers → accessor name). The BODY methods of [Regex] above build
 // the Kotlin `MatchResult`/`MatchGroupCollection` surface over them via the [ClrMatchResult]/[ClrMatchGroupCollection]
 // adapter classes (which ARE emitted as real Kotlin classes).
+
+private class ReplacementPart(private val literal: String?, private val group: Int = 0) {
+    fun value(match: Match): String = literal ?: match.Groups[group].Value
+}
 
 /** Binds System.Text.RegularExpressions.Capture/Group members used by a captured group. */
 @kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.Group")

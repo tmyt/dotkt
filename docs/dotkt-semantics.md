@@ -974,7 +974,10 @@ and coexisting `^…$` anchors all behave as Kotlin/JVM). `matches` delegates to
 `$1` and `${name}` refer to groups, and a backslash quotes the next character. Use
 `Regex.escapeReplacement` for literal text. The native CLR `Regex.Replace` method
 continues to accept .NET replacement strings (for example, `$&` for the whole match).
-Both APIs operate on the same CLR Regex and use its engine for matching.
+Both APIs operate on the same CLR Regex and use its engine for matching. Numeric
+references use the actual CLR group numbers, which may have gaps. A native
+right-to-left regex replaces its rightmost match first. A terminal empty match
+is included: replacing `a|$` in `a` with `<$0>` produces `<a><>`.
 
 ## 5b-quater. `Regex.options` decodes the compiled `RegexOptions`; three `RegexOption`s have no CLR bit (deliberate CLR choice)
 

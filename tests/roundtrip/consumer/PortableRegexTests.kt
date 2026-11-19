@@ -13,9 +13,11 @@ class PortableRegexTests {
         catch (_: IndexOutOfBoundsException) { missing = true }
         check(missing)
         check(native.Replace("a", "<\$&>") == "<a>")
-        val backwards = (RegexInterop.NativeRegexes.Backwards() as Any) as Regex
+        val backwards = (RegexInterop.NativeRegexes.Backwards("a.") as Any) as Regex
         check(backwards.replaceFirst("a1/a2", "<\$0>") == "a1/<a2>")
         check(replaceFromLibrary(backwards, "a1/a2", "<\$0>") == "<a1>/<a2>")
+        val zeroWidth = RegexInterop.NativeRegexes.Backwards("a|")
+        check(replaceFromLibrary((zeroWidth as Any) as Regex, "baa", "<\$0>") == zeroWidth.Replace("baa", "<\$&>"))
     }
 
     @TestAttribute fun librarySequencesCanOutliveTheProducerCallAndBeReiterated() {
