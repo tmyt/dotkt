@@ -123,6 +123,7 @@ public static class SourceMetadataJson
         SourceAnnotation[]? annotations = default;
         SourceAnnotation[]? receiverAnnotations = default;
         SourceType? receiverType = default;
+        SourcePropertyAccessors? propertyAccessors = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(ref reader, JsonTokenType.PropertyName);
@@ -174,12 +175,16 @@ public static class SourceMetadataJson
                     Seen(ref seen, 1024UL);
                     receiverAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
                     break;
+                case "propertyAccessors":
+                    Seen(ref seen, 2048UL);
+                    propertyAccessors = ReadSourcePropertyAccessors(ref reader);
+                    break;
                 default: throw new FormatException();
             }
         }
         Require(ref reader, JsonTokenType.EndObject);
         if ((seen & 2015UL) != 2015UL) throw new FormatException();
-        return new SourceCallable(declarationId!, name!, flags, typeParameters!, reifiedParameters!, contextParameters!, valueParameters!, returnType!, annotations!, receiverAnnotations!, receiverType);
+        return new SourceCallable(declarationId!, name!, flags, typeParameters!, reifiedParameters!, contextParameters!, valueParameters!, returnType!, annotations!, receiverAnnotations!, receiverType, propertyAccessors);
     }
 
     private static void WriteSourceCallable(Utf8JsonWriter writer, SourceCallable value)
@@ -240,6 +245,90 @@ public static class SourceMetadataJson
             WriteSourceAnnotation(writer, item);
         }
         writer.WriteEndArray();
+        if (value.PropertyAccessors is { } propertyAccessors)
+        {
+            writer.WritePropertyName("propertyAccessors");
+            WriteSourcePropertyAccessors(writer, propertyAccessors);
+        }
+        writer.WriteEndObject();
+    }
+
+    private static SourcePropertyAccessors ReadSourcePropertyAccessors(ref Utf8JsonReader reader)
+    {
+        Require(ref reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        SourceAnnotation[]? getterAnnotations = default;
+        SourceAnnotation[]? setterAnnotations = default;
+        int? getterFlags = default;
+        int? setterFlags = default;
+        SourceValueParameter? setterParameter = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(ref reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "getterFlags":
+                    Seen(ref seen, 1UL);
+                    getterFlags = ReadInt32(ref reader);
+                    break;
+                case "setterFlags":
+                    Seen(ref seen, 2UL);
+                    setterFlags = ReadInt32(ref reader);
+                    break;
+                case "getterAnnotations":
+                    Seen(ref seen, 4UL);
+                    getterAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "setterAnnotations":
+                    Seen(ref seen, 8UL);
+                    setterAnnotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "setterParameter":
+                    Seen(ref seen, 16UL);
+                    setterParameter = ReadSourceValueParameter(ref reader);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        Require(ref reader, JsonTokenType.EndObject);
+        if ((seen & 12UL) != 12UL) throw new FormatException();
+        return new SourcePropertyAccessors(getterAnnotations!, setterAnnotations!, getterFlags, setterFlags, setterParameter);
+    }
+
+    private static void WriteSourcePropertyAccessors(Utf8JsonWriter writer, SourcePropertyAccessors value)
+    {
+        writer.WriteStartObject();
+        if (value.GetterFlags is { } getterFlags)
+        {
+            writer.WritePropertyName("getterFlags");
+            writer.WriteNumberValue(getterFlags);
+        }
+        if (value.SetterFlags is { } setterFlags)
+        {
+            writer.WritePropertyName("setterFlags");
+            writer.WriteNumberValue(setterFlags);
+        }
+        writer.WritePropertyName("getterAnnotations");
+        writer.WriteStartArray();
+        foreach (var item in value.GetterAnnotations)
+        {
+            WriteSourceAnnotation(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WritePropertyName("setterAnnotations");
+        writer.WriteStartArray();
+        foreach (var item in value.SetterAnnotations)
+        {
+            WriteSourceAnnotation(writer, item);
+        }
+        writer.WriteEndArray();
+        if (value.SetterParameter is { } setterParameter)
+        {
+            writer.WritePropertyName("setterParameter");
+            WriteSourceValueParameter(writer, setterParameter);
+        }
         writer.WriteEndObject();
     }
 

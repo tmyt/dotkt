@@ -51,7 +51,8 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
                         }
                     }
                     if (!target(callee)) return expression
-                    check(callee.parameters.single { it.name.asString() == "content" }.type.hasAnnotation(marker))
+                    if (callee.correspondingPropertySymbol == null)
+                        check(callee.parameters.single { it.name.asString() == "content" }.type.hasAnnotation(marker))
                     val args = expression.arguments.toList()
                     if (callee.parameters.none { it.name.asString() == "extraToken" }) {
                         // fir2ir omits the receiver from a companion-extension call but leaves it
@@ -80,6 +81,7 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
         for (declaration in container.declarations) when (declaration) {
             is IrClass -> visit(declaration)
             is IrSimpleFunction -> lower(declaration)
+                is IrProperty -> declaration.getter?.let(::lower)
         }
     }
     module.files.forEach(::visit)

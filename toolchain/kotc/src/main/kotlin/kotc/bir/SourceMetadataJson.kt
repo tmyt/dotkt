@@ -98,6 +98,41 @@ internal object SourceMetadataJson {
             sb.append(",\"receiverType\":")
             writeSourceType(child, sb)
         }
+        value.propertyAccessors?.let { child ->
+            sb.append(",\"propertyAccessors\":")
+            writeSourcePropertyAccessors(child, sb)
+        }
+        sb.append('}')
+    }
+
+    private fun writeSourcePropertyAccessors(value: SourcePropertyAccessors, sb: StringBuilder) {
+        sb.append('{')
+        sb.append("\"getterAnnotations\":")
+        sb.append('[')
+        value.getterAnnotations.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceAnnotation(item, sb)
+        }
+        sb.append(']')
+        sb.append(",\"setterAnnotations\":")
+        sb.append('[')
+        value.setterAnnotations.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceAnnotation(item, sb)
+        }
+        sb.append(']')
+        value.getterFlags?.let { child ->
+            sb.append(",\"getterFlags\":")
+            sb.append(child)
+        }
+        value.setterFlags?.let { child ->
+            sb.append(",\"setterFlags\":")
+            sb.append(child)
+        }
+        value.setterParameter?.let { child ->
+            sb.append(",\"setterParameter\":")
+            writeSourceValueParameter(child, sb)
+        }
         sb.append('}')
     }
 

@@ -16,6 +16,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   when the interface and its implementation are compiled together.
 - Kotlin callers in another assembly see a function's source signature and
   annotations when an IR compiler plugin adds hidden parameters.
+- Kotlin callers can read properties whose getters acquire hidden plugin parameters
+  in another assembly; consumer plugins see the original getter annotations.
 - Compiler plugins can pass a sequence of IR expressions as a call argument;
   the prefix executes in order and the final expression supplies the value.
 

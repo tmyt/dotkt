@@ -2674,6 +2674,12 @@ internal sealed partial class AssemblyScanner : IDisposable
             // declaration. Project it below from the authoritative interface Property/MethodSemantics row so NRT,
             // defaults, parameter names and generic metadata cannot drift with the private implementation signature.
             if (explicitInterfaceProperty || !IsPublicOrProtected(representative.Attributes)) continue;
+            if (PluginSourceProperty(accessors, names) is { } sourceProperty)
+            {
+                result.Property.Add(sourceProperty);
+                propertyNames.Add(sourcePropertyName);
+                continue;
+            }
             var context = new GenericContext(handle, accessors.Getter.IsNil ? accessors.Setter : accessors.Getter, typeParameterIds);
             var signature = property.DecodeProjectedSignature(signatures, context);
             var name = explicitInterfaceProperty
@@ -5581,6 +5587,13 @@ internal sealed partial class AssemblyScanner : IDisposable
             if (separatelyProjectedPropertyAccessors.Contains(methodHandle)) continue;
             var method = _md.GetMethodDefinition(methodHandle);
             if (!IsPublicOrProtected(method.Attributes)) continue;
+            if (PluginSourceProperty(accessors, names) is { } sourceProperty)
+            {
+                sourceProperty.PropertyAnnotation.Add(ClrExternalAnnotation(names, handle));
+                package.Property.Add(sourceProperty);
+                propertyNames.Add(KotlinPropertySourceName(property, accessors));
+                continue;
+            }
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
             var sig = property.DecodeProjectedSignature(signatures, context);
             var type = !accessors.Getter.IsNil
@@ -5794,6 +5807,16 @@ internal sealed partial class AssemblyScanner : IDisposable
                 return null;
         }
         return value;
+    }
+
+    private Property? PluginSourceProperty(System.Reflection.Metadata.PropertyAccessors accessors, NameTable names)
+    {
+        if (accessors.Getter.IsNil || KotlinDeclarationIdentityCarrier(accessors.Getter)?.Id is not { } getter ||
+            _sourceMetadata.Property(getter, names) is not { } property) return null;
+        var setter = accessors.Setter.IsNil ? null : KotlinDeclarationIdentityCarrier(accessors.Setter)?.Id;
+        property.PropertyAnnotation.Add(KotlinDeclarationIdentityAnnotation(names, getter, setter ?? ""));
+        property.Flags |= 1;
+        return property;
     }
 
     private void ApplyAccessorFlags(

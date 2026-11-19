@@ -114,7 +114,11 @@ can also modify type-use annotations without changing the CLR parameter types.
 The declaration ID, by contrast, identifies the transformed function. bir2cir consumes each
 record into a repeatable assembly-level `KotlinSourceCallableAttribute` using the same codec as
 an alias. dll2klib projects the source signature to the consumer frontend and retains the ID for
-physical call binding. The consumer's IR plugin is responsible for supplying its ABI arguments;
+physical call binding. For a Kotlin property, the record is keyed by the transformed
+getter ID; `propertyAccessors` retains source accessor flags and annotations separately
+from the property's own annotations. A hidden getter argument is not a source indexer
+parameter. A CLR property with no such record keeps its ordinary projection.
+The consumer's IR plugin is responsible for supplying its ABI arguments;
 neither dll2klib nor bir2cir infer them from parameter names.
 
 The declaration schema is [kotlin-typealias.schema.json](kotlin-typealias.schema.json).

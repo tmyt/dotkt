@@ -61,7 +61,7 @@ internal sealed class KotlinSourceMetadata
 
     public Function? Callable(string? id, NameTable names)
     {
-        if (id == null || !_callables.TryGetValue(id, out var source)) return null;
+        if (id == null || !_callables.TryGetValue(id, out var source) || source.PropertyAccessors != null) return null;
         var function = new Function { Name = names.String(source.Name), Flags = source.Flags,
             ReturnType = Type(source.ReturnType, names) };
         if (source.ReceiverType is {} receiver) function.ReceiverType = Type(receiver, names);
@@ -71,19 +71,44 @@ internal sealed class KotlinSourceMetadata
             projected.Reified = source.ReifiedParameters.Contains(parameter.Id);
             function.TypeParameter.Add(projected);
         }
-        ValueParameter ValueParameter(SourceValueParameter parameter)
-        {
-            var value = new ValueParameter { Name = names.String(parameter.Name), Flags = parameter.Flags,
-                Type = Type(parameter.Type, names) };
-            if (parameter.VarargElementType is {} elem) value.VarargElementType = Type(elem, names);
-            value.ParameterAnnotation.Add(parameter.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
-            return value;
-        }
-        function.ValueParameter.Add(source.ValueParameters.Select(ValueParameter));
-        function.ContextParameter.Add(source.ContextParameters.Select(ValueParameter));
+        function.ValueParameter.Add(source.ValueParameters.Select(parameter => ProjectValueParameter(parameter, names)));
+        function.ContextParameter.Add(source.ContextParameters.Select(parameter => ProjectValueParameter(parameter, names)));
         function.FunctionAnnotation.Add(source.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
         function.FunctionExtensionReceiverAnnotation.Add(source.ReceiverAnnotations.Select(annotation => ReadAnnotation(annotation, names)));
         return function;
+    }
+
+    public Property? Property(string? getterIdentity, NameTable names)
+    {
+        if (getterIdentity == null || !_callables.TryGetValue(getterIdentity, out var source) ||
+            source.PropertyAccessors is not { } accessors) return null;
+        var property = new Property { Name = names.String(source.Name), Flags = source.Flags,
+            ReturnType = Type(source.ReturnType, names) };
+        if (source.ReceiverType is {} receiver) property.ReceiverType = Type(receiver, names);
+        foreach (var parameter in source.TypeParameters)
+        {
+            var projected = ProjectParameter(parameter, names);
+            projected.Reified = source.ReifiedParameters.Contains(parameter.Id);
+            property.TypeParameter.Add(projected);
+        }
+        property.ContextParameter.Add(source.ContextParameters.Select(parameter => ProjectValueParameter(parameter, names)));
+        if (accessors.GetterFlags is int getter) property.GetterFlags = getter;
+        if (accessors.SetterFlags is int setter) property.SetterFlags = setter;
+        if (accessors.SetterParameter is {} value) property.SetterValueParameter = ProjectValueParameter(value, names);
+        property.PropertyAnnotation.Add(source.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+        property.PropertyGetterAnnotation.Add(accessors.GetterAnnotations.Select(annotation => ReadAnnotation(annotation, names)));
+        property.PropertySetterAnnotation.Add(accessors.SetterAnnotations.Select(annotation => ReadAnnotation(annotation, names)));
+        property.PropertyExtensionReceiverAnnotation.Add(source.ReceiverAnnotations.Select(annotation => ReadAnnotation(annotation, names)));
+        return property;
+    }
+
+    static ValueParameter ProjectValueParameter(SourceValueParameter parameter, NameTable names)
+    {
+        var value = new ValueParameter { Name = names.String(parameter.Name), Flags = parameter.Flags,
+            Type = Type(parameter.Type, names) };
+        if (parameter.VarargElementType is {} elem) value.VarargElementType = Type(elem, names);
+        value.ParameterAnnotation.Add(parameter.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+        return value;
     }
 
     static TypeParameter ProjectParameter(SourceTypeParameter parameter, NameTable names)

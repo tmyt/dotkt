@@ -22,6 +22,7 @@ fun main() {
     check(compositeDiscard(++evaluations) === Unit && evaluations == 1)
     check(pluginprobe.api.render(content = { "source" }) == 73)
     check(pluginprobe.api.render(content = 19) == 19)
+    check(pluginprobe.api.Sample().number == 73)
     check(Tag.marked { 1 } == 73)
     check(pluginprobe.api.Scope.Nested<Int>().render(3) { it.toString() } == 73)
     check(construct()().value == "closed")
