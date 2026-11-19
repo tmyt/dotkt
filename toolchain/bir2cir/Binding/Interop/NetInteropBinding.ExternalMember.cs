@@ -26,11 +26,19 @@ static partial class NetInteropBinding
         }
         var operands = call.Args.Value.Select((arg, index) => Bind(index.ToString(),
             FBoundStarProjectionErasure.SubstituteMethodTypeArguments(slots[index], typeArgs), arg)).ToArray();
+        var readonlyOperands = binding.ReadonlyOperands.OrDefault();
+        bool ByAddress(int i) => (readonlyOperands & (1 << i)) != 0;
+        OptionalField<TypeNode[]> NativeSignature(OptionalField<TypeNode[]> source) =>
+            readonlyOperands == 0 || !source.HasValue ? source : source.Value
+                .Select((t, i) => ByAddress(i) ? new TypeNode.ByRef(t) : t).ToArray();
         IBirExpression Invoke(string member)
         {
+            // A native ref slot takes its argument's address. Supply the local lvalue,
+            // not an expression that has already taken its address.
             var native = new BirCallStatic { OwnerType = call.OwnerType, Method = member, Ret = boolean, Sty = boolean,
                 Args = operands.Select(n => (IBirExpression)new BirLocal { Name = n }).ToArray(),
-                Sig = call.Sig, ShapeTypes = call.ShapeTypes, ArgTypes = call.ArgTypes, TypeArgs = call.TypeArgs,
+                Sig = NativeSignature(call.Sig), ShapeTypes = NativeSignature(call.ShapeTypes),
+                ArgTypes = NativeSignature(call.ArgTypes), TypeArgs = call.TypeArgs,
                 ExternalMember = new BirExternalMemberBinding { Owner = binding.Owner, Member = member } };
             return (IBirExpression)LowerCall(new SourceCall(native), refs);
         }

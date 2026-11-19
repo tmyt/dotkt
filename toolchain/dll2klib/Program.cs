@@ -3292,10 +3292,12 @@ internal sealed partial class AssemblyScanner : IDisposable
         names.StringValue(function.Name) + "`" + function.TypeParameter.Count + "(" +
         string.Join(",", function.ValueParameter.Select(p => TypeKey(p.Type))) + ")";
 
-    private static string FunctionShapeKey(Function function, NameTable names) =>
+    private static string FunctionShapeKey(Function function, NameTable names, bool ignoreParameterNames = false) =>
         FunctionKey(function, names) + ":" + TypeKey(function.ReturnType) + "<" +
-        string.Join(",", function.TypeParameter.Select(parameter =>
-            Convert.ToBase64String(parameter.ToByteArray()))) + ">";
+        string.Join(",", function.TypeParameter.Select(parameter => {
+            if (ignoreParameterNames) { parameter = parameter.Clone(); parameter.Name = parameter.Id; }
+            return Convert.ToBase64String(parameter.ToByteArray());
+        })) + ">";
 
     private bool IsImplementedInterfaceDeclaration(
         EntityHandle declaration,

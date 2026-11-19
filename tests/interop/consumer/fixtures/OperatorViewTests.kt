@@ -1,5 +1,7 @@
 import NUnit.Framework.TestAttribute
 import OperatorViews.*
+import ExplicitOperators.*
+import kotlin.clr.byref
 
 private infix fun Bits.and(right: Operand<Double>): Double = right.Value + 1.0
 
@@ -54,6 +56,18 @@ class OperatorViewTests {
         check(Left() < Key(1))
         val compare: (StrictOrder, StrictOrder) -> Int = StrictOrder::compareTo
         check(compare(StrictOrder(4), StrictOrder(1)) > 0)
+        ReadonlyOrder.Trace = ""
+        check(ReadonlyOrder.Make(3).compareTo(ReadonlyOrder.Make(2)) == 1)
+        check(ReadonlyOrder.Trace == "32<>")
+        check(2 < ReadonlyOrder.Make(3) && ReadonlyOrder.Trace == "32<>3LG")
+        var first = ReadonlyOrder(1)
+        var second = ReadonlyOrder(2)
+        check(first < 2)
+        val left = BorrowLeft<Int>()
+        check(first < Ticket(2) && left < BorrowRight<Int>() && left < left)
+        check(ReadonlyOrder.op_LessThan(byref(first), byref(second)))
+        var counter = 0L
+        check(ReadonlyOrder.op_LessThan(byref(first), byref(counter)) && counter == 1L)
     }
 
     @TestAttribute

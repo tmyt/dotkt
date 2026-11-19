@@ -381,6 +381,9 @@ class V:
             self.err(f, path + "/member", "externalMember.member must be a string")
         if "pairedMember" in value and not isinstance(value["pairedMember"], str):
             self.err(f, path + "/pairedMember", "externalMember.pairedMember must be a string")
+        if "readonlyOperands" in value and (type(value["readonlyOperands"]) is not int or
+                not 0 <= value["readonlyOperands"] <= 3 or "pairedMember" not in value):
+            self.err(f, path + "/readonlyOperands", "expected a two-operand mask on a paired comparison")
         if not isinstance(value["owner"], str):
             self.err(f, path + "/owner", "externalMember.owner must be encoded declaration TypeNode text")
             return

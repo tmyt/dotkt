@@ -691,6 +691,7 @@ internal static class BirGraphDom
                 case "owner": break;
                 case "member": break;
                 case "pairedMember": break;
+                case "readonlyOperands": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirExternalMemberBinding at {source.GetPath()}");
             }
         return new BirExternalMemberBinding
@@ -698,6 +699,7 @@ internal static class BirGraphDom
             Owner = Field<SourceDeclarationType>(fields, "owner", value => SourceDeclarationType.ReadFrozenText(value!.GetValue<string>())),
             Member = Field<string>(fields, "member", value => value!.GetValue<string>()),
             PairedMember = Field<string>(fields, "pairedMember", value => value!.GetValue<string>()),
+            ReadonlyOperands = Field<int>(fields, "readonlyOperands", value => value!.GetValue<int>()),
         };
     }
 

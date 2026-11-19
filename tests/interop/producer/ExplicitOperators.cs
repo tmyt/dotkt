@@ -12,6 +12,8 @@ public struct Counter(int value)
 
 public sealed class Ticket(int value)
 {
+    public static bool operator <(OperatorViews.ReadonlyOrder a, Ticket b) => true;
+    public static bool operator >(OperatorViews.ReadonlyOrder a, Ticket b) => false;
     public int Value = value;
     public void operator ++() => Value++;
     public static Ticket op_BitwiseAnd(Ticket ticket, int[] values) => ticket;

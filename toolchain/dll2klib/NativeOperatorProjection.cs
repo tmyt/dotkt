@@ -30,14 +30,30 @@ internal sealed partial class AssemblyScanner
     static void RemoveShadowedComparisonViews(Package package, NameTable names)
     {
         var compare = package.Function.Where(f => names.StringValue(f.Name) == "compareTo" && f.ReceiverType != null)
-            .Select(f => (View: f, Role: f.FunctionAnnotation.Where(a => a.Id == names.Class("kotlin.clr.ClrExternal"))
-                .SelectMany(a => a.Argument).Where(arg => names.StringValue(arg.NameId) == "operatorRole")
-                .Select(arg => names.StringValue(arg.Value.StringValue)).SingleOrDefault()))
+            .Select(f => {
+                var args = f.FunctionAnnotation.Where(a => a.Id == names.Class("kotlin.clr.ClrExternal"))
+                    .SelectMany(a => a.Argument);
+                var role = args.SingleOrDefault(arg => names.StringValue(arg.NameId) == "operatorRole");
+                var mask = args.SingleOrDefault(arg => names.StringValue(arg.NameId) == "readonlyOperands");
+                return (View: f, Role: role == null ? null : names.StringValue(role.Value.StringValue),
+                    Mask: (int)(mask?.Value.IntValue ?? 0));
+            })
             .Where(x => x.Role is "strictOrder" or "nonStrictOrder")
-            .GroupBy(x => (TypeKey(x.View.ReceiverType), FunctionShapeKey(x.View, names)));
+            .GroupBy(x => (TypeKey(x.View.ReceiverType), FunctionShapeKey(x.View, names, ignoreParameterNames: true)));
         foreach (var g in compare.ToArray())
-            if (g.Any(x => x.Role == "strictOrder"))
-                foreach (var x in g.Where(x => x.Role == "nonStrictOrder")) package.Function.Remove(x.View);
+        {
+            // Prefer strict when that role can supply an unambiguous passing mode.
+            var keep = new HashSet<Function>(ReferenceEqualityComparer.Instance);
+            foreach (var role in new[] { "strictOrder", "nonStrictOrder" })
+            {
+                var pairs = g.Where(x => x.Role == role).ToArray();
+                foreach (var x in pairs.Where(x => pairs.All(other => (x.Mask & other.Mask) == x.Mask)))
+                    keep.Add(x.View);
+                if (keep.Count != 0) break;
+            }
+            foreach (var x in g)
+                if (!keep.Contains(x.View)) package.Function.Remove(x.View);
+        }
     }
 
     // Both predicates must accept each operand. Never erase mismatching generic arguments
@@ -85,9 +101,18 @@ internal sealed partial class AssemblyScanner
                 if (byName[less].Count() != 1 || byName[greater].Count() != 1) continue;
                 var first = byName[less].Single();
                 var declaration = first.Declaration.Clone();
-                var second = byName[greater].Single().Declaration;
-                var receiver = CommonComparisonInput(declaration.ValueParameter[0].Type, second.ValueParameter[0].Type);
-                var operand = CommonComparisonInput(declaration.ValueParameter[1].Type, second.ValueParameter[1].Type);
+                var second = byName[greater].Single();
+                var mask = ReadonlyOperands(first);
+                if (mask != ReadonlyOperands(second)) continue;
+                // A writable location cannot be a value operand of the comparison adapter.
+                // Its original CLR method remains available for explicit ref/out calls.
+                if (declaration.ValueParameter.Where((p, i) => (mask & (1 << i)) == 0 &&
+                        signatures.ByRefElement(p.Type) != null).Any()) continue;
+                KType Input(ProjectedFunction predicate, int i) => (mask & (1 << i)) != 0
+                    ? signatures.ByRefElement(predicate.Declaration.ValueParameter[i].Type)!
+                    : predicate.Declaration.ValueParameter[i].Type;
+                var receiver = CommonComparisonInput(Input(first, 0), Input(second, 0));
+                var operand = CommonComparisonInput(Input(first, 1), Input(second, 1));
                 if (receiver == null || operand == null) continue;
                 declaration.ValueParameter[0].Type = receiver;
                 declaration.ValueParameter[1].Type = operand;
@@ -96,8 +121,25 @@ internal sealed partial class AssemblyScanner
                 view.ReturnType = signatures.NamedType("kotlin.Int");
                 SetOperatorFact(view, names, "pairedMember", greater);
                 SetOperatorFact(view, names, "operatorRole", less == "op_LessThan" ? "strictOrder" : "nonStrictOrder");
-                break;
+                if (mask != 0)
+                    view.FunctionAnnotation.Single(a => a.Id == names.Class("kotlin.clr.ClrExternal")).Argument.Add(
+                        new Annotation.Types.Argument { NameId = names.String("readonlyOperands"),
+                            Value = new Annotation.Types.Argument.Types.Value {
+                                Type = Annotation.Types.Argument.Types.Value.Types.Type.Int, IntValue = mask } });
             }
+        }
+        int ReadonlyOperands(ProjectedFunction predicate)
+        {
+            var mask = 0;
+            foreach (var (handle, row) in PhysicalParameters(_md.GetMethodDefinition(predicate.Handle)))
+            {
+                int i = row.SequenceNumber - 1;
+                if (signatures.ByRefElement(predicate.Declaration.ValueParameter[i].Type) != null &&
+                    (row.Attributes & (ParameterAttributes.In | ParameterAttributes.Out)) == ParameterAttributes.In &&
+                    _attrs.Has(handle, "System.Runtime.CompilerServices.IsReadOnlyAttribute", requireTrust: false))
+                    mask |= 1 << i;
+            }
+            return mask;
         }
     }
 

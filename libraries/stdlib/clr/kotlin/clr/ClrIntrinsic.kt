@@ -28,6 +28,8 @@ public annotation class ClrExternal(
     val pairedMember: String = "",
     // Source-level role for Kotlin operator selection; not a physical method name.
     val operatorRole: String = "",
+    // Bit i marks a value operand passed to the paired predicates' readonly reference slot.
+    val readonlyOperands: Int = 0,
 )
 
 // A projected event declaration, as distinct from an ordinary property storing a ClrEvent value. dll2klib owns

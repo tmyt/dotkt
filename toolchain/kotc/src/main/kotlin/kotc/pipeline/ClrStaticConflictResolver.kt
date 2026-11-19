@@ -9,6 +9,8 @@ import org.jetbrains.kotlin.fir.declarations.FirNamedFunction
 import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.declarations.getAnnotationByClassId
 import org.jetbrains.kotlin.fir.declarations.getStringArgument
+import org.jetbrains.kotlin.fir.declarations.findArgumentByName
+import org.jetbrains.kotlin.fir.expressions.FirLiteralExpression
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
@@ -32,11 +34,25 @@ internal fun FirNamedFunction.operatorRole(session: FirSession): String? =
 
 /** A non-strict pair is a fallback, including when the two operands supply different views. */
 private class ComparisonViewPriority(private val session: FirSession) : ConeCallConflictResolver() {
+	private val overrideChecker = FirStandardOverrideChecker(session)
+	private val readonlyOperands = Name.identifier("readonlyOperands")
 	override fun chooseMaximallySpecificCandidates(candidates: Set<Candidate>): Set<Candidate> {
 		if (candidates.size < 2) return candidates
 		fun role(c: Candidate) = (c.symbol.fir as? FirNamedFunction)?.operatorRole(session)
-		return if (candidates.any { role(it) == "strictOrder" })
+		val applicable = if (candidates.any { role(it) == "strictOrder" })
 			candidates.filterTo(linkedSetOf()) { role(it) != "nonStrictOrder" } else candidates
+		val views = applicable.mapNotNull { c ->
+			if (role(c) !in setOf("strictOrder", "nonStrictOrder")) return@mapNotNull null
+			val f = c.symbol.fir as FirNamedFunction
+			val mask = f.getAnnotationByClassId(externalBinding, session)?.findArgumentByName(readonlyOperands)
+			Triple(c, f, (mask as? FirLiteralExpression)?.value as? Int ?: 0)
+		}
+		// Equally imported namespaces may supply the same value signature. Resolve only
+		// that tie; the borrow mode must not decide between different Kotlin overloads.
+		return applicable - views.filter { (_, f, mask) -> views.any { (_, other, preferred) ->
+			preferred != mask && (preferred and mask) == preferred &&
+				overrideChecker.isOverriddenFunction(f, other, ignoreVisibility = true)
+		} }.map { it.first }.toSet()
 	}
 }
 

@@ -312,7 +312,8 @@
       "properties": {
         "owner": { "type": "string", "x-dotkt-csharp-type": "SourceDeclarationType", "x-dotkt-csharp-codec": "SourceDeclarationType", "x-dotkt-json-content": "#/$defs/type", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "$comment": "Canonical TypeNode text from trusted projection metadata, forwarded unchanged by kotc and decoded once by the BIR boundary into an immutable declaration-frame TypeNode." },
         "member": { "type": "string" },
-        "pairedMember": { "type": "string", "description": "Second native operator selected for this comparison view; same declaring frame and operand signature." }
+        "pairedMember": { "type": "string", "description": "Second native operator selected for this comparison view; same declaring frame and operand signature." },
+        "readonlyOperands": { "type": "integer", "minimum": 0, "maximum": 3, "description": "For a binary comparison view, bit i identifies a Kotlin value operand passed to both selected predicates by readonly managed reference." }
       },
       "required": ["owner", "member"], "additionalProperties": false
     },

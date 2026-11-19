@@ -31,6 +31,44 @@ public sealed class StrictOrder(int key)
     public static bool operator >=(StrictOrder a, StrictOrder b) => throw new System.Exception();
 }
 
+public readonly struct ReadonlyOrder(int key)
+{
+    public int Key => key;
+    public static string Trace = "";
+    public static ReadonlyOrder Make(int n) { Trace += n; return new(n); }
+    public static bool operator <(in ReadonlyOrder a, in ReadonlyOrder b) { Trace += "<"; return a.Key < b.Key; }
+    public static bool operator >(in ReadonlyOrder a, in ReadonlyOrder b) { Trace += ">"; return a.Key > b.Key; }
+    public static bool operator <=(int a, in ReadonlyOrder b) { Trace += "L"; return a <= b.Key; }
+    public static bool operator >=(int a, in ReadonlyOrder b) { Trace += "G"; return a >= b.Key; }
+    public static bool operator <(in ReadonlyOrder a, int b) => throw new System.Exception();
+    public static bool operator >(in ReadonlyOrder a, int b) => throw new System.Exception();
+    public static bool operator <(ReadonlyOrder a, int b) => a.Key < b;
+    public static bool operator >(ReadonlyOrder a, int b) => a.Key > b;
+    public static bool operator <(in ReadonlyOrder a, ExplicitOperators.Ticket b) => throw new System.Exception();
+    public static bool operator >(in ReadonlyOrder a, ExplicitOperators.Ticket b) => throw new System.Exception();
+    [System.Runtime.CompilerServices.SpecialName]
+    public static bool op_LessThan(in ReadonlyOrder a, ref long n) => ++n > 0;
+    [System.Runtime.CompilerServices.SpecialName]
+    public static bool op_GreaterThan(in ReadonlyOrder a, ref long n) => --n > 0;
+}
+
+public sealed class BorrowLeft<T>
+{
+    public static bool operator <(in BorrowLeft<T> a, BorrowRight<T> b) => throw new System.Exception();
+    public static bool operator >(in BorrowLeft<T> a, BorrowRight<T> b) => throw new System.Exception();
+    public static bool operator <(in BorrowLeft<T> a, BorrowLeft<T> b) => throw new System.Exception();
+    public static bool operator >(in BorrowLeft<T> a, BorrowLeft<T> b) => throw new System.Exception();
+    public static bool operator <(BorrowLeft<T> a, in BorrowLeft<T> b) => throw new System.Exception();
+    public static bool operator >(BorrowLeft<T> a, in BorrowLeft<T> b) => throw new System.Exception();
+    public static bool operator <=(BorrowLeft<T> a, BorrowLeft<T> b) => true;
+    public static bool operator >=(BorrowLeft<T> a, BorrowLeft<T> b) => false;
+}
+public sealed class BorrowRight<U>
+{
+    public static bool operator <(BorrowLeft<U> a, BorrowRight<U> b) => true;
+    public static bool operator >(BorrowLeft<U> a, BorrowRight<U> b) => false;
+}
+
 public readonly struct PartialOrder<T>(int key)
 {
     public int Key => key;

@@ -465,7 +465,7 @@ internal object BirMessagePack {
 
     private fun writeBirExternalMemberBinding(value: BirExternalMemberBinding, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(2 + (if (value.pairedMember == null) 0 else 1))
+        packer.packMapHeader(2 + (if (value.pairedMember == null) 0 else 1) + (if (value.readonlyOperands == null) 0 else 1))
         packer.packString("owner")
         MessagePackText.write(packer, value.owner)
         packer.packString("member")
@@ -473,6 +473,10 @@ internal object BirMessagePack {
         value.pairedMember?.let { child ->
             packer.packString("pairedMember")
             MessagePackText.write(packer, child)
+        }
+        value.readonlyOperands?.let { child ->
+            packer.packString("readonlyOperands")
+            packer.packInt(child)
         }
     }
 
