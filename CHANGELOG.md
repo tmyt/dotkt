@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Kotlin classes implementing ordinary function types can be passed and invoked as functions,
+  including through interfaces imported from another DLL.
+
 ## 0.9.28 (2026-11-19)
 
 - All five NuGet packages and both SDK defaults move to `0.9.28`. The embedded

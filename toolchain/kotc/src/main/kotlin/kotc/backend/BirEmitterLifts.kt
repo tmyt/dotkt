@@ -1631,9 +1631,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 	val getMethod = BirFunctionDeclaration(name = "get", isStatic = false, isOverride = true, isVirtual = true,
 		params = readParams, ret = vType, body = listOf(readBody), overrides = propertySlotOverrides("get"))
 	// KProperty0/KProperty1's declared supertype `() -> V`/`(T) -> V` gives them a REAL fake-overridden `invoke`
-	// abstract member (confirmed in the compiled BIR: `interfaces` drops the FunctionN supertype — a Kotlin
-	// function type has no faithful CLR interface base — but the interface's OWN `methods` still carries the
-	// fake override AS ITS OWN abstract slot). So the lifted class must implement it too, same body as `get`
+	// abstract member on the property interface itself. The lifted class must implement it too, with the same body as `get`
 	// (mirrors JVM's `PropertyReferenceImpl.invoke() = get()`).
 	val invokeMethod = getMethod.copy(name = "invoke", overrides = propertySlotOverrides("invoke"))
 

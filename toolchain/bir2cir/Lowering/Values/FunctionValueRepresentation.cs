@@ -41,18 +41,27 @@ static partial class FunctionValueRepresentation
                 interfaces.OrEmpty().Where(ContainsOrdinaryFunction).ToArray(), bounds);
             return ReferenceEquals(original, merged) ? previous : merged;
         }
+        // A source function edge is published via KotlinSupertypes. Unlike an interface
+        // containing a function argument, the function value itself is physically a delegate,
+        // which cannot appear in a CLR InterfaceImpl row.
+        OptionalField<TypeNode[]> PhysicalEdges(OptionalField<TypeNode[]> edges) =>
+            edges.HasValue && edges.Value.Any(t => t is TypeNode.Fn)
+                ? edges.Value.Where(t => t is not TypeNode.Fn).ToArray() : edges;
         IBirTypeDeclaration Owner(IBirTypeDeclaration declaration) => declaration switch {
             BirClassDefinition owner => owner with {
+                Interfaces = PhysicalEdges(owner.Interfaces),
                 KotlinSupertypesPre = Edges(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
                 Methods = Map(owner.Methods, Method), Ctors = Map(owner.Ctors, Constructor),
                 Fields = Map(owner.Fields, Field), Properties = Map(owner.Properties, Property),
             },
             BirInterfaceDefinition owner => owner with {
+                Interfaces = PhysicalEdges(owner.Interfaces),
                 KotlinSupertypesPre = Edges(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
                 Methods = Map(owner.Methods, Method), Ctors = Map(owner.Ctors, Constructor),
                 Fields = Map(owner.Fields, Field), Properties = Map(owner.Properties, Property),
             },
             BirEnumDefinition owner => owner with {
+                Interfaces = PhysicalEdges(owner.Interfaces),
                 KotlinSupertypesPre = Edges(owner.Base, owner.Interfaces, owner.TypeParams, owner.KotlinSupertypesPre),
                 Methods = Map(owner.Methods, Method), Ctors = Map(owner.Ctors, Constructor),
                 Fields = Map(owner.Fields, Field), Properties = Map(owner.Properties, Property),

@@ -83,7 +83,9 @@ sealed partial class ReferenceMetadataIndex
         if (physical.SourceFacts?["interfaces"] is JsonArray sourceInterfaces)
             foreach (var sourceInterface in sourceInterfaces)
             {
-                var edge = (TypeNode.Fqn)Restore(TypeJson.Read(sourceInterface), source: true);
+                var sourceType = TypeJson.Read(sourceInterface);
+                if (sourceType is TypeNode.Fn) continue; // function values are not nominal CLR interface edges
+                var edge = (TypeNode.Fqn)Restore(sourceType, source: true);
                 restored.RemoveAll(candidate => candidate.Name == edge.Name);
                 restored.Add(edge);
             }

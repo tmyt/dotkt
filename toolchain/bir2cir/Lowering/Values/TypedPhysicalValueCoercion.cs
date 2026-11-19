@@ -28,6 +28,7 @@ static class TypedPhysicalValueCoercion
             IsNativeReference = isNativeReference ?? (_ => false),
             ReferencedCarrier = referencedCarrier, References = references, LocalCarriers = localCarriers,
             DelegateAdapters = new TypedPhysicalDelegateAdapter(localTypes, references, unitValue, declarations),
+            LocalFunctionRuntime = roots.Any(root => root.FileClass.OrDefault() == FunctionValueRepresentation.FunctionRuntime),
         };
         foreach (var root in roots)
         {
@@ -83,6 +84,7 @@ static class TypedPhysicalValueCoercion
         internal Func<TypeNode.Fqn, bool> IsNativeReference = _ => false;
         internal Func<TypeNode.Fqn, TypeNode.Fqn, bool> ReferencedCarrier;
         internal bool ReferenceBuild;
+        internal bool LocalFunctionRuntime;
         internal ReferenceMetadataIndex References;
         internal IReadOnlyDictionary<string, string> LocalCarriers;
         internal BirFileDeclaration Document;
@@ -288,7 +290,8 @@ static class TypedPhysicalValueCoercion
     {
         target = SignatureValueTypes.Of(target);
         if (target != null && value is BirConditional { Type.HasValue: false } conditional
-            && (NeedsConversion(ExprType(Graph(conditional.Then.OrDefault()), scope, index), target, index)
+            && (Underlying(target) is TypeNode.Fn { Suspend: false }
+                || NeedsConversion(ExprType(Graph(conditional.Then.OrDefault()), scope, index), target, index)
                 || NeedsConversion(ExprType(Graph(conditional.Else.OrDefault()), scope, index), target, index)))
         {
             if (conditional.Then.HasValue) conditional.Then = Field(CoerceExpression(conditional.Then.Value, target, scope, index));
@@ -300,7 +303,46 @@ static class TypedPhysicalValueCoercion
         if (value is IBirExpression expression
             && index.DelegateAdapters?.AdaptUnitDelegateValue(index.LocalCarriers, index.Document, expression, got, target) is { } adapter)
             return Graph(adapter);
+        if (FunctionViewOperand(value, got, target, index) is { } view) return Cast(view, target);
         return NeedsConversion(got, target, index) ? Cast(value, target) : value;
+    }
+
+    static TypeNode Underlying(TypeNode type) => type switch {
+        TypeNode.Nullable n => Underlying(n.Of), TypeNode.Oblivious o => Underlying(o.Of),
+        TypeNode.Mod m => Underlying(m.Of), _ => type,
+    };
+
+    // Explicit casts, assignments, calls and returns must agree on what a Kotlin
+    // function value is. In particular a nominal object is never itself a delegate.
+    static BirGraphValue FunctionViewOperand(BirGraphValue value, TypeNode source, TypeNode target, Index index)
+    {
+        if (index.References == null || index.ReferenceBuild || value == null || source == null) return null;
+        var from = Underlying(source); var to = Underlying(target);
+        if (to is TypeNode.Fn { Suspend: false } function && from is TypeNode.Fqn or TypeNode.Tv)
+            return RuntimeFunctionCall(value, function.DelegateParams.Count(), index);
+        if (to is TypeNode.Fn { Suspend: false } next && from is TypeNode.Fn { Suspend: false } previous
+            && next.DelegateParams.Count() != previous.DelegateParams.Count())
+            return RuntimeFunctionCall(RuntimeFunctionCall(value, null, index), next.DelegateParams.Count(), index);
+        if (from is TypeNode.Fn { Suspend: false } && (to is TypeNode.Tv || to is TypeNode.Fqn nominal
+            && nominal.Name is not ("System.Delegate" or "System.MulticastDelegate")
+            && !index.References.IsClrDelegate(nominal)))
+            return RuntimeFunctionCall(value, null, index);
+        return null;
+    }
+
+    static BirCallStatic RuntimeFunctionCall(BirGraphValue operand, int? arity, Index index)
+    {
+        var owner = new TypeNode.Fqn(FunctionValueRepresentation.FunctionRuntime);
+        var method = arity.HasValue ? "kotlinFunctionView" : "kotlinFunctionObject";
+        var integer = new TypeNode.Fqn("System.Int32");
+        TypeNode[] signature = arity.HasValue ? [Object, integer] : [Object];
+        var args = new List<IBirExpression> { Cast(operand, Object) };
+        if (arity.HasValue) args.Add(new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(arity.Value) });
+        var call = new BirCallStatic { Owner = owner, Method = method, Sig = signature, Args = args.ToArray(), Ret = Object };
+        if (!index.LocalFunctionRuntime) call.MemberRef = new BirMemberReference { Kind = "method",
+            Assembly = "DotKt.Stdlib", DeclaringType = owner, Name = method, GenericArity = 0,
+            CallingConvention = "static", ParameterTypes = signature, ReturnType = Object };
+        return call;
     }
 
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, BirParameter[] parameters,
@@ -598,14 +640,20 @@ static class TypedPhysicalValueCoercion
                 ValidateNativePointerConversion(ExprType(Graph(value.Lhs.OrDefault()), scope, index), Object);
                 ValidateNativePointerConversion(ExprType(Graph(value.Rhs.OrDefault()), scope, index), Object); break;
             case BirIsInstance value:
+                if (FunctionViewOperand(Graph(value.E.OrDefault()), ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault(), index) is { } tested)
+                    value.E = Field(Expression(tested));
                 ValidateNativePointerConversion(ExprType(Graph(value.E.OrDefault()), scope, index), Object);
                 ValidateNativePointerConversion(ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault()); break;
             case BirInstanceOrNull value:
+                if (FunctionViewOperand(Graph(value.E.OrDefault()), ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault(), index) is { } safe)
+                    value.E = Field(Expression(safe));
                 ValidateNativePointerConversion(ExprType(Graph(value.E.OrDefault()), scope, index), Object);
                 ValidateNativePointerConversion(ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault()); break;
             case BirConcat value:
                 foreach (var part in value.Parts.OrEmpty()) ValidateNativePointerConversion(ExprType(Graph(part), scope, index), Object); break;
             case BirCast value:
+                if (FunctionViewOperand(Graph(value.E.OrDefault()), ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault(), index) is { } converted)
+                    value.E = Field(Expression(converted));
                 ValidateNativePointerConversion(ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault()); break;
             case BirBinaryOperation { Op.HasValue: true, Op.Value: "===" } value:
                 var left = ExprType(Graph(value.Lhs.OrDefault()), scope, index);
@@ -614,7 +662,8 @@ static class TypedPhysicalValueCoercion
                 if (left != right)
                 {
                     ValidateNativePointerConversion(left, Object); ValidateNativePointerConversion(right, Object);
-                    value.Lhs = Cast(Graph(value.Lhs.Value), Object); value.Rhs = Cast(Graph(value.Rhs.Value), Object);
+                    value.Lhs = Cast(FunctionViewOperand(Graph(value.Lhs.Value), left, Object, index) ?? Graph(value.Lhs.Value), Object);
+                    value.Rhs = Cast(FunctionViewOperand(Graph(value.Rhs.Value), right, Object, index) ?? Graph(value.Rhs.Value), Object);
                 }
                 value.Op = "=="; break;
             case BirVariable value: value.Init = C(value.Init, value.Type.OrDefault()); break;
@@ -627,7 +676,7 @@ static class TypedPhysicalValueCoercion
             case BirReturnExpression value: value.Value = C(value.Value, scope.Return); break;
             case BirValueBlock value: value.Result = C(value.Result, value.Type.OrDefault()); break;
             case BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance:
-                CoerceVector(Arguments(node), ParameterTypes(node), scope, index); break;
+                CoerceVector(Arguments(node), ParameterTypes(node, index), scope, index); break;
             case BirNew or BirNewClr: CoerceConstructorArguments(node, scope, index); break;
             case BirNewClosure value: CoerceVector(value.Captures.OrDefault(), index.ClosureParameters(value), scope, index); break;
             case BirDelegateInvoke value: CoerceDelegateArguments(value, scope, index); break;
@@ -677,7 +726,7 @@ static class TypedPhysicalValueCoercion
     static void CoerceConstructorArguments(BirGraphValue node, Scope scope, Index index)
     {
         var member = Member(node);
-        var targets = member != null ? ParameterTypes(node) : ArgumentTypes(node);
+        var targets = member != null ? ParameterTypes(node, index) : ArgumentTypes(node);
         var args = Arguments(node);
         CoerceVector(args, targets, scope, index);
         if (member?.Kind.OrDefault() != "ctor" || args == null || targets?.Length != args.Length) return;
@@ -744,7 +793,7 @@ static class TypedPhysicalValueCoercion
         if (PhysicalResult(node, scope, index) is { } physical)
         {
             if (node is BirNativeStatic or BirNativeInstance && physical is TypeNode.ByRef reference) physical = reference.Of;
-            return SignatureValueTypes.Of(physical);
+            return SignatureValueTypes.Of(FunctionSlot(physical, DeclaredResult(node), index));
         }
         var inferred = BirNodeType.Of(node as BirGraphNode, child => ExprType(child, scope, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var element) ? element : null);
@@ -825,7 +874,14 @@ static class TypedPhysicalValueCoercion
         BirNativeInstance value => value.ArgTypes.OrDefault(), BirNew value => value.ArgTypes.OrDefault(),
         BirNewClr value => value.ArgTypes.OrDefault(), _ => null,
     };
-    static TypeNode[] ParameterTypes(BirGraphValue node)
+    // Reflection spells the same delegate as a constructed named type. Keep
+    // the selected Kotlin function slot for value conversion without changing
+    // the exact referenced method signature used for CLR linkage.
+    static TypeNode FunctionSlot(TypeNode physical, TypeNode selected, Index index) =>
+        Underlying(selected) is TypeNode.Fn { Suspend: false } && Underlying(physical) is TypeNode.Fqn named
+            && index?.References?.IsClrDelegate(named) == true ? selected : physical;
+
+    static TypeNode[] ParameterTypes(BirGraphValue node, Index index = null)
     {
         var member = Member(node);
         var parameters = member?.ParameterTypes.OrDefault();
@@ -839,7 +895,9 @@ static class TypedPhysicalValueCoercion
         }) ?? ArgumentTypes(node);
         if (parameters == null) return null;
         var ownerArgs = member != null ? OwnerArgs(member) : CallOwner(node)?.Args;
-        return parameters.Select(type => Close(type, ownerArgs, MethodArgs(node))).ToArray();
+        var selected = Signature(node) ?? ArgumentTypes(node);
+        return parameters.Select((type, i) => FunctionSlot(Close(type, ownerArgs, MethodArgs(node)),
+            selected?.Length == parameters.Length ? selected[i] : null, index)).ToArray();
     }
     static string MethodName(BirGraphValue node) => node switch {
         BirCallStatic value => value.Method.OrDefault(), BirCallInstance value => value.Method.OrDefault(),

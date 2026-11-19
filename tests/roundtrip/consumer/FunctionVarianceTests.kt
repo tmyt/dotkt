@@ -22,6 +22,40 @@ private class ConsumerInheritedCallbacks : CallbackParent(), InheritedCallbackSl
 private class ConsumerGenericInheritedCallbacks : GenericInheritedCallbackParent<Int>(43), GenericInheritedCallbackSlot<Int>
 
 class FunctionVarianceTests {
+    private class Direct : (Int) -> Int { override fun invoke(p1: Int) = p1 * 2 }
+    private class FromDefault : DefaultUnary
+    private class Echo<T> : (T) -> T { override fun invoke(p1: T): T = p1 }
+    private class TwoArities : NominalTwice(), () -> Int { override fun invoke() = 7 }
+    private class Binary : NominalBinary {
+        var seen = ""
+        override fun invoke(p1: String, p2: Int): Any? { seen = p1 + p2; return Unit }
+    }
+
+    @TestAttribute
+    fun nominalFunctionsCanBePassedAndRetainTheirIdentity() {
+        val direct = Direct()
+        check(invokeDefault(21, direct) == 42)
+        val imported: NominalUnary = NominalTwice()
+        val echo: (String) -> String = Echo<String>()
+        check(echo("generic") == "generic")
+        var callback: (Int) -> Int = imported
+        check(callback(21) == 42 && callback === unaryView(imported))
+        check((callback as Any) === (imported as Any))
+        callback = direct
+        check((callback as Any) === direct && (direct::invoke as Any) !== direct)
+        val multi = TwoArities()
+        val zero: () -> Int = multi
+        val one: (Int) -> Int = multi
+        check(zero() == 7 && one(21) == 42 && (zero as Any) === (one as Any))
+        check(invokeDefault(21, FromDefault()) == 22)
+        val binary = Binary()
+        val nominal: NominalBinary = binary
+        @Suppress("UNCHECKED_CAST")
+        val erased = nominal as Function2<String, Int, Unit>
+        erased("ok", 2)
+        check(binary.seen == "ok2")
+    }
+
     @TestAttribute
     fun sourceSignaturesAndIdentitySurviveDllBoundaries() {
         val next: (Int) -> Int = increment()

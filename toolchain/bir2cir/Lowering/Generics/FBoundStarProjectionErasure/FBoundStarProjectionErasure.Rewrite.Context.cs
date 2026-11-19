@@ -173,7 +173,7 @@ static partial class FBoundStarProjectionErasure
         || facts.Kind is "byrefLoad" or "byrefStore" && field == "elem";
 
     internal static bool ExactLexicalTypeSlot(TypeSlotFacts facts, string field) =>
-        field == "ownerType" && facts.LexicalReceiver
+        (field == "ownerType" || facts.Kind == "newBoundDelegate" && field == "calleeOwner") && facts.LexicalReceiver
         || field is "type" or "sty" or "memberType" or "ret" or "ownerType" && (facts.ExactOuter || facts.Kind == "this");
 
     static bool SourceExactOuter(BirGraphValue node) => node switch {

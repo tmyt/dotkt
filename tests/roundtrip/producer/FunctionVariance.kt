@@ -1,6 +1,11 @@
 package roundtrip.functionvariance
 
 fun increment(): (Int) -> Int = { it + 1 }
+interface NominalUnary : (Int) -> Int
+open class NominalTwice : NominalUnary { override fun invoke(p1: Int) = p1 * 2 }
+interface NominalBinary : Function2<String, Int, Any?>
+interface DefaultUnary : (Int) -> Int { override fun invoke(p1: Int) = p1 + 1 }
+fun unaryView(value: NominalUnary): (Int) -> Int = value
 fun sequenceLength(): (CharSequence?) -> Int? = { it?.length }
 fun stringFactory(): () -> String = { "cross-module" }
 fun consumeSequenceFactory(factory: () -> CharSequence): Int = factory().length
