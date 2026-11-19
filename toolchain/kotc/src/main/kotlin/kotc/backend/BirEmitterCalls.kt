@@ -1038,14 +1038,20 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				"a .NET event can be raised only through an event declaration (`source.<Event>.invoke(...)`)", locationOf(call))
 			return kotc.bir.BirUnsupportedExpression(of = "clr-event-raise-non-instance-handle")
 		}
-		// invoke is `vararg args: Any?` — the individual sender/args arrive wrapped in a single IrVararg; unwrap them.
-		val rawArgs = regularArgs(call)
-		val argExprs = if (rawArgs.size == 1 && rawArgs[0] is IrVararg)
-			(rawArgs[0] as IrVararg).elements.filterIsInstance<IrExpression>() else rawArgs
+		// Keep ordinary operands individually typed. A spread instead supplies the
+		// whole Kotlin vararg pack; its final arity is not known at compile time.
+		val argument = regularArgs(call).singleOrNull()
+		val direct = when {
+			argument == null -> emptyList()
+			argument is IrVararg && argument.elements.all { it is IrExpression } ->
+				argument.elements.map { it as IrExpression }
+			else -> null
+		}
 		val receiver = eventRecv?.let { expr(it) }
 		return BirEventRaise(type = eventOwnerType(prop, eventRecv), event = prop.name.asString(),
 			isStatic = isStatic, superCall = eventAccess.superQualifierSymbol != null,
-			recv = receiver, args = argExprs.map { expr(it) })
+			recv = receiver, args = direct?.map { expr(it) },
+			packedArgs = if (direct == null) argument?.let(::expr) else null)
 	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }

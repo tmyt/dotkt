@@ -18721,6 +18721,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<bool> Super { get; set; }
     public OptionalField<IBirExpression> Recv { get; set; }
     public OptionalField<IBirExpression[]> Args { get; set; }
+    public OptionalField<IBirExpression> PackedArgs { get; set; }
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
@@ -18742,6 +18743,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(rewrite("type", BirGenericFrameRole.Lexical, Type.Value));
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit("args", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (PackedArgs.HasValue) { visit("packedArgs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)PackedArgs.Value!, replacement => PackedArgs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void RewritePhysicalFieldsInPlace(
         Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
@@ -18751,6 +18753,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) Type = OptionalField<TypeNode>.Of(type("type", BirPhysicalTypeRole.Value, Type.Value));
         if (Recv.HasValue) { child("recv", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; child("args", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (PackedArgs.HasValue) { child("packedArgs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)PackedArgs.Value!, replacement => PackedArgs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void ConsumePhysicalSourceFacts()
     {
@@ -18769,28 +18772,33 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
     {
         if (Recv.HasValue) { visit((BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { visit((BirGraphValue)item0); } }
+        if (PackedArgs.HasValue) { visit((BirGraphValue)PackedArgs.Value); }
     }
     public override void VisitChildSlots(Action<BirGraphSlot> visit)
     {
         if (Recv.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (PackedArgs.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)PackedArgs.Value!, replacement => PackedArgs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override void VisitOwnChildSlots(
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
     {
         if (Recv.HasValue) { visit("recv", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Recv.Value!, replacement => Recv = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
         if (Args.HasValue) { for (var index0 = 0; index0 < Args.Value.Length; index0++) { var at0 = index0; var child0 = Args.Value[at0]; visit("args", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Args.Value[at0]!, replacement => Args.Value[at0] = (IBirExpression)replacement)); } }
+        if (PackedArgs.HasValue) { visit("packedArgs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)PackedArgs.Value!, replacement => PackedArgs = OptionalField<IBirExpression>.Of((IBirExpression)replacement))); }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)Recv.Value)) : Recv,
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)rewrite((BirGraphValue)item0)).ToArray()) : Args,
+        PackedArgs = PackedArgs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)rewrite((BirGraphValue)PackedArgs.Value)) : PackedArgs,
     };
     public override BirGraphValue DeepClone() => this with
     {
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone()) : Recv,
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : Args,
+        PackedArgs = PackedArgs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)PackedArgs.Value).DeepClone()) : PackedArgs,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
@@ -18800,6 +18808,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
             Type = Type.HasValue ? OptionalField<TypeNode>.Of(CopyType(Type.Value)) : Type,
             Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)Recv.Value).DeepClone(born)) : Recv,
             Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Args,
+            PackedArgs = PackedArgs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)PackedArgs.Value).DeepClone(born)) : PackedArgs,
             SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(CopyType(SuspendFnTypePre.Value)) : SuspendFnTypePre,
         };
         born(this, result);
@@ -18816,6 +18825,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         Type = Type.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)) : Type,
         Recv = Recv.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value)) : Recv,
         Args = Args.HasValue ? OptionalField<IBirExpression[]>.Of(Args.Value.Select(item0 => (IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : Args,
+        PackedArgs = PackedArgs.HasValue ? OptionalField<IBirExpression>.Of((IBirExpression)child(BirGenericFrameRole.Lexical, (BirGraphValue)PackedArgs.Value)) : PackedArgs,
         SuspendFnTypePre = SuspendFnTypePre.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)) : SuspendFnTypePre,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
@@ -18829,6 +18839,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)Type.Value); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+        if (PackedArgs.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)PackedArgs.Value); }
         if (SuspendFnTypePre.HasValue) { type(BirGenericFrameRole.FrozenSourceFact, (TypeNode)SuspendFnTypePre.Value); }
     }
     public override void RewriteGenericFrameInPlace(
@@ -18838,6 +18849,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, Type.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
+        if (PackedArgs.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)PackedArgs.Value); }
         if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.FrozenSourceFact, SuspendFnTypePre.Value)); }
     }
     public override void RewriteRepresentationInPlace(
@@ -18847,6 +18859,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.ValueType, Type.Value)); }
         if (Recv.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+        if (PackedArgs.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)PackedArgs.Value); }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -18855,6 +18868,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Type.HasValue) { Type = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, Type.Value)); }
         if (Recv.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Recv.Value); }
         if (Args.HasValue) { foreach (var item0 in Args.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (PackedArgs.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)PackedArgs.Value); }
         if (SuspendFnTypePre.HasValue) { SuspendFnTypePre = OptionalField<TypeNode>.Of(type(BirOwnershipRole.FrozenFact, SuspendFnTypePre.Value)); }
     }
     public override bool StructurallyEquals(BirGraphValue other)
@@ -18865,6 +18879,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
             && EqualField(Super, value.Super, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Recv, value.Recv, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(Args, value.Args, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(PackedArgs, value.PackedArgs, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(SuspendFnTypePre, value.SuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -18876,6 +18891,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "recv", Recv, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "packedArgs", PackedArgs, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         writer.WriteEndObject();
     }
@@ -18889,6 +18905,7 @@ internal sealed record BirEventRaise : BirGraphNode, IBirExpression, IBirAttribu
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
         if (Recv.IsPresent) result["recv"] = Recv.IsNull ? null : ((BirGraphValue)Recv.Value).ToDom(projected);
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (PackedArgs.IsPresent) result["packedArgs"] = PackedArgs.IsNull ? null : ((BirGraphValue)PackedArgs.Value).ToDom(projected);
         if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         projected?.Invoke(this, result);
         return result;

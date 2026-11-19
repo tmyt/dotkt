@@ -2954,6 +2954,7 @@ internal static class BirGraphDom
                 case "super": break;
                 case "recv": break;
                 case "args": break;
+                case "packedArgs": break;
                 case "suspendFnTypePre": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirEventRaise at {source.GetPath()}");
             }
@@ -2965,6 +2966,7 @@ internal static class BirGraphDom
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
             Recv = Field<IBirExpression>(fields, "recv", value => ReadBirExpression(value!)),
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+            PackedArgs = Field<IBirExpression>(fields, "packedArgs", value => ReadBirExpression(value!)),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
         };
     }

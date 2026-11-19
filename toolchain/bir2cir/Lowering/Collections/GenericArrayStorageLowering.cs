@@ -57,7 +57,7 @@ static partial class GenericArrayStorageLowering
         var refs = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
         var check = LowerTypeOperation(operation, operation.Type.Value, null, null, refs,
             _ => new TypeNode.Fqn("System.Object"), _ => false,
-            new TypedGenericArrayStorageLowering.FreshNames(operation), (expected, _) => expected == component ? classifier : null);
+            new BirTemporaryNames(operation), (expected, _) => expected == component ? classifier : null);
         var exact = false;
         check.Visit(node => {
             if (node is BirConditional { Cond.Value: BirObjectEquals {
