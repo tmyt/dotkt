@@ -142,6 +142,9 @@ abstract class RuntimeTypesAbstractBodylessContract {
     abstract var text: String
 }
 
+private interface RuntimeTypesSlot<T> { var slotValue: T }
+private class RuntimeTypesStringSlot(override var slotValue: String) : RuntimeTypesSlot<String>
+
 open class RuntimeTypesA { open fun name() = "A" }
 open class RuntimeTypesB : RuntimeTypesA() { override fun name() = super.name() + "B" }
 class RuntimeTypesC : RuntimeTypesB() { override fun name() = super.name() + "C" }
@@ -328,6 +331,15 @@ class RuntimeTypeAndSuperDispatchTests {
         assertEquals("impl+hi-default", RuntimeTypesImpl().hi())  // impl+hi-default
         assertEquals("method-derived>method-base:call", RuntimeTypesSuperMethodDerived().inheritedMethod("call"))
         assertEquals("property-derived>property-base", RuntimeTypesSuperPropertyDerived().inheritedProperty)
+        val slot = RuntimeTypesStringSlot("initial")
+        val bound = slot::slotValue
+        val unbound = RuntimeTypesStringSlot::slotValue
+        slot.slotValue = "direct"
+        assertEquals("direct", bound.get())
+        bound.set("bound")
+        assertEquals("bound", unbound.get(slot))
+        unbound.set(slot, "unbound")
+        assertEquals("unbound", slot.slotValue)
         val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11

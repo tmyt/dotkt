@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin #637's bodyless abstract slots and exact class-super declaration owner."""
+"""Check bodyless abstract slots and direct, super and lifted accessor bindings."""
 
 import json
 import sys
@@ -93,4 +93,27 @@ for method, owner in cir_expected.items():
     if actual_owner != owner or matches[0].get("virtual") is not False:
         raise SystemExit(f"CIR {method} must be a non-virtual call to {owner}, got {matches[0]!r}")
 
-print("abstract slots are bodyless and class-super calls name concrete base declarations")
+# Bound and unbound property references must carry the same selected accessor and
+# instantiated override edges as the direct calls, even when all three dispatch correctly.
+def slot_calls(declaration):
+    bindings = {}
+    for node in objects(declaration["methods"]):
+        if (node.get("k") == "callInstance" and node.get("method") == "slotValue"
+                and node["ownerType"].get("name") == "RuntimeTypesStringSlot"):
+            binding = (node["declarationId"], node.get("overrides"))
+            assert bindings.setdefault(node["prop"], binding) == binding, "get and invoke disagree"
+    return bindings
+
+direct = slot_calls(type_decl(bir, "RuntimeTypeAndSuperDispatchTests"))
+assert set(direct) == {"get", "set"}
+for _, edges in direct.values():
+    assert len(edges) == 1 and edges[0]["owner"] == {
+        "t": "fqn", "name": "RuntimeTypesSlot", "args": [{"t": "fqn", "name": "kotlin.String"}]}
+for arity in (0, 1):
+    protocol = f"kotlin.reflect.KMutableProperty{arity}"
+    matches = [calls for decl in bir["types"]
+               if any(i.get("name") == protocol for i in decl.get("interfaces", []))
+               and (calls := slot_calls(decl))]
+    assert matches == [direct], f"{protocol}: selected accessor or override edge differs from direct access"
+
+print("abstract slots, class-super calls and lifted accessor bindings OK")

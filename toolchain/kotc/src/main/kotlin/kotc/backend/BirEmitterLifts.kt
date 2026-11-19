@@ -1560,10 +1560,10 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): BirExpression {
 		// access. The fake override's dispatch owner alone does not identify the declaration's storage or slot.
 		val declarationIdentity = declarationIdForPhysicalAllocation(fn)
 			?: if (fn.isFakeOverride) fn.resolveFakeOverride()?.let(::declarationIdForPhysicalAllocation) else null
-		val inherited = if (fn.isFakeOverride) overrideDeclarations(fn) else null
 		val externalCompanion = true.takeIf { companionCaptureClass?.let { clrExternalOwner(it) != null } == true }
 		return BirCallInstance(ownerType = memberOwner, virtual = virtual, recv = recvExprIn(), method = name, prop = kind,
-			sig = overloadSignature(fn), args = args, companionCall = externalCompanion, declarationId = declarationIdentity, overrides = inherited)
+			sig = overloadSignature(fn), args = args, companionCall = externalCompanion,
+			declarationId = declarationIdentity, overrides = overrideDeclarations(fn))
 	}
 	// A field-backed member property (`@ClrField`) reads/writes its backing field directly — the SAME
 	// `field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
