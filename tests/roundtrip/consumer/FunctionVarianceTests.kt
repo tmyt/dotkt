@@ -22,8 +22,12 @@ private class ConsumerInheritedCallbacks : CallbackParent(), InheritedCallbackSl
 private class ConsumerGenericInheritedCallbacks : GenericInheritedCallbackParent<Int>(43), GenericInheritedCallbackSlot<Int>
 
 class FunctionVarianceTests {
-    private class Direct : (Int) -> Int { override fun invoke(p1: Int) = p1 * 2 }
+    private class Direct : (Int) -> Int {
+        override fun invoke(p1: Int) = p1 * 2
+        override fun toString() = "direct"
+    }
     private class FromDefault : DefaultUnary
+    private class CallbackChild(value: NominalUnary) : NominalCallbackBase(value)
     private class Echo<T> : (T) -> T { override fun invoke(p1: T): T = p1 }
     private class TwoArities : NominalTwice(), () -> Int { override fun invoke() = 7 }
     private class Binary : NominalBinary {
@@ -36,6 +40,8 @@ class FunctionVarianceTests {
         val direct = Direct()
         check(invokeDefault(21, direct) == 42)
         val imported: NominalUnary = NominalTwice()
+        check(imported(21) == 42 && CallbackChild(imported).callback(21) == 42)
+        check(FunctionBound(NominalTwice()).apply(21) == 42)
         val echo: (String) -> String = Echo<String>()
         check(echo("generic") == "generic")
         var callback: (Int) -> Int = imported
@@ -43,6 +49,7 @@ class FunctionVarianceTests {
         check((callback as Any) === (imported as Any))
         callback = direct
         check((callback as Any) === direct && (direct::invoke as Any) !== direct)
+        check(callback.toString() == "direct")
         val multi = TwoArities()
         val zero: () -> Int = multi
         val one: (Int) -> Int = multi

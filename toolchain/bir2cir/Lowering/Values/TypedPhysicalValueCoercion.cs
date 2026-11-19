@@ -234,7 +234,7 @@ static class TypedPhysicalValueCoercion
             RewriteStatements(constructor.PreStmts.OrEmpty(), scope, index);
             var arguments = constructor.ThisArgs.OrDefault() ?? constructor.BaseArgs.OrDefault();
             RewriteExpressions(arguments, scope, index);
-            if (!index.ReferenceBuild) CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index);
+            if (!index.ReferenceBuild) CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index, constructor.DelegationSig.OrDefault());
             RewriteStatements(constructor.Body.OrEmpty(), scope, index);
         }
         foreach (var method in methods)
@@ -269,12 +269,21 @@ static class TypedPhysicalValueCoercion
     }
 
     static BirCast Cast(BirGraphValue expression, TypeNode type) => new() { Type = type, E = Field(Expression(expression)) };
-    static IBirExpression CoerceExpression(IBirExpression value, TypeNode target, Scope scope, Index index)
-        => value == null ? null : Expression(Coerce(Graph(value), target, scope, index));
-    static void CoerceVector(IBirExpression[] values, TypeNode[] targets, Scope scope, Index index)
+    static IBirExpression CoerceExpression(IBirExpression value, TypeNode target, Scope scope, Index index, TypeNode selected = null)
+    {
+        if (value == null) return null;
+        // The source slot selects the Kotlin conversion; the actual CLR slot selects
+        // the cast. Their type arguments can differ, e.g. on imported base constructors.
+        if (FunctionSlot(target, selected, index) != target
+            && FunctionViewOperand(Graph(value), ExprType(Graph(value), scope, index), selected, index) is { } view)
+            return Cast(view, SignatureValueTypes.Of(target));
+        return Expression(Coerce(Graph(value), target, scope, index));
+    }
+    static void CoerceVector(IBirExpression[] values, TypeNode[] targets, Scope scope, Index index, TypeNode[] selected = null)
     {
         if (values == null || targets == null || values.Length != targets.Length) return;
-        for (var i = 0; i < values.Length; i++) values[i] = CoerceExpression(values[i], targets[i], scope, index);
+        for (var i = 0; i < values.Length; i++) values[i] = CoerceExpression(values[i], targets[i], scope, index,
+            selected?.Length == values.Length ? selected[i] : null);
     }
     static void CoerceArray(IBirExpression[] values, TypeNode target, Scope scope, Index index)
     {
@@ -631,12 +640,17 @@ static class TypedPhysicalValueCoercion
         if (index.ReferenceBuild && node is not BirBinaryOperation { Op.HasValue: true, Op.Value: "===" }) return;
         OptionalField<IBirExpression> C(OptionalField<IBirExpression> value, TypeNode target) => value.HasValue && target != null
             ? OptionalField<IBirExpression>.Of(CoerceExpression(value.Value, target, scope, index)) : value;
+        OptionalField<IBirExpression> AsKotlinObject(OptionalField<IBirExpression> value) =>
+            value.HasValue && FunctionViewOperand(Graph(value.Value), ExprType(Graph(value.Value), scope, index), Object, index)
+                is { } original ? Field(Expression(original)) : value;
         switch (node)
         {
             case BirObjectMethod value:
+                value.Recv = AsKotlinObject(value.Recv); value.Arg = AsKotlinObject(value.Arg);
                 ValidateNativePointerConversion(ExprType(Graph(value.Recv.OrDefault()), scope, index), Object);
                 ValidateNativePointerConversion(ExprType(Graph(value.Arg.OrDefault()), scope, index), Object); break;
             case BirObjectEquals value:
+                value.Lhs = AsKotlinObject(value.Lhs); value.Rhs = AsKotlinObject(value.Rhs);
                 ValidateNativePointerConversion(ExprType(Graph(value.Lhs.OrDefault()), scope, index), Object);
                 ValidateNativePointerConversion(ExprType(Graph(value.Rhs.OrDefault()), scope, index), Object); break;
             case BirIsInstance value:
@@ -676,7 +690,7 @@ static class TypedPhysicalValueCoercion
             case BirReturnExpression value: value.Value = C(value.Value, scope.Return); break;
             case BirValueBlock value: value.Result = C(value.Result, value.Type.OrDefault()); break;
             case BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance:
-                CoerceVector(Arguments(node), ParameterTypes(node, index), scope, index); break;
+                CoerceVector(Arguments(node), ParameterTypes(node), scope, index, Signature(node)); break;
             case BirNew or BirNewClr: CoerceConstructorArguments(node, scope, index); break;
             case BirNewClosure value: CoerceVector(value.Captures.OrDefault(), index.ClosureParameters(value), scope, index); break;
             case BirDelegateInvoke value: CoerceDelegateArguments(value, scope, index); break;
@@ -710,7 +724,7 @@ static class TypedPhysicalValueCoercion
         if (!node.InvokeRef.HasValue || !node.Args.HasValue)
             throw new InvalidOperationException("bir2cir: delegate invocation has no resolved argument contract");
         var invoke = node.InvokeRef.Value;
-        if (node.Recv.HasValue) node.Recv = Field(CoerceExpression(node.Recv.Value, invoke.DeclaringType.OrDefault(), scope, index));
+        if (node.Recv.HasValue) node.Recv = Field(CoerceExpression(node.Recv.Value, invoke.DeclaringType.OrDefault(), scope, index, node.FuncType.OrDefault()));
         var targets = invoke.ParameterTypes.OrDefault()
             ?? throw new InvalidOperationException("bir2cir: delegate invocation has no parameter types");
         var args = node.Args.Value;
@@ -726,9 +740,9 @@ static class TypedPhysicalValueCoercion
     static void CoerceConstructorArguments(BirGraphValue node, Scope scope, Index index)
     {
         var member = Member(node);
-        var targets = member != null ? ParameterTypes(node, index) : ArgumentTypes(node);
+        var targets = member != null ? ParameterTypes(node) : ArgumentTypes(node);
         var args = Arguments(node);
-        CoerceVector(args, targets, scope, index);
+        CoerceVector(args, targets, scope, index, ArgumentTypes(node));
         if (member?.Kind.OrDefault() != "ctor" || args == null || targets?.Length != args.Length) return;
         for (var i = 0; i < args.Length; i++)
             if (args[i] is { } argument
@@ -881,7 +895,7 @@ static class TypedPhysicalValueCoercion
         Underlying(selected) is TypeNode.Fn { Suspend: false } && Underlying(physical) is TypeNode.Fqn named
             && index?.References?.IsClrDelegate(named) == true ? selected : physical;
 
-    static TypeNode[] ParameterTypes(BirGraphValue node, Index index = null)
+    static TypeNode[] ParameterTypes(BirGraphValue node)
     {
         var member = Member(node);
         var parameters = member?.ParameterTypes.OrDefault();
@@ -895,9 +909,7 @@ static class TypedPhysicalValueCoercion
         }) ?? ArgumentTypes(node);
         if (parameters == null) return null;
         var ownerArgs = member != null ? OwnerArgs(member) : CallOwner(node)?.Args;
-        var selected = Signature(node) ?? ArgumentTypes(node);
-        return parameters.Select((type, i) => FunctionSlot(Close(type, ownerArgs, MethodArgs(node)),
-            selected?.Length == parameters.Length ? selected[i] : null, index)).ToArray();
+        return parameters.Select(type => Close(type, ownerArgs, MethodArgs(node))).ToArray();
     }
     static string MethodName(BirGraphValue node) => node switch {
         BirCallStatic value => value.Method.OrDefault(), BirCallInstance value => value.Method.OrDefault(),

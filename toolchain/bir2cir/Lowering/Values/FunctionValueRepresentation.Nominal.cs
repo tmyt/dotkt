@@ -16,7 +16,9 @@ static partial class FunctionValueRepresentation
     // supplies the implementation selected for inherited class and default methods.
     static IEnumerable<InvokeSlot> InvokeSlots(BirClassDefinition owner, TypeNode self)
     {
-        static TypeNode.Fn Function(BirOverride[] overrides) => overrides.Select(slot => slot.Owner.OrDefault())
+        static TypeNode.Fn Function(BirOverride[] overrides) => overrides
+            .Where(slot => slot.Kind.OrDefault() == "method" && slot.Member.OrDefault() == "invoke")
+            .Select(slot => slot.Owner.OrDefault())
             .OfType<TypeNode.Fn>().FirstOrDefault(fn => !fn.Suspend);
         foreach (var method in owner.Methods.OrEmpty())
             if (Function(method.Overrides.OrEmpty()) is { } fn)
@@ -33,6 +35,13 @@ static partial class FunctionValueRepresentation
 
     internal static void MaterializeNominalFunctions(BirFileDeclaration[] roots, ValueTypeOracle byRefLike)
     {
+        // Neither the object implementing invoke nor a lambda has a common CLR
+        // base more specific than Object. Keep the Kotlin bound in its carrier.
+        for (var i = 0; i < roots.Length; i++)
+            roots[i] = (BirFileDeclaration)SourceConstraintErasure.Apply(roots[i], constraints => {
+                var physical = constraints.Where(type => type is not TypeNode.Fn { Suspend: false }).ToArray();
+                return (physical, physical.Length != constraints.Length);
+            }, includeEmptyBounds: false);
         foreach (var owner in roots.SelectMany(root => root.Types.OrEmpty()).OfType<BirClassDefinition>())
         {
             var arity = owner.TypeParams.OrEmpty().Length + owner.CapturedTypeParams.OrEmpty().Length;
