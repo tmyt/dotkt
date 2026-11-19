@@ -10,11 +10,12 @@ static partial class ReifiedNullabilityWitnessLowering
     sealed record SourceGeneratedTarget(BirFunctionDeclaration Method, string ClosureName, string Owner, int[] Indices);
     sealed record SourceGeneratedType(IBirTypeDeclaration Type, int[] Indices);
     sealed record SourceWitnessFrame(IReadOnlyDictionary<int, IBirExpression> Method,
-        IReadOnlyDictionary<int, IBirExpression> Type);
+        IReadOnlyDictionary<int, IBirExpression> Type, ReflectedDeclarationParameters.Scope Parameters = null);
 
     internal static void Apply(BirFileDeclaration file, NullableWitnessDemand demand,
         ReferenceMetadataIndex refs, ValueRepresentationLowering values,
-        Action<BirFunctionDeclaration> retireSourceDeclaration)
+        Action<BirFunctionDeclaration> retireSourceDeclaration, SourceHelperBinder helpers = null,
+        ReflectedDeclarationParameters declarationsOfParameters = null)
     {
         var frames = demand.AnalyzeGeneratedFrames(file);
         var targets = SourceGeneratedTargets(file, frames.Targets);
@@ -28,12 +29,14 @@ static partial class ReifiedNullabilityWitnessLowering
         void Owner(BirGraphValue owner)
         {
             var type = owner as IBirTypeDeclaration;
+            var scope = new ReflectedDeclarationParameters.Scope(null, null, declarationsOfParameters?.Type(type?.Name.OrDefault()),
+                type == null ? null : NullableRepresentationViews.TypeFacts(owner)?.NullableFrame);
             var typeWitnesses = type?.Name.HasValue == true
                 && generatedTypes.TryGetValue(type.Name.Value, out var generated)
                 && ReferenceEquals(type, generated.Type) ? MaterializeSourceType(type, generated.Indices) : null;
             var methods = owner is BirFileDeclaration source ? source.Methods : type.Methods;
             foreach (var method in methods.OrEmpty())
-                if (!targets.Values.Any(target => ReferenceEquals(target.Method, method))) Method(method, typeWitnesses);
+                if (!targets.Values.Any(target => ReferenceEquals(target.Method, method))) Method(method, typeWitnesses, scope);
             if (methods.HasValue)
             {
                 var retained = methods.Value.Where(method => !targets.Values.Any(target => ReferenceEquals(target.Method, method))).ToArray();
@@ -46,14 +49,14 @@ static partial class ReifiedNullabilityWitnessLowering
                 }
             }
             if (type != null)
-                foreach (var ctor in type.Ctors.OrEmpty()) Walk(ctor, new(null, typeWitnesses));
+                foreach (var ctor in type.Ctors.OrEmpty()) Walk(ctor, new(null, typeWitnesses, scope));
             foreach (var field in owner is BirFileDeclaration fieldsFile ? fieldsFile.Fields.OrEmpty() : type.Fields.OrEmpty())
-                Walk(field, new(null, typeWitnesses));
+                Walk(field, new(null, typeWitnesses, scope));
             if (type != null)
-                foreach (var property in type.Properties.OrEmpty()) Walk(property, new(null, typeWitnesses));
+                foreach (var property in type.Properties.OrEmpty()) Walk(property, new(null, typeWitnesses, scope));
         }
 
-        void Method(BirFunctionDeclaration method, IReadOnlyDictionary<int, IBirExpression> typeWitnesses)
+        void Method(BirFunctionDeclaration method, IReadOnlyDictionary<int, IBirExpression> typeWitnesses, ReflectedDeclarationParameters.Scope scope)
         {
             var semantic = method.TypeParams.OrEmpty().Select((parameter, index) => (parameter, index))
                 .Where(entry => entry.parameter.Reified.OrDefault()).Select(entry => entry.index).ToArray();
@@ -81,13 +84,16 @@ static partial class ReifiedNullabilityWitnessLowering
                         if (slot.SourceIndex != index) continue;
                         witnesses[physical] = slot.Representation is NullableRepresentationFrame.Role.Nullable
                             or NullableRepresentationFrame.Role.NullableStorage
-                            ? KotlinRuntimeTypeWitness.NullableValue(value) : SourceCopy(value);
+                            ? KotlinRuntimeTypeWitness.NullableValue(value, demand.Reflected?.Indices(identity).Contains(index) == true ? helpers : null) : SourceCopy(value);
                     }
                 }
                 method.Params = parameters.ToArray();
                 method.NullableWitnessIndices = indices.ToArray();
+                if (demand.Reflected?.Indices(identity) is { Length: > 0 } reflection)
+                    method.ReflectedWitnessIndices = reflection;
             }
-            Body(method.Body, new(witnesses, typeWitnesses));
+            Body(method.Body, new(witnesses, typeWitnesses, scope with {
+                Method = declarationsOfParameters?.Method(identity), MethodFrame = method.NullableRepresentationFrame.OrDefault() }));
         }
 
         void Body(OptionalField<IBirStatement[]> statements, SourceWitnessFrame witnesses)
@@ -100,16 +106,22 @@ static partial class ReifiedNullabilityWitnessLowering
         BirGraphValue Walk(BirGraphValue node, SourceWitnessFrame witnesses)
         {
             if (node == null || node is IBirExecutablePayload) return node;
+            if (node is BirReflectedType operation)
+                return (BirGraphValue)Reflect(operation.Operand.Value, witnesses, values, helpers);
+            Func<int, TypeNode, IBirExpression> Capture(int[] reflected) =>
+                (index, argument) => SourceWitnessFor(argument, witnesses, values, reflected?.Contains(index) == true ? helpers : null);
+            int[] ReflectedFrame(BirGraphValue body, TypeNode[] args, bool dense = false) =>
+                demand.Reflected?.MaterializedFrameIndices(body, args, frames.Reflected, dense);
             if (node is BirNewClosure { SynthClass.HasValue: true, TypeArgs.HasValue: true } closure
                 && demand.MaterializedFrameIndices(closure.SynthClass.Value, closure.TypeArgs.Value, frames) is { Length: > 0 } closureIndices)
             {
-                MaterializeSourceClosure(closure, closureIndices, witnesses, Walk, values);
+                MaterializeSourceClosure(closure, closureIndices, witnesses, Capture(ReflectedFrame(closure.SynthClass.Value, closure.TypeArgs.Value)), Walk);
                 return node;
             }
             if (node is BirNewSam { SynthClass.HasValue: true, TypeArgs.HasValue: true } sam
                 && demand.MaterializedFrameIndices(sam.SynthClass.Value, sam.TypeArgs.Value, frames) is { Length: > 0 } samIndices)
             {
-                MaterializeSourceSam(sam, samIndices, witnesses, Walk, values);
+                MaterializeSourceSam(sam, samIndices, witnesses, Capture(ReflectedFrame(sam.SynthClass.Value, sam.TypeArgs.Value)), Walk);
                 return node;
             }
             if (node is BirNewSuspendLambda suspend)
@@ -118,16 +130,17 @@ static partial class ReifiedNullabilityWitnessLowering
                 if (dense || suspend.TypeArgs.HasValue)
                 {
                     var arguments = dense ? suspend.TypeArgs.OrEmpty() : suspend._suspendDeclarationTypeArgs.OrDefault() ?? suspend.TypeArgs.Value;
-                    var indices = demand.MaterializedFrameIndices(new BirBlock { Body = suspend.Body.OrEmpty() }, arguments, frames, dense);
+                    var body = new BirBlock { Body = suspend.Body.OrEmpty() };
+                    var indices = demand.MaterializedFrameIndices(body, arguments, frames, dense);
                     if (dense || indices.Length != 0)
                     {
-                        MaterializeSourceSuspend(suspend, indices, witnesses, Walk, values, dense);
+                        MaterializeSourceSuspend(suspend, indices, witnesses, Capture(ReflectedFrame(body, arguments, dense)), Walk, dense);
                         return node;
                     }
                 }
             }
             if (node is BirNewDelegate { Method.HasValue: true } target && targets.TryGetValue(target.Method.Value, out var generated))
-                return MaterializeSourceDelegate(target, generated, witnesses, Walk, values);
+                return MaterializeSourceDelegate(target, generated, Capture(frames.Reflected?.Targets.GetValueOrDefault(target.Method.Value)), Walk);
 
             // Pending witnesses already belong to this caller frame. Never analyze or prepare their generated
             // expressions again; repeat admission is rejected by PrepareSourceWitnesses below.
@@ -164,13 +177,14 @@ static partial class ReifiedNullabilityWitnessLowering
                 {
                     if (!node.ApplicationTypeArguments.HasValue)
                         throw new InvalidOperationException($"bir2cir: nullable-sensitive call '{id}' has no type arguments");
-                    PrepareSourceWitnesses(node, node.ApplicationTypeArguments.Value, indices, witnesses, values, $"nullable-sensitive call '{id}'");
+                    PrepareSourceWitnesses(node, node.ApplicationTypeArguments.Value, indices, witnesses, values, $"nullable-sensitive call '{id}'",
+                        demand.Reflected?.Indices(id), helpers);
                 }
             }
             if (node is BirNew { Type.Value: TypeNode.Fqn constructed }
                 && generatedTypes.TryGetValue(constructed.Name, out var construction))
                 PrepareSourceWitnesses(node, constructed.Args ?? Array.Empty<TypeNode>(), construction.Indices, witnesses, values,
-                    $"generated type '{constructed.Name}'");
+                    $"generated type '{constructed.Name}'", frames.Reflected?.Types.GetValueOrDefault(constructed.Name), helpers);
             return node;
         }
 
@@ -222,14 +236,32 @@ static partial class ReifiedNullabilityWitnessLowering
 
     static IBirExpression SourceCopy(IBirExpression value) => (IBirExpression)((BirGraphValue)value).DeepClone();
 
-    static IBirExpression SourceWitnessFor(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values) => type switch {
-        TypeNode.Nullable nullable => KotlinRuntimeTypeWitness.NullableValue(SourceWitnessFor(nullable.Of, witnesses, values)),
-        TypeNode.Oblivious oblivious => SourceWitnessFor(oblivious.Of, witnesses, values),
+    static IBirExpression Reflect(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder helpers) =>
+        ReflectedKotlinType.Value(type, helpers, (tv, nullable) => witnesses?.Parameters?.IsDeclared(tv) == true
+            ? witnesses.Parameters.Value(tv, nullable, helpers, (bound, marked) =>
+                ReflectedKotlinType.Read(SourceWitnessFor(bound, witnesses, values), marked, helpers))
+            : ReflectedKotlinType.Read(SourceWitnessFor(tv, witnesses, values), nullable, helpers));
+
+    static IBirExpression SourceWitnessFor(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder reflection = null) => type switch {
+        TypeNode.Nullable nullable => KotlinRuntimeTypeWitness.NullableValue(SourceWitnessFor(nullable.Of, witnesses, values, reflection), reflection),
+        TypeNode.Oblivious oblivious => SourceWitnessFor(oblivious.Of, witnesses, values, reflection),
+        TypeNode.Tv tv when reflection != null && witnesses?.Parameters?.IsDeclared(tv) == true =>
+            SourceDeclaredWitness(tv, witnesses, values, reflection),
         TypeNode.Tv { Scope: "method" } variable when witnesses?.Method != null && witnesses.Method.TryGetValue(variable.I, out var value) => SourceCopy(value),
         TypeNode.Tv { Scope: "type" } variable when witnesses?.Type != null && witnesses.Type.TryGetValue(variable.I, out var value) => SourceCopy(value),
-        TypeNode.Tv variable => throw new InvalidOperationException($"bir2cir: nullable-witness demand reached unbound {variable.Scope} type parameter {variable.I}"),
-        _ => KotlinRuntimeTypeWitness.KnownValue(type, values),
+        TypeNode.Tv variable => throw new InvalidOperationException($"bir2cir: nullable-witness demand reached unbound {variable.Scope} type parameter {variable.I} (method {witnesses?.Parameters?.Method?.Identity}, owner {witnesses?.Parameters?.Type?.Owner}, reflected={reflection != null})"),
+        _ => KotlinRuntimeTypeWitness.KnownValue(type, values, reflection == null ? null : Reflect(type, witnesses, values, reflection)),
     };
+
+    static IBirExpression SourceDeclaredWitness(TypeNode.Tv tv, SourceWitnessFrame frame, ValueRepresentationLowering values, SourceHelperBinder helpers)
+    {
+        var reflected = Reflect(tv, frame, values, helpers);
+        var slots = tv.Scope == "method" ? frame.Method : frame.Type;
+        return slots != null && slots.TryGetValue(tv.I, out var witness)
+            ? KotlinRuntimeTypeWitness.CreateValue(KotlinRuntimeTypeWitness.FlagsValue(witness),
+                KotlinRuntimeTypeWitness.ClassifierValue(witness), KotlinRuntimeTypeWitness.PredicateValue(witness), reflected)
+            : KotlinRuntimeTypeWitness.KnownValue(tv, values, reflected);
+    }
 
     static OptionalField<IBirExpression[]> SourcePending(BirGraphValue node) => node switch {
         BirCallStatic call => call.NullablePendingWitnesses, BirCallInstance call => call.NullablePendingWitnesses,
@@ -237,11 +269,24 @@ static partial class ReifiedNullabilityWitnessLowering
     };
 
     static void PrepareSourceWitnesses(BirGraphValue call, TypeNode[] arguments, int[] indices,
-        SourceWitnessFrame witnesses, ValueRepresentationLowering values, string context)
+        SourceWitnessFrame witnesses, ValueRepresentationLowering values, string context, int[] reflected = null, SourceHelperBinder helpers = null)
     {
         if (SourcePending(call).HasValue) throw new InvalidOperationException($"bir2cir: {context} was assigned nullable witnesses twice");
-        var pending = indices.Select(index => index >= 0 && index < arguments.Length ? SourceWitnessFor(arguments[index], witnesses, values)
-            : throw new InvalidOperationException($"bir2cir: {context} has no type argument at index {index}")).ToArray();
+        var shapes = ReflectedKotlinType.TakeCallShapes(call);
+        var pending = indices.Select(index => {
+            if (index < 0 || index >= arguments.Length) throw new InvalidOperationException($"bir2cir: {context} has no type argument at index {index}");
+            var type = arguments[index];
+            var position = reflected == null ? -1 : Array.IndexOf(reflected, index);
+            if (position < 0 || shapes == null)
+                return SourceWitnessFor(type, witnesses, values, position < 0 ? null : helpers);
+            var shape = shapes[position];
+            if (KotlinTypeWitness.Variable(type) is not { } variable ||
+                (variable.Scope == "method" ? witnesses?.Method : witnesses?.Type)?.ContainsKey(variable.I) != true)
+                return KotlinRuntimeTypeWitness.KnownValue(type, values, shape);
+            var scalar = SourceWitnessFor(type, witnesses, values);
+            return KotlinRuntimeTypeWitness.CreateValue(KotlinRuntimeTypeWitness.FlagsValue(scalar),
+                KotlinRuntimeTypeWitness.ClassifierValue(scalar), KotlinRuntimeTypeWitness.PredicateValue(scalar), shape);
+        }).ToArray();
         switch (call)
         {
             case BirCallStatic value: value.NullablePendingWitnesses = pending; break;

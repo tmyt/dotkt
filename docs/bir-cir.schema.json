@@ -91,7 +91,8 @@
         "declarationSemanticSignature": { "$ref": "#/$defs/sourceDeclarationSignature" },
         "semanticReifiedIndices": { "type": "array", "items": { "type": "integer" } },
         "nullableWitnessIndices": { "type": "array", "items": { "type": "integer" } },
-        "nullableRepresentationFrame": { "type": "string", "x-dotkt-csharp-type": "NullableRepresentationFrame", "x-dotkt-csharp-codec": "DotKt.Bir.NullableRepresentationFrame", "x-dotkt-json-content": "#/$defs/nullableRepresentationFrame" }
+        "nullableRepresentationFrame": { "type": "string", "x-dotkt-csharp-type": "NullableRepresentationFrame", "x-dotkt-csharp-codec": "DotKt.Bir.NullableRepresentationFrame", "x-dotkt-json-content": "#/$defs/nullableRepresentationFrame" },
+        "reflectedWitnessIndices": { "type": "array", "items": { "type": "integer" } }
       }, "additionalProperties": false
     },
     "birInnerConstructorFactory": {
@@ -170,7 +171,7 @@
         { "$ref": "#/$defs/birNullableHasValue" }, { "$ref": "#/$defs/birNullableValue" },
         { "$ref": "#/$defs/birValueBlock" }, { "$ref": "#/$defs/birEnumValue" },
         { "$ref": "#/$defs/birEnumValues" }, { "$ref": "#/$defs/birCompanionValue" },
-        { "$ref": "#/$defs/birClassReference" }, { "$ref": "#/$defs/birNullableNull" },
+        { "$ref": "#/$defs/birClassReference" }, { "$ref": "#/$defs/birReflectedType" }, { "$ref": "#/$defs/birNullableNull" },
         { "$ref": "#/$defs/birDefaultParameter" }, { "$ref": "#/$defs/birDefaultReceiver" },
         { "$ref": "#/$defs/birBindingReference" }, { "$ref": "#/$defs/birLocalFunctionReference" },
         { "$ref": "#/$defs/birBinaryOperation" }, { "$ref": "#/$defs/birCast" },
@@ -356,7 +357,8 @@
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" },
         "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
-        "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
+        "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" },
+        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }
       } },
       "properties": {
         "companionCall": { "type": "boolean" },
@@ -388,7 +390,8 @@
         "_erasedConstraintDispatch": { "type": "boolean" }, "_exactExistentialBridgeOwnerCall": { "type": "boolean" },
         "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
-        "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" }
+        "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" },
+        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }
       } },
       "properties": {
         "companionCall": { "type": "boolean" },
@@ -611,7 +614,8 @@
         "methodTypeParameterBoundsPre": { "$ref": "#/$defs/sourceMethodBoundsText" },
         "nullableRepresentationFrame": { "type": "string", "x-dotkt-csharp-type": "NullableRepresentationFrame", "x-dotkt-csharp-codec": "DotKt.Bir.NullableRepresentationFrame", "x-dotkt-json-content": "#/$defs/nullableRepresentationFrame" },
         "kotlinPropertyAccessorCarrier": { "$ref": "#/$defs/eventPropertySourceFacts" },
-        "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } }
+        "signatureOverrideDeclarations": { "type": "array", "items": { "type": "string" } },
+        "reflectedWitnessIndices": { "type": "array", "items": { "type": "integer" } }
       } },
       "properties": {
         "name": { "type": "string" }, "sourceName": { "type": "string" }, "static": { "type": "boolean", "x-dotkt-kotlin-name": "isStatic" },
@@ -1123,6 +1127,11 @@
       "type": "object", "x-dotkt-model": { "name": "BirClassReference", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinClassifierRef": { "type": "boolean" } } },
       "properties": { "k": { "const": "classRef" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" } },
       "required": ["k", "type"], "additionalProperties": false
+    },
+    "birReflectedType": {
+      "type": "object", "x-dotkt-model": { "name": "BirReflectedType", "domain": "birCore", "role": "expression" },
+      "properties": { "k": { "const": "typeOf" }, "operand": { "$ref": "#/$defs/type" } },
+      "required": ["k", "operand"], "additionalProperties": false
     },
     "birNullableNull": {
       "type": "object", "x-dotkt-model": { "name": "BirNullableNull", "domain": "birCore", "role": "expression" },
@@ -2187,6 +2196,7 @@
         "_exactExistentialBridgeOwnerCall": { "type": "boolean" },
         "declarationReferencedIntrinsic": { "type": "boolean" },
         "nullablePendingWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
         "dotktDeclarationIdentityBound": { "type": "boolean" }, "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "nullableWitnessCount": { "type": "integer" }, "resolvedMemberParams": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } },
         "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" }, "suspendCall": { "type": "boolean" },

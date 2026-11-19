@@ -436,6 +436,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.NullableWitnessTypeParameterIndices
             : null;
+    public int[] ReflectedWitnessIndices(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding) ? binding.ReflectedWitnessIndices : null;
     public NullableRepresentationFrame NullableMethodFrame(string id) =>
         id != null && _declarationById.TryGetValue(id, out var binding) ? binding.NullableFrame : null;
 
@@ -1010,6 +1012,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         && Same(a.VarargPositions, b.VarargPositions)
         && Same(a.SemanticReifiedTypeParameterIndices, b.SemanticReifiedTypeParameterIndices)
         && Same(a.NullableWitnessTypeParameterIndices, b.NullableWitnessTypeParameterIndices)
+        && Same(a.ReflectedWitnessIndices, b.ReflectedWitnessIndices)
         && SameFrame(a.NullableFrame, b.NullableFrame);
 
     static bool SameFrame(NullableRepresentationFrame a, NullableRepresentationFrame b) =>
@@ -5544,6 +5547,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
     public string SourceMethodDeclaration { get; init; }
+    public int[] ReflectedWitnessIndices { get; init; }
     public string ValueAdapter { get; init; }
     public string ValueSlot { get; init; }
     public bool SignatureAllocated { get; init; }

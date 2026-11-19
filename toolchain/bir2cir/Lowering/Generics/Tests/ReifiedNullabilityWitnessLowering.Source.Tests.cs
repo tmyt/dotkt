@@ -67,10 +67,12 @@ static partial class ReifiedNullabilityWitnessLowering
                 Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } }
             && nullableKnown.Args.Value[1] is BirFieldGet { Name.Value: "Item2", Recv.Value: BirNew classifierKnown }
             && nullableKnown.Args.Value[2] is BirFieldGet { Name.Value: "Item3", Recv.Value: BirNew predicateKnown }
+            && nullableKnown.Args.Value[3] is BirFieldGet { Name.Value: "Item4", Recv.Value: BirNew reflectionKnown }
             && flagsKnown.Args.Value is [BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 0 } },
                 BirClassReference { Type.Value: TypeNode.Fqn { Name: "kotlin.String" }, KotlinClassifierRef.Value: true },
+                BirConstant { Value.Value: BirLiteral.NullLiteral },
                 BirConstant { Value.Value: BirLiteral.NullLiteral }]
-            && flagsKnown.StructurallyEquals(classifierKnown) && flagsKnown.StructurallyEquals(predicateKnown)
+            && flagsKnown.StructurallyEquals(classifierKnown) && flagsKnown.StructurallyEquals(predicateKnown) && flagsKnown.StructurallyEquals(reflectionKnown)
             && !ReferenceEquals(flagsKnown, classifierKnown) && !ReferenceEquals(flagsKnown, predicateKnown)
             && !ReferenceEquals(classifierKnown, predicateKnown)
             && !ReferenceEquals(flagsKnown.Args.Value[1], classifierKnown.Args.Value[1])

@@ -126,6 +126,7 @@ static partial class SuspendColdLowering
                 ? OptionalField<int[]>.Of(_m.SemanticReifiedIndices.Value.ToArray()) : _m.SemanticReifiedIndices;
             if (_m.NullableWitnessIndices.IsPresent) method.NullableWitnessIndices = _m.NullableWitnessIndices.HasValue
                 ? OptionalField<int[]>.Of(_m.NullableWitnessIndices.Value.ToArray()) : _m.NullableWitnessIndices;
+            if (_m.ReflectedWitnessIndices.HasValue) method.ReflectedWitnessIndices = _m.ReflectedWitnessIndices.Value.ToArray();
             RoundtripMetadata.CopySourceMethodIdentity(_m, method);
         }
 

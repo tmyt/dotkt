@@ -7,7 +7,8 @@ using DotKt.Cir;
 
 sealed partial class NullableWitnessDemand
 {
-    internal static NullableWitnessDemand Collect(IReadOnlyList<BirFileDeclaration> sources, ReferenceMetadataIndex references)
+    internal static NullableWitnessDemand Collect(IReadOnlyList<BirFileDeclaration> sources, ReferenceMetadataIndex references,
+        ReflectedDeclarationParameters declarationsOfParameters = null)
     {
         var declarations = new TypedInlineBirIndex(sources);
         var roots = references == null ? sources.ToArray()
@@ -18,24 +19,44 @@ sealed partial class NullableWitnessDemand
                 if (method.DeclarationId.HasValue && !methods.TryAdd(method.DeclarationId.Value, method)
                     && !ReferenceEquals(methods[method.DeclarationId.Value], method))
                     throw new InvalidOperationException($"bir2cir: duplicate declaration identity '{method.DeclarationId.Value}' in nullable-witness analysis");
-        var demands = methods.Keys.ToDictionary(identity => identity, _ => new HashSet<int>(), StringComparer.Ordinal);
-        bool changed;
-        do
+        var ordinary = Solve(false);
+        bool usesReflection = false;
+        foreach (var root in roots)
+            root.Visit(node => {
+                if (usesReflection) return;
+                var target = node is BirCallInline inline ? inline.DeclarationId.OrDefault() : node.DeclarationIdentityFact.OrDefault();
+                usesReflection = node is BirReflectedType || target != null && references?.ReflectedWitnessIndices(target) is { Length: > 0 };
+            });
+        if (!usesReflection) return ordinary;
+        var reflected = Solve(true);
+        return new NullableWitnessDemand(Join(ordinary.LocalDeclarations, reflected.LocalDeclarations), references) { Reflected = reflected };
+
+        NullableWitnessDemand Solve(bool reflection)
         {
-            changed = false;
-            var analyzer = new NullableWitnessDemand(Freeze(demands), references);
-            var generated = roots.Select(analyzer.TypedGeneratedFrames).ToArray();
-            foreach (var (identity, method) in methods)
-                foreach (var index in analyzer.AnalyzeTyped(method, generated).Where(variable => variable.Scope == "method")
-                    .Select(variable => variable.Index).Distinct().OrderBy(index => index))
-                {
-                    if (index < 0 || index >= method.TypeParams.OrEmpty().Length)
-                        throw new InvalidOperationException($"bir2cir: nullable-witness demand for declaration '{identity}' names method type parameter {index}, but its generic arity is {method.TypeParams.OrEmpty().Length}");
-                    if (demands[identity].Add(index)) changed = true;
-                }
-        } while (changed);
-        return new(Freeze(demands), references);
+            var demands = methods.Keys.ToDictionary(identity => identity, _ => new HashSet<int>(), StringComparer.Ordinal);
+            bool changed;
+            do
+            {
+                changed = false;
+                var analyzer = new NullableWitnessDemand(Freeze(demands), references) { reflectedOnly = reflection };
+                var generated = roots.Select(analyzer.TypedGeneratedFrames).ToArray();
+                foreach (var (identity, method) in methods)
+                    foreach (var index in analyzer.AnalyzeTyped(method, generated).Where(variable => variable.Scope == "method")
+                        .Select(variable => variable.Index).Distinct().OrderBy(index => index))
+                    {
+                        if (index < 0 || index >= method.TypeParams.OrEmpty().Length)
+                            throw new InvalidOperationException($"bir2cir: nullable-witness demand for declaration '{identity}' names method type parameter {index}, but its generic arity is {method.TypeParams.OrEmpty().Length}");
+                        if (reflection && declarationsOfParameters?.Method(identity) is { } declared &&
+                            !declared.Parameters[index].Reified.OrDefault()) continue;
+                        if (demands[identity].Add(index)) changed = true;
+                    }
+            } while (changed);
+            return new NullableWitnessDemand(Freeze(demands), references) { reflectedOnly = reflection };
+        }
     }
+
+    static IReadOnlyDictionary<string, int[]> Join(IReadOnlyDictionary<string, int[]> a, IReadOnlyDictionary<string, int[]> b) =>
+        a.ToDictionary(pair => pair.Key, pair => pair.Value.Union(b.GetValueOrDefault(pair.Key) ?? []).Order().ToArray(), StringComparer.Ordinal);
 
     static IEnumerable<BirGraphValue> TypedOwners(BirGraphValue owner)
     {
@@ -50,13 +71,20 @@ sealed partial class NullableWitnessDemand
         _ => Array.Empty<BirFunctionDeclaration>(),
     };
 
-    internal sealed record TypedFrameDemands(IReadOnlyDictionary<string, int[]> Types, IReadOnlyDictionary<string, int[]> Targets);
+    internal sealed record TypedFrameDemands(IReadOnlyDictionary<string, int[]> Types, IReadOnlyDictionary<string, int[]> Targets,
+        TypedFrameDemands Reflected = null);
 
-    internal TypedFrameDemands AnalyzeGeneratedFrames(BirFileDeclaration file) => TypedGeneratedFrames(file);
+    internal TypedFrameDemands AnalyzeGeneratedFrames(BirFileDeclaration file)
+    {
+        var frames = TypedGeneratedFrames(file);
+        if (Reflected == null) return frames;
+        var reflected = Reflected.TypedGeneratedFrames(file);
+        return new(Join(frames.Types, reflected.Types), Join(frames.Targets, reflected.Targets), reflected);
+    }
 
     internal int[] MaterializedFrameIndices(BirGraphValue frame, TypeNode[] typeArguments,
         TypedFrameDemands generated, bool dense = false) => ResolveFramePositions(
-            AnalyzeTyped(frame, new[] { generated }), typeArguments, "materialized frame",
+            AnalyzeTyped(frame, new[] { generated }).Union(Reflected?.AnalyzeTyped(frame, new[] { generated.Reflected }) ?? []), typeArguments, "materialized frame",
             dense || ClosureSynthesis.HasPreboundFrame(frame));
 
     TypedFrameDemands TypedGeneratedFrames(BirFileDeclaration file)
@@ -113,8 +141,6 @@ sealed partial class NullableWitnessDemand
     HashSet<TypeVariable> AnalyzeTyped(BirGraphValue root, IReadOnlyList<TypedFrameDemands> frames)
     {
         var required = new HashSet<TypeVariable>();
-        int[] DeclarationDemand(string id) => _localDeclarations.TryGetValue(id, out var local)
-            ? local : _refs?.NullableWitnessTypeParameterIndices(id) ?? Array.Empty<int>();
         int[] GeneratedDemand(string name, bool target) => frames.Select(frame =>
             (target ? frame.Targets : frame.Types).TryGetValue(name, out var demand) ? demand : null)
             .FirstOrDefault(demand => demand != null) ?? Array.Empty<int>();
@@ -124,7 +150,9 @@ sealed partial class NullableWitnessDemand
             {
                 if (index < 0 || index >= arguments.Count)
                     throw new InvalidOperationException($"bir2cir: {context} has no type argument at demanded nullable-witness position {index}");
-                if (KotlinTypeWitness.Variable(arguments[index]) is { } variable) required.Add(new(variable.Scope, variable.I));
+                if (reflectedOnly)
+                    TypedExecutableFrames.RewriteType(arguments[index], tv => { required.Add(new(tv.Scope, tv.I)); return null; });
+                else if (KotlinTypeWitness.Variable(arguments[index]) is { } variable) required.Add(new(variable.Scope, variable.I));
             }
         }
         void Frame(BirGraphValue declaration, TypeNode[] arguments, TypeNode[] declarationArguments, string context, bool dense)
@@ -167,6 +195,7 @@ sealed partial class NullableWitnessDemand
                 BirCast operation when KotlinTypeWitness.NeedsWitness("cast", operation.ReifiedTypeOperand.OrDefault()) => operation.Type.OrDefault(),
                 _ => null,
             };
+            if (reflectedOnly) tested = (node as BirReflectedType)?.Operand.OrDefault();
             if (KotlinTypeWitness.Variable(tested) is { } variable) required.Add(new(variable.Scope, variable.I));
             var call = node switch {
                 BirCallStatic value => (value.DeclarationId.OrDefault(), value.TypeArgs.OrEmpty()),
@@ -175,7 +204,7 @@ sealed partial class NullableWitnessDemand
                 BirCallInline value => (value.DeclarationId.OrDefault(), value.TypeArgs.OrEmpty()),
                 _ => ((string)null, Array.Empty<TypeNode>()),
             };
-            if (call.Item1 != null) Map(DeclarationDemand(call.Item1), call.Item2, $"call '{call.Item1}'");
+            if (call.Item1 != null) Map(Indices(call.Item1), call.Item2, $"call '{call.Item1}'");
         }
         Walk(root);
         return required;

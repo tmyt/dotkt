@@ -47,6 +47,7 @@ internal static class BirGraphDom
                 case "semanticReifiedIndices": break;
                 case "nullableWitnessIndices": break;
                 case "nullableRepresentationFrame": break;
+                case "reflectedWitnessIndices": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirRoundtripDeclarationIdentity at {source.GetPath()}");
             }
         return new BirRoundtripDeclarationIdentity
@@ -59,6 +60,7 @@ internal static class BirGraphDom
             SemanticReifiedIndices = Field<int[]>(fields, "semanticReifiedIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             NullableWitnessIndices = Field<int[]>(fields, "nullableWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             NullableRepresentationFrame = Field<NullableRepresentationFrame>(fields, "nullableRepresentationFrame", value => DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(value!.GetValue<string>())),
+            ReflectedWitnessIndices = Field<int[]>(fields, "reflectedWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
         };
     }
 
@@ -845,6 +847,7 @@ internal static class BirGraphDom
                 case "_capturedGenericArgument": break;
                 case "_capturedGenericResult": break;
                 case "_capturedGenericTarget": break;
+                case "reflectedArguments": break;
                 case "calleeRet": break;
                 case "calleeParams": break;
                 case "memberRef": break;
@@ -903,6 +906,7 @@ internal static class BirGraphDom
             _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
             _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _capturedGenericTarget = Field<string>(fields, "_capturedGenericTarget", value => value!.GetValue<string>()),
+            ReflectedArguments = Field<IBirExpression[]>(fields, "reflectedArguments", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             CalleeRet = Field<TypeNode>(fields, "calleeRet", value => TypeNode.Read(value) ?? throw new FormatException()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
@@ -969,6 +973,7 @@ internal static class BirGraphDom
                 case "_capturedGenericArgument": break;
                 case "_capturedGenericResult": break;
                 case "_capturedGenericTarget": break;
+                case "reflectedArguments": break;
                 case "calleeRet": break;
                 case "calleeParams": break;
                 case "memberRef": break;
@@ -1030,6 +1035,7 @@ internal static class BirGraphDom
             _capturedGenericArgument = Field<CapturedGenericArgument[]>(fields, "_capturedGenericArgument", value => ((JsonArray)value!).Select(item0 => ReadCapturedGenericArgument(item0!)).ToArray()),
             _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _capturedGenericTarget = Field<string>(fields, "_capturedGenericTarget", value => value!.GetValue<string>()),
+            ReflectedArguments = Field<IBirExpression[]>(fields, "reflectedArguments", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             CalleeRet = Field<TypeNode>(fields, "calleeRet", value => TypeNode.Read(value) ?? throw new FormatException()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
@@ -1751,6 +1757,7 @@ internal static class BirGraphDom
                 case "nullableRepresentationFrame": break;
                 case "kotlinPropertyAccessorCarrier": break;
                 case "signatureOverrideDeclarations": break;
+                case "reflectedWitnessIndices": break;
                 case "retAttrs": break;
                 case "clrFinal": break;
                 case "specialName": break;
@@ -1846,6 +1853,7 @@ internal static class BirGraphDom
             NullableRepresentationFrame = Field<NullableRepresentationFrame>(fields, "nullableRepresentationFrame", value => DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(value!.GetValue<string>())),
             KotlinPropertyAccessorCarrier = Field<EventPropertySourceFacts>(fields, "kotlinPropertyAccessorCarrier", value => ReadEventPropertySourceFacts(value!)),
             SignatureOverrideDeclarations = Field<string[]>(fields, "signatureOverrideDeclarations", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<string>()).ToArray()),
+            ReflectedWitnessIndices = Field<int[]>(fields, "reflectedWitnessIndices", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             RetAttrs = Field<BirAttribute[]>(fields, "retAttrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             ClrFinal = Field<bool>(fields, "clrFinal", value => value!.GetValue<bool>()),
             SpecialName = Field<bool>(fields, "specialName", value => value!.GetValue<bool>()),
@@ -3629,6 +3637,22 @@ internal static class BirGraphDom
         };
     }
 
+    internal static BirReflectedType ReadBirReflectedType(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "k": if (field.Value?.GetValue<string>() != "typeOf") throw new FormatException(); break;
+                case "operand": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirReflectedType at {source.GetPath()}");
+            }
+        return new BirReflectedType
+        {
+            Operand = Field<TypeNode>(fields, "operand", value => TypeNode.Read(value) ?? throw new FormatException()),
+        };
+    }
+
     internal static BirNullableNull ReadBirNullableNull(JsonNode source)
     {
         var fields = source.AsObject();
@@ -4463,6 +4487,7 @@ internal static class BirGraphDom
                 case "_exactExistentialBridgeOwnerCall": break;
                 case "declarationReferencedIntrinsic": break;
                 case "nullablePendingWitnesses": break;
+                case "reflectedArguments": break;
                 case "dotktDeclarationIdentityBound": break;
                 case "functionCallSignature": break;
                 case "nullableWitnessCount": break;
@@ -4505,6 +4530,7 @@ internal static class BirGraphDom
             _exactExistentialBridgeOwnerCall = Field<bool>(fields, "_exactExistentialBridgeOwnerCall", value => value!.GetValue<bool>()),
             DeclarationReferencedIntrinsic = Field<bool>(fields, "declarationReferencedIntrinsic", value => value!.GetValue<bool>()),
             NullablePendingWitnesses = Field<IBirExpression[]>(fields, "nullablePendingWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+            ReflectedArguments = Field<IBirExpression[]>(fields, "reflectedArguments", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             DotktDeclarationIdentityBound = Field<bool>(fields, "dotktDeclarationIdentityBound", value => value!.GetValue<bool>()),
             FunctionCallSignature = Field<TypeNode[]>(fields, "functionCallSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             NullableWitnessCount = Field<int>(fields, "nullableWitnessCount", value => value!.GetValue<int>()),
@@ -5465,6 +5491,7 @@ internal static class BirGraphDom
         "enumValues" => ReadBirEnumValues(source),
         "companionValue" => ReadBirCompanionValue(source),
         "classRef" => ReadBirClassReference(source),
+        "typeOf" => ReadBirReflectedType(source),
         "nullableNull" => ReadBirNullableNull(source),
         "defaultArgParam" => ReadBirDefaultParameter(source),
         "defaultArgReceiver" => ReadBirDefaultReceiver(source),

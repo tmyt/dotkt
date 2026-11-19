@@ -330,7 +330,7 @@ KINDS = {
     "newList", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
     "companionValue",                           # #275 BIR-only semantic access; bir2cir resolves the nested carrier.
-    "enumValue", "enumBits", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
+    "enumValue", "enumBits", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "typeOf", "console",
     # §2.7 CALL-EVALUATION PLAN — BIR-only. `callEval` wraps a call in its ordered bindings; `bindRef` is a pure READ
     # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
     "callEval", "bindRef",

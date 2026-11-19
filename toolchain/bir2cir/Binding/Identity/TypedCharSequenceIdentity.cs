@@ -31,7 +31,7 @@ static class TypedCharSequenceIdentity
         foreach (var root in roots) Walk(root);
     }
 
-    static TypeNode RewriteType(TypeNode type) => type switch {
+    internal static TypeNode RewriteType(TypeNode type) => type switch {
         TypeNode.Fqn value => value with {
             Name = value.Name == "kotlin.CharSequence" ? SharedSyntheticSynthesis.CharSeq : value.Name,
             Args = value.Args?.Select(RewriteType).ToArray(),

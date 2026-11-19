@@ -940,6 +940,11 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// by IR identity against the frontend-validated tail-call set installed by `method()`.
 	tailrecCtx?.let { ctx -> if (call in ctx.calls) return tailrecJump(call, ctx) }
 	val callee = call.symbol.owner
+	// A typeOf operand is a Kotlin type, including nested projections and nullability;
+	// its runtime representation is not the erased class token of a CLR generic argument.
+	if (callee.fqNameWhenAvailable?.asString() == "kotlin.reflect.typeOf"
+		&& callee.parameters.isEmpty() && callee.typeParameters.singleOrNull()?.isReified == true)
+		call.typeArguments.singleOrNull()?.let { return BirReflectedType(birType(it)) }
 	// These are compiler IR operations, not declarations in the JVM runtime. Preserve their semantic owner
 	// and each operand's source type; bir2cir chooses the corresponding Kotlin array content operation.
 	if (irBuiltIns != null && (call.symbol == irBuiltIns.dataClassArrayMemberToStringSymbol ||

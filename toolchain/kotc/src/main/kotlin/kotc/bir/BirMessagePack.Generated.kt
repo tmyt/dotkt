@@ -116,6 +116,7 @@ internal object BirMessagePack {
             is BirEnumValues -> writeBirEnumValues(value, packer, depth)
             is BirCompanionValue -> writeBirCompanionValue(value, packer, depth)
             is BirClassReference -> writeBirClassReference(value, packer, depth)
+            is BirReflectedType -> writeBirReflectedType(value, packer, depth)
             is BirNullableNull -> writeBirNullableNull(value, packer, depth)
             is BirDefaultParameter -> writeBirDefaultParameter(value, packer, depth)
             is BirDefaultReceiver -> writeBirDefaultReceiver(value, packer, depth)
@@ -3047,6 +3048,15 @@ internal object BirMessagePack {
         packer.packString("classRef")
         packer.packString("type")
         writeType(value.type, packer, depth + 1)
+    }
+
+    private fun writeBirReflectedType(value: BirReflectedType, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(2)
+        packer.packString("k")
+        packer.packString("typeOf")
+        packer.packString("operand")
+        writeType(value.operand, packer, depth + 1)
     }
 
     private fun writeBirNullableNull(value: BirNullableNull, packer: MessagePacker, depth: Int) {

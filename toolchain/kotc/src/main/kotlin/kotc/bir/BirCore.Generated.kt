@@ -3801,6 +3801,17 @@ data class BirClassReference(
     }
 }
 
+data class BirReflectedType(
+    val operand: TypeNode
+) : BirExpression() {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"typeOf\"")
+        output.append(",\"operand\":")
+        operand.writeJson(output)
+        output.append('}')
+    }
+}
+
 data class BirNullableNull(
     val elem: TypeNode
 ) : BirExpression() {

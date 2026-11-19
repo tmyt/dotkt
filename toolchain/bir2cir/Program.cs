@@ -385,6 +385,7 @@ sealed class Pipeline
         }
         var captured = DeclarationSignatureIdentity.Capture(TakeSources());
         for (var index = 0; index < captured.Length; index++) captured[index] = SourceOwnerClosure.Apply(captured[index]);
+        var declarationParameters = new ReflectedDeclarationParameters(captured);
         captured = ComparableRepresentationLowering.Apply(captured, referenceBuild);
         // Keep the selected declaration's Kotlin spelling and signature before
         // physical shaping can rename accessors, companion cores or suspend entries.
@@ -426,13 +427,15 @@ sealed class Pipeline
                     captured[index], collectionInputs.Helpers.Bind);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)EnumEntriesLowering.Apply(
                     captured[index], refs, collectionInputs.Helpers.Bind);
+                captured[index] = ReflectedKotlinType.Apply(captured[index], collectionInputs.Helpers);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)PrimitiveOperatorLowering.Apply(captured[index], refs);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)FaithfulHintRecognition.Apply(captured[index], sourceTopLevelFns);
             }
         });
         CollectionHelperBinding.Apply(captured, refs, sourceIndex.CollisionAliases, collectionInputs);
-        var nullableWitnessDemand = NullableWitnessDemand.Collect(captured, refs);
+        var nullableWitnessDemand = NullableWitnessDemand.Collect(captured, refs, declarationParameters);
+        foreach (var source in captured) ReflectedKotlinType.CaptureCalls(source, nullableWitnessDemand.Reflected, collectionInputs.Helpers);
         RoundtripMetadata.FreezeSuspendResults(captured);
         InheritedMemberOwnerBinding.ProjectOwners(captured, refs);
         var genericRepresentations = GenericRepresentationPolicy.CreateSource(captured, sourceIndex.CollisionAliases, refs);
@@ -534,7 +537,7 @@ sealed class Pipeline
         {
             if (!referenceBuild) KClassMemberBinding.Apply(source);
             valueRepresentations.BindOperations(source);
-            ReifiedNullabilityWitnessLowering.Apply(source, nullableWitnessDemand, refs, valueRepresentations, RetireDeclaration);
+            ReifiedNullabilityWitnessLowering.Apply(source, nullableWitnessDemand, refs, valueRepresentations, RetireDeclaration, collectionInputs.Helpers, declarationParameters);
         }
         // Ingredients become actual declarations in this same owning graph.
         // Preserve the source vectors and append synthesized types only after

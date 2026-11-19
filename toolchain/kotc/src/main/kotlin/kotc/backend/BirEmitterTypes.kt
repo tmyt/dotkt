@@ -1,6 +1,8 @@
 package kotc.backend
 
 import kotc.bir.TypeNode
+import org.jetbrains.kotlin.builtins.functions.FunctionTypeKind
+import org.jetbrains.kotlin.builtins.functions.FunctionTypeKindExtractor
 import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
@@ -87,20 +89,27 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
+private val standardFunctionClasses = FunctionTypeKindExtractor(listOf(
+    FunctionTypeKind.Function, FunctionTypeKind.KFunction, FunctionTypeKind.SuspendFunction, FunctionTypeKind.KSuspendFunction,
+))
+
+internal fun BirEmitter.functionClassifierOperand(type: IrType): TypeNode.Fn? {
+    val fqName = type.classFqName ?: return null
+    val (kind, arity) = standardFunctionClasses.getFunctionalClassKindWithArity(fqName.parent(), fqName.shortName().asString()) ?: return null
+    return TypeNode.Fn(kind == FunctionTypeKind.SuspendFunction || kind == FunctionTypeKind.KSuspendFunction,
+        TypeNode.Star, List(arity) { TypeNode.Star })
+}
+
 // Kotlin's erased classifier application has no lexical type-variable slots,
-// including those captured by an inner/local class. Function classifier stars
-// retain the same function vocabulary as ordinary Kotlin function types.
+// including those captured by an inner/local class.
 internal fun BirEmitter.erasedTypeOperand(type: IrType): TypeNode? {
     val parameter = (type.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.owner ?: return null
     if (parameter.isReified) return null
     val erased = type.eraseTypeParameters()
     val klass = (erased.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrClassSymbol)?.owner
-    val name = erased.classFqName?.asString()
-    val function = name != null && (name.startsWith("kotlin.Function") || name.startsWith("kotlin.reflect.KFunction")
-        || name.startsWith("kotlin.coroutines.SuspendFunction") || name.startsWith("kotlin.reflect.KSuspendFunction"))
+    val function = functionClassifierOperand(erased)
     val raw = when {
-        function -> TypeNode.Fn(name!!.contains("SuspendFunction"), TypeNode.Star,
-            List(klass!!.typeParameters.size - 1) { TypeNode.Star })
+        function != null -> function
         klass != null && (klass.isInner || liftedCaptureArgs(klass).isNotEmpty()) ->
             sourceClassifierType(klass, List(klass.typeParameters.size + innerEnclosingTypeParams(klass).size
                 + liftedCaptureArgs(klass).size) { TypeNode.Star })

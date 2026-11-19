@@ -764,6 +764,7 @@ static class ReferenceMetadataReader
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
                             SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
+                            ReflectedWitnessIndices = declarationIdentity?.ReflectedWitnessIndices,
                             ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
                                 attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
                                 ?.ConstructorArguments[0].Value as string : null,
@@ -1917,7 +1918,8 @@ static class ReferenceMetadataReader
         string SourceAssociation);
     internal sealed record DeclarationIdentityPayloadInfo(string Id, string Name, TypeNode[] SemanticParams,
         TypeNode SemanticReturn, int[] SemanticReifiedTypeParameterIndices,
-        int[] NullableWitnessTypeParameterIndices, NullableRepresentationFrame NullableFrame, bool SignatureAllocated);
+        int[] NullableWitnessTypeParameterIndices, NullableRepresentationFrame NullableFrame, bool SignatureAllocated,
+        int[] ReflectedWitnessIndices = null);
 
     internal static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly, int methodGenericArity = int.MaxValue)
@@ -1929,10 +1931,10 @@ static class ReferenceMetadataReader
 
     internal static DeclarationIdentityPayloadInfo ParseDeclarationIdentityPayload(JsonObject payload, int methodGenericArity)
     {
-        if (payload.Count is < 2 or > 8 ||
+        if (payload.Count is < 2 or > 9 ||
             payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
-            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or NullableRepresentationFrame.MetadataKey or DeclarationSignatureIdentity.AllocationMetadataKey or "constructorPrimary"))
+            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness" or "reflectedWitness" or NullableRepresentationFrame.MetadataKey or DeclarationSignatureIdentity.AllocationMetadataKey or "constructorPrimary"))
             || payload.ContainsKey("constructorPrimary") &&
                 (payload["constructorPrimary"] is not JsonValue primary || !primary.TryGetValue<bool>(out _))
             || payload[DeclarationSignatureIdentity.AllocationMetadataKey] is JsonNode allocation
@@ -1995,9 +1997,12 @@ static class ReferenceMetadataReader
                     $"malformed [KotlinDeclarationIdentity] semantic signature: {semanticSignature.ToJsonString()}", ex);
             }
         }
+        var reflected = payload["reflectedWitness"]?.AsArray().Select(index => index.GetValue<int>()).ToArray();
+        if (reflected != null && reflected.Except(nullableWitness).Any())
+            throw new InvalidDataException("Reflected type witness has no method argument");
         return new DeclarationIdentityPayloadInfo(
             id, name, semanticParams, semanticReturn, reified, nullableWitness, nullableFrame,
-            payload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() == true);
+            payload[DeclarationSignatureIdentity.AllocationMetadataKey]?.GetValue<bool>() == true, reflected);
     }
 
     internal static NullableRepresentationFrame ReadNullableFrame(JsonNode node, int physicalArity)
