@@ -43,5 +43,12 @@ internal fun sourceValueBlock(
     result: BirExpression,
     type: TypeNode? = null,
     yieldsNull: Boolean = result.yieldsNullAtJoin(),
+    transparentScope: Boolean = false,
 ): BirValueBlock = BirValueBlock(stmts, result, type = type,
-    joinNullBranch = if (yieldsNull) true else null)
+    joinNullBranch = true.takeIf { yieldsNull }, transparentScope = true.takeIf { transparentScope })
+
+internal fun sourceUnitAfter(stmts: List<BirStatement>, transparentScope: Boolean): BirValueBlock {
+    val unit = TypeNode.Fqn("kotlin.Unit")
+    return sourceValueBlock(stmts, BirConstant(unit, BirLiteral.NullLiteral), type = unit,
+        yieldsNull = false, transparentScope = transparentScope)
+}

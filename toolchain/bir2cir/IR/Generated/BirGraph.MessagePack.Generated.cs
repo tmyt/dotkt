@@ -19899,44 +19899,49 @@ internal static class BirGraphMessagePack
         var count = ReadMap(ref reader);
         ulong seen = 0;
         OptionalField<bool> field0 = default;
-        OptionalField<TypeNode> field1 = default;
-        OptionalField<IBirStatement[]> field2 = default;
-        OptionalField<IBirExpression> field3 = default;
-        OptionalField<TypeNode> field4 = default;
+        OptionalField<bool> field1 = default;
+        OptionalField<TypeNode> field2 = default;
+        OptionalField<IBirStatement[]> field3 = default;
+        OptionalField<IBirExpression> field4 = default;
         OptionalField<TypeNode> field5 = default;
         OptionalField<TypeNode> field6 = default;
+        OptionalField<TypeNode> field7 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 7); if (IrMessagePack.ReadString(ref reader) != "valueBlock") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 8); if (IrMessagePack.ReadString(ref reader) != "valueBlock") throw new FormatException(); break;
                 case "joinNullBranch":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "type":
+                case "transparentScope":
                     Seen(ref seen, 1UL << 1);
-                    field1 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field1 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "type":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 case "stmts":
-                    Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "result":
-                    Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
                     break;
                 case "_erasedValueVariable":
-                    Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
                     break;
                 case "sty":
-                    Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -19945,19 +19950,20 @@ internal static class BirGraphMessagePack
         return new BirValueBlock
         {
             JoinNullBranch = field0,
-            Type = field1,
-            Stmts = field2,
-            Result = field3,
-            _erasedValueVariable = field4,
-            SuspendFnTypePre = field5,
-            Sty = field6,
+            TransparentScope = field1,
+            Type = field2,
+            Stmts = field3,
+            Result = field4,
+            _erasedValueVariable = field5,
+            SuspendFnTypePre = field6,
+            Sty = field7,
         };
     }
 
     internal static void WriteBirValueBlock(ref MessagePackWriter writer, BirValueBlock value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.JoinNullBranch.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Stmts.IsPresent ? 1 : 0) + (value.Result.IsPresent ? 1 : 0) + (value._erasedValueVariable.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.JoinNullBranch.IsPresent ? 1 : 0) + (value.TransparentScope.IsPresent ? 1 : 0) + (value.Type.IsPresent ? 1 : 0) + (value.Stmts.IsPresent ? 1 : 0) + (value.Result.IsPresent ? 1 : 0) + (value._erasedValueVariable.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("valueBlock");
         if (value.JoinNullBranch.IsPresent)
@@ -19967,6 +19973,15 @@ internal static class BirGraphMessagePack
             else
             {
                 writer.Write(value.JoinNullBranch.Value);
+            }
+        }
+        if (value.TransparentScope.IsPresent)
+        {
+            writer.Write("transparentScope");
+            if (value.TransparentScope.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.TransparentScope.Value);
             }
         }
         if (value.Type.IsPresent)
