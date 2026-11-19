@@ -5,7 +5,8 @@ using DotKt.Cir;
 // Bounds are source types: taking these from a late CLR generic frame loses e.g. Any?.
 sealed class ReflectedDeclarationParameters
 {
-    internal sealed record Declaration(string Owner, string Identity, BirTypeParameter[] Parameters);
+    internal sealed record Declaration(string Owner, string Identity, BirTypeParameter[] Parameters,
+        string Enclosing = null, int OuterStart = 0, int OuterCount = 0);
     readonly Dictionary<string, Declaration> methods = new(StringComparer.Ordinal), types = new(StringComparer.Ordinal);
     internal Declaration Method(string id) => id == null ? null : methods.GetValueOrDefault(id);
     internal Declaration Type(string name) => name == null ? null : types.GetValueOrDefault(name);
@@ -20,7 +21,11 @@ sealed class ReflectedDeclarationParameters
                 if (owner.Generated.OrDefault()) continue; // a captured frame, not a fresh source declaration
                 var name = owner.Name.Value;
                 if (owner.TypeParams.OrEmpty().Length != 0)
-                    types.Add(name, new(name, name, Copy(owner.TypeParams.Value)));
+                {
+                    var nested = owner as BirClassDefinition;
+                    types.Add(name, new(name, name, Copy(owner.TypeParams.Value), owner.SemanticOwner.OrDefault(),
+                        nested?.OuterTypeParamOffset.OrDefault() ?? 0, nested?.OuterTypeParamCount.OrDefault() ?? 0));
+                }
                 foreach (var method in owner.Methods.OrEmpty()) Add(name, method);
             }
         }
@@ -36,7 +41,7 @@ sealed class ReflectedDeclarationParameters
         parameters.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
 
     internal sealed record Scope(Declaration Method, NullableRepresentationFrame MethodFrame,
-        Declaration Type, NullableRepresentationFrame TypeFrame)
+        Declaration Type, NullableRepresentationFrame TypeFrame, ReflectedDeclarationParameters Declarations)
     {
         internal bool IsDeclared(TypeNode.Tv variable)
         {
@@ -49,23 +54,30 @@ sealed class ReflectedDeclarationParameters
         {
             var frame = physical.Scope == "method" ? MethodFrame : TypeFrame;
             var slot = frame?.PhysicalSlot(physical.I);
-            var active = new HashSet<(string Scope, int Index)>();
+            var active = new HashSet<(string Declaration, int Index)>();
             return Build(new TypeNode.Tv(physical.Scope, slot?.SourceIndex ?? physical.I),
-                nullable || slot?.Representation is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage);
+                nullable || slot?.Representation is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage, Type);
 
-            IBirExpression Build(TypeNode.Tv tv, bool marked)
+            IBirExpression Build(TypeNode.Tv tv, bool marked, Declaration typeFrame)
             {
-                var decl = tv.Scope == "method" ? Method : Type;
-                var p = decl.Parameters[tv.I];
+                var decl = tv.Scope == "method" ? Method : typeFrame;
+                var index = tv.I;
+                while (index >= decl.OuterStart && index - decl.OuterStart < decl.OuterCount)
+                {
+                    index -= decl.OuterStart;
+                    decl = Declarations.Type(decl.Enclosing) ?? throw new InvalidOperationException("Missing enclosing type-parameter declaration");
+                }
+                var p = decl.Parameters[index];
                 // Inside a declared bound even a reified R denotes the declaration R,
                 // not the argument supplied at this invocation.
-                if (!active.Add((tv.Scope, tv.I)))
+                if (!active.Add((decl.Identity, index)))
                     throw new InvalidOperationException($"bir2cir: typeOf: recursive bounds of non-reified type parameter '{p.Name.Value}' are not supported");
                 TypeNode[] constraints = p.Constraints.OrEmpty();
                 if (constraints.Length == 0) constraints = [new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))];
-                var bounds = constraints.Select(bound => ReflectedKotlinType.Value(bound, helpers, Build, TypedCharSequenceIdentity.RewriteType)).ToArray();
-                active.Remove((tv.Scope, tv.I));
-                return ReflectedKotlinType.Parameter(decl.Owner, decl.Identity, tv.I, p, marked, bounds, helpers);
+                var bounds = constraints.Select(bound => ReflectedKotlinType.Value(bound, helpers,
+                    (v, n) => Build(v, n, tv.Scope == "type" ? decl : typeFrame), TypedCharSequenceIdentity.RewriteType)).ToArray();
+                active.Remove((decl.Identity, index));
+                return ReflectedKotlinType.Parameter(decl.Owner, decl.Identity, index, p, marked, bounds, helpers);
             }
         }
     }

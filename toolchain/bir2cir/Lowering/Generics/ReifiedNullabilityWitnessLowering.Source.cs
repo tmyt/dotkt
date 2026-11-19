@@ -30,7 +30,7 @@ static partial class ReifiedNullabilityWitnessLowering
         {
             var type = owner as IBirTypeDeclaration;
             var scope = new ReflectedDeclarationParameters.Scope(null, null, declarationsOfParameters?.Type(type?.Name.OrDefault()),
-                type == null ? null : NullableRepresentationViews.TypeFacts(owner)?.NullableFrame);
+                type == null ? null : NullableRepresentationViews.TypeFacts(owner)?.NullableFrame, declarationsOfParameters);
             var typeWitnesses = type?.Name.HasValue == true
                 && generatedTypes.TryGetValue(type.Name.Value, out var generated)
                 && ReferenceEquals(type, generated.Type) ? MaterializeSourceType(type, generated.Indices) : null;

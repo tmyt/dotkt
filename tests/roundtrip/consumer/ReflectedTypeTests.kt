@@ -11,6 +11,7 @@ import roundtrip.reflectedtypes.reflectedInLambda
 import roundtrip.reflectedtypes.LibraryBox
 import roundtrip.reflectedtypes.declaredBox
 import roundtrip.reflectedtypes.defaultType
+import roundtrip.reflectedtypes.reflectAfter
 
 private class Box<T>
 private inline fun <reified T> forwardedDefault() = defaultType<T>()
@@ -18,12 +19,18 @@ private fun <T : CharSequence> boundedType() = typeOf<List<T?>>()
 private inline fun <reified R, T : R> dependentBound() = typeOf<List<T>>()
 private fun <T : CharSequence> forwardedType() = reflected<List<T?>>()
 private class DeclaringClass<out E> { fun element() = typeOf<List<E>>() }
+private class Enclosing<E> {
+    fun element() = typeOf<List<E>>()
+    inner class Inner { fun sameElement() = typeOf<List<E>>() }
+}
 
 class ReflectedTypeTests {
     @TestAttribute fun ordinaryParametersBelongToTheirDeclaration() {
         val dependent = dependentBound<Any, String>().arguments.single().type!!.classifier as KTypeParameter
         val upper = dependent.upperBounds.single().classifier as KTypeParameter
         check(upper.name == "R" && upper.isReified && upper.upperBounds.single() == typeOf<Any?>())
+        val outer = Enclosing<String>()
+        check(outer.element() == outer.Inner().sameElement())
         val element = boundedType<String>().arguments.single().type!!
         val t = element.classifier as KTypeParameter
         check(element.isMarkedNullable && t.name == "T" && !t.isReified)
@@ -42,6 +49,8 @@ class ReflectedTypeTests {
     @TestAttribute fun nestedTypeSurvivesReifiedLibraryCalls() {
         check(declaredBox() == typeOf<LibraryBox<String>>())
         check(forwardedDefault<String>() == typeOf<List<String>>())
+        var calls = 0
+        check(reflectAfter<CharSequence> { calls++ } == typeOf<CharSequence>() && calls == 1)
         val direct = typeOf<List<String?>>()
         val imported = reflected<List<String?>>()
         val composed = reflectedList<String>()

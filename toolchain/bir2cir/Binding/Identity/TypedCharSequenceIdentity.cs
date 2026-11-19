@@ -34,6 +34,10 @@ static class TypedCharSequenceIdentity
     internal static TypeNode RewriteType(TypeNode type) => type switch {
         TypeNode.Fqn value => value with {
             Name = value.Name == "kotlin.CharSequence" ? SharedSyntheticSynthesis.CharSeq : value.Name,
+            // Inline type arguments can reach typeOf after the bridge has been selected.
+            // The bridge is the binding name, not a new Kotlin classifier.
+            Classifier = value.Classifier ?? (value.Name == "kotlin.CharSequence"
+                ? new TypeNode.SourceClassifier("kotlin", [], "CharSequence") : null),
             Args = value.Args?.Select(RewriteType).ToArray(),
         },
         TypeNode.Projection value => value with { Of = RewriteType(value.Of) },
