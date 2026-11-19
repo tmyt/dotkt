@@ -3,4 +3,7 @@
 package kotlin.text
 
 @SinceKotlin("1.4")
-public actual open class CharacterCodingException actual constructor() : Exception()
+public actual open class CharacterCodingException : Exception {
+    public actual constructor() : super()
+    internal constructor(message: String) : super(message)
+}
