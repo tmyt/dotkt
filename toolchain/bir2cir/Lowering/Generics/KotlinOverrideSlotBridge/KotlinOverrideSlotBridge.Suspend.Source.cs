@@ -170,7 +170,7 @@ static partial class KotlinOverrideSlotBridge
                     {
                         var association = implementation.Source?.PropertyAssociation.OrDefault()
                             ?? implementation.Header?.PropertyAssociation.OrDefault();
-                        if (!needsSignature && definition.Kind == "interface")
+                        if (definition.Kind == "interface")
                             KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(bridge, slot.IdentityName, slot.PropertyAccessor, association);
                         else KotlinPropertyAccessors.AssociateBridgeProperty(declaration, bridge, slot.IdentityName, slot.PropertyAccessor,
                             association, slot.Parameters, slot.Return);

@@ -645,7 +645,9 @@ name or re-resolving an erased signature; representable properties otherwise use
 metadata. A synthesized override bridge carries its own physical-property association plus an explicit
 `sourceAssociation` back to the source accessor, and that source accessor carries its association as well. This
 relation lets a downstream class consume the frontend-selected default through the bridge even when their CLR
-signatures differ; no consumer compares those signatures or parses either opaque association.
+signatures differ; no consumer compares those signatures or parses either opaque association. On an interface,
+private MethodImpl bodies record this association on the method only. Distinct CLR slots may require separate
+bodies with the same signature; they do not add getters or setters to the authored Property row.
 
 A native event can also implement an ordinary Kotlin `ClrEvent<H>` property slot. Its getter returns the
 materialized event handle, while add/remove/raise remain native event accessors. The BIR event backing carries
