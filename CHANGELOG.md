@@ -8,6 +8,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Kotlin collection slot bridges preserve the declared result when an override
   returns `Nothing`, including `MutableSet.add`, `addAll`, and `List.indexOf`.
 - Named arguments in `this(...)` and `super(...)` constructor delegation now evaluate in Kotlin source order.
+- Cross-assembly inline code can access inherited `@PublishedApi` properties on generic receivers
+  even when the property's declaring class uses a different type-parameter order.
 - Kotlin callers in another assembly see a function's source signature and
   annotations when an IR compiler plugin adds hidden parameters.
 

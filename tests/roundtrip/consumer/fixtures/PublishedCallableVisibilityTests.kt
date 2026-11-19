@@ -51,6 +51,10 @@ class PublishedCallableVisibilityTests {
         check(publicGeneric("generic") { it } == "generic")
         check(publicGenericProperty(19) { it } == 19)
         check(publicGenericProperty("property") { it } == "property")
+        val pair = ReorderedPair(42, "value")
+        check(pair.update { text, number -> text + number } == "value42")
+        check(pair.update { prior, _ -> prior } == "value42")
+        check(PublishedChild<String>().read { it + 1 } == 8)
         check(publicStatics { it } == 43)
     }
 

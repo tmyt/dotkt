@@ -84,10 +84,10 @@ static partial class FBoundStarProjectionErasure
         var count = call.ParameterCount;
         IReadOnlyList<TypeNode> OwnerArguments(string declaring) => declaring == owner.Name ? ownerArguments
             : start == null ? null : ProjectSourceOwnerArguments(start, ownerArguments, declaring, context);
-        void CloseResult(TypeNode declaration)
+        void CloseResult(TypeNode declaration, IReadOnlyList<TypeNode> declarationArguments = null)
         {
             if (declaration != null && call.DeclaredReturn != null && call.DeclaredReturn.Equals(declaration))
-                call.DeclaredReturn = CloseDeclarationType(declaration, args, call.Arguments);
+                call.DeclaredReturn = CloseDeclarationType(declaration, declarationArguments ?? args, call.Arguments);
         }
         BirGraphValue Align(TypeNode physical, TypeNode declaration, IReadOnlyList<TypeNode> declarationOwner)
         {
@@ -150,6 +150,25 @@ static partial class FBoundStarProjectionErasure
             call.BindOwner(erasedOwner); call.Name = erasedMethod; call.Parameters(erasedSignature);
             MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor);
             return Align(physicalReturn, declarationReturn, ownerArguments);
+        }
+        // A fake override can name the child as its receiver while its selected
+        // declaration and its physical forwarding slot belong to different ancestors.
+        if (call.Identity is { } id && refs.TryExistentialPhysicalOwner(owner.Name, out var carrier)
+            && refs.TryDeclarationIdentity(id, out _, out var declaringName, out _, out _))
+        {
+            var frames = SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = owner },
+                context.Preparation.SourceSupertypes, refs, sourceFrames: true, physicalSourceApplications: true)
+                .Where(edge => edge.spec.Name == declaringName).Select(edge => edge.spec).Take(2).ToArray();
+            if (frames.Length == 1 && refs.TryInheritedStarSlot(carrier, id, arity, count,
+                    out var slotOwner, out var slot, out var sourceResult))
+            {
+                var frame = frames[0].Args ?? Array.Empty<TypeNode>();
+                CloseResult(sourceResult, frame);
+                call.BindOwner(slotOwner); call.Name = slot.Name;
+                call.Parameters(slot.ParamTypeNodes, slot.SignatureParameters);
+                MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor, slot.DeclarationId);
+                return Align(slot.SuspendReturnType ?? slot.ReturnTypeNode, sourceResult, frame);
+            }
         }
         if (count == 0 && !call.Signature.HasValue) call.Signature = Array.Empty<TypeNode>();
         return node;
