@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.28 (2026-11-19)
+
+- All five NuGet packages and both SDK defaults move to `0.9.28`. The embedded
+  Kotlin compiler and the common standard library remain at **2.4.21**.
+
+### Changes
+
 - Kotlin Regex string replacements now use Kotlin's group references and backslash escaping.
   Use the native Regex.Replace method explicitly for .NET replacement strings.
 - Building and rendering deep chains of suppressed exceptions now takes less time in garbage collection.
