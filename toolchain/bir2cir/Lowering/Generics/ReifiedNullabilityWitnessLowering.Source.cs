@@ -106,8 +106,12 @@ static partial class ReifiedNullabilityWitnessLowering
         BirGraphValue Walk(BirGraphValue node, SourceWitnessFrame witnesses)
         {
             if (node == null || node is IBirExecutablePayload) return node;
+            IBirExpression LowerShape(IBirExpression shape) => (IBirExpression)Walk((BirGraphValue)shape, witnesses);
             if (node is BirReflectedType operation)
-                return (BirGraphValue)Reflect(operation.Operand.Value, witnesses, values, helpers);
+                return (BirGraphValue)Reflect(operation.Operand.Value, witnesses, values, helpers,
+                    ReflectedKotlinType.Projections(operation, helpers, LowerShape));
+            if (node is BirReflectedParameter parameter)
+                return (BirGraphValue)ReflectedKotlinType.Declared(parameter, helpers, LowerShape);
             Func<int, TypeNode, IBirExpression> Capture(int[] reflected) =>
                 (index, argument) => SourceWitnessFor(argument, witnesses, values, reflected?.Contains(index) == true ? helpers : null);
             int[] ReflectedFrame(BirGraphValue body, TypeNode[] args, bool dense = false) =>
@@ -155,9 +159,9 @@ static partial class ReifiedNullabilityWitnessLowering
             if (KotlinTypeWitness.Variable(tested) != null)
             {
                 var witness = SourceWitnessFor(tested, witnesses, values);
-                var flags = KotlinRuntimeTypeWitness.FlagsValue(witness);
-                var classifier = KotlinRuntimeTypeWitness.ClassifierValue(witness);
-                var predicate = KotlinRuntimeTypeWitness.PredicateValue(witness);
+                var flags = OptionalField<IBirExpression>.Of(KotlinRuntimeTypeWitness.FlagsValue(witness));
+                var classifier = OptionalField<IBirExpression>.Of(KotlinRuntimeTypeWitness.ClassifierValue(witness));
+                var predicate = OptionalField<IBirExpression>.Of(KotlinRuntimeTypeWitness.PredicateValue(witness));
                 switch (node)
                 {
                     case BirCast cast:
@@ -236,10 +240,11 @@ static partial class ReifiedNullabilityWitnessLowering
 
     static IBirExpression SourceCopy(IBirExpression value) => (IBirExpression)((BirGraphValue)value).DeepClone();
 
-    static IBirExpression Reflect(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder helpers) =>
+    static IBirExpression Reflect(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder helpers,
+        IBirExpression[] projections = null) =>
         ReflectedKotlinType.Value(type, helpers, (tv, nullable) => witnesses?.Parameters?.IsDeclared(tv) == true
             ? witnesses.Parameters.Value(tv, nullable, helpers)
-            : ReflectedKotlinType.Read(SourceWitnessFor(tv, witnesses, values), nullable, helpers));
+            : ReflectedKotlinType.Read(SourceWitnessFor(tv, witnesses, values), nullable, helpers), projections: projections);
 
     static IBirExpression SourceWitnessFor(TypeNode type, SourceWitnessFrame witnesses, ValueRepresentationLowering values, SourceHelperBinder reflection = null) => type switch {
         TypeNode.Nullable nullable => KotlinRuntimeTypeWitness.NullableValue(SourceWitnessFor(nullable.Of, witnesses, values, reflection), reflection),

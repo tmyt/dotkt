@@ -21,14 +21,21 @@ static partial class KotlinRuntimeTypeWitness
     });
     internal static JsonNode TypeJsonNode() => TypeJson.Write(Type);
 
-    internal static BirFieldGet FlagsValue(IBirExpression witness) => FieldValue(witness, "Item1", new TypeNode.Fqn("System.Int32"));
-    internal static BirFieldGet ClassifierValue(IBirExpression witness) => FieldValue(witness, "Item2", new TypeNode.Fqn("System.Type"));
-    internal static BirFieldGet PredicateValue(IBirExpression witness) => FieldValue(witness, "Item3", PredicateType);
-    internal static BirFieldGet ReflectedValue(IBirExpression witness) => FieldValue(witness, "Item4", new TypeNode.Fqn("System.Object"));
-    static BirFieldGet FieldValue(IBirExpression witness, string name, TypeNode result) => new() {
-        OwnerType = Type, Recv = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)witness).DeepClone()),
-        Name = name, Type = result, Sty = BirGraphValue.CopyType(result),
-    };
+    internal static IBirExpression FlagsValue(IBirExpression witness) => FieldValue(witness, 0, new TypeNode.Fqn("System.Int32"));
+    internal static IBirExpression ClassifierValue(IBirExpression witness) => FieldValue(witness, 1, new TypeNode.Fqn("System.Type"));
+    internal static IBirExpression PredicateValue(IBirExpression witness) => FieldValue(witness, 2, PredicateType);
+    internal static IBirExpression ReflectedValue(IBirExpression witness) => FieldValue(witness, 3, new TypeNode.Fqn("System.Object"));
+    static IBirExpression FieldValue(IBirExpression witness, int index, TypeNode result)
+    {
+        // These constructors are compiler-authored witnesses. Reading scalar facts must
+        // not allocate the unused KType, even when the same method reflects elsewhere.
+        if (witness is BirNew tuple)
+            return (IBirExpression)((BirGraphValue)tuple.Args.Value[index]).DeepClone();
+        return new BirFieldGet {
+            OwnerType = Type, Recv = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)witness).DeepClone()),
+            Name = "Item" + (index + 1), Type = result, Sty = BirGraphValue.CopyType(result),
+        };
+    }
 
     internal static BirNew CreateValue(IBirExpression flags, IBirExpression classifier, IBirExpression predicate, IBirExpression reflected = null) => new() {
         Type = Type, Args = new[] { flags, classifier, predicate, reflected ?? new BirConstant { Type = new TypeNode.Fqn("System.Object"), Value = new BirLiteral.NullLiteral() } },

@@ -243,7 +243,11 @@ static partial class ReifiedNullabilityWitnessLowering
         Apply(SourceFile(method), demand, null, null, null);
         SourceCheck(method.NullableWitnessIndices.Value.SequenceEqual(new[] { 0 }) && method.Params.Value.Length == 1
             && ((BirFieldGet)ordinary.KotlinTypeWitness.Value).Recv.Value is BirLocal
-            && ((BirFieldGet)nullable.KotlinTypeWitness.Value).Recv.Value is BirNew tuple
-            && tuple.Args.Value[0] is BirBinaryOperation { Op.Value: "|" }, "explicit physical-order nullable companion mapping");
+            && nullable.KotlinTypeWitness.Value is BirBinaryOperation { Op.Value: "|",
+                Lhs.Value: BirFieldGet { Name.Value: "Item1", Recv.Value: BirLocal },
+                Rhs.Value: BirConstant { Value.Value: BirLiteral.IntegerLiteral { Value: 1 } } }
+            && nullable.KotlinRuntimeTypeWitness.Value is BirFieldGet { Name.Value: "Item2", Recv.Value: BirLocal }
+            && nullable.KotlinClassifierPredicate.Value is BirFieldGet { Name.Value: "Item3", Recv.Value: BirLocal },
+            "nullable scalar tests project the corresponding witness fields without constructing a reflected type");
     }
 }

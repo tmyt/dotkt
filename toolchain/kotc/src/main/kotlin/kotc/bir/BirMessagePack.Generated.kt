@@ -117,6 +117,8 @@ internal object BirMessagePack {
             is BirCompanionValue -> writeBirCompanionValue(value, packer, depth)
             is BirClassReference -> writeBirClassReference(value, packer, depth)
             is BirReflectedType -> writeBirReflectedType(value, packer, depth)
+            is BirReflectedParameter -> writeBirReflectedParameter(value, packer, depth)
+            is BirReflectedProjection -> writeBirReflectedProjection(value, packer, depth)
             is BirNullableNull -> writeBirNullableNull(value, packer, depth)
             is BirDefaultParameter -> writeBirDefaultParameter(value, packer, depth)
             is BirDefaultReceiver -> writeBirDefaultReceiver(value, packer, depth)
@@ -3052,11 +3054,57 @@ internal object BirMessagePack {
 
     private fun writeBirReflectedType(value: BirReflectedType, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(2)
+        packer.packMapHeader(2 + (if (value.argumentShapes == null) 0 else 1))
         packer.packString("k")
         packer.packString("typeOf")
         packer.packString("operand")
         writeType(value.operand, packer, depth + 1)
+        value.argumentShapes?.let { child ->
+            packer.packString("argumentShapes")
+            checkDepth(depth + 1)
+            packer.packArrayHeader(child.size)
+            for (item0 in child) {
+                writeBirReflectedProjection(item0, packer, depth + 1 + 1)
+            }
+        }
+    }
+
+    private fun writeBirReflectedParameter(value: BirReflectedParameter, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(9)
+        packer.packString("k")
+        packer.packString("typeParameterOf")
+        packer.packString("owner")
+        writeType(value.owner, packer, depth + 1)
+        packer.packString("declarationId")
+        MessagePackText.write(packer, value.declarationId)
+        packer.packString("index")
+        packer.packInt(value.index)
+        packer.packString("name")
+        MessagePackText.write(packer, value.name)
+        packer.packString("variance")
+        MessagePackText.write(packer, value.variance)
+        packer.packString("reified")
+        packer.packBoolean(value.reified)
+        packer.packString("nullable")
+        packer.packBoolean(value.nullable)
+        packer.packString("bounds")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.bounds.size)
+        for (item0 in value.bounds) {
+            write(item0, packer, depth + 1 + 1)
+        }
+    }
+
+    private fun writeBirReflectedProjection(value: BirReflectedProjection, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(1 + (if (value.shape == null) 0 else 1))
+        packer.packString("variance")
+        MessagePackText.write(packer, value.variance)
+        value.shape?.let { child ->
+            packer.packString("shape")
+            write(child, packer, depth + 1)
+        }
     }
 
     private fun writeBirNullableNull(value: BirNullableNull, packer: MessagePacker, depth: Int) {
@@ -3646,7 +3694,7 @@ internal object BirMessagePack {
 
     private fun writeTypeFn(value: TypeNode.Fn, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(4 + (if (value.recv == null) 0 else 1))
+        packer.packMapHeader(4 + (if (value.recv == null) 0 else 1) + (if (value.reflective == null) 0 else 1))
         packer.packString("t")
         packer.packString("fn")
         packer.packString("suspend")
@@ -3662,6 +3710,10 @@ internal object BirMessagePack {
         value.recv?.let { child ->
             packer.packString("recv")
             writeType(child, packer, depth + 1)
+        }
+        value.reflective?.let { child ->
+            packer.packString("reflective")
+            packer.packBoolean(child)
         }
     }
 

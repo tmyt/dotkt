@@ -3,6 +3,9 @@ package roundtriptests.reflectedtypes
 import NUnit.Framework.TestAttribute
 import kotlin.reflect.KTypeProjection
 import kotlin.reflect.KTypeParameter
+import kotlin.reflect.KType
+import kotlin.reflect.KFunction
+import kotlin.reflect.KFunction1
 import kotlin.reflect.KVariance
 import kotlin.reflect.typeOf
 import roundtrip.reflectedtypes.reflected
@@ -12,6 +15,8 @@ import roundtrip.reflectedtypes.LibraryBox
 import roundtrip.reflectedtypes.declaredBox
 import roundtrip.reflectedtypes.defaultType
 import roundtrip.reflectedtypes.reflectAfter
+import roundtrip.reflectedtypes.declaredInCallback
+import roundtrip.reflectedtypes.declaredInDefault
 
 private class Box<T>
 private inline fun <reified T> forwardedDefault() = defaultType<T>()
@@ -26,6 +31,15 @@ private class Enclosing<E> {
 
 class ReflectedTypeTests {
     @TestAttribute fun ordinaryParametersBelongToTheirDeclaration() {
+        fun <T> local() = typeOf<List<T>>()
+        fun parameter(shape: KType) = shape.arguments.single().type!!.classifier as KTypeParameter
+        val localT = parameter(local<Int>())
+        val callbackT = parameter(declaredInCallback<String> { it })
+        val stored: (KType) -> KType = { it }
+        val defaultT = parameter(declaredInDefault<String>())
+        check(localT.name == "T" && localT == parameter(local<String>()))
+        check(callbackT == parameter(declaredInCallback<Int>(stored)) && defaultT == parameter(declaredInDefault<Int>()))
+        check(localT != callbackT && callbackT != defaultT && localT != defaultT)
         val dependent = dependentBound<Any, String>().arguments.single().type!!.classifier as KTypeParameter
         val upper = dependent.upperBounds.single().classifier as KTypeParameter
         check(upper.name == "R" && upper.isReified && upper.upperBounds.single() == typeOf<Any?>())
@@ -79,5 +93,10 @@ class ReflectedTypeTests {
         check(projectedFunction.classifier == Function1::class)
         check(projectedFunction.arguments == listOf(KTypeProjection.STAR, KTypeProjection.invariant(typeOf<Int>())))
         check(typeOf<Function1<*, *>>().arguments == listOf(KTypeProjection.STAR, KTypeProjection.STAR))
+        val callable = typeOf<KFunction1<String, Int>>()
+        check(callable != function && callable.arguments == function.arguments)
+        check(callable.classifier == KFunction1::class && callable.classifier == KFunction::class)
+        check(callable.classifier != function.classifier && reflected<KFunction1<String, Int>>() == callable)
+        check(reflectAfter<List<KFunction1<String, Int>>> {}.arguments.single().type == callable)
     }
 }

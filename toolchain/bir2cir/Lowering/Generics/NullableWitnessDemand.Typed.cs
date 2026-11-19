@@ -202,7 +202,7 @@ sealed partial class NullableWitnessDemand
                 BirCast operation when KotlinTypeWitness.NeedsWitness("cast", operation.ReifiedTypeOperand.OrDefault()) => operation.Type.OrDefault(),
                 _ => null,
             };
-            if (reflectedOnly) tested = (node as BirReflectedType)?.Operand.OrDefault();
+            if (reflectedOnly) tested = node is BirReflectedType { ArgumentShapes.HasValue: false } reflected ? reflected.Operand.OrDefault() : null;
             Require(tested);
             var call = node switch {
                 BirCallStatic value => (value.DeclarationId.OrDefault(), value.TypeArgs.OrEmpty()),

@@ -10,16 +10,53 @@ static class ReflectedKotlinType
     static readonly TypeNode String = new TypeNode.Fqn("kotlin.String"), Boolean = new TypeNode.Fqn("kotlin.Boolean"),
         Classifier = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.reflect.KClassifier")),
         KType = new TypeNode.Fqn("kotlin.reflect.KType"), Projection = new TypeNode.Fqn("kotlin.reflect.KTypeProjection");
-    internal static BirFileDeclaration Apply(BirFileDeclaration root, SourceHelperBinder helpers) =>
-        (BirFileDeclaration)root.Rewrite(node => node is BirReflectedType reflected
-            ? (BirGraphValue)Value(reflected.Operand.Value, helpers) : node);
+    internal static BirFileDeclaration Apply(BirFileDeclaration root, SourceHelperBinder helpers)
+    {
+        BirGraphValue Lower(BirGraphValue node)
+        {
+            node.VisitChildSlots(slot => {
+                var child = slot.Value;
+                var lowered = Lower(child);
+                if (!ReferenceEquals(child, lowered)) slot.Replace(lowered);
+            });
+            if (node is BirClassReference { Type.Value: TypeNode.Fn { Reflective: true, Suspend: false } } literal)
+                literal.Type = ReflectiveCallableClassifier();
+            return node switch {
+                BirReflectedParameter parameter => (BirGraphValue)Declared(parameter, helpers, value => value),
+                BirReflectedType reflected => (BirGraphValue)Value(reflected.Operand.Value, helpers,
+                    projections: Projections(reflected, helpers, value => value)),
+                _ => node,
+            };
+        }
+        return (BirFileDeclaration)Lower(root);
+    }
+
+    internal static IBirExpression[] Projections(BirReflectedType reflected, SourceHelperBinder helpers,
+        Func<IBirExpression, IBirExpression> lower) => reflected.ArgumentShapes.OrDefault()?.Select(p =>
+            MakeProjection(p.Variance.Value, p.Shape.HasValue ? lower(p.Shape.Value) : null, helpers)).ToArray();
+
+    internal static IBirExpression Declared(BirReflectedParameter p, SourceHelperBinder helpers,
+        Func<IBirExpression, IBirExpression> lower) => Parameter(((TypeNode.Fqn)p.Owner.Value).Name, p.DeclarationId.Value,
+            p.Index.Value, new BirTypeParameter { Name = p.Name.Value, Variance = p.Variance.Value, Reified = p.Reified.Value },
+            p.Nullable.Value, p.Bounds.Value.Select(lower).ToArray(), helpers);
+
+    static IBirExpression MakeProjection(string variance, IBirExpression shape, SourceHelperBinder helpers)
+    {
+        var method = variance switch {
+            "star" => "reflectedStar", "in" => "reflectedIn", "out" => "reflectedOut", "invariant" => "reflectedInvariant",
+            _ => throw new InvalidOperationException("Invalid reflected projection " + variance),
+        };
+        return helpers.Bind(new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectedTypeRuntimeKt"),
+            Method = method, Sig = shape == null ? [] : new[] { KType }, Args = shape == null ? [] : new[] { shape }, Ret = Projection, Sty = Projection });
+    }
 
     internal static IBirExpression Value(TypeNode source, SourceHelperBinder helpers,
-        Func<TypeNode.Tv, bool, IBirExpression> variable = null, Func<TypeNode, TypeNode> selectClassifier = null)
+        Func<TypeNode.Tv, bool, IBirExpression> variable = null, Func<TypeNode, TypeNode> selectClassifier = null,
+        IBirExpression[] projections = null)
     {
         var nullable = source is TypeNode.Nullable;
         var core = source is TypeNode.Nullable n ? n.Of : source;
-        if (core is TypeNode.Oblivious oblivious) return Value(oblivious.Of, helpers, variable, selectClassifier);
+        if (core is TypeNode.Oblivious oblivious) return Value(oblivious.Of, helpers, variable, selectClassifier, projections);
         if (core is TypeNode.Tv tv)
         {
             if (variable != null) return variable(tv, nullable);
@@ -39,13 +76,12 @@ static class ReflectedKotlinType
         return Call("reflectedType", [String, Classifier, Boolean, new TypeNode.Array(Projection)],
             [new BirConstant { Type = String, Value = new BirLiteral.TextLiteral(name) },
              new BirClassReference { Type = selectClassifier?.Invoke(classifier) ?? classifier }, new BirConstant { Type = Boolean, Value = new BirLiteral.BooleanLiteral(nullable) },
-             new BirNewArray { Elem = Projection, Elems = arguments.Select(Project).ToArray() }], KType);
+             new BirNewArray { Elem = Projection, Elems = projections ?? arguments.Select(Project).ToArray() }], KType);
 
         IBirExpression Project(TypeNode argument) => argument switch {
-            TypeNode.Star => Call("reflectedStar", [], [], Projection),
-            TypeNode.Projection { Variance: "in" } p => Call("reflectedIn", [KType], [Value(p.Of, helpers, variable, selectClassifier)], Projection),
-            TypeNode.Projection { Variance: "out" } p => Call("reflectedOut", [KType], [Value(p.Of, helpers, variable, selectClassifier)], Projection),
-            _ => Call("reflectedInvariant", [KType], [Value(argument, helpers, variable, selectClassifier)], Projection),
+            TypeNode.Star => MakeProjection("star", null, helpers),
+            TypeNode.Projection p => MakeProjection(p.Variance, Value(p.Of, helpers, variable, selectClassifier), helpers),
+            _ => MakeProjection("invariant", Value(argument, helpers, variable, selectClassifier), helpers),
         };
         BirCallStatic Call(string method, TypeNode[] signature, IBirExpression[] values, TypeNode result) =>
             helpers.Bind(new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectedTypeRuntimeKt"),
@@ -109,8 +145,12 @@ static class ReflectedKotlinType
         if (fn.Suspend)
             throw new InvalidOperationException("bir2cir: typeOf does not support suspend function types");
         var arguments = (fn.Ctx ?? []).Concat(fn.DelegateParams).Append(fn.Ret).ToArray();
+        if (fn.Reflective == true)
+            return ("kotlin.reflect.KFunction", ReflectiveCallableClassifier(), arguments);
         var name = "kotlin.Function" + (arguments.Length - 1);
         return (name, new TypeNode.Fn(false, new TypeNode.Star(),
             arguments.SkipLast(1).Select(_ => (TypeNode)new TypeNode.Star()).ToArray()), arguments);
     }
+
+    static TypeNode ReflectiveCallableClassifier() => new TypeNode.Fqn("kotlin.reflect.KFunction", [new TypeNode.Star()]);
 }

@@ -3645,11 +3645,60 @@ internal static class BirGraphDom
             {
                 case "k": if (field.Value?.GetValue<string>() != "typeOf") throw new FormatException(); break;
                 case "operand": break;
+                case "argumentShapes": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirReflectedType at {source.GetPath()}");
             }
         return new BirReflectedType
         {
             Operand = Field<TypeNode>(fields, "operand", value => TypeNode.Read(value) ?? throw new FormatException()),
+            ArgumentShapes = Field<BirReflectedProjection[]>(fields, "argumentShapes", value => ((JsonArray)value!).Select(item0 => ReadBirReflectedProjection(item0!)).ToArray()),
+        };
+    }
+
+    internal static BirReflectedParameter ReadBirReflectedParameter(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "k": if (field.Value?.GetValue<string>() != "typeParameterOf") throw new FormatException(); break;
+                case "owner": break;
+                case "declarationId": break;
+                case "index": break;
+                case "name": break;
+                case "variance": break;
+                case "reified": break;
+                case "nullable": break;
+                case "bounds": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirReflectedParameter at {source.GetPath()}");
+            }
+        return new BirReflectedParameter
+        {
+            Owner = Field<TypeNode>(fields, "owner", value => TypeNode.Read(value) ?? throw new FormatException()),
+            DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+            Index = Field<int>(fields, "index", value => value!.GetValue<int>()),
+            Name = Field<string>(fields, "name", value => value!.GetValue<string>()),
+            Variance = Field<string>(fields, "variance", value => value!.GetValue<string>()),
+            Reified = Field<bool>(fields, "reified", value => value!.GetValue<bool>()),
+            Nullable = Field<bool>(fields, "nullable", value => value!.GetValue<bool>()),
+            Bounds = Field<IBirExpression[]>(fields, "bounds", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+        };
+    }
+
+    internal static BirReflectedProjection ReadBirReflectedProjection(JsonNode source)
+    {
+        var fields = source.AsObject();
+        foreach (var field in fields)
+            switch (field.Key)
+            {
+                case "variance": break;
+                case "shape": break;
+                default: throw new FormatException($"Unprojected {field.Key} on BirReflectedProjection at {source.GetPath()}");
+            }
+        return new BirReflectedProjection
+        {
+            Variance = Field<string>(fields, "variance", value => value!.GetValue<string>()),
+            Shape = Field<IBirExpression>(fields, "shape", value => ReadBirExpression(value!)),
         };
     }
 
@@ -5492,6 +5541,7 @@ internal static class BirGraphDom
         "companionValue" => ReadBirCompanionValue(source),
         "classRef" => ReadBirClassReference(source),
         "typeOf" => ReadBirReflectedType(source),
+        "typeParameterOf" => ReadBirReflectedParameter(source),
         "nullableNull" => ReadBirNullableNull(source),
         "defaultArgParam" => ReadBirDefaultParameter(source),
         "defaultArgReceiver" => ReadBirDefaultReceiver(source),

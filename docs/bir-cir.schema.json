@@ -171,7 +171,7 @@
         { "$ref": "#/$defs/birNullableHasValue" }, { "$ref": "#/$defs/birNullableValue" },
         { "$ref": "#/$defs/birValueBlock" }, { "$ref": "#/$defs/birEnumValue" },
         { "$ref": "#/$defs/birEnumValues" }, { "$ref": "#/$defs/birCompanionValue" },
-        { "$ref": "#/$defs/birClassReference" }, { "$ref": "#/$defs/birReflectedType" }, { "$ref": "#/$defs/birNullableNull" },
+        { "$ref": "#/$defs/birClassReference" }, { "$ref": "#/$defs/birReflectedType" }, { "$ref": "#/$defs/birReflectedParameter" }, { "$ref": "#/$defs/birNullableNull" },
         { "$ref": "#/$defs/birDefaultParameter" }, { "$ref": "#/$defs/birDefaultReceiver" },
         { "$ref": "#/$defs/birBindingReference" }, { "$ref": "#/$defs/birLocalFunctionReference" },
         { "$ref": "#/$defs/birBinaryOperation" }, { "$ref": "#/$defs/birCast" },
@@ -1130,8 +1130,24 @@
     },
     "birReflectedType": {
       "type": "object", "x-dotkt-model": { "name": "BirReflectedType", "domain": "birCore", "role": "expression" },
-      "properties": { "k": { "const": "typeOf" }, "operand": { "$ref": "#/$defs/type" } },
+      "properties": { "k": { "const": "typeOf" }, "operand": { "$ref": "#/$defs/type" },
+        "argumentShapes": { "type": "array", "items": { "$ref": "#/$defs/birReflectedProjection" } } },
       "required": ["k", "operand"], "additionalProperties": false
+    },
+    "birReflectedParameter": {
+      "type": "object", "x-dotkt-model": { "name": "BirReflectedParameter", "domain": "birCore", "role": "expression" },
+      "properties": {
+        "k": { "const": "typeParameterOf" }, "owner": { "$ref": "#/$defs/type" }, "declarationId": { "type": "string" },
+        "index": { "type": "integer" }, "name": { "type": "string" }, "variance": { "type": "string" },
+        "reified": { "type": "boolean" }, "nullable": { "type": "boolean" },
+        "bounds": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }
+      },
+      "required": ["k", "owner", "declarationId", "index", "name", "variance", "reified", "nullable", "bounds"], "additionalProperties": false
+    },
+    "birReflectedProjection": {
+      "type": "object", "x-dotkt-model": { "name": "BirReflectedProjection", "domain": "birCoreValues" },
+      "properties": { "variance": { "type": "string" }, "shape": { "$ref": "#/$defs/birExpressionNode" } },
+      "required": ["variance"], "additionalProperties": false
     },
     "birNullableNull": {
       "type": "object", "x-dotkt-model": { "name": "BirNullableNull", "domain": "birCore", "role": "expression" },
@@ -1353,7 +1369,7 @@
         "t":    { "const": "fqn" },
         "name": { "type": "string", "description": "e.g. kotlin.Int, kotlin.collections.List, System.Exception, dotkt$CharSequence (a compiler-generated synthetic — `$` is Kotlin-unspeakable; the def carries generated:true)" },
         "args": { "type": "array", "items": { "$ref": "#/$defs/type" }, "description": "generic type arguments; absent = non-generic" },
-        "classifier": { "$ref": "#/$defs/sourceClassifier", "properties": { "ownerPath": { "minItems": 1 } }, "description": "Frontend-authored nested Kotlin classifier identity. It does not occur in a physical member signature; contextual signature checks remain in the validator." }
+        "classifier": { "$ref": "#/$defs/sourceClassifier", "description": "Kotlin classifier identity, including a top-level declaration whose binding name differs from its Kotlin name. It does not occur in a physical member signature." }
       },
       "required": ["t", "name"],
       "additionalProperties": false
@@ -1405,7 +1421,7 @@
     },
     "tFn": {
       "type": "object",
-      "x-dotkt-model": { "name": "Fn", "csharpParameters": ["suspend", "ret", "params", "recv", "clr", "ctx"] },
+      "x-dotkt-model": { "name": "Fn", "csharpParameters": ["suspend", "ret", "params", "recv", "clr", "ctx"], "csharpInit": ["reflective"] },
       "description": "A function type; subsumes plain AND suspend (the H2 position metadata is just an fn with suspend:true). Replaces func:/sfunc:.",
       "properties": {
         "t":       { "const": "fn" },
@@ -1413,6 +1429,7 @@
         "ret":     { "$ref": "#/$defs/type" },
         "params":  { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "recv":    { "$ref": "#/$defs/type", "description": "extension receiver; absent = none" },
+        "reflective": { "type": "boolean", "description": "Kotlin reflective callable classifier rather than the ordinary function classifier; not a different delegate calling convention." },
         "ctx":     {
           "type": "array", "items": { "$ref": "#/$defs/type" },
           "x-dotkt-kotlin": false,

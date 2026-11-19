@@ -944,7 +944,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// its runtime representation is not the erased class token of a CLR generic argument.
 	if (callee.fqNameWhenAvailable?.asString() == "kotlin.reflect.typeOf"
 		&& callee.parameters.isEmpty() && callee.typeParameters.singleOrNull()?.isReified == true)
-		call.typeArguments.singleOrNull()?.let { return BirReflectedType(birType(it)) }
+		call.typeArguments.singleOrNull()?.let { return reflectedSourceType(it, call) }
 	// These are compiler IR operations, not declarations in the JVM runtime. Preserve their semantic owner
 	// and each operand's source type; bir2cir chooses the corresponding Kotlin array content operation.
 	if (irBuiltIns != null && (call.symbol == irBuiltIns.dataClassArrayMemberToStringSymbol ||

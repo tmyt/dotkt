@@ -3802,12 +3802,76 @@ data class BirClassReference(
 }
 
 data class BirReflectedType(
-    val operand: TypeNode
+    val operand: TypeNode,
+    val argumentShapes: List<BirReflectedProjection>? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"typeOf\"")
         output.append(",\"operand\":")
         operand.writeJson(output)
+        argumentShapes?.let { value ->
+            output.append(",\"argumentShapes\":")
+            output.append('[')
+            value.forEachIndexed { index0, item0 ->
+                if (index0 > 0) output.append(',')
+                item0.writeJson(output)
+            }
+            output.append(']')
+        }
+        output.append('}')
+    }
+}
+
+data class BirReflectedParameter(
+    val owner: TypeNode,
+    val declarationId: String,
+    val index: Int,
+    val name: String,
+    val variance: String,
+    val reified: Boolean,
+    val nullable: Boolean,
+    val bounds: List<BirExpression>
+) : BirExpression() {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{\"k\":\"typeParameterOf\"")
+        output.append(",\"owner\":")
+        owner.writeJson(output)
+        output.append(",\"declarationId\":")
+        TypeNodeJson.writeString(declarationId, output)
+        output.append(",\"index\":")
+        output.append(index)
+        output.append(",\"name\":")
+        TypeNodeJson.writeString(name, output)
+        output.append(",\"variance\":")
+        TypeNodeJson.writeString(variance, output)
+        output.append(",\"reified\":")
+        output.append(reified)
+        output.append(",\"nullable\":")
+        output.append(nullable)
+        output.append(",\"bounds\":")
+        output.append('[')
+        bounds.forEachIndexed { index0, item0 ->
+            if (index0 > 0) output.append(',')
+            item0.writeJson(output)
+        }
+        output.append(']')
+        output.append('}')
+    }
+}
+
+data class BirReflectedProjection(
+    val variance: String,
+    val shape: BirExpression? = null
+) : BirValue {
+    override fun writeJson(output: StringBuilder) {
+        output.append("{")
+        var hasField = false
+        if (hasField) output.append(','); hasField = true; output.append("\"variance\":")
+        TypeNodeJson.writeString(variance, output)
+        shape?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"shape\":")
+            value.writeJson(output)
+        }
         output.append('}')
     }
 }

@@ -18,7 +18,7 @@ internal fun BirExpression.yieldsNullAtJoin(): Boolean = when (this) {
     is BirValueBlock -> joinNullBranch == true
     is BirObjectEquals, is BirLocal, is BirThis, is BirNew, is BirThrowExpression,
     is BirUnaryOperation, is BirNullableHasValue, is BirNullableValue,
-    is BirEnumValue, is BirEnumValues, is BirCompanionValue, is BirClassReference, is BirReflectedType,
+    is BirEnumValue, is BirEnumValues, is BirCompanionValue, is BirClassReference, is BirReflectedType, is BirReflectedParameter,
     is BirNullableNull, is BirDefaultParameter, is BirDefaultReceiver,
     is BirBindingReference, is BirLocalFunctionReference,
     is BirBinaryOperation, is BirCast, is BirIsInstance, is BirInstanceOrNull,

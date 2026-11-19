@@ -19709,14 +19709,19 @@ internal static class BirGraphMessagePack
         var count = ReadMap(ref reader);
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
+        OptionalField<BirReflectedProjection[]> field1 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 1); if (IrMessagePack.ReadString(ref reader) != "typeOf") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 2); if (IrMessagePack.ReadString(ref reader) != "typeOf") throw new FormatException(); break;
                 case "operand":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "argumentShapes":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TryReadNil() ? OptionalField<BirReflectedProjection[]>.Null : OptionalField<BirReflectedProjection[]>.Of(ReadArray<BirReflectedProjection>(ref reader, (ref MessagePackReader reader) => ReadBirReflectedProjection(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -19725,13 +19730,14 @@ internal static class BirGraphMessagePack
         return new BirReflectedType
         {
             Operand = field0,
+            ArgumentShapes = field1,
         };
     }
 
     internal static void WriteBirReflectedType(ref MessagePackWriter writer, BirReflectedType value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Operand.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Operand.IsPresent ? 1 : 0) + (value.ArgumentShapes.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("typeOf");
         if (value.Operand.IsPresent)
@@ -19741,6 +19747,224 @@ internal static class BirGraphMessagePack
             else
             {
                 CirMessagePack.WriteType(ref writer, value.Operand.Value, depth + 1);
+            }
+        }
+        if (value.ArgumentShapes.IsPresent)
+        {
+            writer.Write("argumentShapes");
+            if (value.ArgumentShapes.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ArgumentShapes.Value.Length);
+                foreach (var item0 in value.ArgumentShapes.Value)
+                {
+                    WriteBirReflectedProjection(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+    }
+
+    internal static BirReflectedParameter ReadBirReflectedParameter(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        OptionalField<TypeNode> field0 = default;
+        OptionalField<string> field1 = default;
+        OptionalField<int> field2 = default;
+        OptionalField<string> field3 = default;
+        OptionalField<string> field4 = default;
+        OptionalField<bool> field5 = default;
+        OptionalField<bool> field6 = default;
+        OptionalField<IBirExpression[]> field7 = default;
+        for (var index = 0; index < count; index++)
+        {
+            switch (IrMessagePack.ReadString(ref reader))
+            {
+                case "k": Seen(ref seen, 1UL << 8); if (IrMessagePack.ReadString(ref reader) != "typeParameterOf") throw new FormatException(); break;
+                case "owner":
+                    Seen(ref seen, 1UL << 0);
+                    field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    break;
+                case "declarationId":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "index":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    break;
+                case "name":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "variance":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "reified":
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "nullable":
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "bounds":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray<IBirExpression>(ref reader, (ref MessagePackReader reader) => ReadBirExpression(ref reader)));
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        reader.Depth--;
+        return new BirReflectedParameter
+        {
+            Owner = field0,
+            DeclarationId = field1,
+            Index = field2,
+            Name = field3,
+            Variance = field4,
+            Reified = field5,
+            Nullable = field6,
+            Bounds = field7,
+        };
+    }
+
+    internal static void WriteBirReflectedParameter(ref MessagePackWriter writer, BirReflectedParameter value, int depth)
+    {
+        CheckDepth(depth);
+        writer.WriteMapHeader(1 + (value.Owner.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.Index.IsPresent ? 1 : 0) + (value.Name.IsPresent ? 1 : 0) + (value.Variance.IsPresent ? 1 : 0) + (value.Reified.IsPresent ? 1 : 0) + (value.Nullable.IsPresent ? 1 : 0) + (value.Bounds.IsPresent ? 1 : 0));
+        writer.Write("k");
+        writer.Write("typeParameterOf");
+        if (value.Owner.IsPresent)
+        {
+            writer.Write("owner");
+            if (value.Owner.IsNull) writer.WriteNil();
+            else
+            {
+                CirMessagePack.WriteType(ref writer, value.Owner.Value, depth + 1);
+            }
+        }
+        if (value.DeclarationId.IsPresent)
+        {
+            writer.Write("declarationId");
+            if (value.DeclarationId.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.DeclarationId.Value);
+            }
+        }
+        if (value.Index.IsPresent)
+        {
+            writer.Write("index");
+            if (value.Index.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.Index.Value);
+            }
+        }
+        if (value.Name.IsPresent)
+        {
+            writer.Write("name");
+            if (value.Name.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.Name.Value);
+            }
+        }
+        if (value.Variance.IsPresent)
+        {
+            writer.Write("variance");
+            if (value.Variance.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.Variance.Value);
+            }
+        }
+        if (value.Reified.IsPresent)
+        {
+            writer.Write("reified");
+            if (value.Reified.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.Reified.Value);
+            }
+        }
+        if (value.Nullable.IsPresent)
+        {
+            writer.Write("nullable");
+            if (value.Nullable.IsNull) writer.WriteNil();
+            else
+            {
+                writer.Write(value.Nullable.Value);
+            }
+        }
+        if (value.Bounds.IsPresent)
+        {
+            writer.Write("bounds");
+            if (value.Bounds.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.Bounds.Value.Length);
+                foreach (var item0 in value.Bounds.Value)
+                {
+                    WriteBirExpression(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+    }
+
+    internal static BirReflectedProjection ReadBirReflectedProjection(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        OptionalField<string> field0 = default;
+        OptionalField<IBirExpression> field1 = default;
+        for (var index = 0; index < count; index++)
+        {
+            switch (IrMessagePack.ReadString(ref reader))
+            {
+                case "variance":
+                    Seen(ref seen, 1UL << 0);
+                    field0 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "shape":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TryReadNil() ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        reader.Depth--;
+        return new BirReflectedProjection
+        {
+            Variance = field0,
+            Shape = field1,
+        };
+    }
+
+    internal static void WriteBirReflectedProjection(ref MessagePackWriter writer, BirReflectedProjection value, int depth)
+    {
+        CheckDepth(depth);
+        writer.WriteMapHeader(0 + (value.Variance.IsPresent ? 1 : 0) + (value.Shape.IsPresent ? 1 : 0));
+        if (value.Variance.IsPresent)
+        {
+            writer.Write("variance");
+            if (value.Variance.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.Variance.Value);
+            }
+        }
+        if (value.Shape.IsPresent)
+        {
+            writer.Write("shape");
+            if (value.Shape.IsNull) writer.WriteNil();
+            else
+            {
+                WriteBirExpression(ref writer, value.Shape.Value, depth + 1);
             }
         }
     }
@@ -29024,6 +29248,7 @@ internal static class BirGraphMessagePack
         "companionValue" => ReadBirCompanionValue(ref reader),
         "classRef" => ReadBirClassReference(ref reader),
         "typeOf" => ReadBirReflectedType(ref reader),
+        "typeParameterOf" => ReadBirReflectedParameter(ref reader),
         "nullableNull" => ReadBirNullableNull(ref reader),
         "defaultArgParam" => ReadBirDefaultParameter(ref reader),
         "defaultArgReceiver" => ReadBirDefaultReceiver(ref reader),
@@ -29145,6 +29370,7 @@ internal static class BirGraphMessagePack
             case BirCompanionValue node: WriteBirCompanionValue(ref writer, node, depth); break;
             case BirClassReference node: WriteBirClassReference(ref writer, node, depth); break;
             case BirReflectedType node: WriteBirReflectedType(ref writer, node, depth); break;
+            case BirReflectedParameter node: WriteBirReflectedParameter(ref writer, node, depth); break;
             case BirNullableNull node: WriteBirNullableNull(ref writer, node, depth); break;
             case BirDefaultParameter node: WriteBirDefaultParameter(ref writer, node, depth); break;
             case BirDefaultReceiver node: WriteBirDefaultReceiver(ref writer, node, depth); break;

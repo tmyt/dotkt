@@ -8643,6 +8643,7 @@ internal static partial class BirGraphJson
         Require(reader, JsonTokenType.StartObject);
         ulong seen = 0;
         OptionalField<TypeNode> field0 = default;
+        OptionalField<BirReflectedProjection[]> field1 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -8650,10 +8651,14 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 1); if (ReadString(ref reader) != "typeOf") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 2); if (ReadString(ref reader) != "typeOf") throw new FormatException(); break;
                 case "operand":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "argumentShapes":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirReflectedProjection[]>.Null : OptionalField<BirReflectedProjection[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirReflectedProjection(ref reader)));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -8662,6 +8667,108 @@ internal static partial class BirGraphJson
         return new BirReflectedType
         {
             Operand = field0,
+            ArgumentShapes = field1,
+        };
+    }
+
+    internal static BirReflectedParameter ReadBirReflectedParameter(ref Utf8JsonReader reader)
+    {
+        Require(reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        OptionalField<TypeNode> field0 = default;
+        OptionalField<string> field1 = default;
+        OptionalField<int> field2 = default;
+        OptionalField<string> field3 = default;
+        OptionalField<string> field4 = default;
+        OptionalField<bool> field5 = default;
+        OptionalField<bool> field6 = default;
+        OptionalField<IBirExpression[]> field7 = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "k": Seen(ref seen, 1UL << 8); if (ReadString(ref reader) != "typeParameterOf") throw new FormatException(); break;
+                case "owner":
+                    Seen(ref seen, 1UL << 0);
+                    field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
+                    break;
+                case "declarationId":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "index":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TokenType == JsonTokenType.Null ? OptionalField<int>.Null : OptionalField<int>.Of(reader.GetInt32());
+                    break;
+                case "name":
+                    Seen(ref seen, 1UL << 3);
+                    field3 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "variance":
+                    Seen(ref seen, 1UL << 4);
+                    field4 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "reified":
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
+                case "nullable":
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
+                case "bounds":
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirExpression(ref reader)));
+                    break;
+                default: throw new FormatException($"Unknown lowering field {key}");
+            }
+        }
+        Require(reader, JsonTokenType.EndObject);
+        return new BirReflectedParameter
+        {
+            Owner = field0,
+            DeclarationId = field1,
+            Index = field2,
+            Name = field3,
+            Variance = field4,
+            Reified = field5,
+            Nullable = field6,
+            Bounds = field7,
+        };
+    }
+
+    internal static BirReflectedProjection ReadBirReflectedProjection(ref Utf8JsonReader reader)
+    {
+        Require(reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        OptionalField<string> field0 = default;
+        OptionalField<IBirExpression> field1 = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "variance":
+                    Seen(ref seen, 1UL << 0);
+                    field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "shape":
+                    Seen(ref seen, 1UL << 1);
+                    field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirExpression>.Null : OptionalField<IBirExpression>.Of(ReadBirExpression(ref reader));
+                    break;
+                default: throw new FormatException($"Unknown lowering field {key}");
+            }
+        }
+        Require(reader, JsonTokenType.EndObject);
+        return new BirReflectedProjection
+        {
+            Variance = field0,
+            Shape = field1,
         };
     }
 
@@ -12829,6 +12936,7 @@ internal static partial class BirGraphJson
         "companionValue" => ReadBirCompanionValue(ref reader),
         "classRef" => ReadBirClassReference(ref reader),
         "typeOf" => ReadBirReflectedType(ref reader),
+        "typeParameterOf" => ReadBirReflectedParameter(ref reader),
         "nullableNull" => ReadBirNullableNull(ref reader),
         "defaultArgParam" => ReadBirDefaultParameter(ref reader),
         "defaultArgReceiver" => ReadBirDefaultReceiver(ref reader),

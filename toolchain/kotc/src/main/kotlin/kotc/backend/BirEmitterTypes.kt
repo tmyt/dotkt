@@ -97,7 +97,8 @@ internal fun BirEmitter.functionClassifierOperand(type: IrType): TypeNode.Fn? {
     val fqName = type.classFqName ?: return null
     val (kind, arity) = standardFunctionClasses.getFunctionalClassKindWithArity(fqName.parent(), fqName.shortName().asString()) ?: return null
     return TypeNode.Fn(kind == FunctionTypeKind.SuspendFunction || kind == FunctionTypeKind.KSuspendFunction,
-        TypeNode.Star, List(arity) { TypeNode.Star })
+        TypeNode.Star, List(arity) { TypeNode.Star },
+        reflective = true.takeIf { kind == FunctionTypeKind.KFunction || kind == FunctionTypeKind.KSuspendFunction })
 }
 
 // Kotlin's erased classifier application has no lexical type-variable slots,
@@ -201,7 +202,8 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		val extension = functionKind != FunctionTypeKind.KFunction && params.isNotEmpty() &&
 			t.annotations.any { it.type.classFqName?.asString() == "kotlin.ExtensionFunctionType" }
 		return if (extension) TypeNode.Fn(suspend, args.last(), params.drop(1), params.first())
-		else TypeNode.Fn(suspend, args.last(), params)
+		else TypeNode.Fn(suspend, args.last(), params, reflective = true.takeIf {
+			functionKind == FunctionTypeKind.KFunction || functionKind == FunctionTypeKind.KSuspendFunction })
 	}
 	// `by lazy` delegate: kotlin.Lazy<T> is a REAL emitted stdlib interface (its impl `UnsafeLazyImpl` is pure
 	// Kotlin, produced by the stdlib `lazy()` function) — kotc emits the plain Kotlin type identity and falls
