@@ -471,18 +471,15 @@ internal fun BirEmitter.containerValue(block: IrContainerExpression): BirExpress
 	// After the specialized paths, a Unit-valued block executes every statement and produces Unit.
 	// A Nothing tail never produces that value, even if IR gives its enclosing block the Unit type;
 	// retain the terminal expression below. Physical Unit representation belongs to bir2cir.
-	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing())) return sourceValueBlock(
-		type = birType(block.type),
-		stmts = if (block is IrComposite) block.statements.flatMap { stmt(it) } else bodyStmts(block),
-		result = BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral),
-		yieldsNull = false,
-	)
+	if (block.type.isUnit() && !(last is IrExpression && last.type.isNothing()))
+		return sourceUnitAfter(if (block is IrComposite) block.statements.flatMap { stmt(it) } else bodyStmts(block),
+			transparentScope = block is IrComposite)
 	// A value or terminal block: emit its preceding statements, then the last expression.
 	// e.g. `{ counter++ }` lowers to `{ val <unary> = counter; counter = counter + 1; <unary> }` — dropping the
 	// leading statements would lose the temp + the assignment.
 	if (block.statements.size > 1 && last is IrExpression) {
 		val pre = block.statements.dropLast(1).flatMap { stmt(it) }
-		return sourceValueBlock(stmts = pre, result = expr(last))
+		return sourceValueBlock(stmts = pre, result = expr(last), transparentScope = block is IrComposite)
 	}
 	return (last as? IrExpression)?.let { expr(it) } ?: BirConstant(TypeNode.Fqn("kotlin.Unit"), BirLiteral.NullLiteral)
 }

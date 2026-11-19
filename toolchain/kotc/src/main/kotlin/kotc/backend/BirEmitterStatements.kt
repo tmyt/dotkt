@@ -250,7 +250,7 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): List<B
 	is IrBlock -> listOf((if (node.origin?.toString() == "FOR_LOOP") birForLoop(node) else null)
 		?: BirBlock(node.statements.flatMap { stmt(it) }))
 	// IrComposite: a scope-less statement container (e.g. a desugared loop body) -> a flat block.
-	is IrComposite -> listOf(BirBlock(node.statements.flatMap { stmt(it) }))
+	is IrComposite -> node.statements.flatMap { stmt(it) }
 	is IrExpression -> listOf(BirExpressionStatement(expr(node)))
 	else -> listOf(BirExpressionStatement(unsupported(node, "this statement", "the IR node ${node::class.simpleName} has no .NET lowering")))
 }
