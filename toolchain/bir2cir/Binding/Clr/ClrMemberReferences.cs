@@ -88,6 +88,18 @@ static class ClrMemberReferences
         return node;
     }
 
+    // The caller already has emitted owner arguments. Map the open declaration edge
+    // before substitution so these arguments never re-enter runtime alias lowering.
+    internal static MemberRefNode MethodOnPhysicalOwner(ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes,
+        MethodInfo method, Type openOwner, TypeNode[] arguments)
+    {
+        var frame = Enumerable.Range(0, arguments.Length).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+        var reference = MemberRefOf(refs, localTypes, method, MemberRefNode.Kinds.Method, openOwner, frame);
+        return arguments.Length == 0 ? reference : reference with {
+            DeclaringType = SupertypeGraph.SubstOwnerTvs(reference.DeclaringType, arguments),
+        };
+    }
+
     internal static MemberRefNode FieldRefOf(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
     {
         field = OpenFieldDeclarationOf(field);

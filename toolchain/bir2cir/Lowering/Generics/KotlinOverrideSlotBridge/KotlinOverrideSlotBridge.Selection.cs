@@ -24,7 +24,8 @@ static partial class KotlinOverrideSlotBridge
         Phase phase, bool refBuild, IReadOnlySet<string> localTypeNames, NullableRepresentationTypes sourceMapping,
         GenericRepresentationPolicy representations, Func<TypeNode,TypeNode,bool> carrierSeam, Action<SelectedSlot> fill,
         IReadOnlyDictionary<OverrideMethod,TypeNode[]> inheritedSignatures = null,
-        IReadOnlyDictionary<OverrideMethod,TypeNode[]> sourceParameters = null)
+        IReadOnlyDictionary<OverrideMethod,TypeNode[]> sourceParameters = null,
+        BirTypeLowering.PhysicalTypeContext metadataProjection = null)
     {
         var cls = owner.Definition;
         var inheritedSlots = new List<(SelectedSlot Slot, string Key)>();
@@ -54,7 +55,7 @@ static partial class KotlinOverrideSlotBridge
                 // constructed base rather than the interface), and the emitter resolves that base externally.
                 SelectReferenceSlots(owner, defs, spec, supIsInterface, candidates, ownArgs, isValue, refs, phase, sourceMapping, representations,
                     Select, suspendValues: phase == Phase.SuspendValueBridges, inheritedSignatures: inheritedSignatures,
-                    sourceParameters: sourceParameters, nativeAliases: !refBuild);
+                    sourceParameters: sourceParameters, nativeAliases: !refBuild, metadataProjection: metadataProjection);
                 continue;
             }
             var supArgs = SupertypeGraph.EffectiveArgs(spec, sup.Arity);
@@ -228,7 +229,8 @@ static partial class KotlinOverrideSlotBridge
         ReferenceMetadataIndex refs, Phase phase, NullableRepresentationTypes sourceMapping, GenericRepresentationPolicy representations,
         Action<SelectedSlot> fill, bool suspendValues = false,
         IReadOnlyDictionary<OverrideMethod, TypeNode[]> inheritedSignatures = null,
-        IReadOnlyDictionary<OverrideMethod, TypeNode[]> sourceParameters = null, bool nativeAliases = false)
+        IReadOnlyDictionary<OverrideMethod, TypeNode[]> sourceParameters = null, bool nativeAliases = false,
+        BirTypeLowering.PhysicalTypeContext metadataProjection = null)
     {
         var cls = implementingTypeView.Definition;
         if (refs == null) return;
@@ -450,9 +452,10 @@ static partial class KotlinOverrideSlotBridge
                             ps.Length, methodArity, implementationSignature, selectedArgs,
                             out var physicalOwner, out _, out var externalAccessor))
                     {
-                        var projectedOwner = (TypeNode.Fqn)BirTypeLowering.LowerPhysicalType(
-                            descriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames, typeArg: false,
-                            nullableFrames: refs.NullableTypeFrames);
+                        var projectedOwner = (TypeNode.Fqn)(metadataProjection != null && nativeOwner != null
+                            ? BirTypeLowering.LowerSlot(descriptorOwner, metadataProjection, BirTypeLowering.PhysicalSlotRole.Owner)
+                            : BirTypeLowering.LowerPhysicalType(descriptorOwner, refs.Aliases, isValue,
+                                refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames));
                         var currentPhysicalOwner = refs.ExactReflectedOwner(
                             selectedSpec.Name, projectedOwner.Args?.Length ?? 0);
                         if (physicalOwner != currentPhysicalOwner) continue;
@@ -524,6 +527,10 @@ static partial class KotlinOverrideSlotBridge
                         var comparableParams = (usesSelectionFrame ? implementationSignature : slotParams).Select(parameter => BirTypeLowering.LowerPhysicalType(
                             parameter, refs.Aliases, isValue, refs.PhysicalTypeNames,
                             typeArg: false, localTypeNames: null, nullableFrames: refs.NullableTypeFrames)).ToArray();
+                        var metadataOwner = metadataProjection != null && loweredOwner.Args is { Length: > 0 }
+                            && IsNativeSlotOwner(selectedDescriptorOwner.Name, defs, refs.HasDotKtOwner)
+                            ? (TypeNode.Fqn)BirTypeLowering.LowerSlot(selectedDescriptorOwner, metadataProjection,
+                                BirTypeLowering.PhysicalSlotRole.Owner) : null;
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
                                 null, refs, loweredOwner, descriptorMember, methodArity, comparableParams,
                                 MethodTypeParameterShapeKey(selectedSlotTypeParams, selectedSlotArgs),
@@ -531,7 +538,7 @@ static partial class KotlinOverrideSlotBridge
                                 out var physicalParams, out var physicalRet,
                                 // Bindings such as Comparable deliberately collapse their owner arguments.
                                 // Their existing physical selection remains authoritative.
-                                usesSelectionFrame ? selectionOwnerArgs : null))
+                                usesSelectionFrame ? selectionOwnerArgs : null, emittedOwnerArgs: metadataOwner?.Args))
                             continue;
                         descriptorOwner = declarationOwner;
                         descriptorMember = declarationMember;

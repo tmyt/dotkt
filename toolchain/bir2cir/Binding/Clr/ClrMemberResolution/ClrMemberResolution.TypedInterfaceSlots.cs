@@ -84,7 +84,7 @@ static partial class ClrMemberResolution
                     .Where(method => IsPublicOrProtected(method) && method.GetGenericArguments().Length == arity
                         && method.GetParameters().Length == parameters.Length)
                     .Select(method => {
-                        var reference = MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, arguments);
+                        var reference = ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, arguments);
                         var declaringArguments = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
                         return new InterfaceCandidate(method, reference, declaringArguments,
                             reference.ParameterTypes.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArguments)).ToArray(),

@@ -13,7 +13,7 @@ need_fe_klib
 need_stdlib_ref
 need_stdlib_rt
 collect_stdlib_sources
-STDLIB_CLR+=("$ROOT/tests/stdlib-source-array/SourceArrayProbe.kt")
+STDLIB_CLR+=("$ROOT/tests/stdlib-source-array/SourceArrayProbe.kt" "$ROOT/tests/stdlib-source-array/NativeMetadataSlots.kt")
 stdlib_fragment_args
 stdlib_reference_args
 rm -rf -- "$OUT/bir"
@@ -48,6 +48,20 @@ dotnet build "$ROOT/tests/stdlib-source-array/RuntimeProbe.csproj" -c Release -o
     -v q --nologo > "$OUT/runtime-build.log" 2>&1
 actual="$(dotnet "$OUT/runner/RuntimeProbe.dll" "$OUT/dll/SourceArrayProbe.dll" "$STDLIB_RT_DLL")"
 [[ "$actual" == source-array-runtime-ok ]] || die "runtime probe did not complete: $actual"
+
+# Reuse the frontend compilation. The internal metadata assembly needs both Kotlin
+# signatures and the exact CLR methods on its emitted (not runtime) interface types.
+metadata_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
+dotnet "$BIR2CIR_DLL" "$OUT/metadata-cir" --compile-refs "$metadata_refs" --build-stdlib=metadata \
+    "$OUT/bir/NativeMetadataSlots.bir.json" > "$OUT/metadata-bir2cir.log" 2>&1
+jq -e 'any(.types[].methods[]; .name == "Clone" and .ret.name == "kotlin.Any") and
+    any(.types[].methods[]; .name == "Compare" and .ret.name == "kotlin.Int" and
+        [.params[].type.name] == ["kotlin.String", "kotlin.String"])' "$OUT/metadata-cir/NativeMetadataSlots.cir.json" >/dev/null
+dotnet "$ILEMIT_DLL" "$OUT/metadata-dll" NativeMetadataSlots --compile-refs "$metadata_refs" \
+    --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=metadata \
+    "$OUT/metadata-cir/NativeMetadataSlots.cir.json" > "$OUT/metadata-ilemit.log" 2>&1
+cp "$STDLIB_REF_DLL" "$OUT/metadata-dll/"
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/metadata-dll/NativeMetadataSlots.dll"
 
 # This tiny source-owned builtin exercises the same checker split without another
 # whole-stdlib compile. Each invalid Kotlin form must still produce its diagnostic.

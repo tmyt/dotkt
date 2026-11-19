@@ -15,6 +15,7 @@ static partial class KotlinOverrideSlotBridge
         internal readonly GenericRepresentationPolicy Representations;
         internal readonly IReadOnlySet<string> LocalNames;
         internal readonly bool ReferenceBuild;
+        internal readonly BirTypeLowering.PhysicalTypeContext MetadataProjection;
         internal readonly IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> Covariant;
         internal readonly Func<TypeNode, bool> HasClassifier;
         readonly IReadOnlyDictionary<string, string> carriers;
@@ -31,6 +32,8 @@ static partial class KotlinOverrideSlotBridge
         {
             Index = CreateSourceSelection(roots); Views = new(Index.Declarations);
             References = references; IsValue = isValue; LocalNames = localNames; ReferenceBuild = referenceBuild;
+            if (referenceBuild) MetadataProjection = new(true, references.Aliases, isValue,
+                references.PhysicalTypeNames, localNames, references.NullableTypeFrames);
             Representations = representations; Covariant = covariant; this.carriers = carriers;
             HasClassifier = hasClassifier ?? throw new ArgumentNullException(nameof(hasClassifier));
             this.materialized = materialized;
@@ -154,7 +157,7 @@ static partial class KotlinOverrideSlotBridge
         }
         SelectSlots(owner, defs, context.Views, candidates, ownArguments, isValue, refs,
             Phase.PhysicalBridges, context.ReferenceBuild, context.LocalNames, mapping, context.Representations,
-            context.CarrierSeam, Fill, signatures);
+            context.CarrierSeam, Fill, signatures, metadataProjection: context.MetadataProjection);
 
         void Fill(SelectedSlot slot)
         {
@@ -184,6 +187,20 @@ static partial class KotlinOverrideSlotBridge
             ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                 Phase.PhysicalBridges, isValue, context.Annotation);
             var needsSignature = fit.Parameters.Contains(Fit.Bridge) || fit.Return == Fit.Bridge;
+            // Metadata mode retains source classifiers. Runtime-equivalent types can therefore
+            // require a separate MethodDef for an already selected external CLR slot.
+            if (!needsSignature && context.ReferenceBuild &&
+                IsNativeSlotOwner(slot.DescriptorSpec.Name, defs, refs.HasDotKtOwner))
+            {
+                bool Matches(TypeNode source, TypeNode target, BirTypeLowering.PhysicalSlotRole role) =>
+                    TypeNodeDataEquality.Equal(BirTypeLowering.CanonicalPhysicalSlotType(BirTypeLowering.LowerSlot(
+                        SupertypeGraph.SubstOwnerTvs(source, ownArguments), context.MetadataProjection, role)),
+                        BirTypeLowering.CanonicalPhysicalSlotType(target));
+                needsSignature = !Matches(implementation.Return, slot.Return, implementation.ReturnsValue
+                    ? BirTypeLowering.PhysicalSlotRole.Value : BirTypeLowering.PhysicalSlotRole.Return)
+                    || implementation.Parameters.Where((parameter, i) =>
+                        !Matches(parameter.Type, slot.Parameters[i], BirTypeLowering.PhysicalSlotRole.Value)).Any();
+            }
             var needsProperty = slot.IsInterface && slot.PropertyAccessor != null && slot.DescriptorMember != implementation.Name
                 && (definition.Kind != "class" || reimplements || inheritedDefault);
             var needsInterface = slot.IsInterface && (selectedBody != null

@@ -9,6 +9,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   across assemblies retain nested arguments, projections, and nullability.
 - Generic calls can capture the type represented by a star-projected `KClass<*>`, including across DLLs.
 - Source files with case-insensitively colliding basenames can be compiled in the same module.
+- Internal stdlib metadata assemblies preserve Kotlin method signatures while implementing
+  the exact CLR interface slots, including on constructed generic interfaces.
 - Kotlin collection slot bridges preserve the declared result when an override
   returns `Nothing`, including `MutableSet.add`, `addAll`, and `List.indexOf`.
 - Named arguments in `this(...)` and `super(...)` constructor delegation now evaluate in Kotlin source order.
