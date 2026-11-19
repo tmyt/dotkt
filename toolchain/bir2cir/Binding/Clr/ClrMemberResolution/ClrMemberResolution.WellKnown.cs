@@ -133,7 +133,7 @@ static partial class ClrMemberResolution
         string wantedShape,
         out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn,
-        TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null)
+        TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null, TypeNode[] emittedOwnerArgs = null)
     {
         declarationOwner = null;
         declarationMember = null;
@@ -155,7 +155,9 @@ static partial class ClrMemberResolution
             if (!IsPublicOrProtected(method) || method.Name != member
                 || method.GetGenericArguments().Length != methodArity
                 || method.GetParameters().Length != wantedParams.Length) continue;
-            var reference = MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, ownerArgs);
+            var reference = emittedOwnerArgs == null
+                ? MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, ownerArgs)
+                : ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, emittedOwnerArgs);
             var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
@@ -165,9 +167,10 @@ static partial class ClrMemberResolution
             // MethodDef in the physical storage frame. Comparing the latter to Kotlin scalar
             // parameters would lose Add(E) when the interface is ICollection<S(E)>.
             var selectionArgs = declaringArgs;
-            if (selectionOwnerArgs != null)
+            var matchArgs = selectionOwnerArgs ?? (emittedOwnerArgs != null ? ownerArgs : null);
+            if (matchArgs != null)
             {
-                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, bindingLocalTypes, method, open, selectionOwnerArgs) as TypeNode.Fqn;
+                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, bindingLocalTypes, method, open, matchArgs) as TypeNode.Fqn;
                 selectionArgs = selectionOwner?.Args ?? Array.Empty<TypeNode>();
             }
             var selectionParameters = reference.ParameterTypes
@@ -176,7 +179,7 @@ static partial class ClrMemberResolution
             if (wantedShape != null)
             {
                 var declaredTypeParams = method.GetGenericArguments()
-                    .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
+                    .Select(gp => ReferenceMetadataReader.GenericParamDeclaration(gp, native: !refs.HasDotKtOwner(physicalOwner.Name))).ToArray();
                 if (KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declaredTypeParams, selectionArgs)
                     != wantedShape)
                     continue;

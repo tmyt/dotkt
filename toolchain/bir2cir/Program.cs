@@ -842,7 +842,7 @@ sealed class Pipeline
                 }
                 aliasTransitions.AdmitMaterializedTypes(file, appended);
                 genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
-            });
+            }, metadataBuild: referenceBuild);
         // Keep the original slot-owner clock on the owning graph. Covariant
         // slots suppress duplicate suspend bridges using the same actual handles.
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(captured, isValueFqn, refs,
@@ -1306,7 +1306,7 @@ sealed class Pipeline
         }
         // Interface obligations resolve against the complete final declaration
         // graph, using the same owning records as the following consumers.
-        ClrMemberResolution.ResolveInterfaceSlots(emittedLocalTypes, physicalDocuments, refs);
+        ClrMemberResolution.ResolveInterfaceSlots(emittedLocalTypes, physicalDocuments, refs, _options.RefBuild);
         var delegateDeclarations = new PhysicalDelegateDeclarations();
         foreach (var (root, file) in physicalRoots)
         {

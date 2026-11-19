@@ -15,6 +15,7 @@ static partial class KotlinOverrideSlotBridge
         internal readonly GenericRepresentationPolicy Representations;
         internal readonly IReadOnlySet<string> LocalNames;
         internal readonly bool ReferenceBuild;
+        internal readonly BirTypeLowering.PhysicalTypeContext MetadataProjection;
         internal readonly IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> Covariant;
         internal readonly Func<TypeNode, bool> HasClassifier;
         readonly IReadOnlyDictionary<string, string> carriers;
@@ -31,6 +32,8 @@ static partial class KotlinOverrideSlotBridge
         {
             Index = CreateSourceSelection(roots); Views = new(Index.Declarations);
             References = references; IsValue = isValue; LocalNames = localNames; ReferenceBuild = referenceBuild;
+            if (referenceBuild) MetadataProjection = new(true, references.Aliases, isValue,
+                references.PhysicalTypeNames, localNames, references.NullableTypeFrames);
             Representations = representations; Covariant = covariant; this.carriers = carriers;
             HasClassifier = hasClassifier ?? throw new ArgumentNullException(nameof(hasClassifier));
             this.materialized = materialized;
@@ -154,7 +157,7 @@ static partial class KotlinOverrideSlotBridge
         }
         SelectSlots(owner, defs, context.Views, candidates, ownArguments, isValue, refs,
             Phase.PhysicalBridges, context.ReferenceBuild, context.LocalNames, mapping, context.Representations,
-            context.CarrierSeam, Fill, signatures);
+            context.CarrierSeam, Fill, signatures, metadataProjection: context.MetadataProjection);
 
         void Fill(SelectedSlot slot)
         {
@@ -170,6 +173,8 @@ static partial class KotlinOverrideSlotBridge
             var inheritedDefault = slot.IsInterface && definition.Kind == "class" && !reimplements && slot.HasDefault;
             if (slot.IsInterface && definition.Kind == "class" && !reimplements && !inheritedDefault) return;
             var typeParameters = SubstituteParameters(slot.TypeParameters, slot.SemanticSpec.Args ?? []);
+            var nativeMetadata = slot.IsInterface && slot.Referenced
+                && IsNativeSlotOwner(slot.SemanticSpec.Name, defs, refs.HasDotKtOwner) ? context.MetadataProjection : null;
             var fit = AssessFit(implementation, ownArguments, slot.Parameters, slot.Return, slot.UnitValueReturn,
                 slot.Signature, slot.IsInterface, slot.Referenced, slot.DescriptorSpec, slot.PropertyAccessor,
                 Phase.PhysicalBridges, selectedBody != null, isValue, refs, context.LocalNames, mapping,
@@ -179,7 +184,7 @@ static partial class KotlinOverrideSlotBridge
                 () => implementation.Source != null && context.Covariant?.Contains(new(
                     implementation.Source, CovariantInterfaceReturnBridge.DescriptorKey(slot.DescriptorSpec,
                         slot.DescriptorMember, implementation.Arity, slot.Parameters, slot.Return, refs, isValue))) == true,
-                context.HasClassifier);
+                context.HasClassifier, nativeMetadata);
             if (fit == null) return;
             ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                 Phase.PhysicalBridges, isValue, context.Annotation);
@@ -238,7 +243,8 @@ static partial class KotlinOverrideSlotBridge
             // replace an authored overridable DIM, or invent a forwarding body for an abstract one.
             if (definition.Kind == "interface" && implementation.Abstract) return;
             implementation.SetVirtual();
-            string PhysicalKey(TypeNode type) => SupertypeGraph.TypeKey(context.Physical(type));
+            string PhysicalKey(TypeNode type) => SupertypeGraph.TypeKey(nativeMetadata == null
+                ? context.Physical(type) : BirTypeLowering.CanonicalPhysicalSlotType(type));
             // CLR method generic arity is part of the slot identity (ECMA-335 I.8.6.1.6).
             // The selected BODY is part of sharing identity too: equal erased A<Int>/B<String>
             // slots can forward to different overloads, and must not share the first body's cast.

@@ -13,7 +13,8 @@ static partial class KotlinOverrideSlotBridge
         NullableRepresentationTypes sourceMapping, Func<TypeNode,TypeNode> PhysicalSlotType,
         Func<TypeNode,TypeNode,bool> CarrierParameterSeam, Func<TypeNode,TypeNode,bool> CanForwardPhysicalValue,
         Func<TypeNode,bool> canPassAsObject, Func<TypeNode,TypeNode,bool> canForwardClassReturn,
-        Func<bool> existingAlreadyOwns, Func<bool> covariantAlreadyOwns, Func<TypeNode,bool> hasClassifier = null)
+        Func<bool> existingAlreadyOwns, Func<bool> covariantAlreadyOwns, Func<TypeNode,bool> hasClassifier = null,
+        BirTypeLowering.PhysicalTypeContext nativeMetadata = null)
     {
         var declParams = impl.Parameters;
         var declRet = impl.Return;
@@ -29,13 +30,23 @@ static partial class KotlinOverrideSlotBridge
                     && !impl.ReturnsValue)) return null;
         if (phase == Phase.PhysicalBridges && existingAlreadyOwns?.Invoke() == true) return null;
 
+        Fit Compare(TypeNode target, TypeNode source, bool result)
+        {
+            if (nativeMetadata == null)
+                return Classify(target, source, refs, isValue, result, referencedSlot, hasClassifier);
+            // A metadata MethodDef needs no runtime conversion. Match its emitted signature to
+            // the already selected native declaration, retaining the authored row when they differ.
+            var role = result && !impl.ReturnsValue ? BirTypeLowering.PhysicalSlotRole.Return : BirTypeLowering.PhysicalSlotRole.Value;
+            var emitted = BirTypeLowering.LowerSlot(source, nativeMetadata, role);
+            return TypeNodeDataEquality.Equal(BirTypeLowering.CanonicalPhysicalSlotType(emitted),
+                BirTypeLowering.CanonicalPhysicalSlotType(target)) ? Fit.Same : Fit.Bridge;
+        }
         var fit = new Fit[slotParams.Length];
         for (var i = 0; i < slotParams.Length; i++)
         {
             var declT = declParams[i].Type;
             if (declT == null) { fit = null; break; }
-            fit[i] = Classify(slotParams[i], SupertypeGraph.SubstOwnerTvs(declT, ownArgs), refs, isValue,
-                returnPosition: false, referencedSlot, hasClassifier);
+            fit[i] = Compare(slotParams[i], SupertypeGraph.SubstOwnerTvs(declT, ownArgs), false);
             if (fit[i] == Fit.Foreign && SameSourceRepresentationVariables(slotParams[i],
                     SupertypeGraph.SubstOwnerTvs(declT, ownArgs), sourceMapping.OwnerFrame))
                 fit[i] = Fit.Bridge;
@@ -88,8 +99,7 @@ static partial class KotlinOverrideSlotBridge
             // Both MethodDefs already return the Unit reference. A bridge over the
             // same virtual slot would dispatch back into itself.
             ? Fit.Same
-            : Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
-                returnPosition: true, referencedSlot, hasClassifier);
+            : Compare(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), true);
         if (retFit == Fit.Foreign && SameSourceRepresentationVariables(slotRet,
                 SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), sourceMapping.OwnerFrame))
             retFit = Fit.Bridge;

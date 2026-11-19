@@ -75,6 +75,9 @@ static partial class ClrMemberResolution
         var generic = typeof(ClrMemberResolution).GetMethod(nameof(TypedInterfaceConstraintProbe), BindingFlags.Static | BindingFlags.NonPublic)
             .GetGenericArguments().Single();
         var reflected = ReferenceMetadataReader.GenericParamSourceDeclaration(generic);
+        var nativeBound = ReferenceMetadataReader.GenericParamDeclaration(generic, native: true).Constraints.Value.Single();
+        if (nativeBound is not TypeNode.Fqn { Name: "System.IComparable`1", Args: [TypeNode.Tv { Scope: "method", I: 0 }] })
+            throw new InvalidOperationException("Native interface constraint lost the reflected TypeDef or method argument");
         var descriptor = new BirTypeParameter { Name = "DifferentSourceName",
             Constraints = new TypeNode[] { new TypeNode.Fqn("System.IComparable", new TypeNode[] { new TypeNode.Tv("method", 0) }) },
             SpecialConstraints = new[] { "class", "new" } };

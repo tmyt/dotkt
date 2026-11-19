@@ -740,7 +740,7 @@ static class ReferenceMetadataReader
                             carriedProperty?.Association,
                             carriedProperty?.SourceAssociation,
                             sourceMethodName,
-                            method.GetGenericArguments().Select(GenericParamSourceDeclaration).ToArray(),
+                            method.GetGenericArguments().Select(gp => GenericParamDeclaration(gp, native: !dotKtAuthored)).ToArray(),
                             declarationIdentity?.Id,
                             declarationIdentity?.Name,
                             exactPhysicalOwner,
@@ -2880,10 +2880,10 @@ static class ReferenceMetadataReader
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
         DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
 
-    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity)
+    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false)
     {
-        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity);
-        string Name(Type def) => preserveNestedIdentity && def.IsNested ? ExactPhysicalMetadataName(def)
+        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity, nativeNames);
+        string Name(Type def) => nativeNames || preserveNestedIdentity && def.IsNested ? ExactPhysicalMetadataName(def)
             : DottedFqn(StripGenericArity(def.FullName ?? def.Name));
         if (type == null) return null;
         if (type.IsByRef) return Project(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
@@ -3093,13 +3093,15 @@ static class ReferenceMetadataReader
         return null;
     }
 
-    internal static BirTypeParameter GenericParamSourceDeclaration(Type gp)
+    internal static BirTypeParameter GenericParamSourceDeclaration(Type gp) => GenericParamDeclaration(gp, native: false);
+
+    internal static BirTypeParameter GenericParamDeclaration(Type gp, bool native)
     {
         var declaration = new BirTypeParameter { Name = gp.Name };
         var constraints = new List<TypeNode>();
         foreach (var constraint in gp.GetGenericParameterConstraints())
-            if (DeclarationTypeNode(constraint) is TypeNode node)
-                constraints.Add(NormalizeNestedNames(node));
+            if (DeclarationTypeNode(constraint, nominalDelegates: native, preserveNestedIdentity: native, nativeNames: native) is TypeNode node)
+                constraints.Add(native ? node : NormalizeNestedNames(node));
         if (constraints.Count != 0) declaration.Constraints = constraints.ToArray();
 
         var special = new List<string>();

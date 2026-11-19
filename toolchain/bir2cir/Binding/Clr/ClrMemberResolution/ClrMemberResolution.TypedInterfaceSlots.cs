@@ -14,7 +14,8 @@ static partial class ClrMemberResolution
     /// </remarks>
     // Final physical declarations are indexed module-wide before any owner is stamped.
     // This inventory retains the actual mutable MethodDefs, not reconstructed source declarations.
-    public static void ResolveInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
+    public static void ResolveInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IReadOnlyList<BirFileDeclaration> roots,
+        ReferenceMetadataIndex refs, bool metadataBuild = false)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var definitions = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -24,7 +25,7 @@ static partial class ClrMemberResolution
         foreach (var root in roots)
             root.Visit(node => {
                 if (node is IBirTypeDeclaration type && type.Name.HasValue)
-                    StampInterfaceSlots(bindingLocalTypes, type, definitions, refs);
+                    StampInterfaceSlots(bindingLocalTypes, type, definitions, refs, metadataBuild);
             });
     }
 
@@ -48,7 +49,7 @@ static partial class ClrMemberResolution
         TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return);
 
     static void StampInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IBirTypeDeclaration type,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild)
     {
         if (InterfaceSlotSets(type).IsPresent || !type.Methods.HasValue) return;
         var methods = type.Methods.Value;
@@ -84,7 +85,8 @@ static partial class ClrMemberResolution
                     .Where(method => IsPublicOrProtected(method) && method.GetGenericArguments().Length == arity
                         && method.GetParameters().Length == parameters.Length)
                     .Select(method => {
-                        var reference = MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, arguments);
+                        var reference = metadataBuild ? ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, arguments)
+                            : MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, arguments);
                         var declaringArguments = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
                         return new InterfaceCandidate(method, reference, declaringArguments,
                             reference.ParameterTypes.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArguments)).ToArray(),
@@ -98,7 +100,7 @@ static partial class ClrMemberResolution
                     var shape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(descriptor.TypeParams.Value, Array.Empty<TypeNode>());
                     candidates = candidates.Where(candidate => {
                         var declared = candidate.Method.GetGenericArguments()
-                            .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
+                            .Select(gp => ReferenceMetadataReader.GenericParamDeclaration(gp, native: !refs.HasDotKtOwner(iface.Name))).ToArray();
                         return KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declared, candidate.DeclaringArguments) == shape;
                     }).ToList();
                 }
