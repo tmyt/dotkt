@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pin #637's bodyless abstract slots and exact class-super declaration owner."""
+"""Check bodyless abstract slots and direct, super and lifted accessor bindings."""
 
 import json
 import sys
@@ -93,4 +93,27 @@ for method, owner in cir_expected.items():
     if actual_owner != owner or matches[0].get("virtual") is not False:
         raise SystemExit(f"CIR {method} must be a non-virtual call to {owner}, got {matches[0]!r}")
 
-print("abstract slots are bodyless and class-super calls name concrete base declarations")
+# Bound and unbound property references must carry the same selected accessor and
+# instantiated override edges as the direct calls, even when all three dispatch correctly.
+def slot_calls(method):
+    return [(node["prop"], node["declarationId"], node.get("overrides"))
+            for node in objects(method) if node.get("k") == "callInstance"
+            and node.get("method") == "slotValue" and node["ownerType"].get("name") == "RuntimeTypesSlotImpl"]
+
+caller = next(m for m in type_decl(bir, "RuntimeTypesSlotImpl")["methods"] if m["name"] == "exercise")
+direct = {call[0]: call for call in slot_calls(caller)}
+assert set(direct) == {"get", "set"}
+for _, _, edges in direct.values():
+    assert len(edges) == 1 and edges[0]["owner"] == {
+        "t": "fqn", "name": "RuntimeTypesSlot", "args": [{"t": "tv", "scope": "type", "i": 1}]}
+for arity in (0, 1):
+    protocol = f"kotlin.reflect.KMutableProperty{arity}"
+    matches = [decl for decl in bir["types"]
+               if any(i.get("name") == protocol for i in decl.get("interfaces", []))
+               and any(slot_calls(method) for method in decl["methods"])]
+    assert len(matches) == 1, f"expected a {protocol} reference to slotValue"
+    methods = {m["name"]: m for m in matches[0]["methods"]}
+    for method, prop in (("get", "get"), ("invoke", "get"), ("set", "set")):
+        assert slot_calls(methods[method]) == [direct[prop]], f"{protocol}.{method}: wrong accessor or override edge"
+
+print("abstract slots, class-super calls and lifted accessor bindings OK")
