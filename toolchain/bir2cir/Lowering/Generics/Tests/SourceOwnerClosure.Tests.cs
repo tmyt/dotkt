@@ -84,25 +84,32 @@ static class SourceOwnerClosureTests
             throw new InvalidOperationException("Source closure crossed the suspend-lambda declaration frame");
 
         var ambiguous = input with { Methods = new[] { method with { Body = new IBirStatement[] {
-            new BirVariable { Name = "item", Type = integer }, Return(Call(new BirLocal { Name = "item" })),
+            new BirVariable { Name = "item", Type = integer }, new BirVariable { Name = "item", Type = variable },
+            Return(Call(new BirLocal { Name = "item" })),
         } } } };
-        var unresolved = (BirCallInstance)((BirReturn)SourceOwnerClosure.Apply(ambiguous).Methods.Value[0].Body.Value[1]).Value.Value;
+        var unresolved = (BirCallInstance)((BirReturn)SourceOwnerClosure.Apply(ambiguous).Methods.Value[0].Body.Value[^1]).Value.Value;
         if (unresolved._erasedConstraintDispatch.IsPresent || unresolved.OwnerType.Value != new TypeNode.Fqn("Owner"))
             throw new InvalidOperationException("Source closure guessed an ambiguous local's declared type");
 
-        foreach (var (constraints, erased, selected) in new[] {
-            (new TypeNode[] { Bound(integer), Bound(text) }, Array.Empty<TypeNode>(), false),
-            (new TypeNode[] { new TypeNode.Tv("method", 0) }, Array.Empty<TypeNode>(), false),
+        TypeNode next = new TypeNode.Tv("method", 1);
+        foreach (var (constraints, erased, expectedErasure) in new (TypeNode[], TypeNode[], bool?)[] {
+            (new TypeNode[] { Bound(integer), Bound(text) }, Array.Empty<TypeNode>(), null),
+            (new[] { variable }, Array.Empty<TypeNode>(), null),
             (Array.Empty<TypeNode>(), new TypeNode[] { Bound(integer) }, true),
+            (Array.Empty<TypeNode>(), new[] { next }, true),
+            (new[] { next }, new[] { next }, null),
+            (new[] { next, Bound(integer) }, Array.Empty<TypeNode>(), false),
         })
         {
             var source = input with { Methods = new[] { method with {
-                TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = constraints, ErasedInnerConstraints = erased } },
-                Body = new IBirStatement[] { Return(Call(new BirLocal { Name = "item" })) },
+                TypeParams = new[] { new BirTypeParameter { Name = "T", Constraints = constraints, ErasedInnerConstraints = erased },
+                    new BirTypeParameter { Name = "U", Constraints = new TypeNode[] { new TypeNode.Nullable(Bound(integer)) } } },
+                Body = new IBirStatement[] { new BirVariable { Name = "item", Type = variable }, Return(Call(new BirLocal { Name = "item" })) },
             } } };
-            var call = (BirCallInstance)((BirReturn)SourceOwnerClosure.Apply(source).Methods.Value[0].Body.Value[0]).Value.Value;
-            if (call._erasedConstraintDispatch.HasValue != selected
-                || selected && (call.OwnerType.Value != Bound(integer) || !call._erasedConstraintDispatch.Value))
+            var call = (BirCallInstance)((BirReturn)SourceOwnerClosure.Apply(source).Methods.Value[0].Body.Value[^1]).Value.Value;
+            if (call.OwnerType.Value != (expectedErasure.HasValue ? Bound(integer) : new TypeNode.Fqn("Owner"))
+                || call._erasedConstraintDispatch.IsPresent != expectedErasure.HasValue
+                || expectedErasure.HasValue && call._erasedConstraintDispatch.Value != expectedErasure.Value)
                 throw new InvalidOperationException("Source closure guessed an ambiguous/cyclic bound or lost erased-edge provenance");
         }
         var stamp = new BirCallInstance { Sty = text, Ret = integer, DynRet = variable };
