@@ -81,8 +81,7 @@ static partial class FBoundStarProjectionErasure
                 {
                     if (node is IBirExecutablePayload or BirMemberReference) return node;
                     node.VisitChildSlots(slot => slot.Replace(Capture(slot.Value)));
-                    return node is BirGenericStatic call
-                        ? CapturedGenericInvocation.ProjectStorageCall(call, plan.Slots, references) : node;
+                    return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references);
                 }
                 Capture(storage);
             }

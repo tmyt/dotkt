@@ -511,6 +511,75 @@ internal fun starProjectionInvokeStaticHelperUnit(
         authoredTypeArguments, receiverIndex, arguments)
 }
 
+// Only the listed method slots lost their joint CLR proof in projected storage.
+// Resolve the declaration before looking at any value; operands supply type
+// arguments, never a different overload. The caller evaluates each operand once.
+@PublishedApi
+internal fun starProjectionInvokeIntersection(
+    receiver: Any?, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
+    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, missing: IntArray,
+    arguments: Array<Any?>,
+): Any? {
+    val open = if (declaringType.isGenericType) declaringType.getGenericTypeDefinition() else declaringType
+    val definition = starProjectionOpenMethod(open, metadataToken, memberName, authored.size, parameterTypeKeys)
+    var selected = definition
+    if (open != declaringType) {
+        var closed: StarProjectionMethod? = null
+        for (candidate in declaringType.getMethods()) {
+            if (candidate.module == definition.module && candidate.metadataToken == definition.metadataToken) {
+                closed = candidate
+                break
+            }
+        }
+        selected = closed ?: throw IllegalStateException("Missing closed projected method")
+    }
+    val parameters = selected.getParameters()
+    val inferred = arrayOfNulls<StarProjectionType>(authored.size)
+    val exact = BooleanArray(authored.size)
+    for (i in arguments.indices) {
+        val value = arguments[i] ?: continue
+        val formal = parameters[i].parameterType
+        val direct = formal.isGenericParameter && formal.declaringMethod != null
+        val fromValue = arrayOfNulls<StarProjectionType>(authored.size)
+        starProjectionBindConstructionSlots(formal, value.starProjectionRuntimeType(), fromValue, true, missing)
+        for (slot in missing) {
+            val next = fromValue[slot] ?: continue
+            val previous = inferred[slot]
+            inferred[slot] = when {
+                previous == null || previous == next -> next
+                exact[slot] && (!direct || !previous.isAssignableFrom(next)) ->
+                    throw ClassCastException("Incompatible arguments for projected generic method")
+                exact[slot] -> previous
+                !direct && !next.isAssignableFrom(previous) ->
+                    throw ClassCastException("Incompatible arguments for projected generic method")
+                !direct -> next
+                else -> {
+                    var common: StarProjectionType? = previous
+                    while (common != null && !common.isAssignableFrom(next)) common = common.baseType
+                    common ?: throw ClassCastException("No shared CLR class for projected generic method")
+                }
+            }
+            if (!direct) exact[slot] = true
+        }
+    }
+    val types = Array<StarProjectionType>(authored.size) { inferred[it] ?: authored[it] }
+    val target = selected.makeGenericMethod(types)
+    try {
+        return target.invoke(receiver, arguments)
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+@PublishedApi
+internal fun starProjectionInvokeIntersectionUnit(
+    receiver: Any?, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
+    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, missing: IntArray,
+    arguments: Array<Any?>,
+) {
+    starProjectionInvokeIntersection(receiver, declaringType, metadataToken, memberName, parameterTypeKeys, authored, missing, arguments)
+}
+
 // A captured invocation carries explicit argument witnesses and method-slot ownership. Other slots retain the
 // compiler-authored type arguments, even if variance permits a witness to expose a different physical view.
 @PublishedApi

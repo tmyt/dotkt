@@ -24,6 +24,7 @@ import roundtrip.constrainedbound.ScopedBoundOwner
 import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 import GenericValueInterop.IProjectedMark
+import GenericValueInterop.MarkedStreamReceiver
 import GenericValueInterop.NativeBoxApi
 import System.IO.MemoryStream
 
@@ -42,8 +43,10 @@ private class ScopedBoundConsumer : ScopedBoundOwner() {
 class ConstrainedNullableBoundTests {
     private class ClientItem<T>(val payload: T) : PendingItems.Item(), Mark
     private class MarkedStream<T> : MemoryStream(), IProjectedMark
-    private class StreamSlot<A>(var item: A) where A : MemoryStream, A : IProjectedMark {
-        fun keep(value: A): A = NativeBoxApi.KeepMarkedStream<A>(value)
+    private class StreamSlot<A, B>(var item: A)
+        where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark {
+        fun keep(value: A): A = MarkedStreamReceiver().Keep<A>(value)
+        fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
     }
 
     @TestAttribute
@@ -62,10 +65,11 @@ class ConstrainedNullableBoundTests {
         check(exact.item === number)
         val first = MarkedStream<Long>()
         val second = MarkedStream<String>()
-        val streams = StreamSlot<MarkedStream<*>>(first)
+        val streams = StreamSlot<MarkedStream<*>, MarkedStream<*>>(first)
         check(streams.item === first && streams.keep(first) === first)
         streams.item = second
         check(streams.item === second && streams.keep(second) === second)
+        check(streams.second(first, second) === second)
     }
 
     @TestAttribute
