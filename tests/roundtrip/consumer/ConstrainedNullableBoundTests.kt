@@ -8,6 +8,9 @@ import roundtrip.constrainedbound.ReferencedBoundSink
 import roundtrip.constrainedbound.ReferencedIntBoundSink
 import roundtrip.constrainedbound.PendingItems
 import roundtrip.constrainedbound.ResultSource.ResultItem
+import roundtrip.constrainedbound.ResultSource.Tagged
+import roundtrip.constrainedbound.RelatedItemSlot
+import roundtrip.constrainedbound.localRelatedItem
 import roundtrip.constrainedbound.localItemResult
 import roundtrip.constrainedbound.keepItem
 import roundtrip.constrainedbound.checkLocalMethodBounds
@@ -45,6 +48,12 @@ class ConstrainedNullableBoundTests {
         check(keepItem(projected) === text && queue.select(projected).result == "text")
         check(keepItem<ResultItem<*>>(null) == null)
         checkLocalMethodBounds(projected)
+        check(localRelatedItem(projected))
+        val related = RelatedItemSlot<ResultItem<*>, Tagged<*>>()
+        related.item = numeric
+        check(related.item === numeric)
+        related.item = text
+        check(related.item === text)
         val projectedQueue: PendingItems<*> = queue
         check(projectedQueue.projected(projected, null) === text)
         queue.put(numeric)

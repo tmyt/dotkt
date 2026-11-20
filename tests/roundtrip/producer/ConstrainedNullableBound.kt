@@ -32,6 +32,8 @@ class ItemSlot<A : PendingItems.Item> {
     var item: A? = null
 }
 
+class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
+
 fun <A : PendingItems.Item?> keepItem(value: A?): A? = value
 
 fun checkLocalMethodBounds(value: ResultSource.ResultItem<*>) {
@@ -39,6 +41,12 @@ fun checkLocalMethodBounds(value: ResultSource.ResultItem<*>) {
     check(dependent<ResultSource.Tagged<*>, ResultSource.ResultItem<*>>(value, value) === value)
     check(nullableOperand(value, null) === value)
     check(boxed<ResultSource.ResultItem<*>>() == null)
+}
+
+fun localRelatedItem(value: ResultSource.ResultItem<*>): Boolean {
+    val slot = RelatedItemSlot<ResultSource.ResultItem<*>, ResultSource.ResultItem<*>>()
+    slot.item = value
+    return slot.item === value
 }
 private fun <A> marked(value: A): A where A : PendingItems.Item, A : ResultSource.Mark = value
 private fun <A : PendingItems.Item, B : A> dependent(first: A, second: B): A = second
