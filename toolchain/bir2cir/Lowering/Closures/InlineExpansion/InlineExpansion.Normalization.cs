@@ -7,6 +7,43 @@ using DotKt.Cir;
 
 sealed partial class InlineExpansion
 {
+    // A donor local holding an open array does not promise an allocation of
+    // the caller's component type. Keep its storage open when substituting
+    // the element's use-site type; allocations and native signatures stay exact.
+    static void PreserveOpenArrayLocals(BirValueBlock body)
+    {
+        var locals = CollectVarTypes(body);
+        TypeNode Storage(TypeNode type) => type switch {
+            TypeNode.Nullable n => n with { Of = Storage(n.Of) },
+            TypeNode.Oblivious o => o with { Of = Storage(o.Of) },
+            TypeNode.Array a when GenericArrayStorageLowering.NeedsStorage(a) && HasTvType(a.Elem)
+                && a.Elem is not TypeNode.Projection => a with { Elem = new TypeNode.Projection("out", a.Elem) },
+            _ => type,
+        };
+        TypeNode Element(IBirExpression expression) =>
+            BirGraphStaticType.Surface(expression, locals) is TypeNode.Array array ? array.Elem : null;
+        RewriteOwning(body, node => {
+            switch (node)
+            {
+                case BirArrayGet get when !get.Elem.HasValue && Element(get.Array.OrDefault()) is { } elem: get.Elem = elem; break;
+                case BirArraySet set when !set.Elem.HasValue && Element(set.Array.OrDefault()) is { } elem: set.Elem = elem; break;
+                case BirVariable v when v.Type.HasValue: v.Type = Storage(v.Type.Value); break;
+                case BirLocal l when l.Name.HasValue && locals.TryGetValue(l.Name.Value, out var declared)
+                    && Storage(declared) != declared:
+                    l.Sty = Storage(l.Sty.OrDefault() ?? declared); break;
+                case BirCallInstance c when c.DeclarationId.HasValue && c.Ret.HasValue:
+                    c.Ret = Storage(c.Ret.Value);
+                    if (c.Sty.HasValue) c.Sty = Storage(c.Sty.Value);
+                    break;
+                case BirCallStatic c when c.DeclarationId.HasValue && c.Ret.HasValue:
+                    c.Ret = Storage(c.Ret.Value);
+                    if (c.Sty.HasValue) c.Sty = Storage(c.Sty.Value);
+                    break;
+            }
+            return node;
+        });
+    }
+
     static Dictionary<string, TypeNode> CollectVarTypes(BirGraphValue root)
     {
         var types = new Dictionary<string, TypeNode>(StringComparer.Ordinal);

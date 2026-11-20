@@ -50,7 +50,7 @@ static class NonReifiedCastErasure
     {
         // Bare unchecked type-parameter casts keep their documented null
         // admission; a later concrete/native consumer owns its own narrowing.
-        static TypeNode Target(TypeNode source) => source is TypeNode.Nullable
+        static TypeNode Target(TypeNode source) => source is TypeNode.Nullable or TypeNode.Array
             ? BirGraphValue.CopyType(source) : new TypeNode.Nullable(BirGraphValue.CopyType(source));
         switch (node)
         {

@@ -16,6 +16,25 @@ class ArraySourceSurface(
 }
 
 class GenericArraySource<T>(val values: Array<T>)
+
+class InlineArraySource<T>(val values: Array<T?>) {
+    @Suppress("UNCHECKED_CAST")
+    inline fun edit(change: (T) -> T): T {
+        val items = values as Array<T>
+        items[0] = change(items[0])
+        return items[0]
+    }
+}
+
+@Suppress("UNCHECKED_CAST")
+fun <T> openInlineArray(value: T): InlineArraySource<T> =
+    InlineArraySource(arrayOf<Any?>(value) as Array<T?>)
+
+@Suppress("UNCHECKED_CAST", "NOTHING_TO_INLINE")
+inline fun <T : Number> hasNumberArray(value: Any?): Boolean = value as? Array<T> != null
+
+@Suppress("UNCHECKED_CAST")
+inline fun <reified T> hasExactArray(value: Any?): Boolean = value as? Array<T> != null
 annotation class ArraySourceNames(vararg val names: String)
 fun firstStarArray(values: Array<*>): Any? = values[0]
 @ArraySourceNames("star", "array")

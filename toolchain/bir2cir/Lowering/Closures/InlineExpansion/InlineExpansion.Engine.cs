@@ -149,6 +149,7 @@ sealed partial class InlineExpansion
             ?? throw new InvalidOperationException("inline splice has no authored semantic use-site owner");
         body = (BirValueBlock)RenameSpliceSynthClasses(body, clone, semanticOwner);
         body = (BirValueBlock)TypedExecutableFrames.Prebind(body);
+        PreserveOpenArrayLocals(body);
         var dispatchArguments = receivers?.DispatchTypeArgs.OrDefault();
         if (dispatchArguments?.Length == 0) dispatchArguments = null;
         body = (BirValueBlock)TypedExecutableFrames.Substitute(body, typeArguments, ga, dispatchArguments);

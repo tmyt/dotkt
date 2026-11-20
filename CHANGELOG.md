@@ -18,6 +18,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A class inheriting an interface default now satisfies a sibling interface's abstract method or accessor slots.
 - A `Nothing`-returning override fills its selected base slot even when the base and derived classes compile together.
 - Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
+- Inlining a generic Kotlin array cast preserves its declaration-site component bound and the backing array's runtime type.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
 - A Kotlin interface can inherit methods and properties from a different DLL without duplicating
