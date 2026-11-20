@@ -1120,6 +1120,14 @@ The existing §9c-bis nullable-generic limitation remains: `Int?` values use `ob
 
 ## 5c-quater. Mutable iterator and collection-only members dispatch through compiler-owned slot interfaces
 
+Kotlin `ArrayList<E>` selects its native list element from the Kotlin element representation. A constructed
+Kotlin type with an erased interface can use that interface, so an unchecked `Reader<Int> as Reader<Any?>`
+can be stored without copying or changing the reader. A virtual method with no element witness in its
+signature can instead use `object` for this storage. Neither promises a CLR `List<Reader<object>>`.
+Use an explicit `System.Collections.Generic.List<E>` when a native API needs that exact type; there is
+no implicit list copy. Arrays used as elements keep their ordinary CLR type (for example,
+`ArrayList<Array<Int>>` is a `List<int[]>`).
+
 `MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and `MutableList<E>` IS `IList<E>`, and neither
 BCL interface has a slot for Kotlin's `removeAll(elements)`, `retainAll(elements)`, `addAll(elements)` or
 `MutableList.addAll(index, elements)`. Native void `Add` cannot carry Kotlin's authored Boolean `add` result.
@@ -1128,12 +1136,6 @@ contracts through its void mutation slots. These are virtual Kotlin members a us
 may equally be a plain BCL value (`mutableListOf()` is a `List<T>`, `HashSet()` is a `HashSet<T>`) with no Kotlin body
 at all. The same boundary affects `MutableIterable.iterator()`: its operational `IEnumerable<E>` face returns a BCL
 enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt reconciles those categories physically:
-
-Kotlin `ArrayList<E>` selects its native list element from the Kotlin element representation. A constructed
-Kotlin type with an erased interface uses that interface, so an unchecked `Reader<Int> as Reader<Any?>`
-can be stored without copying or changing the reader. This does not promise a CLR `List<Reader<object>>`.
-An explicit `System.Collections.Generic.List<E>` keeps its reified CLR argument; arrays used as elements
-also keep their ordinary array witness (for example, `ArrayList<Array<Int>>` is a `List<int[]>`).
 
 - every call becomes a `kotlin.collections.ClrCollectionDefaults` dispatcher call (`clrCollRemoveAll`,
   `clrCollRetainAll`, `clrCollAdd`, `clrCollAddAll`, `clrListAddAllAt`, `clrListSet`, `clrListRemoveAt`, their projected counterparts,

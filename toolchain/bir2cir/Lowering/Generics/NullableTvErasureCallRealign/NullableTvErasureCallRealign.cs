@@ -554,10 +554,10 @@ static partial class NullableTvErasureCallRealign
     {
         SourceSnapshotSelfTest();
         UnsafeSourceSelfTest();
-        var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 2, 0, 3, 1 },
-            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
-        var methodRoleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 3, 0, 2 },
-            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
+        var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 2, 5, 0, 3, 4, 1 },
+            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 }, elementIndices: new[] { 0 }, nullableElementIndices: new[] { 0 });
+        var methodRoleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 4, 3, 0, 5, 2 },
+            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 }, elementIndices: new[] { 0 }, nullableElementIndices: new[] { 0 });
         var roleContext = new Ctx { OwnerNullableFrame = roleFrame, MethodNullableFrame = methodRoleFrame };
         foreach (var scope in new[] { "type", "method" })
             foreach (var role in Enum.GetValues<NullableRepresentationFrame.Role>())

@@ -441,3 +441,13 @@ private fun EnumRuntimeAssembly.isCompilerAssembly(): Boolean {
     }
     return false
 }
+
+// A slot-stable virtual entry only has the caller's ordinary CLR type.
+// Native arrays, delegates and foreign generic classes keep that witness;
+// a constructed Kotlin reference can carry a different instantiation.
+@PublishedApi
+internal fun kotlinNeedsErasedListElement(token: Any, nullable: Boolean): Boolean {
+    val type = token as StarProjectionType
+    if (type.isValueType) return nullable
+    return type.isGenericType && (token as EnumRuntimeType).assembly.isCompilerAssembly()
+}

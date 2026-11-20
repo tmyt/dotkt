@@ -76,16 +76,27 @@ static partial class NullableBodyDispatch
                     DynRet = current.Ret,
                 };
             }
-            if (role != NullableRepresentationFrame.Role.Nullable)
+            if (role is NullableRepresentationFrame.Role.Storage or NullableRepresentationFrame.Role.NullableStorage)
                 current.Body = new IBirStatement[] { new BirReturn { Value = Call(new TypeNode.Fqn("object")) } };
-            else current.Body = new IBirStatement[] { new BirReturn { Value = new BirConditional {
-                Type = current.Ret,
-                Cond = new BirPropertyGet {
+            else
+            {
+                var ordinary = currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary);
+                var token = new BirClassReference { Type = ordinary };
+                var boolean = new TypeNode.Fqn("kotlin.Boolean");
+                IBirExpression box = role == NullableRepresentationFrame.Role.Nullable ? new BirPropertyGet {
                     Type = new TypeNode.Fqn("System.Type"), Name = "IsValueType", Static = false, Ret = new TypeNode.Fqn("kotlin.Boolean"),
-                    Recv = new BirClassReference { Type = currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary) },
-                }, Then = Call(new TypeNode.Fqn("object")),
-                Else = Call(currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary)),
-            } } };
+                    Recv = token,
+                } : new BirCallStatic {
+                    Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"), Method = "kotlinNeedsErasedListElement",
+                    Sig = new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), boolean }, Ret = boolean,
+                    Args = new IBirExpression[] { token, new BirConstant { Type = boolean,
+                        Value = new BirLiteral.BooleanLiteral(role == NullableRepresentationFrame.Role.NullableElement) } },
+                };
+                current.Body = new IBirStatement[] { new BirReturn { Value = new BirConditional {
+                    Type = current.Ret, Cond = OptionalField<IBirExpression>.Of(box),
+                    Then = Call(new TypeNode.Fqn("object")), Else = Call(ordinary),
+                } } };
+            }
         }
     }
 }

@@ -135,7 +135,10 @@ static partial class MapVarianceRealign
             }
             else kind = call.Method.HasValue ? refs.CollectionFactoryKind(call.Method.Value) : null;
             if (kind == null || !call.TypeArgs.HasValue || call.TypeArgs.Value.Length == 0
-                || UnwrapNullableOblivious(construction.ArgTypes.Value[index]) is not TypeNode.Fqn { Args: { } target }) continue;
+                || UnwrapNullableOblivious(construction.ArgTypes.Value[index]) is not TypeNode.Fqn { Args: { } target } receiver) continue;
+            // An opaque Kotlin list slot does not prescribe a CLR List<T>.
+            // Keep every witness of the selected factory instead of narrowing its fresh elements.
+            if (kind != "set" && AliasVarianceRepresentation.RequiresErasure(receiver, refs)) continue;
             var frame = call.DeclarationId.HasValue ? refs.NullableMethodFrame(call.DeclarationId.Value) : null;
             if (target.Length != 1 || (frame?.SourceArity ?? call.TypeArgs.Value.Length) != 1) continue;
             if (target[0] == call.TypeArgs.Value[frame?.SourcePosition(0) ?? 0]) continue;

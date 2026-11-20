@@ -12,6 +12,13 @@ object TextReader : Reader<String> { override fun label() = "text" }
 fun reader(number: Boolean): Reader<Any?> = (if (number) NumberReader else TextReader) as Reader<Any?>
 
 fun <T> packElement(value: T): ArrayList<T> = ArrayList<T>().apply { add(value) }
+fun <T> literalElement(value: T): ArrayList<T> = arrayListOf(value)
+fun <U> forwardArray(value: Array<U>): ArrayList<Array<U>> = packElement(value)
+
+interface ListPacker { fun <T> pack(value: T): Any }
+object VirtualListPacker : ListPacker {
+    override fun <T> pack(value: T): Any = ArrayList<T>().apply { add(value) }
+}
 
 private fun <T> packedGenericValue(value: T): T =
     ObliviousBox<MutableList<out T>>(mutableListOf(value)).Value[0]

@@ -135,6 +135,10 @@ static partial class NullableRepresentationDemand
                 foreach (var constructor in owner.View.Constructors)
                 {
                     foreach (var parameter in constructor.Params.OrEmpty()) Graph(parameter, owner.Signature);
+                    foreach (var binding in constructor.DelegationBindings.OrEmpty()) Graph(binding, owner.Body);
+                    foreach (var statement in constructor.PreStmts.OrEmpty()) Graph((BirGraphValue)statement, owner.Body);
+                    foreach (var argument in constructor.ThisArgs.OrEmpty().Concat(constructor.BaseArgs.OrEmpty()))
+                        Graph((BirGraphValue)argument, owner.Body);
                     foreach (var statement in constructor.Body.OrEmpty()) Graph((BirGraphValue)statement, owner.Body);
                 }
                 foreach (var method in owner.Methods)

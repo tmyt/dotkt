@@ -13,11 +13,19 @@ class CollectionFactoryPackingTests {
         check((readers[0] as Any) === NumberReader && (readers[1] as Any) === TextReader)
         check(listOf(true, false).map { reader(it) }.map { it.label() }.joinToString() == "number, text")
         check(mutableListOf(reader(false))[0].label() == "text")
+        check(literalElement(reader(true))[0].label() == "number")
         check(NativeListShape.IsExact<Reader<Any?>>(System.Collections.Generic.List<Reader<Any?>>()))
         check(!NativeListShape.IsExact<Reader<Any?>>(readers))
         val ints = arrayOf(1)
         check(NativeListShape.IsExact<Array<Int>>(packElement(ints)))
+        check(NativeListShape.IsExact<Array<Int>>(forwardArray(ints)))
         check(NativeListShape.IsExact<Array<Int>>(ArrayList<Array<Int>>()))
+        val virtual: ListPacker = VirtualListPacker
+        check(NativeListShape.IsExact<Array<Int>>(virtual.pack(ints)))
+        check(NativeListShape.IsExact<Int>(virtual.pack(1)))
+        @Suppress("UNCHECKED_CAST")
+        val fromVirtual = virtual.pack(reader(true)) as ArrayList<Reader<Any?>>
+        check(fromVirtual[0].label() == "number")
     }
     @TestAttribute
     fun importedProducerKeepsFactoryPacking() {

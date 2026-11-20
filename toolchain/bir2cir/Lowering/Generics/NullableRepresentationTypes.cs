@@ -100,6 +100,7 @@ sealed class NullableRepresentationTypes
     };
     TypeNode NullableElementArgument(TypeNode type) => type switch {
         TypeNode.Nullable n => NullableElementArgument(n.Of), TypeNode.Oblivious o => NullableElementArgument(o.Of),
+        TypeNode.Projection p => p with { Of = NullableElementArgument(p.Of) },
         TypeNode.Tv v => (v.Scope == "type" ? _owner : _method).Variable(v, NullableRepresentationFrame.Role.NullableElement),
         _ => new TypeNode.Nullable(ElementArgument(type)),
     };
