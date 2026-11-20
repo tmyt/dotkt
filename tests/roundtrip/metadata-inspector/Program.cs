@@ -2828,9 +2828,7 @@ static (string Version, byte[] Payload) CarrierPayload(
 
 // Test-only inspection dump; production carrier readers use owning typed codecs.
 static JsonDocument DecodeCarrierContent(string version, byte[] payload) =>
-    JsonDocument.Parse(version == BirCarrier.MessagePackV1
-        ? MessagePack.MessagePackSerializer.ConvertToJson(payload)
-        : BirCarrier.DecodeMetadata(version, payload).ToJsonString());
+    JsonDocument.Parse(MessagePack.MessagePackSerializer.ConvertToJson(BirCarrier.LogicalMessagePack(version, payload)));
 
 static void VerifyNestedTypeCarriers(string path)
 {

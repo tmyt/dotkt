@@ -37,7 +37,7 @@ text = 'x' * 512 + r'\uD800\u0000\uDFFF'
 pathlib.Path(sys.argv[1]).write_text('''package compression
 typealias LargeAlias = (String, String, String, String, String, String, String, String) -> String
 fun relay(value: LargeAlias): LargeAlias = value
-enum class Choice(val code: Int) { First(10), Second(20) }
+enum class Choice(val code: Int) { First(10), Second(20), RepeatedEntryThree(30), RepeatedEntryFour(40), RepeatedEntryFive(50) }
 inline fun <reified E : Enum<E>> lookup(name: String): E = enumValueOf<E>(name)
 var counter = 0
 fun next(): Int { counter += 1; return counter }
@@ -89,7 +89,7 @@ def read(configuration):
     return records
 debug,release=read('Debug'),read('Release')
 assert all(r['codec']=='bir-msgpack/1' for r in debug), 'Debug performed carrier compression'
-for kind in ('KotlinInlineAttribute','KotlinDefaultAttribute','KotlinTypeAliasAttribute','KotlinTypeAttribute','KotlinDeclarationIdentityAttribute'):
+for kind in ('KotlinInlineAttribute','KotlinDefaultAttribute','KotlinTypeAliasAttribute','KotlinTypeAttribute','KotlinDeclarationIdentityAttribute','KotlinRichEnumAttribute'):
     assert any(r['name']==kind and r['codec']=='bir-msgpack+deflate/1' for r in release), kind+' missing compression'
 assert any(r['name']=='KotlinDefaultAttribute' and len(r['raw'])<128 and r['codec']=='bir-msgpack/1' for r in release), 'small default lost fallback'
 identity=lambda rows: collections.Counter((r['name'],r['index'],r['raw']) for r in rows)

@@ -12,17 +12,17 @@ static class ExecutableBirCodec
 
     internal static byte[] EncodeExpression(string codec, IBirExpression body) => BirCarrier.EncodeBody(
         codec, body, (writer, value) => ((BirGraphValue)value).WriteJson(writer),
-        (ref MessagePackWriter writer, IBirExpression value) => BirGraphMessagePack.WriteBirExpression(ref writer, value, 0));
+        (ref MessagePackWriter writer, IBirExpression value) => EmbeddedBirMessagePack.WriteBirExpression(ref writer, value, 0));
 
     internal static IBirExpression ReadExpression(string codec, byte[] content) => BirCarrier.DecodeBody(
-        codec, content, BirGraphJson.ReadBirExpression, BirGraphMessagePack.ReadBirExpression);
+        codec, content, BirGraphJson.ReadBirExpression, EmbeddedBirMessagePack.ReadBirExpression);
 
     internal static byte[] EncodeInline(string codec, BirInlinePayload body) => BirCarrier.EncodeBody(
         codec, body, (writer, value) => value.WriteJson(writer),
-        (ref MessagePackWriter writer, BirInlinePayload value) => BirGraphMessagePack.WriteBirInlinePayload(ref writer, value, 0));
+        (ref MessagePackWriter writer, BirInlinePayload value) => EmbeddedBirMessagePack.WriteBirInlinePayload(ref writer, value, 0));
 
     internal static BirInlinePayload ReadInline(string codec, byte[] content) => BirCarrier.DecodeBody(
-        codec, content, BirGraphJson.ReadBirInlinePayload, BirGraphMessagePack.ReadBirInlinePayload);
+        codec, content, BirGraphJson.ReadBirInlinePayload, EmbeddedBirMessagePack.ReadBirInlinePayload);
 
     // Conflict checks are not graph hand-offs. Compare the canonical logical
     // encoding only when duplicate declarations actually need to be compared.
@@ -44,6 +44,16 @@ static class ExecutableBirCodec
         var text = new TypeNode.Fqn("kotlin.String");
         var frame = new TypeNode.Tv("method", 1);
         var suspendShape = new TypeNode.Fn(true, new TypeNode.Nullable(frame), new TypeNode[] { frame });
+        // The same spelling can be a program string or structured BIR. Assert
+        // the wire token types independently of the round-tripping reader.
+        var spelling = TypeNode.ToJson(frame);
+        var typedParameter = new BirParameter { Name = spelling, KotlinType = frame };
+        var wire = BirCarrier.EncodeMetadata(typedParameter, (ref MessagePackWriter writer, BirParameter parameter) =>
+            EmbeddedBirMessagePack.WriteBirParameter(ref writer, parameter, 0));
+        var fields = BirCarrier.DecodeMetadata(Codec, wire);
+        if (fields["name"]?.GetValue<string>() != spelling || fields["kotlinType"] is not JsonObject typeMap
+            || typeMap["t"]?.GetValue<string>() != "tv")
+            throw new InvalidOperationException("Embedded BIR conflated a string with a type record");
         var sourceDefault = new BirValueBlock {
             Type = text,
             Stmts = new IBirStatement[] { new BirSourcePoint { Span = new BirSourceSpan { F = "producer.kt", L = 3 } } },

@@ -174,7 +174,10 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
   codec identifier. All structured BIR metadata, including declaration identity, supertypes, bounds and
-  visibility, is written as a MessagePack record. Scalar CLR markers and external attributes are not BIR.
+  visibility, is written as a MessagePack record. In an embedded graph, type snapshots, bounds and
+  frames are MessagePack maps or arrays, not strings containing JSON. Kotlin string literals keep
+  their original contents even when they look like JSON. This does not change the inter-stage BIR
+  file codec. Scalar CLR markers and external attributes are not BIR.
   Runtime generic enum reflection uses the exact member names from a scalar `KotlinEnumRuntimeApi`
   attribute and ordinal-marked enum literals; it does not load a compiler codec.
 - `bir-msgpack+deflate/1` is one complete raw RFC 1951 DEFLATE stream of the same MessagePack bytes,

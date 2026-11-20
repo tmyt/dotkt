@@ -1500,10 +1500,17 @@ static class ReferenceMetadataReader
             c.AttributeType.FullName == attrFullName &&
             c.AttributeType.Assembly == declaringAssembly &&
             HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr));
-        if (cad == null || cad.ConstructorArguments.Count != 2 ||
-            cad.ConstructorArguments[0].Value is not string version)
-            return null;
-        return BirCarrier.DecodeMetadata(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
+        if (cad == null) return null;
+        try
+        {
+            if (cad.ConstructorArguments.Count != 2 || cad.ConstructorArguments[0].Value is not string version)
+                throw new FormatException("expected (codec, byte[]) constructor arguments");
+            return BirCarrier.DecodeMetadata(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
+        }
+        catch (Exception ex) when (ex is not InvalidDataException)
+        {
+            throw new InvalidDataException($"malformed trusted {attrFullName} carrier", ex);
+        }
     }
 
     static BirTypeParameter[] SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,

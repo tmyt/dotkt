@@ -81,7 +81,7 @@ static partial class RoundtripMetadata
     {
         if (type is BirInterfaceDefinition { ManagedReferenceContract.HasValue: true } contract)
         {
-            AppendHeader(type, HeaderCarrier(AKManagedReferenceContract, contract.ManagedReferenceContract.Value, BirGraphMessagePack.WriteBirManagedReferenceContract));
+            AppendHeader(type, HeaderCarrier(AKManagedReferenceContract, contract.ManagedReferenceContract.Value, EmbeddedBirMessagePack.WriteBirManagedReferenceContract));
             contract.ManagedReferenceContract = default;
         }
         // Preserve producer-owned ordinals before the CLR-enum early return;
@@ -114,12 +114,12 @@ static partial class RoundtripMetadata
         {
             if (!type.CompanionCarrier.Value.Kind.HasValue)
                 throw new InvalidOperationException("semantic companion reached metadata emission without representation lowering");
-            AppendHeader(type, HeaderCarrier(AKCompanion, type.CompanionCarrier.Value, BirGraphMessagePack.WriteBirCompanionCarrier));
+            AppendHeader(type, HeaderCarrier(AKCompanion, type.CompanionCarrier.Value, EmbeddedBirMessagePack.WriteBirCompanionCarrier));
             type.CompanionCarrier = default;
         }
         if (type.StaticCarrier.HasValue)
         {
-            AppendHeader(type, HeaderCarrier(AKStaticCarrier, type.StaticCarrier.Value, BirGraphMessagePack.WriteBirStaticCarrier));
+            AppendHeader(type, HeaderCarrier(AKStaticCarrier, type.StaticCarrier.Value, EmbeddedBirMessagePack.WriteBirStaticCarrier));
             type.StaticCarrier = default;
         }
         var source = HeaderSupertypes(type);
@@ -152,7 +152,7 @@ static partial class RoundtripMetadata
 
     static void StampRichEnumHeader(IBirTypeDeclaration type, BirRichEnumDeclaration fact)
     {
-        AppendHeader(type, HeaderCarrier(AKRichEnum, fact, BirGraphMessagePack.WriteBirRichEnumDeclaration));
+        AppendHeader(type, HeaderCarrier(AKRichEnum, fact, EmbeddedBirMessagePack.WriteBirRichEnumDeclaration));
         // Runtime reflection needs only these four selected member names. Do not
         // introduce a runtime dependency on the compiler's BIR codec or inflater.
         var text = new TypeNode.Fqn("System.String");
@@ -177,7 +177,7 @@ static partial class RoundtripMetadata
                 throw new InvalidOperationException("basic-enum metadata entry does not match its physical declaration");
             physical[index].Attrs = physical[index].Attrs.OrEmpty().Append(HeaderMarker(AKBasicEnumOrdinal, "System.Int32", index)).ToArray();
         }
-        AppendHeader(type, HeaderCarrier(AKBasicEnum, enumeration.BasicEnum.Value, BirGraphMessagePack.WriteBirBasicEnumCarrier));
+        AppendHeader(type, HeaderCarrier(AKBasicEnum, enumeration.BasicEnum.Value, EmbeddedBirMessagePack.WriteBirBasicEnumCarrier));
         enumeration.BasicEnum = default;
     }
 
@@ -206,8 +206,8 @@ static partial class RoundtripMetadata
         if (type is BirInterfaceDefinition representation) representation.KotlinType = default;
         if (type is BirClassDefinition { RichEnum.HasValue: true } rich)
         {
-            // Generic enum operations also need this exact API map at runtime,
-            // including for stdlib-owned enums; it is not reference-only metadata.
+            // Stamp the declaration and the selected reflection names together,
+            // including for stdlib-owned enums in the runtime assembly.
             StampRichEnumHeader(type, rich.RichEnum.Value);
         }
         if (type is BirClassDefinition runtimeClass)

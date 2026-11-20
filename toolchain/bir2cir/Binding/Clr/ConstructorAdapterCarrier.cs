@@ -13,12 +13,12 @@ static class ConstructorAdapterCarrier
     internal static byte[] Encode(string codec, BirConstructorAdapterPayload payload) => BirCarrier.EncodeBody(codec, payload,
         (writer, value) => value.WriteJson(writer),
         (ref MessagePackWriter writer, BirConstructorAdapterPayload value) =>
-            BirGraphMessagePack.WriteBirConstructorAdapterPayload(ref writer, value, 0));
+            EmbeddedBirMessagePack.WriteBirConstructorAdapterPayload(ref writer, value, 0));
 
     internal static BirConstructorAdapterPayload Decode(string codec, byte[] content)
     {
         var payload = BirCarrier.DecodeBody(codec, content, BirGraphJson.ReadBirConstructorAdapterPayload,
-            BirGraphMessagePack.ReadBirConstructorAdapterPayload);
+            EmbeddedBirMessagePack.ReadBirConstructorAdapterPayload);
         if (payload.Parameters.Value.Length != payload.Signature.Value.Length
             || payload.Arguments.Value.Length != payload.TerminalSignature.Value.Length)
             throw new FormatException("Constructor-adapter signature and argument arities differ");

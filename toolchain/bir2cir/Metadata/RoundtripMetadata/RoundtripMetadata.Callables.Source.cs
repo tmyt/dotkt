@@ -175,7 +175,7 @@ static partial class RoundtripMetadata
             attributes = Add(attributes, PlacementCarrier(AKTypeParameterBounds, BirCarrier.EncodeMetadata(method.RoundtripMethodBounds.Value, SourceBoundsSnapshot.WriteMetadata)));
         if (method.ExistentialInnerConstructorFactory.HasValue)
         {
-            attributes = Add(attributes, HeaderCarrier(AKInnerConstructorFactory, method.ExistentialInnerConstructorFactory.Value, BirGraphMessagePack.WriteBirInnerConstructorFactory));
+            attributes = Add(attributes, HeaderCarrier(AKInnerConstructorFactory, method.ExistentialInnerConstructorFactory.Value, EmbeddedBirMessagePack.WriteBirInnerConstructorFactory));
             method.ExistentialInnerConstructorFactory = default;
         }
         var identityPosition = attributes.OrEmpty().Length;
@@ -285,7 +285,7 @@ static partial class RoundtripMetadata
     static BirAttribute TypeCarrier(string name, TypeNode type) => PlacementCarrier(name,
         TypeNodeCarrier.Encode(TypeNodeCarrier.Codec, type), TypeNodeCarrier.Codec);
     static BirAttribute PropertyAccessorCarrier(EventPropertySourceFacts fact)
-        => HeaderCarrier(AKPropertyAccessor, fact, BirGraphMessagePack.WriteEventPropertySourceFacts);
+        => HeaderCarrier(AKPropertyAccessor, fact, EmbeddedBirMessagePack.WriteEventPropertySourceFacts);
     static BirAttribute NrtMarker(string name, BirAttribute attribute)
     { attribute.AttrExternal = true; attribute.AttrAssembly = "System.Runtime"; return attribute; }
     static BirAttribute NullableAttribute(OptionalField<int[]> flags)

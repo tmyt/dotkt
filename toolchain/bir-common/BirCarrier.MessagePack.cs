@@ -24,15 +24,14 @@ public static partial class BirCarrier
     // fields, not an executable BIR decoder or a JSON text round trip.
     public static JsonNode DecodeMetadata(string codec, byte[] content)
     {
-        if (codec == MessagePackDeflateV1) content = Inflate(content);
-        else if (codec != MessagePackV1) throw new NotSupportedException($"unknown metadata codec `{codec}`");
+        content = LogicalMessagePack(codec, content);
         var reader = new MessagePackReader(content);
         var value = ReadMetadataValue(ref reader, 0);
         if (!reader.End || value is not JsonObject) throw new FormatException("Expected one metadata record");
         return value;
     }
 
-    static JsonNode? ReadMetadataValue(ref MessagePackReader reader, int depth)
+    internal static JsonNode? ReadMetadataValue(ref MessagePackReader reader, int depth)
     {
         if (depth > BirJson.MaxDepth) throw new FormatException("Metadata nesting exceeds the BIR limit");
         switch (reader.NextMessagePackType)
@@ -80,8 +79,7 @@ public static partial class BirCarrier
         MessagePackBodyReader<T> binary)
     {
         if (codec == JsonV1) return DecodeBody(codec, content, json);
-        if (codec == MessagePackDeflateV1) content = Inflate(content);
-        else if (codec != MessagePackV1) throw new NotSupportedException($"unknown carrier codec `{codec}`");
+        content = LogicalMessagePack(codec, content);
         var reader = new MessagePackReader(content);
         var body = binary(ref reader);
         if (!reader.End) throw new FormatException();
@@ -100,6 +98,12 @@ public static partial class BirCarrier
         return saved >= 32 && saved * 10 >= content.Length
             ? (MessagePackDeflateV1, compressed) : (codec, content);
     }
+
+    public static byte[] LogicalMessagePack(string codec, byte[] content) => codec switch {
+        MessagePackV1 => content,
+        MessagePackDeflateV1 => Inflate(content),
+        _ => throw new NotSupportedException($"unknown carrier codec `{codec}`"),
+    };
 
     static byte[] Deflate(byte[] content)
     {

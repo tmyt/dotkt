@@ -29,12 +29,12 @@ def executable_payload(attribute, inspector):
 
 _record_reader = None
 
-def metadata_record(arguments):
+def metadata_record(arguments, inspector=None):
     """Read declaration records with the production codec; reuse one inspector per fixture."""
     global _record_reader
     if _record_reader is None:
         _record_reader = subprocess.Popen(
-            ["dotnet", os.environ["METADATA_INSPECTOR_DLL"], "--decode-metadata-lines"],
+            ["dotnet", inspector or os.environ["METADATA_INSPECTOR_DLL"], "--decode-metadata-lines"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         def finish():
             _record_reader.stdin.close()

@@ -22,7 +22,7 @@ static partial class BirFileCodec
         Header.CopyTo(buffer.GetSpan(Header.Length));
         buffer.Advance(Header.Length);
         var writer = new MessagePackWriter(buffer);
-        BirGraphMessagePack.Write(ref writer, file);
+        FileBirMessagePack.Write(ref writer, file);
         writer.Flush();
         return buffer.WrittenSpan.ToArray();
     }
@@ -31,7 +31,7 @@ static partial class BirFileCodec
     {
         if (!content.Span.StartsWith(Header)) throw new FormatException();
         var reader = new MessagePackReader(content[Header.Length..]);
-        var file = BirGraphMessagePack.Read(ref reader);
+        var file = FileBirMessagePack.Read(ref reader);
         if (!reader.End) throw new FormatException();
         return file;
     }
