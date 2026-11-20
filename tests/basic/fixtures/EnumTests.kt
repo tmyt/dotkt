@@ -354,13 +354,14 @@ enum class EnumEmptyRich {
 private var enumArgumentTrace = ""
 private fun <T> recordEnumArgument(label: String, value: T): T { enumArgumentTrace += label; return value }
 
-enum class EnumSecondaryState(val value: Int, val label: String = "number:$value") {
+enum class EnumSecondaryState(val value: Int, val label: String = "number:$value", val copy: Int = value) {
     PRIMARY(label = recordEnumArgument("R", "primary"), value = recordEnumArgument("L", 1)),
     NUMBER("xx", true),
     TEXT("word"),
     CHAINED(true),
     DEFAULTED(value = 5L),
     BODY(secondary = recordEnumArgument("B", true), input = recordEnumArgument("I", "1234567")) {
+        init { recordEnumArgument("E", Unit) }
         override fun marker(): String = "body:$label"
     };
 
@@ -607,7 +608,8 @@ class EnumTests {
         assertEquals("3:yes", EnumSecondaryState.CHAINED.marker())
         assertEquals("5:long", EnumSecondaryState.DEFAULTED.marker())
         assertEquals("body:number:7", EnumSecondaryState.BODY.marker())
-        assertEquals("RLBI", enumArgumentTrace)
+        assertEquals(EnumSecondaryState.PRIMARY.value, EnumSecondaryState.PRIMARY.copy)
+        assertEquals("RLBIE", enumArgumentTrace)
         assertEquals("initialized", EnumSecondaryState.PRIMARY.path)
         assertEquals("initialized:int", EnumSecondaryState.NUMBER.path)
         assertEquals("initialized:string", EnumSecondaryState.TEXT.path)
