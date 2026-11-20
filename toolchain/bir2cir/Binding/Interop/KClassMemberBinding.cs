@@ -61,13 +61,16 @@ static class KClassMemberBinding
         BirGraphValue Walk(BirGraphValue node)
         {
             if (node is IBirExecutablePayload) return node;
+            if (node is BirCallInstance call && call.OwnerType.OrDefault() is TypeNode.Fqn { Name: "kotlin.reflect.KClass" }
+                && call.Prop.OrDefault() == "get" && call.Method.OrDefault() is "simpleName" or "qualifiedName"
+                && call.Recv.OrDefault() is IBirExpression receiver && StaticKotlinFqn(receiver) is string name)
+                return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
+                    Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
-            if (node is not BirCallInstance call || call.OwnerType.OrDefault() is not TypeNode.Fqn { Name: "kotlin.reflect.KClass" }
-                || call.Prop.OrDefault() != "get" || call.Method.OrDefault() is not ("simpleName" or "qualifiedName")
-                || call.Recv.OrDefault() is not IBirExpression receiver || StaticKotlinFqn(receiver) is not string name)
-                return node;
-            return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
-                Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
+            if (node is not BirRuntimeClass runtime) return node;
+            var type = new TypeNode.Fqn("System.Type");
+            return new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt"),
+                Method = "runtimeKClass", Sig = new TypeNode[] { type }, Ret = type, Args = new IBirExpression[] { runtime } };
         }
         Walk(root);
     }
@@ -95,8 +98,8 @@ static class KClassMemberBinding
     // Null for any other token shape (tv/array/fn), which the caller routes to the run-time read instead of folding.
     static string FqnOf(TypeNode typeNode) => typeNode switch
     {
-        TypeNode.Fqn f => f.Name,
-        TypeNode.Nullable { Of: TypeNode.Fqn f } => f.Name,
+        TypeNode.Fqn f => ReflectedKotlinType.SourceName(f),
+        TypeNode.Nullable { Of: TypeNode.Fqn f } => ReflectedKotlinType.SourceName(f),
         _ => null,
     };
 

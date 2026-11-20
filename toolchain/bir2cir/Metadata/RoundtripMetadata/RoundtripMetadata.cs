@@ -43,6 +43,7 @@ static partial class RoundtripMetadata
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
+    internal const string RuntimeClassifierAttribute = Ns + "KotlinClassifierIdentityAttribute";
     const string AKBasicEnum    = Ns + "KotlinBasicEnumAttribute";
     const string AKBasicEnumOrdinal = Ns + "KotlinBasicEnumOrdinalAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
@@ -107,7 +108,7 @@ static partial class RoundtripMetadata
     // (not projected as Kotlin source), so keeping them keeps rt consistent with app/ref; a retention-aware filter
     // (SOURCE-retention annotations should ship on NO binary) is a broader downstream policy, deliberately NOT folded here.
     static bool IsRuntimeStrippable(string fqn) =>
-        fqn.StartsWith(Ns, StringComparison.Ordinal)          // DotKt.Runtime.CompilerServices.* round-trip carriers
+        (fqn.StartsWith(Ns, StringComparison.Ordinal) && fqn != RuntimeClassifierAttribute)
         || fqn.StartsWith("kotlin.clr.", StringComparison.Ordinal)  // @Clr* binding surface (ref-side only)
         || fqn == ANullable || fqn == ANullableCtx;           // NRT [Nullable]/[NullableContext]
 
@@ -226,6 +227,7 @@ static partial class RoundtripMetadata
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
+            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.String"))),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(DefaultBirCarrier.AttributeName, Ctor(Param("System.Int32"), Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKReadOnly, Ctor()),
@@ -267,6 +269,7 @@ static partial class RoundtripMetadata
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
         if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias),
+            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.String"))),
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKData, Ctor()),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),

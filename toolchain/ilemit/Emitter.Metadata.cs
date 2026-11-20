@@ -282,16 +282,20 @@ sealed partial class Emitter
             case "System.Double": writer.Write(Convert.ToDouble(value)); return;
             case "System.String": WriteSerString(writer, (string)value); return;
             case "System.Type":
-                WriteSerString(writer, value is Type t ? t.AssemblyQualifiedName : (string)value);
+                WriteSerString(writer, value is Type t ? AttributeTypeName(t) : (string)value);
                 return;
             case "System.Object" when value is Type token:
                 writer.Write((byte)0x50); // Boxed CLASS token, ECMA-335 II.23.3.
-                WriteSerString(writer, token.AssemblyQualifiedName);
+                WriteSerString(writer, AttributeTypeName(token));
                 return;
             default:
                 throw new NotSupportedException($"custom attribute fixed argument type '{type}' is not supported");
         }
     }
+
+    // A local TypeDef is resolved in the assembly carrying the custom attribute. Its
+    // TypeBuilder has no AssemblyQualifiedName until the assembly is persisted.
+    static string AttributeTypeName(Type type) => type is TypeBuilder ? type.FullName : type.AssemblyQualifiedName;
 
     static bool IsAttributeEnumType(Type type) =>
         type.IsEnum || type is TypeBuilder && type.BaseType?.FullName == "System.Enum";

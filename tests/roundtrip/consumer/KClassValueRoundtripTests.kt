@@ -40,6 +40,19 @@ class KClassValueImportedDerived : ImportedManual() {
 }
 
 class KClassValueRoundtripTests {
+    private fun checkImportedGenericClassifier() {
+        fun token(value: Any) = value::class
+        val literal = ImportedPlainBase::class
+        val classifier = kotlin.reflect.typeOf<ImportedPlainBase<Int>>().classifier as KClass<*>
+        val runtime = token(ImportedPlainBase(1))
+        check(mapOf(literal to "registered")[runtime] == "registered")
+        check(runtime == classifier && runtime == token(ImportedPlainBase("text")))
+        check(classifier.simpleName == "ImportedPlainBase" && runtime.qualifiedName == "roundtrip.kclassvalues.ImportedPlainBase")
+        check(ImportedPlainBase::class.qualifiedName == runtime.qualifiedName)
+        check(literal.isInstance(KClassValueImportedPlain()))
+        check(token(KClassValueImportedPlain()) == KClassValueImportedPlain::class)
+    }
+
     @TestAttribute
     fun referencedUnrelatedGenericBaseSatisfiesConsumerInterfaceSlots() {
         val value: KClass<*> = KClassValueImportedPlain()
@@ -83,6 +96,7 @@ class KClassValueRoundtripTests {
 
     @TestAttribute
     fun literalSourceInterfacesAndWitnessesSurviveDllProjection() {
+        checkImportedGenericClassifier()
         val value = String::class
         val classifier: KClassifier = boundedIdentity(value)
         assertTrue(classIdentity(value) === value)
