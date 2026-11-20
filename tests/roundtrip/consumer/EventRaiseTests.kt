@@ -55,6 +55,12 @@ class EventRaiseTests {
         } catch (_: ClassCastException) {}
         narrowToken.close()
         assertEquals(7, total)
+
+        val fixed = PolicyPublisher()
+        try {
+            fixed.Changed("not an integer")
+            error("a concrete integer slot must reject a string before dispatch")
+        } catch (_: ClassCastException) {}
     }
 
     @TestAttribute

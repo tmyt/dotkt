@@ -243,12 +243,17 @@ static partial class ClrEventImplBinding
         var receiver = raise.Recv;
         IBirExpression[] Arguments(int expected)
         {
+            var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
             if (!raise.PackedArgs.HasValue)
             {
                 var direct = raise.Args.Value;
                 if (direct.Length != expected)
                     throw new InvalidOperationException($"event raise '{owner.Name}.{name}' expects {expected} argument(s), got {direct.Length}");
-                return direct;
+                // Direct operands are the scalar form of vararg Any?. Keep that
+                // value boundary even when there is no packed array to read.
+                return direct.Select(value => (IBirExpression)new BirCast {
+                    Type = element, E = OptionalField<IBirExpression>.Of(value),
+                }).ToArray();
             }
 
             IBirExpression Bind(string stem, TypeNode type, IBirExpression value)
@@ -260,7 +265,6 @@ static partial class ClrEventImplBinding
             if (receiver.HasValue && receiver.Value is not BirThis)
                 receiver = OptionalField<IBirExpression>.Of(Bind("dotkt$eventReceiver",
                     ((BirGraphValue)receiver.Value).ResultTypeStamp ?? owner, receiver.Value));
-            var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
             var packed = Bind("dotkt$eventArgs", new TypeNode.Array(element), raise.PackedArgs.Value);
             BirLocal Read() => (BirLocal)((BirGraphValue)packed).DeepClone();
             BirConstant Int(int n) => new() { Type = new TypeNode.Fqn("kotlin.Int"), Value = new BirLiteral.IntegerLiteral(n) };
