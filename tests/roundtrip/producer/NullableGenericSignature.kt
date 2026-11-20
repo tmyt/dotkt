@@ -3,6 +3,12 @@ package roundtrip.nullablegenericsignature
 import System.ArraySegment
 import kotlin.coroutines.*
 
+interface ReadStrategy<out T> { fun read(reader: GenericReader): T }
+interface GenericReader {
+    fun <T> readValue(strategy: ReadStrategy<T>): T = strategy.read(this)
+    fun <T : Any> readNullable(strategy: ReadStrategy<T?>): T? = readValue(strategy)
+}
+
 fun <T> echo(value: ArraySegment<T>?): ArraySegment<T>? = value
 
 fun <T> choose(value: ArraySegment<T>?): Int = if (value == null) -1 else value.Count + 10

@@ -21,6 +21,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   including through interfaces imported from another DLL.
 - A Kotlin interface can inherit methods and properties from a different DLL without duplicating
   the base declaration's identity in a third assembly.
+- Interfaces can inherit nullable-generic default methods from a DLL without importing the compiler's private implementation helpers.
 
 ## 0.9.28 (2026-11-19)
 
