@@ -75,6 +75,10 @@ class Registrar : CompilerPluginRegistrar() {
                 })
                 val top = moduleFragment.files.flatMap { it.declarations.filterIsInstance<IrSimpleFunction>() }
                 val original = top.singleOrNull { it.name.asString() == "original" } ?: return
+                val codes = checkNotNull(pluginContext.referenceClass(ClassId.topLevel(FqName("pluginprobe.api.InternalCodes")))).owner
+                check(codes.visibility == org.jetbrains.kotlin.descriptors.DescriptorVisibilities.INTERNAL)
+                val version = codes.declarations.filterIsInstance<IrProperty>().single { it.name.asString() == "version" }
+                check(version.isConst && (version.backingField?.initializer?.expression as? org.jetbrains.kotlin.ir.expressions.IrConst)?.value == 43)
                 fun method(function: IrSimpleFunction): IrCall {
                     lateinit var call: IrCall
                     function.acceptVoid(object : IrVisitorVoid() {

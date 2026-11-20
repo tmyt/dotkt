@@ -1757,7 +1757,8 @@ internal sealed partial class AssemblyScanner : IDisposable
     {
         var visible = _md.TypeDefinitions
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
-            .Where(x => IsPublicTopLevel(x.Definition))
+            .Where(x => x.Definition.GetDeclaringType().IsNil &&
+                (IsPublicTopLevel(x.Definition) || SourceTypeVisibility(x.Handle) == "internal"))
             .Where(x => !_physicalCompanionCarriers.Contains(x.Handle))
             .Where(x => !_existentialCarriers.Contains(x.Handle))
             .Where(x => !_genericStaticCarriers.ContainsKey(x.Handle))
@@ -2254,20 +2255,15 @@ internal sealed partial class AssemblyScanner : IDisposable
         if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem
             || _protectedStaticNested.Contains(handle))
             result.Flags = Flags.AsProtected(result.Flags);
-        using (var sourceVisibility = _attrs.CarrierDocument(
-            handle, MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute"))
-            if (sourceVisibility is not null)
+        if (SourceTypeVisibility(handle) is { } visibility)
+            result.Flags = (result.Flags & ~0xE) | (visibility switch
             {
-                var visibility = sourceVisibility.RootElement.GetProperty("visibility").GetString();
-                result.Flags = (result.Flags & ~0xE) | (visibility switch
-                {
-                    "internal" => 0,
-                    "private" => 2,
-                    "protected" => 4,
-                    "public" => 6,
-                    _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
-                });
-            }
+                "internal" => 0,
+                "private" => 2,
+                "protected" => 4,
+                "public" => 6,
+                _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
+            });
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         if (isAnnotation && KotlinAnnotationTargets(handle, names) is { } target)
             result.ClassAnnotation.Add(target);
@@ -5386,7 +5382,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             if (_csharp14Extensions.IsInfrastructure(childHandle))
                 continue;
             var childDef = _md.GetTypeDefinition(childHandle);
-            if (!IsPublicNested(childDef)) continue;
+            if (!IsPublicNested(childDef) && SourceTypeVisibility(childHandle) != "internal") continue;
             // CLR nesting is also the physical home of local/anonymous/closure/state-machine implementation
             // types. Their standard generated marker is the declaration boundary: they remain present in the DLL
             // for execution and lexical access, but are not Kotlin classifiers and must not enter NestedClassName.
@@ -7403,6 +7399,13 @@ internal sealed partial class AssemblyScanner : IDisposable
         }
         var name = string.Join("+", chain);
         return string.IsNullOrEmpty(package) ? name : package + "." + name;
+    }
+
+    private string? SourceTypeVisibility(TypeDefinitionHandle handle)
+    {
+        using var carrier = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute");
+        return carrier is null ? null : carrier.RootElement.GetProperty("visibility").GetString()
+            ?? throw new InvalidDataException("missing Kotlin type visibility");
     }
 
     private static bool IsPublicTopLevel(TypeDefinition def) =>
