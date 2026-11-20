@@ -9,6 +9,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Reference and runtime DLLs now use MessagePack for all embedded BIR metadata. Release builds also compress declaration metadata when doing so saves space.
 - An instance of a Kotlin generic class has the same reflection classifier as its class literal and `typeOf` classifier, including when used as a map key across DLLs.
 - Rich enum entries can reorder named constructor arguments without changing their evaluation order, including entries with their own class body.
+- Reading a nullable class-bounded type parameter from a native generic call or indexer now produces verifiable IL.
 
 - An inherited property such as `message` on a Kotlin exception from another DLL now resolves its getter and preserves virtual dispatch.
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
