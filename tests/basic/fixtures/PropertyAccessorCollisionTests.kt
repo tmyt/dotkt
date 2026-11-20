@@ -126,6 +126,20 @@ private interface NullableGenericInheritedDefault<T> {
 private class NullableGenericInheritedDefaultInt : NullableGenericInheritedDefault<Int>
 private class NullableGenericInheritedDefaultString : NullableGenericInheritedDefault<String>
 
+private interface SiblingRead<T> { val value: T }
+private interface SiblingWrite<T> : SiblingRead<T> { override var value: T }
+private interface SiblingTagged<T> : SiblingWrite<T> { val tag: String }
+private interface SiblingIntDefault : SiblingWrite<Int> {
+    override var value: Int
+        get() = stored
+        set(value) { stored = value }
+    var stored: Int
+}
+private class SiblingDefaultInstance : SiblingIntDefault, SiblingTagged<Int> {
+    override var stored = 7
+    override val tag get() = "tag"
+}
+
 class PropertyAccessorCollisionTests {
     @TestAttribute
     fun propertiesAndSourceShapedFunctionsKeepDistinctPhysicalBodies() {
@@ -205,6 +219,13 @@ class PropertyAccessorCollisionTests {
         nullableString.value = "ignored"
         assertEquals(null, nullableString.value)
         assertEquals("ok", nullableString.echo("ok"))
-
+        val sibling = SiblingDefaultInstance()
+        val mutable: SiblingWrite<Int> = sibling
+        val tagged: SiblingTagged<Int> = sibling
+        mutable.value = 8
+        assertEquals(8, tagged.value)
+        tagged.value = 9
+        assertEquals(9, (sibling as SiblingRead<Int>).value)
+        assertEquals(9, sibling.stored)
     }
 }
