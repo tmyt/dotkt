@@ -766,6 +766,14 @@ static class TypedPhysicalValueCoercion
         { ReplaceResultStamps(node, actual); return node; }
         if (IsVoid(declared) && actual != null && !IsVoid(actual))
         { ReplaceResultStamps(node, actual, includeSty: false); return node; }
+        // An erased result can be the original Kotlin function object, not a CLR delegate.
+        // Leave the call at its physical return type until its function view is obtained.
+        if (resultUsed && Underlying(declared) is TypeNode.Fn { Suspend: false }
+            && FunctionViewOperand(node, actual, declared, index) is { } functionView)
+        {
+            ReplaceResultStamps(node, actual);
+            return Cast(functionView, declared);
+        }
         var genericObject = declared is TypeNode.Tv && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" } && plainCall;
         var objectGeneric = actual is TypeNode.Tv && declared is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" } && plainCall;
         var genericSlots = declared is TypeNode.Tv && actual is TypeNode.Tv && declared != actual && invocation;

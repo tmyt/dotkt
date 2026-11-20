@@ -38,6 +38,9 @@ class FunctionVarianceTests {
     @TestAttribute
     fun nominalFunctionsCanBePassedAndRetainTheirIdentity() {
         val direct = Direct()
+        val function: (Int) -> Int = direct
+        check(retainFunctionValue(function)(21) == 42)
+        check((retainFunctionValue(function) as Any) === direct)
         check(invokeDefault(21, direct) == 42)
         val imported: NominalUnary = NominalTwice()
         check(imported(21) == 42 && CallbackChild(imported).callback(21) == 42)
