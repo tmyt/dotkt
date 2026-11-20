@@ -866,22 +866,21 @@ internal fun BirEmitter.sourceRichEnumDefinitions(ec: IrClass): List<BirClassDef
 			// args (the `args`) are baked into the subclass's base() call; the entry field constructs it with
 			// just (__name, __ordinal) so the subclass ctor is uniform regardless of user params.
 			val sub = "<>${name}_${ent.name.asString()}"
-			val superCall = enumSuperCall(cc)
-			subDefs.add(sourceEnumEntrySubclass(
-				sub, name, cc, superCall.args, superCall.bindings, superCall.parameterTypes, superCall.declarationId))
+			subDefs.add(sourceEnumEntrySubclass(sub, name, cc, enumSuperCall(cc)))
 			fields.add(BirFieldDeclaration(ent.name.asString(), TypeNode.Fqn(name), isStatic = true, initOnly = true,
 				init = BirField.Value(BirNew(TypeNode.Fqn(sub), nameOrd(i, ent), argTypes = listOf(TypeNode.Fqn("kotlin.String"), TypeNode.Fqn("kotlin.Int"))))))
 		} else {
-			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
-			if (ecc == null) {
+			val site = (ent.initializerExpression as? IrExpressionBody)?.expression?.enumEntrySite()
+			if (site == null) {
 				invariantBroken(ent, "a rich enum entry has no enum-constructor call")
 				return@forEachIndexed
 			}
+			val ecc = site.call
 			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
 			// label: String = "c")`), so it fills omitted defaults like every other call shape — under its own
 			// evaluation plan (§2.7), which rides a `callEval` around this initializer because a static field's
 			// initializer IS an expression position.
-			val (entryPlan, entryArgs) = withCallPlan(ecc) { filledArgs(ecc) }
+			val (entryPlan, entryArgs) = withDelegationPlan(site) { filledArgs(ecc) }
 			val newArgs = nameOrd(i, ent) + entryArgs
 			val selectedCtor = ecc.symbol.owner
 			val selectedTypes = selectedCtor.parameters.filter(::isValueParameter)
@@ -986,7 +985,8 @@ internal data class EnumSuperCall(
 	val args: List<BirExpression>,
 	val bindings: List<BirCallBinding>?,
 	val parameterTypes: List<TypeNode>,
-	val declarationId: String? = null)
+	val declarationId: String? = null,
+	val statement: org.jetbrains.kotlin.ir.IrStatement? = null)
 
 /** The exact enum-super call a per-entry body's anonymous subclass makes. Omitted defaults are filled like every
  * constructor call site, while the selected constructor's source parameter types preserve overload identity after
@@ -999,16 +999,17 @@ internal fun BirEmitter.enumSuperCall(cc: IrClass): EnumSuperCall {
 		invariantBroken(cc, "a rich enum entry body has no constructor")
 		return EnumSuperCall(emptyList(), null, emptyList())
 	}
-	val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
-	if (call == null) {
+	val site = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it.enumEntrySite() }
+	if (site == null) {
 		invariantBroken(ctor, "a rich enum entry body has no enum-constructor call")
 		return EnumSuperCall(emptyList(), null, emptyList())
 	}
-	val (plan, args) = withCallPlan(call) { filledArgs(call) }
+	val call = site.call
+	val (plan, args) = withDelegationPlan(site) { filledArgs(call) }
 	val parameterTypes = call.symbol.owner.parameters.filter(::isValueParameter)
 		.map { birType(it.type) }
 	return EnumSuperCall(args, plan.bindingFacts().takeIf { !plan.isEmpty }, parameterTypes,
-		declarationIdForPhysicalAllocation(call.symbol.owner))
+		declarationIdForPhysicalAllocation(call.symbol.owner), site.statement)
 }
 
 /** Instance storage authored by a Kotlin class body. Ordinary classes, rich enums and entry subclasses share this
@@ -1077,7 +1078,7 @@ internal fun BirEmitter.instanceInitializerStatements(klass: IrClass): List<BirS
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
  *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries overriding members. */
 internal fun BirEmitter.sourceEnumEntrySubclass(subName: String, baseName: String, cc: IrClass,
-		userArgs: List<BirExpression>, delegationBindings: List<BirCallBinding>?, baseParamTypes: List<TypeNode>, baseDeclarationId: String?): BirClassDefinition {
+		superCall: EnumSuperCall): BirClassDefinition {
 	// The frontend's anonymous entry class has no stable source name. Pin every member-body owner reference to the
 	// explicit BIR subclass identity chosen above, just as lifted anonymous classes do before emitting their bodies.
 	anonNames[cc] = subName
@@ -1107,20 +1108,20 @@ internal fun BirEmitter.sourceEnumEntrySubclass(subName: String, baseName: Strin
 	val ctorBody = ArrayList<BirStatement>()
 	(cc.declarations.filterIsInstance<IrConstructor>().firstOrNull()?.body as? IrBlockBody)
 		?.statements?.forEach { statement ->
+			if (statement === superCall.statement) return@forEach
 			when (statement) {
-				is IrEnumConstructorCall, is IrDelegatingConstructorCall -> {}
 				is IrInstanceInitializerCall -> ctorBody.addAll(instanceInitializerStatements(cc))
 				else -> ctorBody.addAll(stmt(statement))
 			}
 		}
 	activeSemanticOwner = savedSemanticOwner
 	activeSemanticOwnerDeclaration = savedSemanticDeclaration
-	val baseArgs = listOf(BirLocal("__name"), BirLocal("__ordinal")) + userArgs
+	val baseArgs = listOf(BirLocal("__name"), BirLocal("__ordinal")) + superCall.args
 	val delegationSig = (listOf(TypeNode.Fqn("kotlin.String"), TypeNode.Fqn("kotlin.Int")) +
-		baseParamTypes)
+		superCall.parameterTypes)
 	val subCtor = BirConstructor(listOf(BirParameter("__name", TypeNode.Fqn("kotlin.String")), BirParameter("__ordinal", TypeNode.Fqn("kotlin.Int"))),
 		baseArgs, ctorBody.toList(), thisArgs = BirField.Null, delegationSig = delegationSig,
-		delegationDeclarationId = baseDeclarationId, delegationBindings = delegationBindings, vis = "public")
+		delegationDeclarationId = superCall.declarationId, delegationBindings = superCall.bindings, vis = "public")
 	// An enum-entry body is an anonymous subclass semantically owned by the enum declaration. Keep that fact explicit;
 	// bir2cir chooses its physical nesting just like it does for an object expression or local class.
 	return BirClassDefinition(subName, TypeNode.Fqn(baseName), emptyList(), fields, listOf(subCtor), overrides + accessors + clrEventMethods,
@@ -2031,17 +2032,24 @@ private data class DelegationSite(
 	val temporaries: List<IrVariable>,
 )
 
-private fun IrBlockBody.delegationSite(allowEnumCall: Boolean = false): DelegationSite? =
-	statements.firstNotNullOfOrNull { statement ->
-		val reorder = (statement as? IrBlock)?.takeIf { it.origin == IrStatementOrigin.ARGUMENTS_REORDERING_FOR_CALL }
-		val call = (reorder?.statements?.lastOrNull() ?: statement) as? IrFunctionAccessExpression
-			?: return@firstNotNullOfOrNull null
-		if (call !is IrDelegatingConstructorCall && !(allowEnumCall && call is IrEnumConstructorCall)) return@firstNotNullOfOrNull null
-		val temporaries = reorder?.statements?.dropLast(1).orEmpty().map {
-			(it as? IrVariable)?.takeIf { v -> !v.isVar && v.initializer != null } ?: return@firstNotNullOfOrNull null
-		}
-		DelegationSite(statement, call, temporaries)
+private inline fun org.jetbrains.kotlin.ir.IrStatement.constructorSite(
+	accept: (IrFunctionAccessExpression) -> Boolean,
+): DelegationSite? {
+	val reorder = (this as? IrBlock)?.takeIf { it.origin == IrStatementOrigin.ARGUMENTS_REORDERING_FOR_CALL }
+	val call = (reorder?.statements?.lastOrNull() ?: this) as? IrFunctionAccessExpression ?: return null
+	if (!accept(call)) return null
+	val temporaries = reorder?.statements?.dropLast(1).orEmpty().map {
+		(it as? IrVariable)?.takeIf { v -> !v.isVar && v.initializer != null } ?: return null
 	}
+	return DelegationSite(this, call, temporaries)
+}
+
+private fun org.jetbrains.kotlin.ir.IrStatement.enumEntrySite() = constructorSite { it is IrEnumConstructorCall }
+
+private fun IrBlockBody.delegationSite(allowEnumCall: Boolean = false): DelegationSite? =
+	statements.firstNotNullOfOrNull { it.constructorSite { call ->
+		call is IrDelegatingConstructorCall || allowEnumCall && call is IrEnumConstructorCall
+	} }
 
 // The prefix evaluates in source order; the selected call reads its values in parameter order.
 // Keep those evaluations inside the same plan as default arguments and the enclosing receiver.
