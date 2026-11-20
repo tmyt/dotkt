@@ -213,7 +213,7 @@ static class SupertypeGraph
         return false;
     }
 
-    static bool SameDeclaration(TypeNode.Fqn left, TypeNode.Fqn right,
+    internal static bool SameDeclaration(TypeNode.Fqn left, TypeNode.Fqn right,
         IReadOnlyDictionary<string, string> physicalNames)
     {
         // Source metadata and projected override edges can name the same declaration in different vocabularies.
