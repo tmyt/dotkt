@@ -6,6 +6,11 @@ import System.Collections.Generic.List as ClrList
 interface UsableBound { val name: String }
 internal interface HiddenBound : UsableBound
 open class VisibleBoundBase : HiddenBound { override val name get() = "base" }
+fun <T : VisibleBoundBase> keepBound(value: T): T = value
+open class ScopedBoundOwner {
+    protected interface State
+    open class Item : State
+}
 
 interface ReferencedBoundSink<T> { fun accept(x: T): String }
 
