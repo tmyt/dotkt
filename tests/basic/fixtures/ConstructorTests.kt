@@ -29,6 +29,21 @@ class ConstructorLabeled {
     constructor(label: String) : this(label, 0)
 }
 
+interface ConstructorReader<T> { fun read(): T }
+open class ConstructorCaptureBase<T>(val label: String, val reader: ConstructorReader<T>)
+class ConstructorCapture<T> : ConstructorCaptureBase<T> {
+    constructor(value: T) : super("direct", object : ConstructorReader<T> {
+        override fun read(): T = value
+    })
+    constructor(value: T, record: (String) -> String) : super(
+        reader = object : ConstructorReader<T> {
+            init { record("R") }
+            override fun read(): T = value
+        },
+        label = record("L"),
+    )
+}
+
 class ConstructorEarlyReturn {
     var value: String = "initial"
 
@@ -82,6 +97,12 @@ class ConstructorTests {
         val reordered = OrderedCtorChild(trace)
         assertEquals("yxyxBST", trace.events)
         assertEquals("x:y:x", "${reordered.x}:${reordered.y}:${reordered.copy}")
+        val token = Any()
+        val captureTrace = CtorTrace()
+        check(ConstructorCapture<Int?>(7).reader.read() == 7)
+        check(ConstructorCapture(token, captureTrace::record).reader.read() === token)
+        check(ConstructorCapture<Int?>(null, captureTrace::record).reader.read() == null)
+        assertEquals("RLRL", captureTrace.events)
     }
 
     @TestAttribute
