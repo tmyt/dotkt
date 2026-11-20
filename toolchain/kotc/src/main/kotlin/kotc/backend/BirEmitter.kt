@@ -136,10 +136,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		fn.getPackageFragment() in sourceFragments && (fn !is IrSimpleFunction || !isInheritedSynthetic(fn))
 	private fun ownsInheritedAbstractDeclaration(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
 		fn is IrSimpleFunction && fn.modality == Modality.ABSTRACT && isInheritedSynthetic(fn) &&
-			(fn.parent as? IrClass)?.let { owner ->
-				!isExternalNetType(owner) && (owner.kind != ClassKind.INTERFACE ||
-					(fn.getPackageFragment() in sourceFragments && carriedDeclarationId(fn) != null))
-			} == true
+			(fn.parent as? IrClass)?.let { it.kind != ClassKind.INTERFACE && !isExternalNetType(it) } == true
 
 	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		declarationIds.getOrPut(fn) {
@@ -206,7 +203,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
 		if (projectedClrOwner != null) return null
-		// Concrete inherited views resolve to the selected implementation. Retained abstract obligations
+		// Concrete inherited views resolve to the selected implementation. Retained abstract class obligations
 		// instead own a declaration signature, including its generic frame and any overload discriminator.
 		if (fn.isFakeOverride && (fn.modality != Modality.ABSTRACT || owner.kind == ClassKind.INTERFACE)) return null
 		// Kotlin supplies body-less primitive operations as built-in vocabulary, not emitted declarations.

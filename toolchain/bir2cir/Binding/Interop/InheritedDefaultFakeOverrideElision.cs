@@ -6,7 +6,8 @@ using DotKt.Cir;
 // from ancestor bodies, CLR metadata or an allocated physical member spelling.
 static partial class InheritedDefaultFakeOverrideElision
 {
-    public static void Apply(BirFileDeclaration root, Action<BirFunctionDeclaration> retireActual)
+    public static void Apply(BirFileDeclaration root, Action<BirFunctionDeclaration> retireActual,
+        ReferenceMetadataIndex refs = null)
     {
         // Selection is per file and last declaration wins, including a later
         // non-interface shadow. Current owning type placement is flat.
@@ -24,14 +25,20 @@ static partial class InheritedDefaultFakeOverrideElision
             for (var index = methods.Length - 1; index >= 0; index--)
             {
                 var method = methods[index];
-                if (!method.FakeOverride.OrDefault() || !method.InheritedImplementation.HasValue) continue;
+                if (!method.FakeOverride.OrDefault()) continue;
+                // A single imported interface declaration already owns this abstract slot.
+                // A real reabstraction or a join of distinct slots is not a mere inherited view.
+                if (!method.InheritedImplementation.HasValue && !(method.Abstract.OrDefault()
+                    && method.Overrides.OrEmpty() is [var edge]
+                    && refs?.TryDeclarationSignatureSlot(edge.DeclarationId.OrDefault(), out var slot) == true
+                    && slot.IsInterface)) continue;
                 if (KotlinPropertyAccessors.TryIdentity(method, out _, out var role) && method.PropertyAssociation.HasValue)
                 {
                     if (!removedAccessors.TryGetValue(method.PropertyAssociation.Value, out var roles))
                         removedAccessors[method.PropertyAssociation.Value] = roles = new(StringComparer.Ordinal);
                     roles.Add(role);
                 }
-                else if (method.Name.HasValue && method.Params.HasValue && method.Ret.HasValue)
+                else if (method.InheritedImplementation.HasValue && method.Name.HasValue && method.Params.HasValue && method.Ret.HasValue)
                 {
                     (added ??= new()).Add(new BirInheritedDefaultMethod {
                         Member = method.Name,

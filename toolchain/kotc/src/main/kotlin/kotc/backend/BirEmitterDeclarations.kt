@@ -484,9 +484,9 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		// search: fail at the Kotlin-semantics boundary that owns this decision.
 		if (!abstract && !hasDefault && inheritedImplementation == null)
 			error("concrete interface member '${iface.name}.${fn.name}' has neither a body nor a frontend-selected inherited implementation")
-		// Concrete inherited views have no declaration here. A retained abstract slot
-		// needs its own identity (including for physical overload allocation).
-		val identity = if (inheritedSynthetic && !abstract) null else declarationIdForPhysicalAllocation(fn)
+		// An inherited interface view may carry its ancestor's ID for calls and override
+		// edges. The view itself must not publish that ID as another declaration.
+		val identity = if (inheritedSynthetic) null else declarationIdForPhysicalAllocation(fn)
 		val explicitName = explicitClrNameValue(fn)
 		val association = prop?.let { propertyAssociation(it) }
 		return BirFunctionDeclaration(name = name, declarationId = identity, explicitClrName = explicitName,
@@ -505,9 +505,9 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		// implementer overrides it. Emitted below alongside the interface's static fields.
 		.filterNot { isKotlinStaticFunction(it) }
 		// Keep inherited declarations in BIR. ifaceMethod records the frontend-selected concrete implementation as an
-		// explicit inheritedImplementation fact; bir2cir then elides only declarations carrying that fact. In particular,
-		// neither layer guesses DIM-ness from whether an IR/BIR body happens to be present (referenced declarations may
-		// legitimately have no body). Abstract fake overrides carry no selected implementation and remain as slots.
+		// explicit inheritedImplementation fact. Abstract fake overrides instead carry override edges; bir2cir
+		// can reuse the slot when an edge selects a single imported interface declaration. Neither rule guesses
+		// from whether an IR/BIR body happens to be present.
 		.map { ifaceMethod(it) }
 	val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 		.filterNot { isKotlinStaticProperty(it) }

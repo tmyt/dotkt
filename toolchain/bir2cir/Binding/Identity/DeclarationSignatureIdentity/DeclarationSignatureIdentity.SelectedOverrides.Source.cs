@@ -59,7 +59,7 @@ static partial class DeclarationSignatureIdentity
         foreach (var (file, owner) in owners.Values)
             foreach (var method in owner.Methods.OrEmpty().ToArray())
             {
-                foreach (var id in method.SignatureOverrideDeclarations.OrEmpty())
+                foreach (var id in method.SignatureOverrideDeclarations.OrEmpty().Distinct(StringComparer.Ordinal))
                 {
                     if (id == null) continue;
                     string selectedOwnerName, name;
