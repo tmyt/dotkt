@@ -48,6 +48,9 @@ class FunctionVarianceTests {
         val fromBox = boxedValue(function).value
         val fromList = singletonValue(function).single()
         val fromSet = singletonSetValue(function).single()
+        check(boxedStar(boxedValue(function)) === direct)
+        val erasedSet: Set<Any> = singletonSetValue(function)
+        check(erasedSet.contains(direct))
         check(fromBox(21) == 42 && (fromBox as Any) === direct)
         check(fromList(21) == 42 && (fromList as Any) === direct)
         check(fromSet(21) == 42 && (fromSet as Any) === direct)

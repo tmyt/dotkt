@@ -330,6 +330,10 @@ static class TypedPhysicalValueCoercion
         if (to is TypeNode.Tv slot && from != to && (from is TypeNode.Tv or TypeNode.Fn { Suspend: false }
             || from is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }))
         {
+            if (value is BirCallStatic callSite
+                && callSite.Owner.OrDefault() is TypeNode.Fqn { Name: FunctionValueRepresentation.FunctionRuntime }
+                && callSite.Method.OrDefault() == "kotlinFunctionSlot" && callSite.Args.OrDefault() is [_, BirClassReference witness]
+                && witness.Type.OrDefault() == slot) return null;
             var original = from is TypeNode.Fn ? RuntimeFunctionCall(value, null, index) : value;
             var owner = new TypeNode.Fqn(FunctionValueRepresentation.FunctionRuntime);
             TypeNode[] signature = [Object, new TypeNode.Fqn("System.Type")];
@@ -345,7 +349,9 @@ static class TypedPhysicalValueCoercion
         if (to is TypeNode.Fn { Suspend: false } next && from is TypeNode.Fn { Suspend: false } previous
             && next.DelegateParams.Count() != previous.DelegateParams.Count())
             return RuntimeFunctionCall(RuntimeFunctionCall(value, null, index), next.DelegateParams.Count(), index);
-        if (from is TypeNode.Fn { Suspend: false } && (to is TypeNode.Tv || to is TypeNode.Fqn nominal
+        if (from is TypeNode.Tv && to is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" })
+            return RuntimeFunctionCall(value, null, index);
+        if (from is TypeNode.Fn { Suspend: false } && (to is TypeNode.Fqn nominal
             && nominal.Name is not ("System.Delegate" or "System.MulticastDelegate")
             && !index.References.IsClrDelegate(nominal)))
             return RuntimeFunctionCall(value, null, index);
@@ -802,7 +808,7 @@ static class TypedPhysicalValueCoercion
         if (!genericObject && !objectGeneric && !genericSlots && !arrayStorage && !opaqueReference && !opaqueValue
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return node;
         ReplaceResultStamps(node, actual);
-        return Cast(node, declared);
+        return Cast(FunctionViewOperand(node, actual, declared, index) ?? node, declared);
     }
 
     static void WidenNumericOperands(BirBinaryOperation node, Scope scope, Index index)
