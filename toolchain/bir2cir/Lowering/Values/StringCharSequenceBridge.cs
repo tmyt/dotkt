@@ -22,10 +22,6 @@ static partial class StringCharSequenceBridge
     // ilemit's `_types`). Fresh per process; non-reference builds only. `_fired` tracks whether a wrap was authored.
     static bool _adapterEmitted;
     static bool _fired;
-    // The ref.dll index — consulted ONLY to read a spliced anonymous object's (`dotkt$obj*`) ctor param types, so a
-    // static-String arg flowing into its `CharSequence` capture slot is adapted
-    // by the owning source constructor boundary. Null-safe.
-    static ReferenceMetadataIndex _refs;
     // #170 — lifted lambdas bound into a `dotkt$CharSequence`-returning delegate (from CharSeqStringLowering). Null-safe.
     static CharSeqStringLowering.CharSeqRetLambdas _retLambdas;
 
@@ -126,7 +122,6 @@ static partial class StringCharSequenceBridge
     {
         TypeNode.Fqn f => f.Name == "kotlin.CharSequence",
         TypeNode.Nullable n => IsSourceCharSeqT(n.Of),
-        TypeNode.Array a => IsSourceCharSeqT(a.Elem),
         _ => false,
     };
     static bool IsScalarCharSequence(TypeNode type) => type switch

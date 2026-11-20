@@ -732,6 +732,7 @@ sealed class Pipeline
         }
 
         localEventDeclarations.ReleaseSourceRecipes();
+        var charSequenceCtorSlots = referenceBuild ? null : StringCharSequenceBridge.ConstructorSlots(captured, refs);
         // Complete every file's member substitution before these consumers
         // inspect sibling declarations. Keep each file's original nullable
         // visibility view, rather than recapturing the canonical module index.
@@ -754,7 +755,7 @@ sealed class Pipeline
             {
                 // Preserve real CharSequence implementations in both runtime
                 // and application builds; a sealed String needs an adapter.
-                var bridge = StringCharSequenceBridge.Apply(source, refs, charSeqReturnViews[index]);
+                var bridge = StringCharSequenceBridge.Apply(source, charSequenceCtorSlots, charSeqReturnViews[index]);
                 var callbacks = ClosureSynthesis.ApplyMaterialized(
                     source, bridge.DelegateAdapters, refs, scalarSlots.ProjectMethod);
                 // Both producers report their actual append order. Neither is
@@ -904,6 +905,8 @@ sealed class Pipeline
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
             valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
                 if (method != null) suspendTransitions.PublishMethods(file, owner, new[] { method });
+                if (method != null && !referenceBuild && StringCharSequenceBridge.EmitPendingAdapter(file) is { Count: > 0 } appended)
+                    suspendTransitions.PublishTypes(file, appended);
                 if (descriptor != null) currentDeclarations.GetSource(descriptor);
                 if (descriptor is BirMethodImpl slot) selectedSlotOwners.Add(slot);
             });

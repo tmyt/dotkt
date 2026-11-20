@@ -55,15 +55,24 @@ static class NonReifiedCastErasure
         switch (node)
         {
             case BirCast { ErasedTypeOperand.HasValue: true } cast:
-                cast.Type = Target(cast.ErasedTypeOperand.Value);
+                if (!HasArrayComponentBound(cast.Type.OrDefault(), cast.ErasedTypeOperand.Value))
+                    cast.Type = Target(cast.ErasedTypeOperand.Value);
                 cast.ErasedTypeOperand = default;
                 break;
             case BirInstanceOrNull { ErasedTypeOperand.HasValue: true } safe:
-                safe.Type = Target(safe.ErasedTypeOperand.Value);
+                if (!HasArrayComponentBound(safe.Type.OrDefault(), safe.ErasedTypeOperand.Value))
+                    safe.Type = Target(safe.ErasedTypeOperand.Value);
                 safe.ErasedTypeOperand = default;
                 break;
         }
     }
+
+    // A non-spliced body still owns its type parameters. Its array lowering
+    // uses those variables for both bound checks and erased element reads.
+    // The snapshot is needed only when a splice is about to replace the frame.
+    internal static bool HasArrayComponentBound(TypeNode target, TypeNode snapshot) =>
+        (target is TypeNode.Array or TypeNode.Nullable { Of: TypeNode.Array })
+        && (snapshot is TypeNode.Array or TypeNode.Nullable { Of: TypeNode.Array });
 
     internal static void SourceSelfTest()
     {

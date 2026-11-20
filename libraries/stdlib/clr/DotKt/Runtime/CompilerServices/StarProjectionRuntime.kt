@@ -160,6 +160,9 @@ internal interface StarProjectionType {
     @kotlin.clr.ClrIntrinsic("GetMethods")
     fun getMethods(): Array<StarProjectionMethod>
 
+    @kotlin.clr.ClrIntrinsic("GetMethod")
+    fun functionInvoke(name: String): StarProjectionMethod?
+
     @kotlin.clr.ClrIntrinsic("GetConstructors")
     fun getConstructors(flags: StarProjectionBindingFlags): Array<StarProjectionConstructor>
 
@@ -1254,11 +1257,12 @@ internal fun projectedMembershipContainsErased(receiver: Any, sourceWitness: Any
         }
     }
     val selected = contains ?: return null
-    if (element == null) {
+    val physical = kotlinFunctionSlot(element, parameter)
+    if (physical == null) {
         if (!starProjectionTypeAcceptsNull(parameter)) return false
-    } else if (!parameter.isAssignableFrom(element.starProjectionRuntimeType())) return false
+    } else if (!parameter.isAssignableFrom(physical.starProjectionRuntimeType())) return false
     return try {
-        selected.invoke(receiver, arrayOf(element)) as Boolean
+        selected.invoke(receiver, arrayOf(physical)) as Boolean
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }
@@ -1423,7 +1427,7 @@ internal fun mutableCollectionAddErased(receiver: Any, element: Any?): Boolean {
         val count = erasedMutableCollectionMethod(receiver, "get_Count", 0)
         val add = erasedMutableCollectionMethod(receiver, "Add", 1)
         val before = count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
-        add.invoke(receiver, arrayOf(element))
+        add.invoke(receiver, arrayOf(kotlinFunctionSlot(element, add.getParameters()[0].parameterType)))
         (count.invoke(receiver, arrayOfNulls<Any?>(0)) as Int) != before
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)

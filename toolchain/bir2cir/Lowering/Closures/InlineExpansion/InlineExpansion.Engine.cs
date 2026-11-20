@@ -143,7 +143,8 @@ sealed partial class InlineExpansion
             Fail(isStatic
                 ? "a static extension inline payload retained an enclosing `this` after representation lowering — cannot co-bind"
                 : "member-extension inline whose body reads the dispatch (enclosing-class) receiver but no recvs.dispatch was carried — cannot co-bind");
-        var returnType = CopyType(payload.Ret.OrDefault());
+        var arrayValues = new InlineArrayValues(payload.TypeParams.OrEmpty());
+        var returnType = arrayValues.Storage(CopyType(payload.Ret.OrDefault()));
         var clone = Pass.NextSpliceIdentity();
         var semanticOwner = call.SemanticOwner.OrDefault() ?? Pass.File.FileClass.OrDefault()
             ?? throw new InvalidOperationException("inline splice has no authored semantic use-site owner");
@@ -151,6 +152,7 @@ sealed partial class InlineExpansion
         body = (BirValueBlock)TypedExecutableFrames.Prebind(body);
         var dispatchArguments = receivers?.DispatchTypeArgs.OrDefault();
         if (dispatchArguments?.Length == 0) dispatchArguments = null;
+        if (typeArguments.Length != 0 || dispatchArguments != null) arrayValues.Prepare(body);
         body = (BirValueBlock)TypedExecutableFrames.Substitute(body, typeArguments, ga, dispatchArguments);
         returnType = SubstituteInlineType(returnType, typeArguments, ga, dispatchArguments);
         foreach (var parameter in parameters)

@@ -6,20 +6,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
+- Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.
 - Generic classes can omit a noncapturing lambda argument in constructors and member functions without producing an invalid delegate owner.
 - Generic storage parameters now retain publicly usable interface constraints consistently across DLLs without exposing non-public types.
 - An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
 - Kotlin lists can store differently instantiated Kotlin generic objects after an unchecked cast. Explicit CLR lists and array-valued elements retain their native types.
 - Kotlin function objects returned by a generic function remain callable and retain their identity.
+- Storing such a function through a generic factory also preserves its identity and callable view, including boxed values and singleton collections.
 - Compiler plugins can look up internal Kotlin classifiers and read their constants from referenced DLLs.
 - An annotation marked with `@RequiresOptIn` retains its marker status, message, and level when imported from a DLL.
 - A reified function using `typeOf<T>()` can be called across DLLs even when a generic overload has the same name.
 - A generic Kotlin class can be passed to a function with a class upper bound without
   the CLR rejecting its storage type argument.
 - Covariant property overrides on derived classes retain the constructed type arguments of their generic base.
+- A Kotlin base-class slot returning `CharSequence` can dispatch to an override returning `String`, preserving null for nullable properties.
 - A class inheriting an interface default now satisfies a sibling interface's abstract method or accessor slots.
 - A `Nothing`-returning override fills its selected base slot even when the base and derived classes compile together.
 - Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
+- Inlining a generic Kotlin array cast preserves its declaration-site component bound and the backing array's runtime type.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
 - A Kotlin interface can inherit methods and properties from a different DLL without duplicating

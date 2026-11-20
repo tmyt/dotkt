@@ -40,6 +40,9 @@ static partial class StringCharSequenceBridge
         return _fired ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
     }
 
+    internal static IReadOnlyList<BirClassDefinition> EmitPendingAdapter(BirFileDeclaration file) =>
+        _fired && !_adapterEmitted ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
+
     static IReadOnlyList<BirClassDefinition> EmitSourceAdapter(BirFileDeclaration file)
     {
         if (_adapterEmitted) return Array.Empty<BirClassDefinition>();
@@ -49,12 +52,40 @@ static partial class StringCharSequenceBridge
         return new[] { adapter };
     }
 
+    internal static Func<BirNew, TypeNode[]> ConstructorSlots(IReadOnlyList<BirFileDeclaration> files, ReferenceMetadataIndex refs)
+    {
+        // Read actual parameter slots after local String collapse; a use-site
+        // signature still describes the original Kotlin declaration.
+        var local = new Dictionary<(string, string), TypeNode[]>();
+        foreach (var file in files)
+            foreach (var type in file.Types.OrEmpty())
+                foreach (var ctor in type.Ctors.OrEmpty())
+                    if (ctor.DeclarationId.OrDefault() is string id && ctor.Params.OrDefault() is { } parameters
+                        && parameters.Any(p => PotentialView(p.Type.OrDefault())))
+                        local[(type.Name.Value, id)] = parameters.Select(p => p.Type.OrDefault()).ToArray();
+        return node => {
+            if (node.Type.OrDefault() is not TypeNode.Fqn owner) return null;
+            if (node.ConstructorDeclarationId.OrDefault() is string id && local.TryGetValue((owner.Name, id), out var slots))
+                return owner.Args is { Length: > 0 } args
+                    ? slots.Select(slot => SubstCallTvs(slot, args, Array.Empty<TypeNode>())).ToArray() : slots;
+            // Reflection supplies only the CLR type of a generated capture,
+            // not its Kotlin nullability. Preserve null when adapting it.
+            return refs?.OwnerCtorParamTypes(owner.Name)?.Select(slot =>
+                IsScalarCharSequence(slot) || IsSourceCharSeqT(slot) ? new TypeNode.Nullable(slot) : slot).ToArray();
+        };
+        static bool PotentialView(TypeNode type) => type switch {
+            TypeNode.Tv { Scope: "type" } => true,
+            TypeNode.Nullable nullable => PotentialView(nullable.Of),
+            TypeNode.Oblivious platform => PotentialView(platform.Of),
+            _ => IsScalarCharSequence(type),
+        };
+    }
+
     // This entry owns the continuing source graph. Newly authored callback
     // ingredients are returned by their actual slots, not detached snapshots.
-    internal static SourceBridgeResult Apply(BirFileDeclaration file, ReferenceMetadataIndex refs,
+    internal static SourceBridgeResult Apply(BirFileDeclaration file, Func<BirNew, TypeNode[]> constructorSlots,
         CharSeqStringLowering.CharSeqRetLambdas retLambdas)
     {
-        _refs = refs;
         _retLambdas = retLambdas;
         _fired = false;
         if (retLambdas != null) SourceRetypeLiftedRets(file, retLambdas);
@@ -63,7 +94,7 @@ static partial class StringCharSequenceBridge
         var context = new ClosureSynthesis.CaptureContext("<file>", position?.F.OrDefault(),
             position?.L.HasValue == true ? position.L.Value : null);
         WalkSourceBridge(new BirGraphSlot(() => file, _ => throw new InvalidOperationException("A bridge cannot replace its file")),
-            new SourceBridgeEnv(context), materialized);
+            new SourceBridgeEnv(context, constructorSlots), materialized);
         IReadOnlyList<BirClassDefinition> appended = Array.Empty<BirClassDefinition>();
         if (!_adapterEmitted && (_fired || SourceUsesCharSequenceView(file))) appended = EmitSourceAdapter(file);
         return new SourceBridgeResult(appended, materialized);
@@ -75,17 +106,18 @@ static partial class StringCharSequenceBridge
         internal TypeNode RetType { get; }
         internal TypeNode.Fqn BaseType { get; }
         internal ClosureSynthesis.CaptureContext Context { get; }
-        internal SourceBridgeEnv(ClosureSynthesis.CaptureContext context)
-            : this(new Dictionary<string, TypeNode>(StringComparer.Ordinal), null, null, context) { }
+        internal Func<BirNew, TypeNode[]> ConstructorSlots { get; }
+        internal SourceBridgeEnv(ClosureSynthesis.CaptureContext context, Func<BirNew, TypeNode[]> constructorSlots = null)
+            : this(new Dictionary<string, TypeNode>(StringComparer.Ordinal), null, null, context, constructorSlots) { }
         SourceBridgeEnv(IReadOnlyDictionary<string, TypeNode> vars, TypeNode ret,
-            TypeNode.Fqn baseType, ClosureSynthesis.CaptureContext context)
-        { Vars = vars; RetType = ret; BaseType = baseType; Context = context; }
+            TypeNode.Fqn baseType, ClosureSynthesis.CaptureContext context, Func<BirNew, TypeNode[]> constructorSlots)
+        { Vars = vars; RetType = ret; BaseType = baseType; Context = context; ConstructorSlots = constructorSlots; }
 
         internal SourceBridgeEnv WithDecl(BirGraphValue node)
         {
             var context = ClosureSynthesis.ContextFor(node, Context);
             if (node is IBirTypeDeclaration type && type.Kind.OrDefault() is "class" or "interface" or "struct" or "enum")
-                return new(Vars, RetType, type.Base.OrDefault() as TypeNode.Fqn, context);
+                return new(Vars, RetType, type.Base.OrDefault() as TypeNode.Fqn, context, ConstructorSlots);
             var parametersPresent = node switch {
                 BirFunctionDeclaration value => value.Params.HasValue,
                 BirConstructor value => value.Params.HasValue,
@@ -95,15 +127,15 @@ static partial class StringCharSequenceBridge
                 BirInheritedClassMethod value => value.Params.HasValue,
                 _ => false,
             };
-            if (!parametersPresent) return new(Vars, RetType, BaseType, context);
+            if (!parametersPresent) return new(Vars, RetType, BaseType, context, ConstructorSlots);
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             node.VisitSourceParameters((name, type) => vars[name] = type);
             var ret = SourceBridgeOwnType(node, "ret");
-            return new(vars, ret ?? RetType, BaseType, context);
+            return new(vars, ret ?? RetType, BaseType, context, ConstructorSlots);
         }
 
         internal SourceBridgeEnv WithVar(string name, TypeNode type)
-            => new(new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type }, RetType, BaseType, Context);
+            => new(new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type }, RetType, BaseType, Context, ConstructorSlots);
     }
 
     static TypeNode SourceBridgeOwnType(BirGraphValue node, string field)
@@ -313,7 +345,7 @@ static partial class StringCharSequenceBridge
             return SourceWrapAdapter(new BirCallStatic { Owner = new TypeNode.Fqn("kotlin.LibraryKt"), Method = "toString",
                 Sig = new TypeNode[] { new TypeNode.Fqn("object") }, Args = new[] { value } });
         if (conversion == CharSequenceConversion.NullableString)
-            return SourceWrapAdapterNullable(value, env);
+            return SourceWrapAdapterNullable(value, source);
         if (conversion == CharSequenceConversion.Branches && value is BirConditional conditional)
         {
             if (conditional.Then.HasValue) conditional.Then = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Then.Value, env, target));
@@ -340,13 +372,13 @@ static partial class StringCharSequenceBridge
 
     static void SourceWrapNewCtorArgs(BirNew node, SourceBridgeEnv env)
     {
-        if (_refs == null || !node.Args.HasValue || node.Type.OrDefault() is not TypeNode.Fqn type) return;
-        var parameters = _refs.OwnerCtorParamTypes(type.Name);
+        if (!node.Args.HasValue) return;
+        var parameters = env.ConstructorSlots?.Invoke(node);
         if (parameters == null || parameters.Length != node.Args.Value.Length) return;
         for (var index = 0; index < parameters.Length; index++)
-            if ((IsCharSeqT(parameters[index]) || IsSourceCharSeqT(parameters[index]))
-                && node.Args.Value[index] is { } argument && SourceIsStaticString(argument, env))
-                node.Args.Value[index] = SourceWrapAdapter(argument);
+            if ((IsScalarCharSequence(parameters[index]) || IsSourceCharSeqT(parameters[index]))
+                && node.Args.Value[index] is { } argument)
+                node.Args.Value[index] = SourceCoerceCharSeqArg(argument, env, parameters[index]);
     }
 
     static void SourceRetypeLiftedRets(BirFileDeclaration file, CharSeqStringLowering.CharSeqRetLambdas returns)
@@ -415,14 +447,23 @@ static partial class StringCharSequenceBridge
         Type = new TypeNode.Fqn(Adapter), ArgTypes = new TypeNode[] { new TypeNode.Fqn("kotlin.String") }, Args = new[] { value },
     };
 
-    static IBirExpression SourceWrapAdapterNullable(IBirExpression value, SourceBridgeEnv env)
+    internal static bool CanAdaptStringReturn(TypeNode source, TypeNode target) =>
+        IsScalarCharSequence(target)
+        && IsStringTokT(source switch {
+            TypeNode.Nullable optional => optional.Of, TypeNode.Oblivious platform => platform.Of, _ => source,
+        });
+
+    internal static IBirExpression AdaptStringReturn(IBirExpression value, TypeNode source) =>
+        source is TypeNode.Nullable or TypeNode.Oblivious ? SourceWrapAdapterNullable(value, source) : SourceWrapAdapter(value);
+
+    static IBirExpression SourceWrapAdapterNullable(IBirExpression value, TypeNode source)
     {
         IBirExpression read = value;
         BirVariable temp = null;
         if (!ValueStability.IsReReadable(((BirGraphNode)value).Tag))
         {
             var name = "__cswrap$" + System.Threading.Interlocked.Increment(ref _counter);
-            temp = new BirVariable { Name = name, Type = BirGraphValue.CopyType(BirGraphStaticType.Surface(value, env.Vars)) ?? new TypeNode.Fqn("kotlin.String"),
+            temp = new BirVariable { Name = name, Type = BirGraphValue.CopyType(source),
                 Init = OptionalField<IBirExpression>.Of(value) };
             read = new BirLocal { Name = name };
         }

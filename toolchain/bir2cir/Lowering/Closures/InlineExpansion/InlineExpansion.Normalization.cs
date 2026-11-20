@@ -7,6 +7,72 @@ using DotKt.Cir;
 
 sealed partial class InlineExpansion
 {
+    // A donor local holding an open array does not promise an allocation of
+    // the caller's component type. Keep its storage open when substituting
+    // the element's use-site type; allocations and native signatures stay exact.
+    sealed class InlineArrayValues(BirTypeParameter[] parameters)
+    {
+        bool Erased(TypeNode.Tv variable) => variable.Scope != "method"
+            || parameters.ElementAtOrDefault(variable.I)?.Reified.OrDefault() != true;
+
+        public TypeNode Storage(TypeNode type)
+        {
+            if (type is TypeNode.Nullable n) { var v = Storage(n.Of); return v == n.Of ? n : n with { Of = v }; }
+            if (type is TypeNode.Oblivious o) { var v = Storage(o.Of); return v == o.Of ? o : o with { Of = v }; }
+            if (type is not TypeNode.Array a || !GenericArrayStorageLowering.NeedsStorage(a)
+                || a.Elem is TypeNode.Projection) return type;
+            var erased = false;
+            BirGraphNameFields.VisitTypeNodes(a.Elem, t => { if (t is TypeNode.Tv var && Erased(var)) erased = true; });
+            return erased ? a with { Elem = new TypeNode.Projection("out", Storage(a.Elem)) } : a;
+        }
+        public void Prepare(BirValueBlock body)
+        {
+            var locals = CollectVarTypes(body);
+            TypeNode Element(IBirExpression expression) =>
+                BirGraphStaticType.Surface(expression, locals) is TypeNode.Array array ? array.Elem : null;
+            void Address(IBirExpression expression)
+            {
+                if (expression is not BirArrayGet get || Element(get.Array.OrDefault()) is not { } element
+                    || !HasTvType(element)) return;
+                // A value read can use System.Array.GetValue. A managed reference
+                // must instead address the real element of an exact native array.
+                get.Array = new BirCast { Type = new TypeNode.Array(element), E = get.Array, _exactBridgeCast = true };
+                get.Elem = element;
+            }
+            RewriteOwning(body, node => {
+                if (node is BirByRefOf reference) Address(reference.Inner.OrDefault());
+                if (ErasedElementValues.SourceAddressParameters(node) is { Length: > 0 } sig)
+                {
+                    int index = 0;
+                    node.VisitSourceChildren((field, _, child) => {
+                        if (field == "args" && index < sig.Length && SignatureValueTypes.Of(sig[index++]) is TypeNode.ByRef)
+                            Address(child.Value as IBirExpression);
+                    }, _ => {});
+                }
+                switch (node)
+                {
+                    case BirCast c when NonReifiedCastErasure.HasArrayComponentBound(c.Type.OrDefault(), c.ErasedTypeOperand.OrDefault()):
+                        c.Type = c.ErasedTypeOperand; c.ErasedTypeOperand = default; break;
+                    case BirInstanceOrNull c when NonReifiedCastErasure.HasArrayComponentBound(c.Type.OrDefault(), c.ErasedTypeOperand.OrDefault()):
+                        c.Type = c.ErasedTypeOperand; c.ErasedTypeOperand = default; break;
+                    case BirArrayGet get when !get.Elem.HasValue && Element(get.Array.OrDefault()) is { } elem:
+                        var v = elem is TypeNode.Nullable n ? n.Of : elem;
+                        get.Elem = v is TypeNode.Tv variable && Erased(variable) ? new TypeNode.Fqn("object") : Storage(elem);
+                        break;
+                    case BirArraySet set when !set.Elem.HasValue && Element(set.Array.OrDefault()) is { } elem: set.Elem = elem; break;
+                }
+                if (node is BirLocal l && !l.Sty.HasValue && l.Name.HasValue && locals.TryGetValue(l.Name.Value, out var decl)
+                    && Storage(decl) != decl) l.Sty = Storage(decl);
+                if (node is BirVariable or BirLocal or BirConditional or BirValueBlock or BirBindingReference or BirCallBinding
+                    or BirCallEvaluation or BirCaptureDescriptor or BirInlineCapture or BirParameter or BirLambdaParameter or BirFieldGet
+                    or BirCallInstance { DeclarationId.HasValue: true } or BirCallStatic { DeclarationId.HasValue: true })
+                    node.RewriteRepresentationInPlace((_, role, t) => role is BirRepresentationRole.ValueType
+                        or BirRepresentationRole.Return or BirRepresentationRole.ResultStamp ? Storage(t) : t, (_, _, _) => {});
+                return node;
+            });
+        }
+    }
+
     static Dictionary<string, TypeNode> CollectVarTypes(BirGraphValue root)
     {
         var types = new Dictionary<string, TypeNode>(StringComparer.Ordinal);

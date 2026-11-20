@@ -6,9 +6,9 @@ static partial class StringCharSequenceBridge
 {
     internal static void SelfTestSource()
     {
-        var saved = (_adapterEmitted, _fired, _refs, _retLambdas, _counter, _delegateAdapterCounter);
+        var saved = (_adapterEmitted, _fired, _retLambdas, _counter, _delegateAdapterCounter);
         try { Run(); }
-        finally { (_adapterEmitted, _fired, _refs, _retLambdas, _counter, _delegateAdapterCounter) = saved; }
+        finally { (_adapterEmitted, _fired, _retLambdas, _counter, _delegateAdapterCounter) = saved; }
 
         static void Require(bool condition, string message)
         {

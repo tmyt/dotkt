@@ -2296,7 +2296,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // Kotlin FQN (`dotkt$obj90`, not `dotkt$obj90``1`), matching the CIR `new` node's bare type token.
     public TypeNode[] OwnerCtorParamTypes(string ownerFqn)
     {
-        if (string.IsNullOrEmpty(ownerFqn)) return null;
+        if (string.IsNullOrEmpty(ownerFqn) || IsLocalEmittedType(ownerFqn)) return null;
         return _ownerCtorParams.GetValueOrDefault(ownerFqn)
             ?? _ownerCtorParams.GetValueOrDefault(StripGenericArity(ownerFqn))
             ?? _ownerCtorParams.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
