@@ -11,5 +11,6 @@ inline fun <T> declaredInCallback(block: (KType) -> KType) = block(typeOf<List<T
 fun <T> declaredInDefault(shape: KType = typeOf<List<T>>()) = shape
 
 inline fun <reified T> reflected(): KType = typeOf<T>()
+fun <T> List<T>.reflected(): Int = size
 inline fun <reified T> reflectedList(): KType = reflected<List<T?>>()
 inline fun <reified T> reflectedInLambda(): () -> KType = { typeOf<List<T?>>() }
