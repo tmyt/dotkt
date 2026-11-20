@@ -290,9 +290,12 @@ static partial class ClrEventImplBinding
         {
             var method = ReferencedRaise(owner, name, refs);
             var arguments = Arguments(method.GetParameters().Length);
+            // The MethodDef identifies the raise accessor, not necessarily the final
+            // dispatch slot. Its projected bridge may accept object rather than T.
+            const ClrMemberResolution.OperandBinding operands = ClrMemberResolution.OperandBinding.FinalSlot;
             call = method.IsStatic
-                ? ClrMemberResolution.ExactStaticCall(null, refs, method, owner, arguments)
-                : ClrMemberResolution.ExactInstanceCall(null, refs, method, owner, receiver.OrDefault(), arguments);
+                ? ClrMemberResolution.ExactStaticCall(null, refs, method, owner, arguments, operands)
+                : ClrMemberResolution.ExactInstanceCall(null, refs, method, owner, receiver.OrDefault(), arguments, operands);
         }
         // Kotlin super access is an instance declaration access. Restore the
         // original derived this instead of the exact binder's base cast.
