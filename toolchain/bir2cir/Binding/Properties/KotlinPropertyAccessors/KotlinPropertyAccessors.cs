@@ -1,8 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json.Nodes;
-using DotKt.Bir;
 
 // Kotlin property accessor identity is an explicit BIR fact.  This is the sole forward projection from that
 // identity to the dedicated CLR accessor spelling. No caller may parse
@@ -111,81 +108,6 @@ static partial class KotlinPropertyAccessors
         if (!TryIdentity(declaration, out _, out _))
             throw new InvalidOperationException("cannot allocate a physical accessor name without Kotlin identity");
         declaration["name"] = physicalName;
-    }
-    // Associate a synthesized MethodImpl body with an exact physical Property shape. Both override-bridge passes use
-    // this one rule so a bridge cannot lose the semantic accessor fact merely because its return conversion differs.
-    internal static void AssociateBridgeProperty(JsonObject owner, JsonObject bridge, string propertyName,
-        string accessorKind, string sourceAssociation, TypeNode[] slotParams, TypeNode slotRet)
-    {
-        var plan = PlanBridgeProperty(accessorKind, sourceAssociation, slotParams, slotRet);
-        var propertyType = plan.Type;
-        var association = plan.Association;
-        bridge[SourceNameKey] = propertyName;
-        bridge[KindKey] = accessorKind;
-        bridge[AssociationKey] = association;
-        // A constructed generic interface is named by MemberRef in MethodImpl metadata. Keep the exact source role on
-        // the local bridge MethodDef as well as in MethodSemantics so reverse projection never needs the declaration's
-        // physical name (and remains sound if a metadata reader cannot recover the MemberRef's Property row).
-        bridge[MetadataCarrierKey] = new JsonObject
-        {
-            ["name"] = propertyName,
-            ["kind"] = accessorKind,
-            ["association"] = association,
-            ["sourceAssociation"] = sourceAssociation,
-        };
-        var properties = owner["properties"] as JsonArray;
-        if (properties == null)
-        {
-            properties = new JsonArray();
-            owner["properties"] = properties;
-        }
-        var property = properties.OfType<JsonObject>()
-            .SingleOrDefault(candidate => Str(candidate[AssociationKey]) == association);
-        if (property == null)
-        {
-            properties.Add(new JsonObject
-            {
-                ["name"] = propertyName,
-                ["type"] = TypeJson.Write(propertyType),
-                [PropertyRolesKey] = new JsonArray(accessorKind),
-                [AssociationKey] = association,
-            });
-            return;
-        }
-        var propertyRoles = property[PropertyRolesKey] as JsonArray;
-        if (!CanMergeBridgeProperty(Str(property["name"]), TypeJson.Read(property["type"]),
-                propertyRoles?.Select(Str).ToArray(), propertyName, accessorKind, propertyType))
-        {
-            var associatedMethods = owner["methods"] is JsonArray ownerMethods
-                ? string.Join(",", ownerMethods.OfType<JsonObject>()
-                    .Where(method => Str(method[AssociationKey]) == association)
-                    .Select(method => Str(method["name"])))
-                : "";
-            throw new InvalidOperationException(
-                $"property override bridges do not form one unique CLR Property shape: " +
-                $"owner={Str(owner["name"]) ?? "<file>"}, property={propertyName}, accessor={accessorKind}, " +
-                $"bridge={Str(bridge["name"])}, association={association}, methods={associatedMethods}");
-        }
-        propertyRoles.Add(accessorKind);
-    }
-
-    // Private interface MethodImpl bodies carry their source accessor identity on the method.
-    // Distinct inherited slots (including an erased view) can have the same property signature;
-    // their forwarding bodies must not compete for the authored property's getter or setter.
-    internal static void MarkExactInterfaceBridgeProperty(JsonObject bridge, string propertyName,
-        string accessorKind, string sourceAssociation)
-    {
-        var association = PlanBridgeProperty(accessorKind, sourceAssociation, null, null, exactInterface: true).Association;
-        bridge[SourceNameKey] = propertyName;
-        bridge[KindKey] = accessorKind;
-        bridge[AssociationKey] = association;
-        bridge[MetadataCarrierKey] = new JsonObject
-        {
-            ["name"] = propertyName,
-            ["kind"] = accessorKind,
-            ["association"] = association,
-            ["sourceAssociation"] = sourceAssociation,
-        };
     }
 
     static string Str(JsonNode node) =>
