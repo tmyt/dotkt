@@ -50,9 +50,9 @@ for method in declarations(document):
             assert method["params"][-1]["type"] == {
                 "t": "fqn", "name": "System.ValueTuple", "args": [
                     {"t": "fqn", "name": "System.Int32"}, {"t": "fqn", "name": "System.Type"},
-                    {"t": "fqn", "name": "System.Func", "args": [
-                        {"t": "fqn", "name": "System.Object"}, {"t": "fqn", "name": "System.Object"},
-                    ]},
+                    {"t": "fn", "suspend": False, "clr": "System.Func",
+                     "ret": {"t": "fqn", "name": "System.Object"},
+                     "params": [{"t": "fqn", "name": "System.Object"}]},
                     {"t": "fqn", "name": "System.Object"},
                 ],
             }
