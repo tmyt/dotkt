@@ -77,7 +77,9 @@ static partial class KotlinOverrideSlotBridge
             IBirExpression returned = call;
             if (implementationReturn != null && !implementationReturn.Equals(result))
             {
-                returned = IsNullableValueSlot(result, implementationReturn, refs, isValue, returnPosition: true)
+                returned = StringCharSequenceBridge.CanAdaptStringReturn(implementationReturn, result)
+                    ? StringCharSequenceBridge.AdaptStringReturn(returned, implementationReturn)
+                    : IsNullableValueSlot(result, implementationReturn, refs, isValue, returnPosition: true)
                     && implementationReturn is TypeNode.Nullable nullable
                     ? new BirNullableValue { Elem = BirGraphValue.CopyType(nullable.Of), E = OptionalField<IBirExpression>.Of(returned),
                         _physicalDeclarationSignature = physicalImplementation }

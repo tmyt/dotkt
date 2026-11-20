@@ -106,6 +106,9 @@ static partial class KotlinOverrideSlotBridge
         if (retFit == Fit.Foreign)
         {
             if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+            else if (!supIsInterface && phase == Phase.PhysicalBridges
+                && StringCharSequenceBridge.CanAdaptStringReturn(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), slotRet))
+                retFit = Fit.Bridge;
             // A source-selected covariant class override still owes the base's exact CLR slot,
             // including when the narrow override is abstract. Reuse the ordinary virtual forwarder
             // only when the actual physical return is assignable; Kotlin variance alone is no proof.

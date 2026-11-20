@@ -33,6 +33,10 @@ class CharSequenceSupertypeTests {
 
     @TestAttribute
     fun importedBaseRetainsKotlinCharSequenceArgument() {
+        val present = StringSource("abc")
+        val absent = StringSource(null)
+        check(present.first() == 'a' && present.reads == 1)
+        check(absent.first() == null && absent.reads == 1)
         val base: Base<CharSequence> = DerivedText()
         check(base.value.toString() == "base")
         check(DerivedText().value.toString() == "base")
