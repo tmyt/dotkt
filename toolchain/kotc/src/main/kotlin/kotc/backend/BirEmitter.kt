@@ -754,9 +754,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		return fileClass
 	}
 
-	/** Exact Kotlin owner application, using the active declaration frame unless an explicit declaration is supplied. */
-	internal fun semanticUseSiteOwnerSpec(declaration: IrDeclaration? = activeSemanticOwnerDeclaration): TypeNode {
+	/** A copied default lambda still has the callee as its IR parent, but its lift belongs to the use site. */
+	internal fun semanticUseSiteOwnerSpec(): TypeNode {
 		val semanticName = activeSemanticOwner ?: fileClass
+		val declaration = activeSemanticOwnerDeclaration
 		var parent: Any? = if (declaration is IrClass) declaration else declaration?.parent
 		while (parent != null) {
 			when (parent) {

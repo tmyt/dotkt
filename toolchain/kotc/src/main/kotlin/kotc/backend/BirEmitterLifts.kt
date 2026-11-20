@@ -373,7 +373,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): BirExpression {
 		}
 		liftedMethods.add(declaration)
 		return BirNewDelegate(method = lname, declarationId = liftedDeclarationIdentity(lname), funcType = ftype,
-			typeArgs = typeArgs, calleeOwner = semanticUseSiteOwnerSpec(fn))
+			typeArgs = typeArgs, calleeOwner = semanticUseSiteOwnerSpec())
 	}
 	// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 	// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the

@@ -42,7 +42,10 @@ class DefaultLambdaFrameRoundtripTests {
 
     @TestAttribute
     fun importedDefaultLambdasKeepConcreteAndNullableResults() {
-        check(DefaultOwner(37).read() == 37)
+        val owner = DefaultOwner(37)
+        check(owner.constructedLabel == "ctor")
+        check(owner.memberLabel() == "member")
+        check(owner.read() == 37)
         check(DefaultOwner(41).sam() == 41)
         check(DefaultOwner("text").nested() == "text")
         check(DefaultOwner<String?>(null).read() == null)
