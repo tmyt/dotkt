@@ -119,11 +119,8 @@ static partial class DefaultArgSplice
             if (arguments == null || calledOwner == null || bindings == null || !arguments.OfType<BirBindingReference>().Any(read =>
                 bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
             var selected = constructor.DelegationDeclarationId.OrDefault();
-            var signature = constructor.DelegationSig.OrDefault();
             var defaults = selected != null ? refs.KotlinDefaultValuesForDeclarationIdentity(selected)
-                : refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length,
-                    signature == null ? null : ReferenceMetadataIndex.SignatureKeyOf(signature),
-                    signature == null ? null : ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true));
+                : refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length);
             if (defaults == null)
             {
                 if (selected == null && refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length))

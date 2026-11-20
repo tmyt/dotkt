@@ -805,6 +805,8 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(18, NonConstantDefaultSuperSub(3).area)                                  // 18   h = w * 2 = 6
         ClassicAssert.AreEqual("7!", DefaultIntChild().label)
         ClassicAssert.AreEqual("2!", DefaultStringChild().label)
+        ClassicAssert.AreEqual("1!", DefaultIntListChild().label)
+        ClassicAssert.AreEqual("2!", DefaultStringListChild().label)
     }
 
     // #34/#42: the cross-module carrier distinguishes dispatch, extension and enclosing receivers, and carries
@@ -908,6 +910,8 @@ class NonConstantDefaultCtorDefaultHost(val n: Int) {
 class NonConstantDefaultSuperSub(w: Int) : NonConstantDefaultPanel2(w)
 private class DefaultIntChild : NonConstantDefaultPair2(7)
 private class DefaultStringChild : NonConstantDefaultPair2("hi")
+private class DefaultIntListChild : NonConstantDefaultPair2(System.Collections.Generic.List<Int>())
+private class DefaultStringListChild : NonConstantDefaultPair2(System.Collections.Generic.List<String>())
 class NonConstantDefaultSeededSub : NonConstantDefaultSeeded()
 // ...and one whose `: super(…)` SUPPLIES a side-effecting value ahead of the base's own filled defaults.
 class NonConstantDefaultSeededOrderSub : NonConstantDefaultSeededOrder(nonConstantDefaultSeedMarkP())
