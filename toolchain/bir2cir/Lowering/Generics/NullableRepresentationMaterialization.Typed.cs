@@ -151,7 +151,9 @@ static partial class NullableRepresentationMaterialization
                     }
                     var split = method.Body.Method.Except(methodFrame.NullableIndices).Any()
                         || method.Body.For("method", NullableRepresentationFrame.Role.Storage).Except(methodFrame.StorageIndices).Any()
-                        || method.Body.For("method", NullableRepresentationFrame.Role.NullableStorage).Except(methodFrame.NullableStorageIndices).Any();
+                        || method.Body.For("method", NullableRepresentationFrame.Role.NullableStorage).Except(methodFrame.NullableStorageIndices).Any()
+                        || method.Body.For("method", NullableRepresentationFrame.Role.Element).Except(methodFrame.ElementIndices).Any()
+                        || method.Body.For("method", NullableRepresentationFrame.Role.NullableElement).Except(methodFrame.NullableElementIndices).Any();
                     var entry = method.View.Function;
                     var source = split ? (BirFunctionDeclaration)entry.DeepClone() : null;
                     if (split) entry.Body = Array.Empty<IBirStatement>();

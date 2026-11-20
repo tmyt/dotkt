@@ -4,6 +4,15 @@ import ProjectedConstructionInterop.ObliviousBox
 
 fun <T> copyForwardedArrayList(values: Array<T>): ArrayList<T> = arrayListOf(*values)
 
+interface Reader<T> { fun label(): String }
+object NumberReader : Reader<Int> { override fun label() = "number" }
+object TextReader : Reader<String> { override fun label() = "text" }
+
+@Suppress("UNCHECKED_CAST")
+fun reader(number: Boolean): Reader<Any?> = (if (number) NumberReader else TextReader) as Reader<Any?>
+
+fun <T> packElement(value: T): ArrayList<T> = ArrayList<T>().apply { add(value) }
+
 private fun <T> packedGenericValue(value: T): T =
     ObliviousBox<MutableList<out T>>(mutableListOf(value)).Value[0]
 

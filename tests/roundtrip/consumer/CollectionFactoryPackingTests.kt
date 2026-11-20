@@ -2,10 +2,23 @@ package roundtriptests.factorypacking
 
 import NUnit.Framework.TestAttribute
 import ProjectedConstructionInterop.ObliviousBox
-import roundtrip.factorypacking.verifyCollectionFactoryPacking
-import roundtrip.factorypacking.copyForwardedArrayList
+import roundtrip.factorypacking.*
+import ProjectedConstructionInterop.NativeListShape
 
 class CollectionFactoryPackingTests {
+    @TestAttribute
+    fun kotlinListPreservesErasedElementsAndNativeArrayIdentity() {
+        val readers = packElement(reader(true))
+        readers.add(reader(false))
+        check((readers[0] as Any) === NumberReader && (readers[1] as Any) === TextReader)
+        check(listOf(true, false).map { reader(it) }.map { it.label() }.joinToString() == "number, text")
+        check(mutableListOf(reader(false))[0].label() == "text")
+        check(NativeListShape.IsExact<Reader<Any?>>(System.Collections.Generic.List<Reader<Any?>>()))
+        check(!NativeListShape.IsExact<Reader<Any?>>(readers))
+        val ints = arrayOf(1)
+        check(NativeListShape.IsExact<Array<Int>>(packElement(ints)))
+        check(NativeListShape.IsExact<Array<Int>>(ArrayList<Array<Int>>()))
+    }
     @TestAttribute
     fun importedProducerKeepsFactoryPacking() {
         verifyCollectionFactoryPacking()

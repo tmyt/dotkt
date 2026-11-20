@@ -206,10 +206,11 @@ sealed partial class InlineExpansion
         int[] Indices(NullableRepresentationFrame.Role role) => slots.Where(slot => slot.Representation == role)
             .Select(slot => slot.SourceIndex).Distinct().OrderBy(index => index).ToArray();
         var canonical = new NullableRepresentationFrame(sources.Count, Indices(NullableRepresentationFrame.Role.Nullable),
-            storageIndices: Indices(NullableRepresentationFrame.Role.Storage), nullableStorageIndices: Indices(NullableRepresentationFrame.Role.NullableStorage));
+            storageIndices: Indices(NullableRepresentationFrame.Role.Storage), nullableStorageIndices: Indices(NullableRepresentationFrame.Role.NullableStorage),
+            elementIndices: Indices(NullableRepresentationFrame.Role.Element), nullableElementIndices: Indices(NullableRepresentationFrame.Role.NullableElement));
         return new NullableRepresentationFrame(sources.Count, canonical.NullableIndices,
             slots.Select(slot => canonical.Variable(new TypeNode.Tv("type", slot.SourceIndex), slot.Representation).I),
-            canonical.StorageIndices, canonical.NullableStorageIndices);
+            canonical.StorageIndices, canonical.NullableStorageIndices, canonical.ElementIndices, canonical.NullableElementIndices);
     }
 
     static Dictionary<(string scope, int i), List<TypeNode>> SharedCaptureConstraints(BirInlineLambda carrier)

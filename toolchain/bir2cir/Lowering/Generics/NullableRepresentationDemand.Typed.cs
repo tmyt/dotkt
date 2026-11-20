@@ -15,7 +15,8 @@ static partial class NullableRepresentationDemand
         IEnumerable<int> Indices(RepresentationRole role) => Signature.For("method", role)
             .Concat(View.CanExtendBodyFrame ? Body.For("method", role) : Enumerable.Empty<int>()).Distinct().OrderBy(index => index);
         internal NullableRepresentationFrame Frame => new(TypeParameters.Length, Indices(RepresentationRole.Nullable),
-            storageIndices: Indices(RepresentationRole.Storage), nullableStorageIndices: Indices(RepresentationRole.NullableStorage));
+            storageIndices: Indices(RepresentationRole.Storage), nullableStorageIndices: Indices(RepresentationRole.NullableStorage),
+                elementIndices: Indices(RepresentationRole.Element), nullableElementIndices: Indices(RepresentationRole.NullableElement));
     }
 
     internal sealed record SourceOwnerDemand(OwnerView View, Variables Signature, Variables Body, List<SourceMethodDemand> Methods)
@@ -33,7 +34,8 @@ static partial class NullableRepresentationDemand
                         .Select(slot => CaptureOffset + slot.SourceIndex) ?? Enumerable.Empty<int>())
                     .Distinct().OrderBy(index => index);
                 var frame = new NullableRepresentationFrame(View.Parameters.OrEmpty().Length, Indices(RepresentationRole.Nullable),
-                    storageIndices: Indices(RepresentationRole.Storage), nullableStorageIndices: Indices(RepresentationRole.NullableStorage));
+                    storageIndices: Indices(RepresentationRole.Storage), nullableStorageIndices: Indices(RepresentationRole.NullableStorage),
+                elementIndices: Indices(RepresentationRole.Element), nullableElementIndices: Indices(RepresentationRole.NullableElement));
                 return enclosing == null ? frame : frame.WithEnclosingPrefix(enclosing, CaptureOffset);
             }
         }

@@ -59,6 +59,8 @@ sealed class SourceTypeFacts
             || !prior.NullableIndices.SequenceEqual(frame.NullableIndices)
             || !prior.StorageIndices.SequenceEqual(frame.StorageIndices)
             || !prior.NullableStorageIndices.SequenceEqual(frame.NullableStorageIndices)
+            || !prior.ElementIndices.SequenceEqual(frame.ElementIndices)
+            || !prior.NullableElementIndices.SequenceEqual(frame.NullableElementIndices)
             || !prior.PhysicalOrder.SequenceEqual(frame.PhysicalOrder)))
             throw new InvalidOperationException("Conflicting declaration-owned nullable representation frames");
         return new SourceTypeFacts(Base, Interfaces, Bounds,

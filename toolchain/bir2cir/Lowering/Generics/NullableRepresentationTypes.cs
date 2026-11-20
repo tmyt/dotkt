@@ -43,7 +43,7 @@ sealed class NullableRepresentationTypes
     }
 
     public TypeNode[] CloseMethod(NullableRepresentationFrame declaration, IReadOnlyList<TypeNode> arguments) =>
-        declaration.Close(arguments, Argument, NullableArgument, StorageArgument, NullableStorageArgument);
+        declaration.Close(arguments, Argument, NullableArgument, StorageArgument, NullableStorageArgument, ElementArgument, NullableElementArgument);
 
     public TypeNode Slot(TypeNode type) => Rewrite(type, NullableGenericErasure.Pos.Slot);
 
@@ -83,7 +83,25 @@ sealed class NullableRepresentationTypes
         NullableRepresentationFrame.Role.Nullable => NullableArgument(type),
         NullableRepresentationFrame.Role.Storage => StorageArgument(type),
         NullableRepresentationFrame.Role.NullableStorage => NullableStorageArgument(type),
+        NullableRepresentationFrame.Role.Element => ElementArgument(type),
+        NullableRepresentationFrame.Role.NullableElement => NullableElementArgument(type),
         _ => throw new InvalidOperationException("Unknown representation argument role"),
+    };
+
+    // Keep native array/function witnesses intact. Only a Kotlin-owned constructed
+    // classifier uses its existential face when used as a Kotlin list element.
+    TypeNode ElementArgument(TypeNode type) => type switch {
+        TypeNode.Tv v => (v.Scope == "type" ? _owner : _method).Variable(v, NullableRepresentationFrame.Role.Element),
+        TypeNode.Nullable n => NullableElementArgument(n.Of),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(ElementArgument(o.Of)),
+        TypeNode.Projection p => p with { Of = ElementArgument(p.Of) },
+        TypeNode.Fqn f => Named(f, NullableGenericErasure.Pos.Argument, storage: true),
+        _ => Argument(type),
+    };
+    TypeNode NullableElementArgument(TypeNode type) => type switch {
+        TypeNode.Nullable n => NullableElementArgument(n.Of), TypeNode.Oblivious o => NullableElementArgument(o.Of),
+        TypeNode.Tv v => (v.Scope == "type" ? _owner : _method).Variable(v, NullableRepresentationFrame.Role.NullableElement),
+        _ => new TypeNode.Nullable(ElementArgument(type)),
     };
 
     public TypeNode NullableArgument(TypeNode type) => NullableArgument(type, storage: false);
@@ -181,7 +199,9 @@ sealed class NullableRepresentationTypes
                         type => MapArgument(type, NullableRepresentationFrame.Role.Ordinary),
                         type => MapArgument(type, NullableRepresentationFrame.Role.Nullable),
                         type => MapArgument(type, NullableRepresentationFrame.Role.Storage),
-                        type => MapArgument(type, NullableRepresentationFrame.Role.NullableStorage))
+                        type => MapArgument(type, NullableRepresentationFrame.Role.NullableStorage),
+                        type => MapArgument(type, NullableRepresentationFrame.Role.Element),
+                        type => MapArgument(type, NullableRepresentationFrame.Role.NullableElement))
                     : arguments.Select(type => MapArgument(type, NullableRepresentationFrame.Role.Ordinary)).ToArray(),
         };
         if (position != NullableGenericErasure.Pos.Argument) return mapped;

@@ -172,10 +172,15 @@ sealed partial class GenericRepresentationPolicy
                 && !IsBindingAlias(owner)
                 && !OwnsValueSlots(owner));
 
-    public bool UsesStorageArguments(string owner) => false;
+    public bool UsesElementArguments(string owner) =>
+        BindingAlias(owner) == "System.Collections.Generic.List";
 
     public NullableRepresentationFrame.Role ApplicationRole(string owner, NullableRepresentationFrame.Role role) =>
-        role;
+        UsesElementArguments(owner) ? role switch {
+            NullableRepresentationFrame.Role.Ordinary => NullableRepresentationFrame.Role.Element,
+            NullableRepresentationFrame.Role.Nullable => NullableRepresentationFrame.Role.NullableElement,
+            _ => role,
+        } : role;
 
     // Frame expansion must retain the source owner until declaration matching is complete. Lowering only a
     // call's type arguments here would compare CLR IReadOnlyList<T> with a selected Kotlin List<T> descriptor.

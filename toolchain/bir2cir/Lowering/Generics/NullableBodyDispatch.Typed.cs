@@ -8,10 +8,12 @@ static partial class NullableBodyDispatch
         NullableRepresentationFrame ownerFrame, NullableRepresentationFrame entryFrame,
         NullableRepresentationDemand.Variables bodyDemand, Action<BirFunctionDeclaration, NullableRepresentationFrame> prepare)
     {
-        var roles = new[] { NullableRepresentationFrame.Role.Nullable, NullableRepresentationFrame.Role.Storage, NullableRepresentationFrame.Role.NullableStorage };
+        var roles = Enum.GetValues<NullableRepresentationFrame.Role>().Where(role => role != NullableRepresentationFrame.Role.Ordinary);
         IEnumerable<int> Declared(NullableRepresentationFrame.Role role) => role switch {
             NullableRepresentationFrame.Role.Nullable => entryFrame.NullableIndices,
-            NullableRepresentationFrame.Role.Storage => entryFrame.StorageIndices, _ => entryFrame.NullableStorageIndices,
+            NullableRepresentationFrame.Role.Storage => entryFrame.StorageIndices, NullableRepresentationFrame.Role.NullableStorage => entryFrame.NullableStorageIndices,
+            NullableRepresentationFrame.Role.Element => entryFrame.ElementIndices, NullableRepresentationFrame.Role.NullableElement => entryFrame.NullableElementIndices,
+            _ => throw new InvalidOperationException("Unknown companion role"),
         };
         var missing = roles.SelectMany(role => bodyDemand.For("method", role).Except(Declared(role))
             .OrderBy(index => index).Select(index => (Index: index, Role: role))).ToArray();
@@ -27,7 +29,9 @@ static partial class NullableBodyDispatch
             indices[demand.Role].Add(demand.Index);
             var frame = new NullableRepresentationFrame(entryFrame.SourceArity, indices[NullableRepresentationFrame.Role.Nullable].OrderBy(index => index),
                 storageIndices: indices[NullableRepresentationFrame.Role.Storage].OrderBy(index => index),
-                nullableStorageIndices: indices[NullableRepresentationFrame.Role.NullableStorage].OrderBy(index => index));
+                nullableStorageIndices: indices[NullableRepresentationFrame.Role.NullableStorage].OrderBy(index => index),
+                elementIndices: indices[NullableRepresentationFrame.Role.Element].OrderBy(index => index),
+                nullableElementIndices: indices[NullableRepresentationFrame.Role.NullableElement].OrderBy(index => index));
             var suffix = 0;
             string name;
             do { name = "$nullableBody$" + suffix++; } while (!names.Add(name));
@@ -59,7 +63,9 @@ static partial class NullableBodyDispatch
                     type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.Ordinary),
                     type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Nullable),
                     type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Storage),
-                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage));
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage),
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Element),
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableElement));
                 TypeNode Argument(TypeNode.Tv variable, NullableRepresentationFrame.Role requested) => variable.I == index && requested == role
                     ? chosen : currentFrame.Variable(variable, requested);
                 return new BirCallInstance {

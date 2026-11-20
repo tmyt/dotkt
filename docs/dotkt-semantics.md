@@ -1129,6 +1129,12 @@ may equally be a plain BCL value (`mutableListOf()` is a `List<T>`, `HashSet()` 
 at all. The same boundary affects `MutableIterable.iterator()`: its operational `IEnumerable<E>` face returns a BCL
 enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt reconciles those categories physically:
 
+Kotlin `ArrayList<E>` selects its native list element from the Kotlin element representation. A constructed
+Kotlin type with an erased interface uses that interface, so an unchecked `Reader<Int> as Reader<Any?>`
+can be stored without copying or changing the reader. This does not promise a CLR `List<Reader<object>>`.
+An explicit `System.Collections.Generic.List<E>` keeps its reified CLR argument; arrays used as elements
+also keep their ordinary array witness (for example, `ArrayList<Array<Int>>` is a `List<int[]>`).
+
 - every call becomes a `kotlin.collections.ClrCollectionDefaults` dispatcher call (`clrCollRemoveAll`,
   `clrCollRetainAll`, `clrCollAdd`, `clrCollAddAll`, `clrListAddAllAt`, `clrListSet`, `clrListRemoveAt`, their projected counterparts,
   and `clrMutableIterator`);

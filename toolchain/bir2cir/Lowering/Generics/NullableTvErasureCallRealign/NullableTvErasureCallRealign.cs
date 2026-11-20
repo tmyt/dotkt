@@ -345,7 +345,7 @@ static partial class NullableTvErasureCallRealign
             var frame = variable.Scope == "type" ? OwnerNullableFrame : MethodNullableFrame;
             return frame != null && variable.I >= 0 && variable.I < frame.PhysicalArity
                 && frame.PhysicalSlot(variable.I).Representation is
-                    NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage;
+                    NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement;
         }
     }
 
@@ -563,7 +563,7 @@ static partial class NullableTvErasureCallRealign
             foreach (var role in Enum.GetValues<NullableRepresentationFrame.Role>())
                 if (roleContext.IsNullableCompanion((scope == "type" ? roleFrame : methodRoleFrame)
                         .Variable(new TypeNode.Tv(scope, 0), role))
-                    != (role is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage))
+                    != (role is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement))
                     throw new InvalidOperationException("Nullable result realignment confused a storage companion with a nullable slot");
 
         var innerDeclaration = new BirClassDefinition {

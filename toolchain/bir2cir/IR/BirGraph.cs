@@ -142,6 +142,8 @@ internal abstract record BirGraphValue
         => left.SourceArity == right.SourceArity && left.NullableIndices.SequenceEqual(right.NullableIndices)
             && left.StorageIndices.SequenceEqual(right.StorageIndices)
             && left.NullableStorageIndices.SequenceEqual(right.NullableStorageIndices)
+            && left.ElementIndices.SequenceEqual(right.ElementIndices)
+            && left.NullableElementIndices.SequenceEqual(right.NullableElementIndices)
             && left.PhysicalOrder.SequenceEqual(right.PhysicalOrder);
 
     internal static TypeNode CopyType(TypeNode type) => type switch {

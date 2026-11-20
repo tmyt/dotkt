@@ -50,9 +50,10 @@ static partial class TypeOwnershipLowering
         var nullable = Indices(NullableRepresentationFrame.Role.Nullable);
         var storage = Indices(NullableRepresentationFrame.Role.Storage);
         var nullableStorage = Indices(NullableRepresentationFrame.Role.NullableStorage);
-        var canonical = new NullableRepresentationFrame(sourceArity, nullable, storageIndices: storage, nullableStorageIndices: nullableStorage);
+        var canonical = new NullableRepresentationFrame(sourceArity, nullable, storageIndices: storage, nullableStorageIndices: nullableStorage,
+            elementIndices: Indices(NullableRepresentationFrame.Role.Element), nullableElementIndices: Indices(NullableRepresentationFrame.Role.NullableElement));
         var order = slots.Select(slot => canonical.Variable(new TypeNode.Tv("type", slot.SourceIndex), slot.Representation).I).ToArray();
-        return new(remaining, oldToNew, sourceMap, new NullableRepresentationFrame(sourceArity, nullable, order, storage, nullableStorage));
+        return new(remaining, oldToNew, sourceMap, new NullableRepresentationFrame(sourceArity, nullable, order, storage, nullableStorage, canonical.ElementIndices, canonical.NullableElementIndices));
     }
 
     static int[] Inverse(int[] newToOld)

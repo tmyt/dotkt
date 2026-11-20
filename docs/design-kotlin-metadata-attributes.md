@@ -218,8 +218,9 @@ not a reconstructed CLR classifier, without teaching dll2klib which transform pr
 
 `nullableFrame` records the source/physical generic correspondence on a type's `KotlinSupertypes` payload
 or a method's `KotlinDeclarationIdentity` payload. Its current fields are `sourceArity`, `nullable`, `storage`,
-`nullableStorage`, and `order`. The three companion arrays contain sorted, distinct source indices. Canonical
-slots are ordinary source parameters followed by nullable, storage, and nullable-storage companions; `order`
+`nullableStorage`, and `order`, with `element` and `nullableElement` when a Kotlin list construction needs
+those witnesses. The companion arrays contain sorted, distinct source indices. Canonical slots are ordinary
+parameters followed by nullable, storage, nullable-storage, element, and nullable-element companions; `order`
 maps physical positions to those canonical slots. This makes an enclosing type's complete physical prefix
 explicit even when the child's source parameters precede its captured enclosing parameters.
 
@@ -237,9 +238,10 @@ declaration-physical variables, while the pass-local `dispatchOwnerTypeArgs` typ
 application order. Source slot carriers and saved declaration signatures bind their nested classifier names to the
 producer's exact metadata identity without changing their source argument order.
 
-Current representation demand does not allocate storage or nullable-storage companions: their arrays are empty
-on ordinary producer-generated frames. The frame machinery can represent those roles, but they are not the
-current collection ABI and do not imply positional conversion to mutable CLR collection heads.
+A Kotlin list construction demands its element companion independently of ordinary value storage:
+both use a Kotlin generic object's existential interface, but only ordinary storage widens a native
+array to `System.Array`. The element witness therefore agrees between an open generic factory and
+its closed caller without changing the identity of a native array or the argument of an imported CLR list.
 
 Each role is closed from the original source argument independently. A storage companion is not a new Kotlin
 type parameter, and nullable-storage is not reconstructed from an already-erased nullable argument. Source
