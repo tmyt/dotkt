@@ -105,7 +105,7 @@ private interface ExplicitNamedDefaultMethodSlot {
 
 private open class ExplicitNamedDefaultMethodCollisionBase {
     fun explicitNamedDefaultMethod(): Int = 87
-    fun explicitNamedDefaultMethod(f: () -> Int): Int = f() + 2
+    open fun explicitNamedDefaultMethod(f: () -> Int): Int = f() + 2
 }
 
 private class ExplicitNamedDefaultMethodCollision :
