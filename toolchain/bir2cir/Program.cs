@@ -499,16 +499,21 @@ sealed class Pipeline
         // hide them. Later declaration/body walks do not descend into these bytes;
         // the explicit opaque-carrier binder still owns classifier binding.
         InlineBirStash.Reset();
-        foreach (var source in captured) InlineBirStash.Stash(source);
+        foreach (var source in captured)
+        {
+            // Both the local splice index and the DLL carrier freeze the producer's body.
+            // Lower its bodiless calls while the producer's symbol scope still applies.
+            PreconditionLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
+            InlineBirStash.Stash(source);
+        }
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(captured);
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(captured);
-        // Intrinsic failures and non-literal repeat lower before expansion, so
+        // Non-literal repeat lowers before expansion, so
         // discarded closures remain ingredients rather than orphan TypeDefs.
         // Expand original files in order against the complete frozen stash;
         // each file drains generated helpers before later owning passes.
         foreach (var source in captured)
         {
-            PreconditionLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
             RepeatInlineLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
             if (appBuild) CompanionRepresentationLowering.BindSpliceUses(source, refs);
             InlineSplice.Apply(source, refs, appLocalFileClassMethods, inlineDispatchHierarchy,

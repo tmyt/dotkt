@@ -58,6 +58,7 @@ class NonReturningInlineTests {
         check(returnStep { effects++; "tail" } == "tail")
         check(effects == 2)
         check(returnStep<Int?> { null } == null)
+        check(withMode(InlineMode.Second) { it + 10 } == 12)
     }
 
     @TestAttribute

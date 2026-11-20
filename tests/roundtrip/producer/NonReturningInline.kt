@@ -6,6 +6,14 @@ inline fun <R> spinWhile(step: () -> Unit): R { while (true) step() }
 inline fun <R> spinDoWhile(step: () -> Unit): R { do { step() } while (true) }
 inline fun <R> throwAfterStep(step: () -> Unit): R { step(); error("after step") }
 inline fun runUnitStep(step: () -> Unit) { step() }
+enum class InlineMode { First, Second }
+inline fun <R> withMode(mode: InlineMode, block: (Int) -> R): R {
+    val n = when (mode) {
+        InlineMode.First -> 1
+        InlineMode.Second -> 2
+    }
+    return block(n)
+}
 inline fun <R> returnStep(step: () -> R): R = step()
 inline fun concreteSpin(step: () -> Unit): Int { while (true) step() }
 inline fun <R> nestedSpin(step: () -> Unit): R = spinWhile<R>(step)
