@@ -3,6 +3,10 @@ package roundtrip.constrainedbound
 
 import System.Collections.Generic.List as ClrList
 
+interface UsableBound { val name: String }
+internal interface HiddenBound : UsableBound
+open class VisibleBoundBase : HiddenBound { override val name get() = "base" }
+
 interface ReferencedBoundSink<T> { fun accept(x: T): String }
 
 class ReferencedIntBoundSink : ReferencedBoundSink<Int?> {

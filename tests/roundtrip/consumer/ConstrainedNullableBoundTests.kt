@@ -11,15 +11,23 @@ import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.localItemResult
 import roundtrip.constrainedbound.StreamChunk
 import roundtrip.constrainedbound.firstChunk
+import roundtrip.constrainedbound.UsableBound
+import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
 
+private class ForeignBoundHolder<T : VisibleBoundBase>(val element: T) {
+    fun read(): String = publicBoundName(element)
+}
+private fun <T : UsableBound> publicBoundName(value: T): String = value.name
+
 class ConstrainedNullableBoundTests {
     @TestAttribute
     fun constructedAndStarredSubclassesSatisfyTheClassBound() {
         check(localItemResult() == 17L)
+        check(ForeignBoundHolder(VisibleBoundBase()).read() == "base")
         val queue = PendingItems<ResultItem<*>>()
         val numeric = ResultItem(42L)
         val text = ResultItem("text")

@@ -129,10 +129,24 @@ sealed partial class GenericRepresentationPolicy
             // Forward the base class's interface proofs when R : Base flows into R : Interface.
             var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
             foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
-                if (isInterface && StorageConstraint(parent) is { } proof) physical.Add(proof);
+                if (isInterface && StorageConstraint(parent) is { } proof && CanReferenceStorageProof(proof)) physical.Add(proof);
         }
         if (physical.Count != 0) parameter.Constraints = physical.Distinct().ToArray();
         if (erased.Count != 0) parameter.ErasedInnerConstraints = erased.ToArray();
+    }
+
+    // Inheriting a public class does not grant access to its assembly's non-public
+    // interfaces (or to non-public type arguments of a constructed interface).
+    bool CanReferenceStorageProof(TypeNode proof)
+    {
+        if (_references == null) return true;
+        var accessible = true;
+        BirGraphNameFields.VisitTypeNodes(proof, node => {
+            if (node is TypeNode.Fqn named && !_localOwners.Contains(named.Name)
+                && _references.ResolveRefType(_references.ExactReflectedOwner(named.Name, named.Args?.Length ?? 0),
+                    named.Args?.Length ?? 0) is { IsVisible: false }) accessible = false;
+        });
+        return accessible;
     }
 
     internal bool OwnsMethodValueSlots(bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>
