@@ -108,6 +108,13 @@ class RevBridgeDefaultOverPrivateBase : RevBridgePrivateIteratorBase(), RevBridg
 private class RevBridgeNever<T>(backing: MutableSet<T>) : MutableSet<T> by backing {
     override fun iterator(): Nothing = throw UnsupportedOperationException("no iterator")
 }
+private open class RevBridgeResult<R> {
+    open fun iterator(): R = throw UnsupportedOperationException("no iterator")
+}
+private class RevBridgeSubstituted : RevBridgeResult<Nothing>(), Iterable<Int>
+private class RevBridgeMap(private val data: MutableMap<String, Int>) : MutableMap<String, Int> by data {
+    private fun iterator(): Nothing? = null
+}
 
 class ReverseEnumeratorBridgeTests {
     @TestAttribute
@@ -120,6 +127,9 @@ class ReverseEnumeratorBridgeTests {
         throwsFromOverride { set.iterator() }
         throwsFromOverride { (set as Any as ClrEnumerable<Int>).GetEnumerator() }
         throwsFromOverride { (set as Any as RevBridgeRawEnumerable).GetEnumerator() }
+        throwsFromOverride { (RevBridgeSubstituted() as Any as RevBridgeRawEnumerable).GetEnumerator() }
+        val map: Any = RevBridgeMap(mutableMapOf("value" to 7))
+        check((map as RevBridgeRawEnumerable).GetEnumerator().MoveNext())
     }
 
     // The generic face at a constructed instantiation, through Kotlin `for`-in and through compiled stdlib bodies

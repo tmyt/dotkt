@@ -7,7 +7,8 @@ static partial class ReverseEnumeratorBridgeSynthesis
     internal static IReadOnlyList<BirClassDefinition> ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs,
         Action<BirFileDeclaration, IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> publishMethods,
-        Action<BirFileDeclaration, IReadOnlyList<IBirTypeDeclaration>> publishTypes)
+        Action<BirFileDeclaration, IReadOnlyList<IBirTypeDeclaration>> publishTypes,
+        IReadOnlyDictionary<string, BottomSlot> bottom = null)
     {
         var definitions = SupertypeGraph.CollectSource(roots);
         var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -19,7 +20,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             {
                 if (type.Kind.OrDefault() != "class" || string.IsNullOrEmpty(type.Name.OrDefault())
                     || !type.Methods.HasValue || !definitions.TryGetValue(type.Name.Value, out var definition)
-                    || Plan(definition, definitions, refs, declarations) is not { } plan) continue;
+                    || Plan(definition, definitions, refs, declarations, bottom) is not { } plan) continue;
                 var nameTaken = type.Methods.Value.Any(method => method.Name.OrDefault() == GetEnumeratorName
                     && !method.Static.OrDefault() && method.Params.HasValue && method.Params.Value.Length == 0
                     && method.TypeParams.OrEmpty().Length == 0);

@@ -126,6 +126,20 @@ static partial class ReverseEnumeratorBridgeSynthesis
         Need(ReserveSlots(definitions["AbstractBag"], definitions, refs, declarations) == null
             && ReserveSlots(definitions["AmbiguousBag"], definitions, refs, declarations) == null,
             "abstract suppression or unrelated-default ambiguity diverged from early slot reservation");
+        var bottomMethod = Iterator("never", new TypeNode.Fqn("kotlin.Nothing"));
+        var mixed = NoProvider("Mixed", Constructed(IEnumerableT, integer), Constructed("kotlin.collections.Iterable", text));
+        mixed.Methods = new[] { bottomMethod };
+        var bottomRoot = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { mixed } };
+        var bottomRoots = new[] { bottomRoot };
+        var slots = new Dictionary<string, BottomSlot>();
+        Need(ReserveSlots(SupertypeGraph.CollectSource(bottomRoots)["Mixed"], SupertypeGraph.CollectSource(bottomRoots),
+            refs, bottomRoot.Types.Value.ToDictionary(t => t.Name.Value), slots)?.Element == text,
+            "bottom override reserved the delegated native element instead of the Kotlin iterable element");
+        bottomMethod.RetKotlinType = default;
+        var noAdapter = ApplyAll(bottomRoots, refs, (_, _, _) => {}, (_, _) => {}, slots);
+        Need(noAdapter.Count == 0 && bottomRoot.Types.Value.Length == 1
+            && mixed.Methods.Value[1].Body.Value.Single() is BirReturn { Value.Value: BirThrowExpression { Value.Value: BirCallInstance } },
+            "bottom-only module emitted an adapter or lost the non-returning call during physical binding");
         Console.WriteLine("[owning reverse enumerator] shared selection, frames, ordered actual births, protocol MOVE and native adapter: OK");
     }
 }

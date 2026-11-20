@@ -23,6 +23,7 @@ static partial class KotlinOverrideSlotBridge
         readonly Dictionary<IBirTypeDeclaration, BirFileDeclaration> files = new(ReferenceEqualityComparer.Instance);
         readonly Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration, BirGraphValue> materialized;
         internal readonly Dictionary<BirFunctionDeclaration, string> ExactSources = new(ReferenceEqualityComparer.Instance);
+        internal readonly Dictionary<string, ReverseEnumeratorBridgeSynthesis.BottomSlot> BottomIterators = new(StringComparer.Ordinal);
 
         internal FinalSourceContext(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
             ReferenceMetadataIndex references, IReadOnlySet<string> localNames, bool referenceBuild,
@@ -88,7 +89,7 @@ static partial class KotlinOverrideSlotBridge
         }
     }
 
-    internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
+    internal static IReadOnlyDictionary<string, ReverseEnumeratorBridgeSynthesis.BottomSlot> ApplyAll(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild,
         GenericRepresentationPolicy representations,
         IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> covariantBridgedSlots,
@@ -104,6 +105,7 @@ static partial class KotlinOverrideSlotBridge
             RepairFinalSourceDefaults(definition, context);
         foreach (var declaration in context.Index.Declarations.Values)
             foreach (var method in declaration.Methods.OrEmpty()) method.SuspendTaskOnlyBridge = default;
+        return context.BottomIterators;
     }
 
     static void ApplyFinalSourceOwner(Def definition, FinalSourceContext context)
@@ -133,7 +135,7 @@ static partial class KotlinOverrideSlotBridge
         var claims = new Dictionary<(OverrideMethod Body, string Shape), List<OverrideMethod>>();
         var ordinal = 0;
         var enumeration = context.ReferenceBuild ? null : ReverseEnumeratorBridgeSynthesis.ReserveSlots(
-            definition, defs, refs, context.Index.Declarations);
+            definition, defs, refs, context.Index.Declarations, context.BottomIterators);
         bool CanPassAsObject(TypeNode type, OverrideMethod method)
         {
             type = SignatureValueTypes.Of(context.Physical(type));
