@@ -245,7 +245,7 @@ sealed partial class Emitter
                 foreach (var i in implementingDeclaration.Interfaces.OrEmpty())
                 {
                     if (i is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
-                    ti.TB.AddInterfaceImplementation(MapType(iFqn));
+                    ti.TB.AddInterfaceImplementation(InterfaceOwnerType(iFqn, out _));
                 }
             }
         }
@@ -300,8 +300,8 @@ sealed partial class Emitter
                     var specFqn = ifWork.Dequeue();
                     var spec = SigCanon(specFqn);            // the canonical overload/dedup key for this interface spec
                     if (!ifSeen.Add(spec)) continue;
-                    var itype = MapType(specFqn);
-                    if (EmittedDefinition(specFqn.Name, specFqn.Args?.Length ?? 0) is not { } iface)
+                    var itype = InterfaceOwnerType(specFqn, out var iface);
+                    if (iface == null)
                     {
                         var reanchor = ContainsTypeBuilder(itype);
                         var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
@@ -394,12 +394,12 @@ sealed partial class Emitter
                 // A same-assembly interface slot is already named by bir2cir's exact MethodImpl descriptor. Consume
                 // that instruction directly; selecting a DIM from concrete methods, names, or hierarchy order would
                 // re-resolve frontend override semantics in the emitter.
-                if (EmittedDefinition(ibF.Name, ibF.Args?.Length ?? 0) != null)
+                var itype = InterfaceOwnerType(ibF, out var localBase);
+                if (localBase != null)
                 {
                     WireResolvedEmittedInterfaceImpls(ti, ibF, dimImplSeen);
                     continue;
                 }
-                var itype = MapType(ibF);
                 var reanchor = ContainsTypeBuilder(itype);
                 var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
                 var ifaceMs = NamedInterfaceSlots(ti, ibF, slotOwner);

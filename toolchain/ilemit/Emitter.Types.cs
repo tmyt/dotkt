@@ -125,6 +125,13 @@ sealed partial class Emitter
     TypeInfo EmittedDefinition(string name, int arity) =>
         _types.TryGetValue(name, out var local) && local.TypeParams.Count == arity ? local : null;
 
+    // Interface rows contain a nominal TypeDef, never an IL primitive shorthand.
+    Type InterfaceOwnerType(DotKt.Bir.TypeNode.Fqn spec, out TypeInfo local)
+    {
+        local = EmittedDefinition(spec.Name, spec.Args?.Length ?? 0);
+        return spec.Args is { Length: > 0 } args ? ConstructGeneric(spec.Name, args) : local?.AsType ?? ResolveType(spec.Name);
+    }
+
     // A System.Type token, unlike a value signature, may denote an open generic TypeDef.
     Type MapTypeToken(DotKt.Bir.TypeNode type) =>
         type is DotKt.Bir.TypeNode.Fqn { Args: null } f && _types.TryGetValue(f.Name, out var local)

@@ -22,7 +22,10 @@ private class CollectionAddResultDerived<T>(private val storage: MutableList<T>)
     override fun add(element: T): Boolean { calls++; storage[0] = element; return false }
 }
 
-private interface CollectionAddResultDefault : MutableCollection<Int> {
+private interface int
+private interface CollectionAddResultDefault : MutableCollection<Int>, int,
+    DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot<Int> {
+    override val marker: Int get() = 19
     val values: MutableList<Int>
     override fun add(element: Int): Boolean { values[0] = element; return true }
 }
@@ -74,8 +77,6 @@ private class RejectingIndex<E>(items: List<E>) : List<E> by items {
 class CollectionAddResultTests {
     @TestAttribute
     fun authoredAddResultSurvivesEveryCollectionView() {
-        val local = DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot("local")
-        check(local.marker == "local")
         val rejecting: MutableSet<Int> = RejectingSet(mutableSetOf(1))
         try { rejecting.add(2); error("add returned") } catch (e: UnsupportedOperationException) { check(e.message == "add") }
         try { rejecting.addAll(listOf(2)); error("addAll returned") } catch (e: UnsupportedOperationException) { check(e.message == "addAll") }
@@ -116,6 +117,8 @@ class CollectionAddResultTests {
         val base: CollectionAddResultList<Int> = derived
         check(!base.add(2) && !collectionAddResultGeneric(derived, 3) && derived.calls == 2 && derived[0] == 3)
         val defaults = CollectionAddResultDefaultCollection()
+        val local: DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot<Int> = defaults
+        check(local.marker == 19)
         check(collectionAddResultGeneric(defaults, 4) && defaults.values[0] == 4 && defaults.size == 1)
         val nullable = CollectionAddResultInherited(mutableListOf<Int?>(1))
         check(nullable.add(null) && nullable[0] == null)
