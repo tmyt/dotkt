@@ -18,9 +18,13 @@ class InheritedClrNameRoundtripTests {
         val throughMid: InheritedInterfaceSlots = object : InheritedInterfaceSlots {
             override val tag: String get() = "property"
             override fun read(): String = "method"
+            override fun <T : BoundValue> choose(value: T) = 1
+            override fun <T : StringSlot> choose(value: T) = 2
         }
         assertEquals("property", throughMid.tag)
         assertEquals("method", throughMid.read())
+        assertEquals(1, throughMid.choose(BoundPayload()))
+        assertEquals(2, throughMid.choose(throughMid))
     }
 
     @TestAttribute

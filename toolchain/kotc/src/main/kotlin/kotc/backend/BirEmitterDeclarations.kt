@@ -484,9 +484,9 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		// search: fail at the Kotlin-semantics boundary that owns this decision.
 		if (!abstract && !hasDefault && inheritedImplementation == null)
 			error("concrete interface member '${iface.name}.${fn.name}' has neither a body nor a frontend-selected inherited implementation")
-		// An inherited interface view may carry its ancestor's ID for calls and override
-		// edges. The view itself must not publish that ID as another declaration.
-		val identity = if (inheritedSynthetic) null else declarationIdForPhysicalAllocation(fn)
+		// Concrete inherited views have no declaration here. A retained abstract slot
+		// needs its own identity (including for physical overload allocation).
+		val identity = if (inheritedSynthetic && !abstract) null else declarationIdForPhysicalAllocation(fn)
 		val explicitName = explicitClrNameValue(fn)
 		val association = prop?.let { propertyAssociation(it) }
 		return BirFunctionDeclaration(name = name, declarationId = identity, explicitClrName = explicitName,

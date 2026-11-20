@@ -9,6 +9,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the CLR rejecting its storage type argument.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
+- A Kotlin interface can inherit methods and properties from a different DLL without duplicating
+  the base declaration's identity in a third assembly.
 
 ## 0.9.28 (2026-11-19)
 
