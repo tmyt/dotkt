@@ -426,33 +426,33 @@ static class TypedPhysicalValueCoercion
             if (node is BirBlock or BirConditional or BirTry or BirForRange or BirForArray or BirForIn
                 || node is BirValueBlock block && !block.TransparentScope.OrDefault())
                 declarations = new(declarations, StringComparer.Ordinal);
-            node.VisitChildren(child => Visit(child, declarations));
-            if (nativeArray != null)
+            var physicalCall = node is BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance
+                or BirGenericStatic or BirGenericInstance or BirNew or BirNewClr;
+            var arguments = physicalCall ? Arguments(node) : null;
+            var callParameters = arguments != null ? ParameterTypes(node) : null;
+            var boundCall = arguments != null && callParameters != null && callParameters.Length == arguments.Length;
+            if (nativeArray == null) node.VisitChildren(child => Visit(child, declarations));
+            else node.VisitOwnChildSlots((field, _, slot) =>
             {
-                // Ordinary calls, callbacks and published values can expose the
-                // same array to Kotlin code whose writes we cannot inspect here.
-                void Escapes(IBirExpression value) { if (value != null) writes.Add((value, null)); }
-                switch (node)
+                var child = slot.Value;
+                Visit(child, declarations);
+                if (child is not IBirExpression value || !MayAliasArray(child)) return;
+                // Allow only uses whose aliases we actually follow or which
+                // cannot publish the array. Storing it in an array, a closure,
+                // a field or an unrecognised operand must all be equally safe.
+                var accounted = node switch
                 {
-                    case BirDelegateInvoke invoke:
-                        foreach (var arg in invoke.Args.OrEmpty()) Escapes(arg);
-                        break;
-                    case BirNewClosure closure:
-                        foreach (var arg in closure.Captures.OrEmpty()) Escapes(arg);
-                        break;
-                    case BirArraySet write:
-                        writes.Add((write.Array.OrDefault(), write.Value.OrDefault()));
-                        Escapes(write.Value.OrDefault()); break;
-                    case BirSetField field: Escapes(field.Value.OrDefault()); break;
-                    case BirStaticFieldSet field: Escapes(field.Value.OrDefault()); break;
-                    case BirFieldSetExpression field: Escapes(field.Value.OrDefault()); break;
-                    case BirPropertySet property: Escapes(property.Value.OrDefault()); break;
-                }
-            }
-            if (node is BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance
-                    or BirGenericStatic or BirGenericInstance or BirNew or BirNewClr
-                && Arguments(node) is { } arguments && ParameterTypes(node) is { } callParameters
-                && callParameters.Length == arguments.Length)
+                    BirVariable => field == "init", BirSetLocal => field == "value",
+                    BirCast or BirIsInstance => field == "e", BirByRefOf => field == "inner",
+                    BirValueBlock => field == "result", BirConditional => field is "then" or "else",
+                    BirArrayGet or BirArrayLength or BirForArray or BirArraySet => field == "array",
+                    BirBinaryOperation binary => binary.Op.OrDefault() is "===" or "!==" or "==" or "!=",
+                    _ => boundCall && field == "args",
+                };
+                if (!accounted) writes.Add((value, null));
+            });
+            if (nativeArray != null && node is BirArraySet write) writes.Add((write.Array.OrDefault(), write.Value.OrDefault()));
+            if (boundCall)
                 for (var i = 0; i < callParameters.Length; i++)
                 {
                     if (nativeArray != null)
@@ -462,7 +462,7 @@ static class TypedPhysicalValueCoercion
                         if (node is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance or BirNewClr
                             && (physical is TypeNode.ByRef byref ? byref.Of : physical) is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } } target)
                             calls.Add((operand, target));
-                        else if (operand is BirLocal or BirNewArray or BirNewArrayInit or BirNewArraySized or BirValueBlock or BirCast or BirConditional)
+                        else if (operand is BirGraphValue expression && MayAliasArray(expression))
                             writes.Add((operand, null)); // a callee can mutate or retain an incoming array
                     }
                     if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference) continue;
@@ -502,6 +502,7 @@ static class TypedPhysicalValueCoercion
                     } else if (node is BirValueBlock block) yield return block.Result.OrDefault();
                     else if (node is BirConditional branch) { yield return branch.Then.OrDefault(); yield return branch.Else.OrDefault(); }
                     else if (node is BirCast cast) yield return cast.E.OrDefault();
+                    else if (node is BirByRefOf address) yield return address.Inner.OrDefault();
                 }
                 foreach (var input in Inputs())
                     foreach (var origin in Origins(input, seen)) yield return origin;
@@ -534,6 +535,9 @@ static class TypedPhysicalValueCoercion
         foreach (var statement in prefix) arrayNames?.Reserve((BirGraphValue)statement);
         prologue.InsertRange(0, prefix);
     }
+
+    static bool MayAliasArray(BirGraphValue value) => value is BirLocal or BirNewArray or BirNewArrayInit
+        or BirNewArraySized or BirValueBlock or BirCast or BirConditional or BirByRefOf;
 
     static bool CanSelectNativeArray(BirGraphValue array, TypeNode.Array requested, Index index)
     {

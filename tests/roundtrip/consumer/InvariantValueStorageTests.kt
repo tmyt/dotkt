@@ -152,6 +152,15 @@ class InvariantValueStorageTests {
         val number = Box(42)
         val erased = number as Box<String>
         check(mutateBeforeNativeBoundary(false) { it[0] = erased } === number)
+        fun nested(cross: Boolean): Any {
+            val items = arrayOf(forwardedNativeBox())
+            val outer = arrayOf(items)
+            outer[0][0] = erased
+            if (cross) NativeBoxApi.EchoBoxes(items)
+            return items[0]
+        }
+        check(nested(false) === number)
+        check(try { nested(true); false } catch (_: ClassCastException) { true })
         val kotlinItems = arrayOf(Box("initial"))
         val writableAlias = kotlinItems
         writableAlias[0] = erased
