@@ -2,7 +2,12 @@ package roundtrip.defaultlambdaframes
 
 fun interface DefaultSupplier<T> { fun read(): T }
 
+private fun defaultFrameLabel(label: String, configure: StringBuilder.() -> Unit = {}): String =
+    StringBuilder(label).apply(configure).toString()
+
 class DefaultOwner<T>(val value: T) {
+    val constructedLabel = defaultFrameLabel("ctor")
+    fun memberLabel() = defaultFrameLabel("member")
     fun read(block: () -> T = { value }): T = block()
     fun nested(block: () -> () -> T = { { value } }): T = block()()
     fun <M> method(value: M, block: () -> M = { value }): M = block()

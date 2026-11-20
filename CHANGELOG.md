@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
 - Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.
+- Generic classes can omit a noncapturing lambda argument in constructors and member functions without producing an invalid delegate owner.
 - Generic storage parameters now retain publicly usable interface constraints consistently across DLLs without exposing non-public types.
 - An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
 - Kotlin function objects returned by a generic function remain callable and retain their identity.
@@ -17,11 +18,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the CLR rejecting its storage type argument.
 - Covariant property overrides on derived classes retain the constructed type arguments of their generic base.
 - A class inheriting an interface default now satisfies a sibling interface's abstract method or accessor slots.
+- A `Nothing`-returning override fills its selected base slot even when the base and derived classes compile together.
 - Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
 - A Kotlin interface can inherit methods and properties from a different DLL without duplicating
   the base declaration's identity in a third assembly.
+- Interfaces can inherit nullable-generic default methods from a DLL without importing the compiler's private implementation helpers.
 
 ## 0.9.28 (2026-11-19)
 
