@@ -345,7 +345,7 @@ sealed partial class Emitter
         AttributeArgument.TextValue v => v.Value,
         AttributeArgument.Utf16Value v => new string(v.Units.Select(unit => (char)unit).ToArray()),
         AttributeArgument.BytesValue v => v.Bytes,
-        AttributeArgument.TypeValue v => MapType(v.Type),
+        AttributeArgument.TypeValue v => MapTypeToken(v.Type),
         AttributeArgument.ArrayValue v => v.Elems.Select(ConstArgValue).ToArray(),
         AttributeArgument.EnumValue { PhysicalValue: { } physical, Underlying: { } underlying } =>
             EnumConstantValue(underlying, physical),

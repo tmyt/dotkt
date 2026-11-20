@@ -5,15 +5,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- A Kotlin collection whose `iterator()` returns `Nothing` now loads on the CLR. Both enumerable interfaces propagate the original override's exception.
 - Reference and runtime DLLs now use MessagePack for all embedded BIR metadata. Release builds also compress declaration metadata when doing so saves space.
+- A local type no longer hides a referenced interface of a different generic arity when emitting interface implementations.
 - An instance of a Kotlin generic class has the same reflection classifier as its class literal and `typeOf` classifier, including when used as a map key across DLLs.
 - Rich enum entries can reorder named constructor arguments without changing their evaluation order, including entries with their own class body.
-- Subclasses can omit default arguments on an overloaded Kotlin base constructor from another DLL; each overload supplies its own defaults.
+- Reading a nullable class-bounded type parameter from a native generic call or indexer now produces verifiable IL.
 
 - An inherited property such as `message` on a Kotlin exception from another DLL now resolves its getter and preserves virtual dispatch.
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
 - Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.
 - Generic classes can omit a noncapturing lambda argument in constructors and member functions without producing an invalid delegate owner.
+- Subclasses can omit default arguments on an overloaded Kotlin base constructor from another DLL; each overload supplies its own defaults.
 - Generic storage parameters now retain publicly usable interface constraints consistently across DLLs without exposing non-public types.
 - An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
 - Kotlin lists can store differently instantiated Kotlin generic objects after an unchecked cast. Explicit CLR lists and array-valued elements retain their native types.

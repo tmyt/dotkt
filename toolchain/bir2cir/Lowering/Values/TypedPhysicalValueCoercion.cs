@@ -778,7 +778,8 @@ static class TypedPhysicalValueCoercion
         var actual = PhysicalResult(node, scope, index);
         var plainCall = node is BirCallStatic or BirCallInstance or BirConstrainedCall;
         var invocation = plainCall || node is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance;
-        if (!resultUsed && actual != null && plainCall)
+        var objectGeneric = invocation && actual is TypeNode.Tv && declared is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" };
+        if (!resultUsed && actual != null && (plainCall || objectGeneric))
         { ReplaceResultStamps(node, actual); return node; }
         if (node is BirFieldGet or BirStaticFieldGet or BirLateinitGet
             && declared is TypeNode.Tv && actual is TypeNode.Tv && declared != actual)
@@ -794,7 +795,6 @@ static class TypedPhysicalValueCoercion
             return Cast(functionView, declared);
         }
         var genericObject = declared is TypeNode.Tv && actual is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" } && plainCall;
-        var objectGeneric = actual is TypeNode.Tv && declared is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" } && plainCall;
         var genericSlots = declared is TypeNode.Tv && actual is TypeNode.Tv && declared != actual && invocation;
         var arrayStorage = SignatureValueTypes.Of(actual) is TypeNode.Fqn { Name: "System.Array" }
             && SignatureValueTypes.Of(declared) is TypeNode.Array;

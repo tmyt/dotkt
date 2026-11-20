@@ -63,6 +63,7 @@ class CrossModuleFeedNumbers : Feed<Int> {
 
 class CrossModuleInheritedIterator(items: List<String>) : ExternalIteratorProvider<String>(items), Feed<String>
 class CrossModuleDefaultIterator : ExternalDefaultIterator, Iterable<Int>
+private class CrossModuleBottomIterator : roundtrip.collslots.ExternalBottomIterator(), Iterable<Int>
 class CrossModuleDefaultCollection : ExternalDefaultCollection {
     private val backing = listOf(1)
     override val size: Int get() = backing.size
@@ -144,6 +145,9 @@ class KotlinCollectionSlotTests {
         val values = CrossModuleInheritedIterator(listOf("x", "yy", "zzz"))
         assertEquals("x|yy|zzz", values.joinToString("|"))
         assertEquals(6, values.sumOf { it.length })
+        val bottom: Any = CrossModuleBottomIterator()
+        try { (bottom as ClrEnumerable<Int>).GetEnumerator(); error("iterator returned") }
+        catch (ex: UnsupportedOperationException) { assertEquals("inherited iterator", ex.message) }
     }
 
     @TestAttribute

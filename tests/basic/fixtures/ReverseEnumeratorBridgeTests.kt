@@ -105,7 +105,33 @@ open class RevBridgePrivateIteratorBase {
 
 class RevBridgeDefaultOverPrivateBase : RevBridgePrivateIteratorBase(), RevBridgeIteratorDefault, Iterable<Int>
 
+private class RevBridgeNever<T>(backing: MutableSet<T>) : MutableSet<T> by backing {
+    override fun iterator(): Nothing = throw UnsupportedOperationException("no iterator")
+}
+private open class RevBridgeResult<R> {
+    open fun iterator(): R = throw UnsupportedOperationException("no iterator")
+}
+private class RevBridgeSubstituted : RevBridgeResult<Nothing>(), Iterable<Int>
+private class RevBridgeMap(private val data: MutableMap<String, Int>) : MutableMap<String, Int> by data {
+    private fun iterator(): Nothing? = null
+}
+
 class ReverseEnumeratorBridgeTests {
+    @TestAttribute
+    fun bottomOverrideThrowsThroughKotlinAndBothClrFaces() {
+        val set: MutableSet<Int> = RevBridgeNever(mutableSetOf(1))
+        fun throwsFromOverride(call: () -> Unit) {
+            try { call(); error("iterator returned") }
+            catch (ex: UnsupportedOperationException) { assertEquals("no iterator", ex.message) }
+        }
+        throwsFromOverride { set.iterator() }
+        throwsFromOverride { (set as Any as ClrEnumerable<Int>).GetEnumerator() }
+        throwsFromOverride { (set as Any as RevBridgeRawEnumerable).GetEnumerator() }
+        throwsFromOverride { (RevBridgeSubstituted() as Any as RevBridgeRawEnumerable).GetEnumerator() }
+        val map: Any = RevBridgeMap(mutableMapOf("value" to 7))
+        check((map as RevBridgeRawEnumerable).GetEnumerator().MoveNext())
+    }
+
     // The generic face at a constructed instantiation, through Kotlin `for`-in and through compiled stdlib bodies
     // (which see the receiver as `IEnumerable<E>` and therefore go through `GetEnumerator`).
     @TestAttribute

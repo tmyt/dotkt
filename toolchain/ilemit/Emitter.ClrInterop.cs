@@ -102,7 +102,7 @@ sealed partial class Emitter
 
     Type EmitNativeClrTypeOf(CirClassReference e)
     {
-        var t = NativeType(e.Type);
+        var t = MapTypeToken(e.Type);
         _il.Emit(OpCodes.Ldtoken, t);
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         return Bcl("System.Type");

@@ -5,15 +5,17 @@ using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
+    internal enum OperandBinding { ExactNative, FinalSlot }
+
     internal static BirCallStatic ExactStaticCall(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs, MethodInfo method,
-        TypeNode.Fqn declaringOwner, IReadOnlyList<IBirExpression> arguments)
+        TypeNode.Fqn declaringOwner, IReadOnlyList<IBirExpression> arguments, OperandBinding operands = OperandBinding.ExactNative)
     {
         var plan = PlanExactDispatch(bindingLocalTypes, refs, method, declaringOwner, isStatic: true);
         var call = new BirCallStatic {
             Owner = BirGraphValue.CopyType(plan.Reference.DeclaringType), Method = plan.Name, Virtual = false,
             Sig = plan.Reference.ParameterTypes.Select(BirGraphValue.CopyType).ToArray(),
             Ret = BirGraphValue.CopyType(plan.Result), Sty = BirGraphValue.CopyType(plan.Result),
-            Args = ExactArguments(plan, arguments), MemberRef = BirMemberReference.FromPhysical(plan.Reference),
+            Args = ExactArguments(plan, arguments, operands), MemberRef = BirMemberReference.FromPhysical(plan.Reference),
             DotktDeclarationIdentityBound = true,
         };
         if (plan.Visibility != null)
@@ -26,7 +28,8 @@ static partial class ClrMemberResolution
     }
 
     internal static BirCallInstance ExactInstanceCall(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs, MethodInfo method,
-        TypeNode.Fqn declaringOwner, IBirExpression receiver, IReadOnlyList<IBirExpression> arguments)
+        TypeNode.Fqn declaringOwner, IBirExpression receiver, IReadOnlyList<IBirExpression> arguments,
+        OperandBinding operands = OperandBinding.ExactNative)
     {
         var plan = PlanExactDispatch(bindingLocalTypes, refs, method, declaringOwner, isStatic: false);
         var call = new BirCallInstance {
@@ -36,7 +39,7 @@ static partial class ClrMemberResolution
                 : new BirCast { Type = BirGraphValue.CopyType(plan.Reference.DeclaringType), E = OptionalField<IBirExpression>.Of(receiver) }),
             Sig = plan.Reference.ParameterTypes.Select(BirGraphValue.CopyType).ToArray(),
             Ret = BirGraphValue.CopyType(plan.Result), Sty = BirGraphValue.CopyType(plan.Result),
-            Args = ExactArguments(plan, arguments), MemberRef = BirMemberReference.FromPhysical(plan.Reference),
+            Args = ExactArguments(plan, arguments, operands), MemberRef = BirMemberReference.FromPhysical(plan.Reference),
             DotktDeclarationIdentityBound = true,
         };
         if (plan.Visibility != null)
@@ -48,8 +51,8 @@ static partial class ClrMemberResolution
         return call;
     }
 
-    static IBirExpression[] ExactArguments(ExactDispatchPlan plan, IReadOnlyList<IBirExpression> arguments)
-        => arguments.Select((argument, index) => (IBirExpression)new BirCast {
+    static IBirExpression[] ExactArguments(ExactDispatchPlan plan, IReadOnlyList<IBirExpression> arguments, OperandBinding operands)
+        => operands == OperandBinding.FinalSlot ? arguments.ToArray() : arguments.Select((argument, index) => (IBirExpression)new BirCast {
             Type = BirGraphValue.CopyType(plan.Arguments[index]),
             E = OptionalField<IBirExpression>.Of((IBirExpression)((BirGraphValue)argument).DeepClone()),
         }).ToArray();

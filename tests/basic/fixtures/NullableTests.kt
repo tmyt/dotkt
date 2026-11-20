@@ -48,6 +48,11 @@ import kotlin.coroutines.startCoroutine
 // `Nullable(Tv)` is now `System.Object` everywhere and each of these used to fail JIT verification at T=Int.
 fun <T> ngPick(x: T?, d: T): T = x ?: d             // `T?` PARAM
 fun <T> ngFirstOrNull(xs: List<T>): T? = if (xs.isEmpty()) null else xs[0]   // `T?` RETURN
+private open class NgIndexRoot
+private class NgNativeIndex<T : NgIndexRoot> {
+    val values = System.Collections.Generic.List<T?>()
+    fun read(index: Int): T? = values[index]
+}
 fun <T> ngRoundTrip(x: T?): T? {                    // `T?` param -> `T?` body-local -> `T?` return
     var local: T? = null
     local = x
@@ -408,6 +413,12 @@ class NullableTests {
         val flag: Boolean? = ngFirstOrNull(listOf(true, false))
         assertTrue(flag == true)                         // true
         assertNull(ngFirstOrNull(listOf<String>()))      // null  reference control
+        val index = NgNativeIndex<NgIndexRoot>()
+        val item = NgIndexRoot()
+        index.values.Add(item)
+        index.values.Add(null)
+        check(index.read(0) === item)
+        assertNull(index.read(1))
         assertEquals(3, ngPick(3, 7))                    // 3     `T?` param carrying a value at T=Int
         assertEquals(7, ngPick<Int>(null, 7))            // 7     a NULL through the same param at T=Int
         assertTrue(ngPick<Boolean>(null, true))          // true  …and at T=Boolean
