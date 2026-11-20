@@ -47,6 +47,13 @@ internal sealed class MetadataAttributes
 
     public bool DefinesTrustedCarrier(string name) => _dotKtAssembly && _trustedCarriers.Contains(name);
 
+    public string? SourceTypeVisibility(TypeDefinitionHandle handle)
+    {
+        using var carrier = CarrierDocument(handle, DotKtNs + "KotlinTypeVisibilityAttribute");
+        return carrier is null ? null : carrier.RootElement.GetProperty("visibility").GetString()
+            ?? throw new InvalidDataException("missing Kotlin type visibility");
+    }
+
     public bool Has(EntityHandle owner, string name, bool requireTrust = true) =>
         Find(owner, name, requireTrust) is not null;
 

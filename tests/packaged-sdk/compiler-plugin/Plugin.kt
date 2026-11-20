@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
 import org.jetbrains.kotlin.compiler.plugin.*
 import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.CompilerConfigurationKey
+import org.jetbrains.kotlin.descriptors.DescriptorVisibilities
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.extensions.*
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
@@ -19,7 +20,9 @@ import org.jetbrains.kotlin.ir.builders.*
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.expressions.IrCall
+import org.jetbrains.kotlin.ir.expressions.IrConst
 import org.jetbrains.kotlin.ir.expressions.IrConstructorCall
+import org.jetbrains.kotlin.ir.types.classOrNull
 import org.jetbrains.kotlin.ir.visitors.*
 import org.jetbrains.kotlin.name.*
 
@@ -75,6 +78,19 @@ class Registrar : CompilerPluginRegistrar() {
                 })
                 val top = moduleFragment.files.flatMap { it.declarations.filterIsInstance<IrSimpleFunction>() }
                 val original = top.singleOrNull { it.name.asString() == "original" } ?: return
+                fun checkConstant(id: ClassId, expected: Int, internal: Boolean = true) {
+                    val codes = checkNotNull(pluginContext.referenceClass(id)) { "Missing $id" }.owner
+                    if (internal) check(codes.visibility == DescriptorVisibilities.INTERNAL)
+                    val version = codes.declarations.filterIsInstance<IrProperty>().single { it.name.asString() == "version" }
+                    check(version.isConst && (version.backingField?.initializer?.expression as? IrConst)?.value == expected)
+                }
+                val group = ClassId.topLevel(FqName("pluginprobe.api.CodeGroup"))
+                val declaration = checkNotNull(pluginContext.referenceClass(group)).owner
+                check(declaration.superTypes.any { it.classOrNull?.owner?.name?.asString() == "Versioned" })
+                check(declaration.sealedSubclasses.any { it.owner.name.asString() == "InternalCodes" })
+                checkConstant(ClassId.topLevel(FqName("pluginprobe.api.InternalCodes")), 43)
+                checkConstant(ClassId.topLevel(FqName("pluginprobe.api.Tag")).createNestedClassId(Name.identifier("NestedCodes")), 44)
+                checkConstant(group.createNestedClassId(Name.identifier("Companion")), 45, internal = false)
                 fun method(function: IrSimpleFunction): IrCall {
                     lateinit var call: IrCall
                     function.acceptVoid(object : IrVisitorVoid() {

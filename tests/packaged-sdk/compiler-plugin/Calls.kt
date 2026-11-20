@@ -23,6 +23,7 @@ private fun withCompositeLocal() {
 }
 fun main() {
     check(nullableDispatch(pluginprobe.api.TextRelay()) == "nullable receiver 7")
+    check(FixtureNative.CompositeRef.InternalTypesKeepClrVisibility())
     withCompositeLocal()
     var evaluations = 0
     check(compositeDiscard(++evaluations) === Unit && evaluations == 1)
