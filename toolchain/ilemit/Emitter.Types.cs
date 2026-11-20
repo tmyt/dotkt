@@ -114,13 +114,28 @@ sealed partial class Emitter
 
     Type GenericDefinition(string name, int arity)
     {
-        if (_types.TryGetValue(name, out var oti)) return oti.AsType;
+        if (EmittedDefinition(name, arity) is { } local) return local.AsType;
         // A NESTED generic whose arity backtick rides an OUTER type already carries a backtick in `name` (e.g. the #3
         // generic ConfigureAwait(false) awaiter `System...ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter` — arity `1 is
         // on the OUTER ConfiguredTaskAwaitable, the nested awaiter has none). Appending a SECOND arity suffix here yields
         // `...ConfiguredTaskAwaiter`1`, which ResolveType can't find — the name is already arity-complete, use it verbatim.
         return name.Contains('`') ? ResolveType(name) : ResolveType(name + "`" + arity);
     }
+
+    TypeInfo EmittedDefinition(string name, int arity) =>
+        _types.TryGetValue(name, out var local) && local.TypeParams.Count == arity ? local : null;
+
+    // Interface rows contain a nominal TypeDef, never an IL primitive shorthand.
+    Type InterfaceOwnerType(DotKt.Bir.TypeNode.Fqn spec, out TypeInfo local)
+    {
+        local = EmittedDefinition(spec.Name, spec.Args?.Length ?? 0);
+        return spec.Args is { Length: > 0 } args ? ConstructGeneric(spec.Name, args) : local?.AsType ?? ResolveType(spec.Name);
+    }
+
+    // A System.Type token, unlike a value signature, may denote an open generic TypeDef.
+    Type MapTypeToken(DotKt.Bir.TypeNode type) =>
+        type is DotKt.Bir.TypeNode.Fqn { Args: null } f && _types.TryGetValue(f.Name, out var local)
+            ? local.AsType : MapType(type);
 
     // A `tv` (scope + flattened index) -> the CLR generic-parameter builder: scope "method" -> the method's own params
     // (`!!i`, GenericMethodParameter), scope "type" -> the enclosing type's flattened params (`!i`, GenericTypeParameter).
@@ -186,17 +201,9 @@ sealed partial class Emitter
             // real external type — a `dotkt$*` canonical synthetic (`dotkt$CharSequence`) OR a root-package library
             // class (`Vec`/`Lib`/`Pt`, no namespace). Resolve it by reflection, don't fall to object. Before the TYPE flip
             // these rode the `@dotkt$X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
-            // dot-less name that ResolvesExternally must route to ResolveType here (mirrors the externalSynthIface path).
-            _ => TryMapEmittedType(t) ?? ResolveType(t),
+            // dot-less name that resolves externally must route to ResolveType here.
+            _ => EmittedDefinition(t, 0)?.AsType ?? ResolveType(t),
         };
-    }
-
-    // Resolve a bare type spec (no `@`/`clr:`/shorthand prefix) against THIS assembly's emitted types (`_types`).
-    // Returns null when the name is not emitted here (the caller then falls back to reflection over referenced assemblies).
-    Type TryMapEmittedType(string spec)
-    {
-        if (spec == null) return null;
-        return _types.TryGetValue(spec, out var ti) ? ti.AsType : null;
     }
 
 }
