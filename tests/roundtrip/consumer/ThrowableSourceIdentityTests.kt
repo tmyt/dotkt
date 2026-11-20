@@ -28,6 +28,10 @@ private class NarrowedObjectMapOwner : ObjectMapOwner {
 class ThrowableSourceIdentityTests {
     @TestAttribute
     fun kotlinExceptionAliasesRetainTheirDeclaredHierarchyAcrossDlls() {
+        fun importedMessage(e: LibraryArgumentError): String? = e.message
+        check(importedMessage(LibraryArgumentError("library")) == "library")
+        val overridden = object : LibraryArgumentError("base") { override val message get() = "override" }
+        check(importedMessage(overridden) == "override")
         val error = IllegalStateException("expected")
         check(acceptThrowable(error) == "expected")
         check(echoException(error) === error)

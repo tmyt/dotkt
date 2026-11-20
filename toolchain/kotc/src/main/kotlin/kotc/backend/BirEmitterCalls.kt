@@ -1670,6 +1670,9 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 					argTypes = plainAccArgTypes, ret = resultType, args = plainAccArgs, companionCall = companionCall)
 			else BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = propKind,
 				sig = signature, argTypes = plainAccArgTypes, ret = resultType, recv = receiver!!, args = plainAccArgs,
+				// The projected receiver can inherit a Kotlin accessor. Its fake override, not the
+				// resolved accessor above, owns the path to the selected declaration.
+				overrides = call.symbol.owner.takeIf { it.isFakeOverride }?.let { overrideDeclarations(it) },
 				superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 		}
 		val member = name
