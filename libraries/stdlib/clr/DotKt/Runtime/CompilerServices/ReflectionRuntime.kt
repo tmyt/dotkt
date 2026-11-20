@@ -36,6 +36,33 @@ private interface NativeReflectionType {
     @kotlin.clr.ClrIntrinsic("GetCustomAttributes") fun attributes(inherit: Boolean): Array<Any>
 }
 
+// Only a declared identity applies. A non-generic Kotlin or native subclass must not inherit
+// the classifier of its generic base. The token also retains CLR IsInstanceOfType semantics.
+internal class KotlinClassifierIdentity(val classifier: StarProjectionType, val declaration: StarProjectionType,
+    val sourceName: String?, val local: Boolean)
+
+private class ClassifierCell public constructor() {
+    @kotlin.concurrent.Volatile var identity: KotlinClassifierIdentity? = null
+}
+
+private val classifierCache = RuntimeTypeCache<StarProjectionType, ClassifierCell>()
+
+private fun classifierIdentity(type: StarProjectionType): KotlinClassifierIdentity {
+    val cell = classifierCache.get(type)
+    cell.identity?.let { return it }
+    // The metadata of a loaded type is immutable. A racing first read may compute the
+    // same answer twice; all later lookups, including native misses, avoid reflection.
+    val identity = readClassifierIdentity(type) ?: KotlinClassifierIdentity(type, type, null, false)
+    cell.identity = identity
+    return identity
+}
+
+@PublishedApi
+internal fun runtimeKClass(type: StarProjectionType): StarProjectionType {
+    if (!type.isGenericType) return type
+    return classifierIdentity(type).classifier
+}
+
 @kotlin.clr.ClrTypeAlias("System.Array")
 private interface ReflectionArrayStorage
 
@@ -101,20 +128,32 @@ internal fun declarationContainerComponentMatches(component: StarProjectionType)
 internal fun declarationContainerClassifier(shape: String): (Any?) -> Boolean = { declarationContainerMatches(it, shape) }
 
 @PublishedApi
-internal fun kClassSimpleName(value: Any): String? =
-    if (value is NativeReflectionType) value.name else (value as KClassSlots).dotktSimpleName()
+internal fun kClassSimpleName(value: Any): String? {
+    if (value !is NativeReflectionType) return (value as KClassSlots).dotktSimpleName()
+    val name = classifierIdentity(value as StarProjectionType).sourceName ?: return value.name
+    return if (name.isEmpty()) null else name.substringAfterLast('.')
+}
 
 @PublishedApi
-internal fun kClassQualifiedName(value: Any): String? =
-    if (value is NativeReflectionType) value.fullName else (value as KClassSlots).dotktQualifiedName()
+internal fun kClassQualifiedName(value: Any): String? {
+    if (value !is NativeReflectionType) return (value as KClassSlots).dotktQualifiedName()
+    val identity = classifierIdentity(value as StarProjectionType)
+    return if (identity.local) null else identity.sourceName ?: value.fullName
+}
 
 @PublishedApi
-internal fun kClassIsInstance(value: Any, instance: Any?): Boolean =
-    if (value is NativeReflectionType) value.isInstance(instance) else (value as KClassSlots).dotktIsInstance(instance)
+internal fun kClassIsInstance(value: Any, instance: Any?): Boolean {
+    if (value !is NativeReflectionType) return (value as KClassSlots).dotktIsInstance(instance)
+    val token = value as StarProjectionType
+    if (instance != null && token.isGenericTypeDefinition && classifierIdentity(token).local)
+        return starProjectionHasView(instance.starProjectionRuntimeType(), token)
+    return value.isInstance(instance)
+}
 
 @PublishedApi
 internal fun annotatedElementAnnotations(value: Any): List<Annotation> =
-    if (value is NativeReflectionType) value.attributes(false).map { it as Annotation }
+    if (value is NativeReflectionType) (classifierIdentity(value as StarProjectionType).declaration as NativeReflectionType)
+        .attributes(false).map { it as Annotation }
     else (value as KAnnotatedElementSlots).dotktAnnotations()
 
 @PublishedApi

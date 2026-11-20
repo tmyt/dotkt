@@ -180,6 +180,7 @@ STR_OK = {
     "lateinitDeclarationId",                    # BIR-only exact property declaration identity for initialization queries.
     "k", "t", "a",                             # executable/type/physical metadata discriminators
     "name",                                     # decl/local/var/field names AND fqn.name (the type identity string)
+    "localClassifierName",                      # BIR local class's source name (empty for an anonymous object).
     "scope",                                    # tv.scope enum
     "op", "cmp", "clrFlagsOperation",           # operator / compiler-carried CLR [Flags] semantic role
     "value", "constant",                       # expression literal / attribute-arg scalar; CIR field Constant value

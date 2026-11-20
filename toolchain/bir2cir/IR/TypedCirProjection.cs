@@ -58,6 +58,10 @@ sealed partial class TypedCirProjection(IReadOnlySet<string> emitted, BirTypeLow
     A ProjectAttributeArgument(IBirAttributeValue value) => value switch
     {
         BirOpaqueBytes bytes => new A.BytesValue(Require(bytes.Bytes)),
+        // A declaration token names its final physical definition, not one constructed
+        // storage use of it. Keep any ownership/nesting renames, omit use-site arguments.
+        BirClassReference reference when reference.DefinitionToken.OrDefault() && reference.Type.OrDefault() is TypeNode.Fqn physical
+            => new A.TypeValue(new TypeNode.Fqn(physical.Name)),
         BirClassReference reference => new A.TypeValue(Require(reference.Type)),
         BirNewArray array => new A.ArrayValue(Require(array.Elems).Select(ProjectAttributeArgument).ToArray(), array.Elem.OrDefault()),
         BirEnumValue constant => new A.EnumValue(constant.Underlying.OrDefault(), constant.PhysicalValue.OrDefault(),

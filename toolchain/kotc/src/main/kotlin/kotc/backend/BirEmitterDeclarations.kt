@@ -2010,6 +2010,7 @@ internal fun BirEmitter.sourceClassDefinition(klass: IrClass, captures: List<Pai
 	// `clrEvents` (§4.2): per-event backing directives for the `by clrEvent()` synthesis — bir2cir's ClrEventImplBinding
 	// turns each into a real `<E>$delegate : D` field + a type-level `clrEventDecl` (the `.event` metadata record).
 	val result = BirClassDefinition(typeName(klass), sourceBase, ifaces, fields, ctors, methods,
+		localClassifierName = if (captureEnclosingGenerics) (if (klass.name.isSpecial) "" else klass.name.asString()) else null,
 		isAbstract = isAbstract, vis = vis, semanticOwner = semanticOwner, staticSemanticOwner = staticSemanticOwner,
 		outerTypeParamCount = outerTypeParamCount.takeIf { it != 0 },
 		outerTypeParamOffset = ownTps.size.takeIf { outerTypeParamCount != 0 && captureEnclosingGenerics },

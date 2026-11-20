@@ -773,8 +773,8 @@ their own null handling. Direct and reified non-null Number casts still reject n
 
 This is not a Kotlin-reflection implementation. Under the native class-token contract (§2, §5g),
 `Number::class` names its physical alias, `System.Object`. A generic `T::class`
-without classifier operations receives no semantic witness and reports its physical type argument: instantiating it
-with Number also exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
+without classifier operations receives no semantic witness. It looks up the Kotlin declaration associated with
+its physical type argument when one exists (§5g). Instantiating it with Number exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
 not the semantic classifier used by Kotlin `is`/`as` operations. Native `KClass.isInstance` uses that physical
 CLR type's membership; an ordinary Kotlin implementation retains its own method.
 
@@ -1401,7 +1401,7 @@ off it — `qualifiedName` = the FQN verbatim, `simpleName` = its last `.`-segme
 the Kotlin identity is still in hand. It folds two cases:
 
 - **Unbound `classRef`** (`Int::class`, `Foo::class`, a generic `Box::class`, a reified `T::class` after inline-splice):
-  always foldable — the token IS the literal type. `Box::class.simpleName` = `"Box"` (class literals drop type args).
+  foldable for a named non-local type — the token IS the literal type. `Box::class.simpleName` = `"Box"` (class literals drop type args).
 - **Bound `getType`** on a **known-final builtin** — the primitive tower + `String` (`1::class`, `"x"::class`). A final
   type has no subtypes, so the runtime class == the static type carried on the argument's `sty`/`type` slot; the fold is
   sound (and gated to a side-effect-free `const`/`local` receiver so no evaluation is dropped). `1::class.simpleName` =
@@ -1413,23 +1413,17 @@ from reading `Type.Name`/`.FullName` at run time, which the const-fold no longer
 **Framing:** Kotlin-contract restoration — `KClass.simpleName`/`qualifiedName` carry the Kotlin KDoc contract ("the name
 as declared in source code"), so reporting the Kotlin name (not `Int32`/`System.Int32`) honors the contract by default.
 
-**Still dynamic (sequenced follow-up):** a BOUND `getType` still reads through `System.Type.Name`/`.FullName` — so can
-surface a .NET reflection name / backtick mangling / the CLR `+` nested separator — in these cases the const-fold does
-not reach:
+**Dynamic Kotlin classifiers:** `value::class` evaluates its receiver once and uses its runtime class. For a Kotlin
+generic declaration with an existential interface, its constructed CLR types and that interface identify the same
+Kotlin classifier. Thus `Box(1)::class`, `Box::class` and `typeOf<Box<String>>().classifier` compare equal and can
+be used interchangeably as map keys, including across DLLs. Its stored `KClass` reports the source name, not the
+physical interface name. A reified `T::class` for the same declaration yields the same key. Reading annotations
+uses the declaration, not its implementation interface. A local class has no qualified name and an anonymous
+object has no simple name either. A subclass still reports its own class; classifier metadata is never inherited.
 
-- static type is **open/an interface** (`x: Any`, a `List<Int>` value): the runtime class is a subtype, genuinely
-  dynamic.
-- a **generic** or **nested** final **user** class (`box::class` where `box: Box<Int>`, `inner::class` where
-  `inner: Outer.Inner`): reads back `Box\`1` / `Outer+Inner`. (A NON-generic TOP-LEVEL final user class IS already
-  correct via the run-time read — such a type is not CLR-renamed, so `Type.FullName`/`.Name` are its Kotlin
-  qualified/simple name. The UNBOUND `Box::class`/`Outer.Inner::class` is exact via the classRef fold regardless.)
-- the receiver is a **smart-cast wrapper** (`val a: Any = 1; if (a is Int) a::class`) or a bare **`this::class`** in a
-  non-inline member — kotc emits a `cast`/`nullableValue`/`this` node, not the `const`/`local` the fold gates on (a
-  `cast` node can also carry a throwing explicit `as`, so it is not safe to fold away).
-
-Closing these needs a small **runtime CLR→Kotlin reverse-map helper** (a stdlib runtime function `KClassMemberBinding`
-routes the dynamic `getType` to) — a cross-layer stdlib piece, not a bir2cir-only const-fold. It does **not** belong in
-kotc or ilemit.
+This does not change a CLR `GetType()` call or erase generic arguments from native CLR types. For dynamic types with
+no Kotlin classifier association, names still come from CLR reflection. For example, a nested CLR type can report
+`Outer+Inner` and an `Int` passed as `Any` can report `System.Int32`.
 
 Ordinary `KClass<T>` values use Object slots: native tokens and Kotlin implementations retain their original
 identity, without wrapping. Type arguments remain in Kotlin metadata rather than becoming arguments of Object.

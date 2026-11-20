@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- An instance of a Kotlin generic class has the same reflection classifier as its class literal and `typeOf` classifier, including when used as a map key across DLLs.
 - Rich enum entries can reorder named constructor arguments without changing their evaluation order, including entries with their own class body.
 
 - Kotlin array factories, collection-to-array conversion and varargs preserve unchecked views of Kotlin generic elements without copying them at CLR boundaries.

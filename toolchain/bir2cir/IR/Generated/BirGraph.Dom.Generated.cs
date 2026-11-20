@@ -2340,6 +2340,7 @@ internal static class BirGraphDom
                 case "kind": break;
                 case "generated": break;
                 case "base": break;
+                case "localClassifierName": break;
                 case "companionCaptureOwner": break;
                 case "typeParams": break;
                 case "semanticOwner": break;
@@ -2391,6 +2392,7 @@ internal static class BirGraphDom
             Kind = Field<string>(fields, "kind", value => value!.GetValue<string>()),
             Generated = Field<bool>(fields, "generated", value => value!.GetValue<bool>()),
             Base = Field<TypeNode>(fields, "base", value => TypeNode.Read(value) ?? throw new FormatException()),
+            LocalClassifierName = Field<string>(fields, "localClassifierName", value => value!.GetValue<string>()),
             CompanionCaptureOwner = Field<string>(fields, "companionCaptureOwner", value => value!.GetValue<string>()),
             TypeParams = Field<BirTypeParameter[]>(fields, "typeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
             SemanticOwner = Field<string>(fields, "semanticOwner", value => value!.GetValue<string>()),
@@ -3629,15 +3631,19 @@ internal static class BirGraphDom
             {
                 case "k": if (field.Value?.GetValue<string>() != "classRef") throw new FormatException(); break;
                 case "type": break;
+                case "reifiedLiteral": break;
                 case "suspendFnTypePre": break;
                 case "kotlinClassifierRef": break;
+                case "definitionToken": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirClassReference at {source.GetPath()}");
             }
         return new BirClassReference
         {
             Type = Field<TypeNode>(fields, "type", value => TypeNode.Read(value) ?? throw new FormatException()),
+            ReifiedLiteral = Field<bool>(fields, "reifiedLiteral", value => value!.GetValue<bool>()),
             SuspendFnTypePre = Field<TypeNode>(fields, "suspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
             KotlinClassifierRef = Field<bool>(fields, "kotlinClassifierRef", value => value!.GetValue<bool>()),
+            DefinitionToken = Field<bool>(fields, "definitionToken", value => value!.GetValue<bool>()),
         };
     }
 

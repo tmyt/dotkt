@@ -201,7 +201,7 @@ sealed partial class TypedCirProjection
 
     internal CirTypeDeclaration ProjectCirTypeDeclaration(BirClassDefinition value)
     {
-        if (value._ownerConstraintDispatchBounds.IsPresent || value._syntheticFrameBound.IsPresent || value.ClrEventForwarders.IsPresent || value.CompanionCaptureOwner.IsPresent || value.CompanionCarrier.IsPresent || value.DotktKotlinMutableCollectionContract.IsPresent || value.EnumRich.IsPresent || value.InheritedClassMethods.IsPresent || value.InheritedDefaultAccessors.IsPresent || value.InheritedDefaultMethods.IsPresent || value.KotlinCompanion.IsPresent || value.KotlinSupertypesPre.IsPresent || value.OuterTypeParamCount.IsPresent || value.OuterTypeParamOffset.IsPresent || value.RichEnum.IsPresent || value.RoundtripSupertypesPre.IsPresent || value.RoundtripTypeHeaderPending.IsPresent || value.SemanticOwner.IsPresent || value.StaticCarrier.IsPresent || value.StaticSemanticOwner.IsPresent)
+        if (value._ownerConstraintDispatchBounds.IsPresent || value._syntheticFrameBound.IsPresent || value.ClrEventForwarders.IsPresent || value.CompanionCaptureOwner.IsPresent || value.CompanionCarrier.IsPresent || value.DotktKotlinMutableCollectionContract.IsPresent || value.EnumRich.IsPresent || value.InheritedClassMethods.IsPresent || value.InheritedDefaultAccessors.IsPresent || value.InheritedDefaultMethods.IsPresent || value.KotlinCompanion.IsPresent || value.KotlinSupertypesPre.IsPresent || value.LocalClassifierName.IsPresent || value.OuterTypeParamCount.IsPresent || value.OuterTypeParamOffset.IsPresent || value.RichEnum.IsPresent || value.RoundtripSupertypesPre.IsPresent || value.RoundtripTypeHeaderPending.IsPresent || value.SemanticOwner.IsPresent || value.StaticCarrier.IsPresent || value.StaticSemanticOwner.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirClassDefinition");
         return new CirTypeDeclaration
         {
@@ -997,7 +997,7 @@ sealed partial class TypedCirProjection
 
     internal CirClassReference ProjectCirClassReference(BirClassReference value)
     {
-        if (value.KotlinClassifierRef.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value.DefinitionToken.IsPresent || value.KotlinClassifierRef.IsPresent || value.ReifiedLiteral.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirClassReference");
         return new CirClassReference
         {

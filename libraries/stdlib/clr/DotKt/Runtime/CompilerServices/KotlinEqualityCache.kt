@@ -3,7 +3,7 @@ package DotKt.Runtime.CompilerServices
 // Ephemeron keys do not keep collectible runtime types/assemblies alive. Cells
 // cache only immutable type facts, never a collection instance or its history.
 @kotlin.clr.ClrTypeAlias("System.Runtime.CompilerServices.ConditionalWeakTable")
-private class EqualityTypeCache<K : Any, V : Any> {
+internal class RuntimeTypeCache<K : Any, V : Any> {
     constructor()
     @kotlin.clr.ClrIntrinsic("GetOrCreateValue")
     fun get(key: K): V = error("CLR binding")
@@ -17,7 +17,7 @@ private class EqualityCacheCell public constructor() {
     var entry: EqualityEntryAccess? = null
 }
 
-private val equalityTypeCache = EqualityTypeCache<StarProjectionType, EqualityCacheCell>()
+private val equalityTypeCache = RuntimeTypeCache<StarProjectionType, EqualityCacheCell>()
 
 @kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Enter")
 private fun enterEqualityCell(cell: Any): Unit = error("CLR binding")

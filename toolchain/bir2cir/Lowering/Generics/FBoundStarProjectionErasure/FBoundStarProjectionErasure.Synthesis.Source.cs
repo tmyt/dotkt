@@ -122,6 +122,11 @@ static partial class FBoundStarProjectionErasure
             Fields = Array.Empty<BirFieldDeclaration>(), Ctors = Array.Empty<BirConstructor>(),
             Methods = methods.ToArray(), Properties = Array.Empty<BirPropertyDeclaration>(), Attrs = Array.Empty<BirAttribute>(),
         };
+        // The physical generic and its existential interface denote one source classifier.
+        // Give reflection the actual allocated token, not a convention for parsing CLR names.
+        BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, owner.Name, false);
+        definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
+        erased.Attrs = new[] { ClassifierIdentity() };
         if (PublishedApiTypeVisibilityLowering.ResolveVisibility(definition) is { } visibility) erased.Vis = visibility;
         context.AttachType(root, erased);
         foreach (var slot in methods)
