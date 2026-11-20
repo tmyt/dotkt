@@ -100,15 +100,18 @@ static partial class GenericArrayStorageLowering
                 return NeedsStorage(nested) ? ErasedComponent(new TypeNode.Fqn("System.Array"), actualType, native) : native;
             }
             if (expected is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object" or "object", Args: null }) return Boolean(true);
-            if (componentPredicate(expected, CopyGenerated(actualType)) is { } semantic)
+            var declaration = new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt"),
+                Method = "arrayBoundComponent", Sig = new[] { (TypeNode)typeType }, Ret = typeType,
+                Args = new[] { CopyGenerated(actualType) } };
+            if (componentPredicate(expected, declaration) is { } semantic)
                 return ErasedComponent(projectBound(expected), actualType, semantic);
             if (expected is TypeNode.Fqn { Args: { Length: > 0 } } generic
-                && ForeignStarProjectionBinding.TypeClassifierCheck(generic, CopyGenerated(actualType), refs) is { } foreign)
+                && ForeignStarProjectionBinding.TypeClassifierCheck(generic, declaration, refs) is { } foreign)
                 return AliasVarianceRepresentation.RequiresErasure(generic, refs)
                     ? ErasedComponent(projectBound(generic), actualType, foreign) : foreign;
             return SourceTypeOperationCall(refs, "System.Type", "IsAssignableFrom",
                 new BirClassReference { Type = BirGraphValue.CopyType(projectBound(expected)) },
-                "System.Boolean", new[] { "System.Type" }, actualType);
+                "System.Boolean", new[] { "System.Type" }, declaration);
         }
         var invalid = Check(array, Read(typeName, typeType), new());
         var exceptionOwner = refs.ResolveRefType("System.InvalidCastException");
