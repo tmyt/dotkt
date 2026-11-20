@@ -883,9 +883,9 @@ sealed partial class Emitter
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
         // (a static abstract interface method would demand an implementer). Only genuine instance interface members
         // become virtual slots / abstract DIMs.
-        // A private concrete body is callable within the interface, not a
-        // slot to be inherited. Explicit MethodImpl bodies still need a slot.
-        if (interfaceSlot && (attrs != MethodAttributes.Private || clrInterfaceSlotBridge))
+        // A concrete body can be callable within an interface without being
+        // an inheritable slot. Its accessibility does not decide virtuality.
+        if (interfaceSlot && (m.Virtual || m.Override || interfaceAbstract || clrInterfaceSlotBridge))
         {
             attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
             if (clrInterfaceSlotBridge)
@@ -893,7 +893,6 @@ sealed partial class Emitter
             else if (interfaceAbstract)
                 attrs |= MethodAttributes.Abstract;
         }
-        else if (ti.IsInterface && isStatic) attrs |= MethodAttributes.Static;
         else if (isStatic) attrs |= MethodAttributes.Static;
         if (m.Extern.OrDefault())
             attrs |= MethodAttributes.HideBySig;

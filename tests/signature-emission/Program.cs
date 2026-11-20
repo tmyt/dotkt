@@ -173,6 +173,15 @@ if (args[0] == "generate")
         } });
         slotBodies.Add(body);
     }
+    slots.Add(new JsonObject {
+        ["name"] = "PrivateBody", ["vis"] = "private", ["static"] = false, ["override"] = false, ["virtual"] = false, ["abstract"] = false,
+        ["params"] = new JsonArray(), ["ret"] = Named("System.Int32"), ["body"] = slotBodies[0]!["body"]!.DeepClone()
+    });
+    var staticBody = slots[^1]!.DeepClone();
+    staticBody["name"] = "InternalStaticBody";
+    staticBody["static"] = true;
+    staticBody["vis"] = "internal";
+    slots.Add(staticBody);
     root["types"]!.AsArray().Add(new JsonObject {
         ["name"] = "DeclarationSlots", ["kind"] = "interface", ["methods"] = slots
     });
@@ -192,6 +201,12 @@ if (args[0] == "generate")
 var emitted = Assembly.LoadFrom(Path.GetFullPath(args[1])).GetType("ModifiedMethods")!;
 FunctionPointerSignatures.Verify(emitted.Assembly);
 var slotContract = emitted.Assembly.GetType("DeclarationSlots")!;
+var privateBody = slotContract.GetMethod("PrivateBody", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+if (privateBody is not { IsPrivate: true, IsVirtual: false } || privateBody.Attributes.HasFlag(MethodAttributes.NewSlot))
+    throw new Exception("Private interface implementation body changed access or became a slot");
+if (slotContract.GetMethod("InternalStaticBody", BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+    is not { IsAssembly: true, IsStatic: true, IsVirtual: false })
+    throw new Exception("Internal static interface implementation body changed access or became a slot");
 var slotConsumer = Activator.CreateInstance(emitted.Assembly.GetType("SlotConsumer")!);
 for (var i = 0; i < 2; i++)
     if ((int)slotContract.GetMethod("Slot" + i)!.Invoke(slotConsumer, null)! != i + 11)
