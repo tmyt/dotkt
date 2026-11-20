@@ -4,6 +4,42 @@ using DotKt.Cir;
 
 static partial class UnsafeAccessorLowering
 {
+    // Bind a super call while 'this' still belongs to the inline declaration.
+    // The same private nonvirtual forwarder is used by its local and exported
+    // inline bodies; normal lexical-access lowering handles relocated callers.
+    internal static void PrepareInlineSuper(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
+    {
+        SourceAccessContext context = null;
+        foreach (var file in roots)
+        foreach (var type in file.Types.OrEmpty())
+        foreach (var method in type.Methods.OrEmpty())
+        {
+            if (method.Mods.OrDefault()?.Inline.OrDefault() != true) continue;
+            var site = 0;
+            BirGraphValue Walk(BirGraphValue node)
+            {
+                if (node is IBirExecutablePayload or IBirTypeDeclaration) return node;
+                node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+                if (!(node is BirCallInstance c && c.Super.OrDefault()
+                    || node is BirNativeInstance n && n.Super.OrDefault())) return node;
+                if (context == null)
+                {
+                    CollectSourceHosts(roots, out var hosts);
+                    context = new(roots, hosts, refs, null);
+                }
+                var host = context.Hosts[type.Name.Value];
+                var edge = SourceMethodEdgeOf(node);
+                var receiver = edge.Receiver is BirThis ? SourceSelfType(host)
+                    : edge.Receiver is BirGraphNode expression ? BirNodeType.Of(expression) as TypeNode.Fqn : null;
+                if (receiver == null || SourceEnclosingHost(host, receiver.Name, context.Hosts) is not { } lexicalHost)
+                    return node;
+                var identity = method.DeclarationId.Value + "|inline-super:" + site++;
+                return BuildSourceSuper(node, edge, lexicalHost, receiver, context, identity);
+            }
+            foreach (var statement in method.Body.OrEmpty()) Walk((BirGraphValue)statement);
+        }
+    }
+
     static SourceHost SourceEnclosingHost(SourceHost caller, string name, IReadOnlyDictionary<string, SourceHost> hosts)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -34,10 +70,17 @@ static partial class UnsafeAccessorLowering
     static BirGraphValue RewriteSourceSuper(BirGraphValue node, SourceMethodEdge edge, SourceHost caller, SourceAccessContext context)
     {
         if (edge.Receiver is not BirGraphNode receiver
-            || BirNodeType.Of(receiver) is not TypeNode.Fqn receiverType || edge.Owner is not TypeNode.Fqn targetOwner || edge.Method == null)
+            || BirNodeType.Of(receiver) is not TypeNode.Fqn receiverType)
             throw new InvalidOperationException("Nested Kotlin super call is missing its receiver/target facts");
         var host = SourceEnclosingHost(caller, receiverType.Name, context.Hosts)
             ?? throw new InvalidOperationException($"Nested Kotlin super receiver '{receiverType.Name}' is not an enclosing physical owner of '{caller.Name}'");
+        return BuildSourceSuper(node, edge, host, receiverType, context, null);
+    }
+    static BirGraphValue BuildSourceSuper(BirGraphValue node, SourceMethodEdge edge, SourceHost host,
+        TypeNode.Fqn receiverType, SourceAccessContext context, string publishedIdentity)
+    {
+        if (edge.Owner is not TypeNode.Fqn targetOwner || edge.Method == null)
+            throw new InvalidOperationException("Kotlin super call is missing its target");
         var resolvedOwner = SourceConstructedAncestor(host, targetOwner.Name, context.Hosts) ?? targetOwner;
         var ownerArgs = resolvedOwner.Args ?? Array.Empty<TypeNode>();
         var declarationSignature = edge.MemberSignature ?? edge.Signature;
@@ -61,10 +104,10 @@ static partial class UnsafeAccessorLowering
         var frame = CopySourceParameters(referenced?.TypeParams ?? SourceMethodParameters(target, edge.MethodParameters), ownerArgs: ownerArgs);
         if ((frame?.Length ?? 0) != arity) throw new InvalidOperationException(
             $"Kotlin super call '{targetOwner.Name}.{edge.Method}' has {arity} method arguments but {frame?.Length ?? 0} declaration parameters");
-        var key = $"{host.Name}|super|{targetOwner.Name}|{edge.Method}|{arity}|" + string.Join(";", signature.Select(SourceTypeKey)) + "|" + SourceTypeKey(result);
+        var key = publishedIdentity ?? $"{host.Name}|super|{targetOwner.Name}|{edge.Method}|{arity}|" + string.Join(";", signature.Select(SourceTypeKey)) + "|" + SourceTypeKey(result);
         if (!context.Accessors.TryGetValue(key, out var definition))
         {
-            var name = SuperForwarderName(edge.Method);
+            var name = publishedIdentity == null ? SuperForwarderName(edge.Method) : "dotkt$inlineSuper$" + publishedIdentity;
             var parameters = signature.Select((type, index) => SourceParameter("arg" + index, type)).ToArray();
             // Copy only the call header. Original executable operands move to
             // the continuing outer call; the forwarder gets fresh this/locals.
@@ -92,13 +135,14 @@ static partial class UnsafeAccessorLowering
                         ? ((TypeNode.Fqn)ClrMemberResolution.PhysicalInstanceView(null, context.References, resolvedOwner)).Args : null };
                 instance.MemberRef = member;
             }
-            DropSourceMemberFacts((BirGraphValue)targetCall);
+            if (publishedIdentity == null) DropSourceMemberFacts((BirGraphValue)targetCall);
             var forwarder = new BirFunctionDeclaration {
                 Name = name, Generated = true, Static = false, Override = false, Virtual = false,
                 Abstract = false, ObjectOverride = false, Vis = "private", Params = parameters,
                 Ret = CopySourceType(result), Body = SourceReturningBody(targetCall, result), Attrs = Array.Empty<BirAttribute>(),
             };
             if (frame != null) forwarder.TypeParams = frame;
+            if (publishedIdentity != null) forwarder.DeclarationId = publishedIdentity;
             host.Append(forwarder, context.Transitions);
             definition = new(name, null, CopySourceTypes(signature), 0, arity);
             context.Accessors.Add(key, definition);
@@ -110,6 +154,15 @@ static partial class UnsafeAccessorLowering
             Ret = CopySourceType(callResult), Sty = CopySourceType(callResult),
         };
         if (edge.TypeArgs.HasValue) replacement.TypeArgs = CopySourceTypes(edge.TypeArgs.Value);
+        if (publishedIdentity != null)
+        {
+            replacement.DeclarationId = publishedIdentity;
+            replacement.MemberVisibility = "private";
+            replacement.MemberOwnerTypeParams = TypeParameterFrame.Declarations(host.Type).ToArray();
+            if (frame != null) replacement.MemberMethodTypeParams = frame;
+            replacement.MemberSignature = CopySourceTypes(signature);
+            replacement.MemberReturnType = CopySourceType(result);
+        }
         return replacement;
     }
 }

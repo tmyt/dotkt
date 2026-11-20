@@ -27,7 +27,7 @@ static partial class UnsafeAccessorLowering
         {
             if (Type == null) File.Methods = Methods.Append(method).ToArray();
             else Type.Methods = Methods.Append(method).ToArray();
-            transitions.PublishMethods(File, Type, new[] { method });
+            transitions?.PublishMethods(File, Type, new[] { method });
         }
     }
 
@@ -65,6 +65,14 @@ static partial class UnsafeAccessorLowering
         SuspendColdLowering.SourceDeclarationTransitions transitions)
     {
         ArgumentNullException.ThrowIfNull(transitions);
+        var callers = CollectSourceHosts(roots, out var hosts);
+        if (hosts.Count == 0) return;
+        var context = new SourceAccessContext(roots, hosts, refs, transitions);
+        RewriteSourceHosts(callers, context);
+    }
+
+    static List<SourceHost> CollectSourceHosts(IReadOnlyList<BirFileDeclaration> roots, out Dictionary<string, SourceHost> hosts)
+    {
         var callers = new List<SourceHost>();
         foreach (var file in roots)
         {
@@ -74,7 +82,7 @@ static partial class UnsafeAccessorLowering
         }
         // Duplicate physical hosts share lookup snapshots, but executable inputs
         // and appends retain their exact occurrence. Lookup is first-host-wins.
-        var hosts = callers.GroupBy(h => h.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => {
+        hosts = callers.GroupBy(h => h.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => {
             var occurrences = g.ToArray();
             var methods = occurrences.SelectMany(h => h.Methods).ToArray();
             var constructors = occurrences.SelectMany(h => h.Constructors).ToArray();
@@ -83,8 +91,11 @@ static partial class UnsafeAccessorLowering
             { occurrence.LookupMethods = methods; occurrence.LookupConstructors = constructors; occurrence.LookupFields = fields; }
             return occurrences[0];
         }, StringComparer.Ordinal);
-        if (hosts.Count == 0) return;
-        var context = new SourceAccessContext(roots, hosts, refs, transitions);
+        return callers;
+    }
+
+    static void RewriteSourceHosts(List<SourceHost> callers, SourceAccessContext context)
+    {
         foreach (var caller in callers)
         {
             foreach (var method in caller.Methods.ToArray())
