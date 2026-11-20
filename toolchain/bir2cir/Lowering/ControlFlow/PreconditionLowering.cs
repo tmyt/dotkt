@@ -64,13 +64,15 @@ static class PreconditionLowering
         Walk(root);
     }
 
+    internal static BirGraphValue FailureIntrinsic(BirGraphValue node) =>
+        node is BirCallStatic call && call.Owner.OrDefault() is TypeNode.Fqn { Name: "kotlin.internal.ir" }
+        && call.Method.OrDefault() is "noWhenBranchMatchedException" or "throwUninitializedPropertyAccessException"
+            ? ThrowExpr(NewExc("kotlin.IllegalStateException", call.Method.Value)) : null;
+
     static BirGraphValue Rewrite(BirCallStatic call, ISet<string> localTopLevelFns, bool appBuild)
     {
         var method = call.Method.OrDefault();
         if (method == null) return call;
-        if (method is "noWhenBranchMatchedException" or "throwUninitializedPropertyAccessException"
-            && call.Owner.OrDefault() is TypeNode.Fqn owner && owner.Name.StartsWith("kotlin", StringComparison.Ordinal))
-            return ThrowExpr(NewExc("kotlin.IllegalStateException", method));
 
         // Presence matters: owner:null is a top-level helper; an absent owner,
         // member ownerType, or even a null prop marker is not that declaration.

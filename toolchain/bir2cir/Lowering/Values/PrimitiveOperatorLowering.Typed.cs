@@ -10,8 +10,10 @@ static partial class PrimitiveOperatorLowering
     // The source graph owner supplies lexical timing and the two static-type
     // views. This consumer owns only primitive operator representation.
     internal static BirGraphValue Apply(BirGraphValue root, ReferenceMetadataIndex refs = null)
-        => SourceGraphRewrite.Rewrite(root, (node, locals) =>
-            TypedOperator(node, locals) is { } replacement ? (BirGraphValue)replacement : node);
+        => SourceGraphRewrite.Rewrite(root, RewriteNode);
+
+    internal static BirGraphValue RewriteNode(BirGraphValue node, IReadOnlyDictionary<string, TypeNode> locals)
+        => (BirGraphValue)TypedOperator(node, locals) ?? node;
 
     static IBirExpression TypedOperator(BirGraphValue node, IReadOnlyDictionary<string, TypeNode> locals)
     {

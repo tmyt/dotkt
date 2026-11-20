@@ -436,7 +436,10 @@ sealed class Pipeline
                     captured[index], refs, collectionInputs.Helpers.Bind);
                 captured[index] = ReflectedKotlinType.Apply(captured[index], collectionInputs.Helpers);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
-                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)PrimitiveOperatorLowering.Apply(captured[index], refs);
+                // Representation-independent failure intrinsics must also be resolved in
+                // the body frozen for local splicing and DLL consumers.
+                captured[index] = (BirFileDeclaration)SourceGraphRewrite.Rewrite(captured[index], (node, scope) =>
+                    PreconditionLowering.FailureIntrinsic(node) ?? PrimitiveOperatorLowering.RewriteNode(node, scope));
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)FaithfulHintRecognition.Apply(captured[index], sourceTopLevelFns);
             }
         });
@@ -499,21 +502,16 @@ sealed class Pipeline
         // hide them. Later declaration/body walks do not descend into these bytes;
         // the explicit opaque-carrier binder still owns classifier binding.
         InlineBirStash.Reset();
-        foreach (var source in captured)
-        {
-            // Both the local splice index and the DLL carrier freeze the producer's body.
-            // Lower its bodiless calls while the producer's symbol scope still applies.
-            PreconditionLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
-            InlineBirStash.Stash(source);
-        }
+        foreach (var source in captured) InlineBirStash.Stash(source);
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(captured);
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(captured);
-        // Non-literal repeat lowers before expansion, so
+        // Precondition helpers and non-literal repeat lower before expansion, so
         // discarded closures remain ingredients rather than orphan TypeDefs.
         // Expand original files in order against the complete frozen stash;
         // each file drains generated helpers before later owning passes.
         foreach (var source in captured)
         {
+            PreconditionLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
             RepeatInlineLowering.Apply(source, inventory.LocalTopLevelFunctions, appBuild);
             if (appBuild) CompanionRepresentationLowering.BindSpliceUses(source, refs);
             InlineSplice.Apply(source, refs, appLocalFileClassMethods, inlineDispatchHierarchy,

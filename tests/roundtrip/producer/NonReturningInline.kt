@@ -7,6 +7,7 @@ inline fun <R> spinDoWhile(step: () -> Unit): R { do { step() } while (true) }
 inline fun <R> throwAfterStep(step: () -> Unit): R { step(); error("after step") }
 inline fun runUnitStep(step: () -> Unit) { step() }
 enum class InlineMode { First, Second }
+inline fun requireWithMessage(ok: Boolean, noinline message: () -> Any) = require(ok, message)
 inline fun <R> withMode(mode: InlineMode, block: (Int) -> R): R {
     val n = when (mode) {
         InlineMode.First -> 1
@@ -14,6 +15,7 @@ inline fun <R> withMode(mode: InlineMode, block: (Int) -> R): R {
     }
     return block(n)
 }
+fun localInlineModeValue(): Int = withMode(InlineMode.First) { it + 4 }
 inline fun <R> returnStep(step: () -> R): R = step()
 inline fun concreteSpin(step: () -> Unit): Int { while (true) step() }
 inline fun <R> nestedSpin(step: () -> Unit): R = spinWhile<R>(step)
