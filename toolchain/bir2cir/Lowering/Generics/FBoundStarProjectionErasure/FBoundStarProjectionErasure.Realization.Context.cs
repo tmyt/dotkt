@@ -83,6 +83,10 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlyDictionary<string, DeclarationBinding> SourceDefinitions => Bindings.SourceDefinitions;
         internal IReadOnlyDictionary<string, string> Aliases { get; }
         internal SourceCarrierDeclarations Declarations { get; } = new();
+        // A proven constructed CLR MethodSpec argument is physical, even when
+        // the same spelling in an ordinary Kotlin value slot requires erasure.
+        internal Dictionary<BirGraphValue, Dictionary<int, TypeNode>> MethodWitnesses { get; } = new(ReferenceEqualityComparer.Instance);
+        internal Dictionary<BirGraphValue, (string Source, string Slot)> MethodSlotSelections { get; } = new(ReferenceEqualityComparer.Instance);
         readonly Action<IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> materializedMethods;
         readonly Action<BirFileDeclaration, IBirTypeDeclaration> materializedType;
 

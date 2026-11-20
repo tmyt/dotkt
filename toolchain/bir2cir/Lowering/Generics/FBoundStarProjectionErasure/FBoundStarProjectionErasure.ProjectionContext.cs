@@ -15,6 +15,7 @@ static partial class FBoundStarProjectionErasure
         readonly Func<string, ProjectionDeclaration> declaration;
         readonly CurrentPhysicalTypeView currentPhysical;
         readonly Dictionary<string, BirTypeParameter[]> referencedWitnessParameters = new(StringComparer.Ordinal);
+        readonly Dictionary<string, BirTypeParameter[]> referencedMethodWitnessParameters = new(StringComparer.Ordinal);
         internal CurrentDeclarationPreparation Preparation { get; }
         internal IReadOnlyDictionary<string, Owner> Owners { get; }
         internal ReferenceMetadataIndex References { get; }
@@ -129,9 +130,38 @@ static partial class FBoundStarProjectionErasure
                 parameters = TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray();
             else if (!referencedWitnessParameters.TryGetValue(owner.Name, out parameters))
                 referencedWitnessParameters[owner.Name] = parameters = References.PhysicalOwnerTypeParametersInPhysicalFrame(owner.Name);
-            if (parameters == null || index >= parameters.Length) return null;
             var frame = Owners.TryGetValue(owner.Name, out var definition) ? OwnerFrame(definition)
                 : References.NullableTypeFrames.GetValueOrDefault(owner.Name);
+            return SharedClassWitness(parameters, frame, "type", index, application,
+                bound => SupertypeGraph.SubstOwnerTvs(bound, owner.Args));
+        }
+
+        internal TypeNode MethodClassWitness(BirFunctionDeclaration local, string identity, NullableRepresentationFrame frame,
+            TypeNode.Fqn owner, TypeNode[] arguments, int index, TypeNode.Fqn application, TypeNode projected,
+            Func<int, TypeNode> closeArgument)
+        {
+            var parameters = local?.TypeParams.OrDefault();
+            if (local == null && identity != null && !referencedMethodWitnessParameters.TryGetValue(identity, out parameters))
+                referencedMethodWitnessParameters[identity] = parameters = References.PhysicalMethodTypeParametersInPhysicalFrame(identity);
+            TypeNode CloseBound(TypeNode bound)
+            {
+                TypeNode[] physical = null;
+                BirGraphNameFields.VisitTypeNodes(bound, part => {
+                    if (part is TypeNode.Tv { Scope: "method" } tv && tv.I != index)
+                        (physical ??= (TypeNode[])arguments.Clone())[tv.I] = closeArgument(tv.I);
+                });
+                return SubstituteDeclarationTypeArguments(bound, owner?.Args ?? [], physical ?? arguments);
+            }
+            return SharedClassWitness(parameters, frame, "method", index, application, CloseBound,
+                local == null ? null : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(local, i, bound)),
+                arguments) ?? projected;
+        }
+
+        TypeNode.Fqn SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
+            int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute,
+            Func<int, TypeNode, TypeNode> physicalBound = null, TypeNode[] methodArguments = null)
+        {
+            if (parameters == null || index >= parameters.Length) return null;
             var linked = new HashSet<int> { index };
             if (frame != null && frame.PhysicalArity == parameters.Length)
             {
@@ -140,17 +170,31 @@ static partial class FBoundStarProjectionErasure
                     && frame.NullableIndices.Contains(slot.SourceIndex))
                 {
                     var ordinary = frame.SourcePosition(slot.SourceIndex);
-                    var nullable = frame.NullableVariable(new TypeNode.Tv("type", slot.SourceIndex)).I;
+                    var nullable = frame.NullableVariable(new TypeNode.Tv(scope, slot.SourceIndex)).I;
                     // A : nullableA is an edge between two physical slots for the same source A.
                     // Closing both to one class satisfies that edge, not any unrelated B : A.
-                    if (parameters[ordinary].Constraints.OrEmpty().Contains(new TypeNode.Tv("type", nullable)))
+                    if (parameters[ordinary].Constraints.OrEmpty().Contains(new TypeNode.Tv(scope, nullable)))
                     { linked.Add(ordinary); linked.Add(nullable); }
                 }
             }
+            // A physical slot (including a synthesized slot without a source frame)
+            // may constrain another slot closed over the very same projected type.
+            if (methodArguments != null)
+            {
+                bool changed;
+                do {
+                    changed = false;
+                    for (int i = 0; i < parameters.Length; i++)
+                        foreach (var edge in parameters[i].Constraints.OrEmpty().OfType<TypeNode.Tv>())
+                            if (edge.Scope == scope && methodArguments[i] == methodArguments[edge.I]
+                                && (linked.Contains(i) || linked.Contains(edge.I)))
+                            { changed |= linked.Add(i); changed |= linked.Add(edge.I); }
+                } while (changed);
+            }
             if (linked.Any(i => parameters[i].SpecialConstraints.OrEmpty().Any(special => special != "class"))) return null;
-            var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty())
-                .Where(bound => bound is not TypeNode.Tv { Scope: "type" } tv || !linked.Contains(tv.I))
-                .Select(bound => SupertypeGraph.SubstOwnerTvs(bound, owner.Args)).Distinct().ToArray();
+            var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty().Select(bound => physicalBound?.Invoke(i, bound) ?? bound))
+                .Where(bound => bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
+                .Select(bound => StripSourceNullability(substitute(bound))).Distinct().ToArray();
             if (bounds.Length == 0) return null;
             TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
                 ? References.PhysicalConstraintType(type) : type;
