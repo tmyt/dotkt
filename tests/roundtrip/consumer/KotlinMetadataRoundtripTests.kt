@@ -803,6 +803,8 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual("mx/2", nonConstantDefaultUf(NonConstantDefaultMarker("x")))                             // mx/2 the class overload's own default
         // A `: super(…)` omitting a cross-module base's non-constant default: a delegation is a call site too.
         ClassicAssert.AreEqual(18, NonConstantDefaultSuperSub(3).area)                                  // 18   h = w * 2 = 6
+        ClassicAssert.AreEqual("7!", DefaultIntChild().label)
+        ClassicAssert.AreEqual("2!", DefaultStringChild().label)
     }
 
     // #34/#42: the cross-module carrier distinguishes dispatch, extension and enclosing receivers, and carries
@@ -904,6 +906,8 @@ class NonConstantDefaultCtorDefaultHost(val n: Int) {
 // #235: omits the cross-module base's non-constant default at its `: super(…)`, and (NonConstantDefaultSeededSub) omits BOTH of a
 // base's defaults where the first is side-effecting and the second reads it.
 class NonConstantDefaultSuperSub(w: Int) : NonConstantDefaultPanel2(w)
+private class DefaultIntChild : NonConstantDefaultPair2(7)
+private class DefaultStringChild : NonConstantDefaultPair2("hi")
 class NonConstantDefaultSeededSub : NonConstantDefaultSeeded()
 // ...and one whose `: super(…)` SUPPLIES a side-effecting value ahead of the base's own filled defaults.
 class NonConstantDefaultSeededOrderSub : NonConstantDefaultSeededOrder(nonConstantDefaultSeedMarkP())

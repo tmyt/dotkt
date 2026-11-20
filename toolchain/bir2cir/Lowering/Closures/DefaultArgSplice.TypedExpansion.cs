@@ -118,10 +118,15 @@ static partial class DefaultArgSplice
             var bindings = constructor.DelegationBindings.OrDefault();
             if (arguments == null || calledOwner == null || bindings == null || !arguments.OfType<BirBindingReference>().Any(read =>
                 bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
-            var defaults = refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length);
+            var selected = constructor.DelegationDeclarationId.OrDefault();
+            var signature = constructor.DelegationSig.OrDefault();
+            var defaults = selected != null ? refs.KotlinDefaultValuesForDeclarationIdentity(selected)
+                : refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length,
+                    signature == null ? null : ReferenceMetadataIndex.SignatureKeyOf(signature),
+                    signature == null ? null : ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true));
             if (defaults == null)
             {
-                if (refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length))
+                if (selected == null && refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length))
                     throw new InvalidOperationException(AmbiguousDefault(calledOwner, arguments.Length, constructorDelegation: true));
                 return;
             }
