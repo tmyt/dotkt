@@ -16,37 +16,76 @@ static partial class UnsafeAccessorLowering
         {
             if (method.Mods.OrDefault()?.Inline.OrDefault() != true) continue;
             var site = 0;
-            BirGraphValue Walk(BirGraphValue node)
+            BirGraphValue Walk(BirGraphValue node, bool lexicalThis = true)
             {
-                if (node is IBirExecutablePayload or IBirTypeDeclaration) return node;
-                node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
-                if (!(node is BirCallInstance c && c.Super.OrDefault()
-                    || node is BirNativeInstance n && n.Super.OrDefault())) return node;
+                if (node is IBirExecutablePayload) return node;
+                lexicalThis &= node is not IBirTypeDeclaration;
+                node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value, lexicalThis)));
+                var sourceReceiver = node switch {
+                    BirCallInstance c when c.Super.OrDefault() => c.Recv.OrDefault(),
+                    BirNativeInstance n when n.Super.OrDefault() => n.Recv.OrDefault(),
+                    BirEventRaise e when e.Super.OrDefault() => e.Recv.OrDefault(),
+                    _ => null,
+                };
+                if (sourceReceiver == null) return node;
                 if (context == null)
                 {
                     CollectSourceHosts(roots, out var hosts);
                     context = new(roots, hosts, refs, null);
                 }
                 var host = context.Hosts[type.Name.Value];
-                var edge = SourceMethodEdgeOf(node);
-                var receiver = edge.Receiver is BirThis ? SourceSelfType(host)
-                    : edge.Receiver is BirGraphNode expression ? BirNodeType.Of(expression) as TypeNode.Fqn : null;
-                if (receiver == null || SourceEnclosingHost(host, receiver.Name, context.Hosts) is not { } lexicalHost)
+                var receiver = sourceReceiver is BirThis or BirDefaultReceiver { Kind: { HasValue: true, Value: "dispatch" } }
+                    ? (lexicalThis ? SourceSelfType(host) : null)
+                    : sourceReceiver is BirGraphNode expression ? BirNodeType.Of(expression) as TypeNode.Fqn : null;
+                if (receiver == null || SourceEnclosingHost(host, receiver.Name, context.Hosts, source: true) is not { } lexicalHost)
                     return node;
                 var identity = method.DeclarationId.Value + "|inline-super:" + site++;
-                return BuildSourceSuper(node, edge, lexicalHost, receiver, context, identity);
+                return node is BirEventRaise raise ? PrepareSuperRaise(raise, lexicalHost, receiver, identity)
+                    : BuildSourceSuper(node, SourceMethodEdgeOf(node), lexicalHost, receiver, context, identity);
             }
             foreach (var statement in method.Body.OrEmpty()) Walk((BirGraphValue)statement);
+            foreach (var parameter in method.Params.OrEmpty())
+            foreach (var attribute in parameter.Attrs.OrEmpty())
+                if (attribute.Attr.OrDefault() is TypeNode.Fqn { Name: DefaultBirCarrier.AttributeName })
+                    DefaultBirCarrier.Rewrite(attribute, expression => (IBirExpression)Walk((BirGraphValue)expression));
         }
     }
 
-    static SourceHost SourceEnclosingHost(SourceHost caller, string name, IReadOnlyDictionary<string, SourceHost> hosts)
+    // Keep the raise in its lexical host. The event binder still selects its
+    // accessor and performs the vararg length/element checks at its usual phase.
+    static BirCallInstance PrepareSuperRaise(BirEventRaise raise, SourceHost host, TypeNode.Fqn receiver, string identity)
+    {
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        var element = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        var args = raise.PackedArgs.HasValue ? new[] { raise.PackedArgs.Value } : raise.Args.Value;
+        var parameters = args.Select((_, i) => SourceParameter("arg" + i,
+            raise.PackedArgs.HasValue ? new TypeNode.Array(element) : element)).ToArray();
+        var reads = parameters.Select(p => (IBirExpression)new BirLocal { Name = p.Name, Sty = p.Type }).ToArray();
+        var body = raise with { Recv = OptionalField<IBirExpression>.Of(new BirThis()) };
+        if (raise.PackedArgs.HasValue) body.PackedArgs = OptionalField<IBirExpression>.Of(reads[0]);
+        else body.Args = reads;
+        var name = "dotkt$inlineSuper$" + identity;
+        host.Append(new BirFunctionDeclaration {
+            Name = name, DeclarationId = identity, Generated = true, Static = false, Virtual = false, Vis = "private",
+            Params = parameters, Ret = unit, Body = SourceReturningBody(body, unit), Attrs = Array.Empty<BirAttribute>(),
+        }, null);
+        var signature = parameters.Select(p => p.Type.Value).ToArray();
+        return new BirCallInstance {
+            OwnerType = receiver, Virtual = false, Recv = raise.Recv, Args = args, Method = name, DeclarationId = identity,
+            Sig = signature, Ret = unit, Sty = unit, MemberVisibility = "private", MemberReturnType = unit,
+            MemberSignature = CopySourceTypes(signature), MemberOwnerTypeParams = TypeParameterFrame.Declarations(host.Type).ToArray(),
+        };
+    }
+
+    static SourceHost SourceEnclosingHost(SourceHost caller, string name, IReadOnlyDictionary<string, SourceHost> hosts,
+        bool source = false)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         while (caller != null && seen.Add(caller.Name))
         {
             if (caller.Name == name) return caller;
-            caller = caller.NestedIn != null && hosts.TryGetValue(caller.NestedIn, out var parent) ? parent : null;
+            var owner = source ? caller.Type?.SemanticOwner.OrDefault() : caller.NestedIn;
+            caller = owner != null && hosts.TryGetValue(owner, out var parent) ? parent : null;
         }
         return null;
     }
@@ -81,6 +120,15 @@ static partial class UnsafeAccessorLowering
     {
         if (edge.Owner is not TypeNode.Fqn targetOwner || edge.Method == null)
             throw new InvalidOperationException("Kotlin super call is missing its target");
+        // A super qualifier may inherit the selected declaration without
+        // declaring it. Use the override row selected by the frontend, not
+        // another class or interface that happens to declare the same name.
+        if (publishedIdentity != null && node is BirCallInstance inherited && edge.Identity != null
+            && inherited.Overrides.OrEmpty().FirstOrDefault(row => row.DeclarationId.OrDefault() == edge.Identity)
+                ?.Owner.OrDefault() is TypeNode.Fqn selectedOwner)
+            targetOwner = selectedOwner;
+        var suspends = publishedIdentity != null && (node is BirCallInstance c && c.SuspendCall.OrDefault()
+            || node is BirNativeInstance n && n.SuspendCall.OrDefault());
         var resolvedOwner = SourceConstructedAncestor(host, targetOwner.Name, context.Hosts) ?? targetOwner;
         var ownerArgs = resolvedOwner.Args ?? Array.Empty<TypeNode>();
         var declarationSignature = edge.MemberSignature ?? edge.Signature;
@@ -143,6 +191,12 @@ static partial class UnsafeAccessorLowering
             };
             if (frame != null) forwarder.TypeParams = frame;
             if (publishedIdentity != null) forwarder.DeclarationId = publishedIdentity;
+            if (suspends)
+            {
+                forwarder.Mods = new BirModifiers { Suspend = true };
+                forwarder.SuspendRet = CopySourceType(result);
+                forwarder.DeclarationSourceName = name;
+            }
             host.Append(forwarder, context.Transitions);
             definition = new(name, null, CopySourceTypes(signature), 0, arity);
             context.Accessors.Add(key, definition);
@@ -157,6 +211,7 @@ static partial class UnsafeAccessorLowering
         if (publishedIdentity != null)
         {
             replacement.DeclarationId = publishedIdentity;
+            if (suspends) replacement.SuspendCall = true;
             replacement.MemberVisibility = "private";
             replacement.MemberOwnerTypeParams = TypeParameterFrame.Declarations(host.Type).ToArray();
             if (frame != null) replacement.MemberMethodTypeParams = frame;
