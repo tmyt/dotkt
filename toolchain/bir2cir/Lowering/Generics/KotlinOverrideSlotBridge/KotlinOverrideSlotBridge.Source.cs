@@ -105,7 +105,9 @@ static partial class KotlinOverrideSlotBridge
             retFit = Fit.Bridge;
         if (retFit == Fit.Foreign)
         {
-            if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+            // A selected Nothing-returning override never produces a value.
+            // It owes the same exact slot whether its base is local or imported.
+            if (NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
             else if (!supIsInterface && phase == Phase.PhysicalBridges
                 && StringCharSequenceBridge.CanAdaptStringReturn(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), slotRet))
                 retFit = Fit.Bridge;
