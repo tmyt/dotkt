@@ -12,9 +12,8 @@ static partial class KotlinRuntimeTypeWitness
     internal const string OperandKey = "kotlinRuntimeTypeWitness";
     internal const string ClassifierKey = "kotlinClassifierRef";
     internal const string PredicateKey = "kotlinClassifierPredicate";
-    internal static TypeNode PredicateType => new TypeNode.Fqn("System.Func", new TypeNode[] {
-        new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.Object"),
-    });
+    internal static TypeNode PredicateType => new TypeNode.Fn(false, new TypeNode.Fqn("System.Object"),
+        new TypeNode[] { new TypeNode.Fqn("System.Object") }, Clr: "System.Func");
     internal static ValueRepresentationLowering ValueRepresentations { get; set; }
     internal static TypeNode Type => new TypeNode.Fqn("System.ValueTuple", new TypeNode[] {
         new TypeNode.Fqn("System.Int32"), new TypeNode.Fqn("System.Type"), PredicateType, new TypeNode.Fqn("System.Object"),

@@ -6,8 +6,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Compiler plugins can look up internal Kotlin classifiers and read their constants from referenced DLLs.
+- A reified function using `typeOf<T>()` can be called across DLLs even when a generic overload has the same name.
 - A generic Kotlin class can be passed to a function with a class upper bound without
   the CLR rejecting its storage type argument.
+- Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
 - A Kotlin interface can inherit methods and properties from a different DLL without duplicating
