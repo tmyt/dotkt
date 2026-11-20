@@ -5,14 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- A class inheriting a default property implementation now satisfies a sibling interface's abstract accessor slots.
-
 - An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
 - Compiler plugins can look up internal Kotlin classifiers and read their constants from referenced DLLs.
 - A reified function using `typeOf<T>()` can be called across DLLs even when a generic overload has the same name.
 - A generic Kotlin class can be passed to a function with a class upper bound without
   the CLR rejecting its storage type argument.
 - Covariant property overrides on derived classes retain the constructed type arguments of their generic base.
+- A class inheriting an interface default now satisfies a sibling interface's abstract method or accessor slots.
 - Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.

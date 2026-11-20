@@ -119,8 +119,8 @@ static partial class KotlinOverrideSlotBridge
                      SourceInheritedFacts(declaration, false), false, false, false))
             inherited.Add(context.Views.Method(selected.Method), selected);
         foreach (var selected in SelectInheritedMethods(owner, defs, context.Views, refs, isValue,
-                     SourceInheritedFacts(declaration, true).Where(fact => fact.Source is BirInheritedDefaultAccessor
-                         && fact.ImplementationOwner is TypeNode.Fqn body && fact.Header.Overrides.OrEmpty().Any(edge =>
+                     SourceInheritedFacts(declaration, true).Where(fact =>
+                         fact.ImplementationOwner is TypeNode.Fqn body && fact.Header.Overrides.OrEmpty().Any(edge =>
                              edge.Owner.OrDefault() is TypeNode.Fqn target && !SupertypeGraph.ReachesDeclaration(body, target, defs, refs))),
                      false, true, false))
             inherited.Add(context.Views.Method(selected.Method), selected);
@@ -183,7 +183,9 @@ static partial class KotlinOverrideSlotBridge
             // A DIM supplies its own interface chain, but cannot supply a distinct
             // abstract slot declared on a sibling that the class also implements.
             if (selectedBody?.IsDefault == true && (slot.HasDefault
-                || SupertypeGraph.Reaches(selectedBody.Owner, slot.DescriptorSpec, defs, refs))) return;
+                || SupertypeGraph.Reaches(selectedBody.Owner, slot.SemanticSpec, defs, refs)
+                || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [selectedBody.Owner] },
+                    slot.DescriptorSpec, defs, refs, isValue, context.LocalNames))) return;
             var reimplements = slot.IsInterface && definition.Kind == "class"
                 && (ReachesFromDeclaredInterface(definition, slot.SemanticSpec, defs, refs)
                     || slot.Referenced && ReachesFromDeclaredPhysicalInterface(definition, slot.DescriptorSpec,
@@ -299,7 +301,8 @@ static partial class KotlinOverrideSlotBridge
                     var association = implementation.Source?.PropertyAssociation.OrDefault() ?? implementation.Header?.PropertyAssociation.OrDefault();
                     if (selectedBody?.IsDefault == true)
                         KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(bridge,slot.IdentityName,slot.PropertyAccessor,
-                            selectedBody.Method.Source?.PropertyAssociation.OrDefault() ?? selectedBody.DeclarationId);
+                            selectedBody.Method.Source?.PropertyAssociation.OrDefault() ?? selectedBody.DeclarationId
+                                ?? "inherited-default:" + key);
                     else if (definition.Kind == "interface")
                         KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(bridge,slot.IdentityName,slot.PropertyAccessor,association);
                     else KotlinPropertyAccessors.AssociateBridgeProperty(declaration,bridge,slot.IdentityName,

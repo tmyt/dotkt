@@ -202,7 +202,9 @@ static partial class KotlinOverrideSlotBridge
                         && source.Arity == arity
                         && SameSourceMethodTypeParameterShape(SemanticParameters(source),
                             SemanticParameters(fact.ImplementationParameters, fact.ImplementationBounds?.Bounds, null), args, args)
-                        && (fact.Header.Overrides.OrEmpty().Any(edge => edge.DeclarationId.OrDefault() is string id
+                        && (defaults && fact.DeclarationId != null
+                            ? SourceDeclarationId(fact.DeclarationId) == SourceDeclarationId(source.DeclarationId)
+                            : fact.Header.Overrides.OrEmpty().Any(edge => edge.DeclarationId.OrDefault() is string id
                                 && id == SourceDeclarationId(source.DeclarationId))
                             || SignatureMatches(source, factParams, factReturn, args, refs, isValue))).ToArray();
                     if (sources.Length == 0 || sources.Length > 1 && !SameSelectedSuspendDeclaration(sources)) continue;
@@ -245,11 +247,14 @@ static partial class KotlinOverrideSlotBridge
                         var declarationParams = parameters.Select((parameter, index) => parameter.KotlinType.OrDefault() ?? factParams[index]).ToArray();
                         var ownArgs = ClassOwnArgs(cls.Definition);
                         var selectedArgs = cls.Frame?.OrdinaryArguments(ownArgs) ?? ownArgs;
-                        var semanticParameters = SemanticParameters(fact.Header.TypeParams.OrDefault(), fact.Header.MethodTypeParameterBoundsPre.OrDefault()?.Bounds, null);
+                        var selectedParameters = defaults ? fact.ImplementationParameters : fact.Header.TypeParams.OrDefault();
+                        var semanticParameters = SemanticParameters(selectedParameters,
+                            (defaults ? fact.ImplementationBounds : fact.Header.MethodTypeParameterBoundsPre.OrDefault())?.Bounds, null);
+                        var selectedArity = defaults ? arity : fact.Header.TypeParams.OrEmpty().Length;
                         var found = accessor != null
-                            ? refs.TrySelectedSourceOverrideDeclaration(spec.Name, member, fact.Header.TypeParams.OrEmpty().Length,
+                            ? refs.TrySelectedSourceOverrideDeclaration(spec.Name, member, selectedArity,
                                 declarationParams, args, semanticParameters, selectedArgs, false, out source, accessor, fact.DeclarationId)
-                            : refs.TrySelectedSourceMethodDeclaration(spec.Name, member, fact.Header.TypeParams.OrEmpty().Length,
+                            : refs.TrySelectedSourceMethodDeclaration(spec.Name, member, selectedArity,
                                 declarationParams, factReturn, args, semanticParameters, selectedArgs, out source,
                                 selectedDeclarationId: fact.DeclarationId);
                         if (!found) continue;
@@ -263,13 +268,15 @@ static partial class KotlinOverrideSlotBridge
                             KotlinCollectionSlotSynthesis.IsErasedQueryParameter(fact.Header.Overrides.OrEmpty(), index)
                                 ? source.QueryParameterBound?.Invoke(index) : null).ToArray(), logical,
                         new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args), null,
-                        collectionQueries ? SupertypeGraph.SubstOwnerTvs(source.Return, args) : null);
+                        collectionQueries ? SupertypeGraph.SubstOwnerTvs(source.Return, args) : null,
+                        defaults && accessor != null ? source.KotlinParameters : null);
                 }
 
                 void Publish(SelectedMethodHeader selectedSource, TypeNode[] physicalParams, TypeNode physicalRet,
                     bool returnsValue, string physicalMember, BirTypeParameter[] typeParams, NullableRepresentationFrame frame,
                     byte[][] nullableFlags, TypeNode[] signature, string declarationId, TypeNode[] queryBounds,
-                    TypeNode logicalResult, TypeNode.Fqn callOwner, OverrideOwner sourceOwner, TypeNode selectedKotlinReturn = null)
+                    TypeNode logicalResult, TypeNode.Fqn callOwner, OverrideOwner sourceOwner, TypeNode selectedKotlinReturn = null,
+                    TypeNode[] kotlinParameters = null)
                 {
                     var projected = selectedSource?.SuspendSourceParameters.HasValue == true;
                     var header = new SelectedMethodHeader {
@@ -301,7 +308,9 @@ static partial class KotlinOverrideSlotBridge
                     if (returnsValue && IsUnitValueSlot(physicalRet)) header.DotktValueReturn = true;
                     result.Add(new(callOwner, header, fact.Source, fact.Header.Overrides.OrEmpty(), defaults,
                         signature, declarationId, queryBounds?.Select(type => type == null ? null : SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
-                        physicalParams.Select((type, index) => index < factParams.Length ? factParams[index] : type).ToArray()));
+                        physicalParams.Select((type, index) => kotlinParameters?[index] is {} semantic
+                            ? SupertypeGraph.SubstOwnerTvs(semantic, refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(args) ?? args)
+                            : index < factParams.Length ? factParams[index] : type).ToArray()));
                 }
             }
         }

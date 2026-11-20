@@ -3281,7 +3281,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             CloneReferencedTypeParameters(match.MethodTypeParams), match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
+        { KotlinParameters = match.KotlinParameterTypes, ParameterNullableFlags = match.ParameterNullableFlags,
+            QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
 
@@ -5565,6 +5566,7 @@ sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Para
     TypeNode PhysicalReturn, NullableRepresentationFrame NullableFrame, TypeNode[] SignatureParameters,
     string DeclarationId)
 {
+    public TypeNode[] KotlinParameters { get; init; }
     public byte[][] ParameterNullableFlags { get; init; }
     public Func<int, TypeNode> QueryParameterBound { get; init; }
 }
