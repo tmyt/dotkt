@@ -108,6 +108,20 @@ static class SupertypeGraph
         var queue = new Queue<(TypeNode.Fqn, bool, bool)>();
         foreach (var i in cls.Interfaces) queue.Enqueue((i, true, physicalSourceApplications));
         if (cls.Base != null) queue.Enqueue((cls.Base, false, physicalSourceApplications));
+        foreach (var edge in Walk(queue, defs, refs, sourceFrames)) yield return edge;
+    }
+
+    public static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReachableFromClass(TypeNode.Fqn construction,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+    {
+        var queue = new Queue<(TypeNode.Fqn, bool, bool)>();
+        queue.Enqueue((construction, false, false));
+        foreach (var edge in Walk(queue, defs, refs, sourceFrames: false)) yield return edge;
+    }
+
+    static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> Walk(Queue<(TypeNode.Fqn, bool, bool)> queue,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool sourceFrames)
+    {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         while (queue.Count > 0)
         {

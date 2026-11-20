@@ -50,8 +50,8 @@ static partial class KotlinOverrideSlotBridge
                         ExactSources[method] = association;
         }
 
-        internal NullableRepresentationTypes Mapping(Def definition) => new(Views.Owner(definition).Frame,
-            null, applications, IsValue, policy: Representations);
+        internal NullableRepresentationTypes Mapping(Def definition, NullableRepresentationFrame method = null) => new(Views.Owner(definition).Frame,
+            method, applications, IsValue, policy: Representations);
         internal TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type,
             References.Aliases, IsValue, References.PhysicalTypeNames, typeArg: false, LocalNames,
             nullableFrames: References.NullableTypeFrames);
@@ -61,17 +61,19 @@ static partial class KotlinOverrideSlotBridge
         internal bool Assignable(TypeNode source, TypeNode target, bool boxing = false) =>
             FBoundStarProjectionErasure.IsClrAssignable(source, target, Index.Declarations, References,
                 physicalTypes: true, allowBoxing: boxing);
-        internal bool CarrierSeam(TypeNode left, TypeNode right)
+        internal TypeNode.Fqn CarrierConstruction(TypeNode exact, TypeNode view)
         {
             static TypeNode Core(TypeNode type) => type switch {
                 TypeNode.Nullable nullable => Core(nullable.Of), TypeNode.Oblivious oblivious => Core(oblivious.Of), _ => type,
             };
-            bool Matches(TypeNode exact, TypeNode view) => Core(exact) is TypeNode.Fqn { Args.Length: > 0 } construction
+            return Core(exact) is TypeNode.Fqn { Args.Length: > 0 } construction
                 && Core(view) is TypeNode.Fqn carrier
                 && (carriers?.TryGetValue(construction.Name, out var local) == true && local == carrier.Name
-                    || References.TryExistentialPhysicalOwner(construction.Name, out var referenced) && referenced == carrier.Name);
-            return Matches(left, right) || Matches(right, left);
+                    || References.TryExistentialPhysicalOwner(construction.Name, out var referenced) && referenced == carrier.Name)
+                ? construction : null;
         }
+        internal bool CarrierSeam(TypeNode left, TypeNode right) =>
+            CarrierConstruction(left, right) != null || CarrierConstruction(right, left) != null;
         internal void Append(IBirTypeDeclaration owner, BirFunctionDeclaration method)
         {
             owner.Methods = owner.Methods.OrEmpty().Append(method).ToArray();
@@ -140,6 +142,12 @@ static partial class KotlinOverrideSlotBridge
         bool CanReturn(TypeNode source, TypeNode target, OverrideMethod method)
         {
             var semantic = method.Source?.RetKotlinType.OrDefault() ?? method.Header?.RetKotlinType.OrDefault();
+            // Prove the declared construction's conversion, not the erased carrier's.
+            // Keep the ordinary checked cast at the actual CLR return boundary.
+            if (context.CarrierConstruction(semantic, source) is { } classifier
+                && NullableGenericErasure.EraseArgument(context.Mapping(definition, method.Frame).Slot(classifier), isValue) is TypeNode.Fqn construction
+                && SupertypeGraph.ReachableFromClass(construction, defs, refs)
+                    .Any(edge => context.Assignable(context.Physical(edge.spec), target))) return true;
             if (LowersToObject(source, refs) && semantic is TypeNode.Tv variable)
                 source = (variable.Scope == "method" ? method.Frame : mapping.OwnerFrame)?.Variable(variable,
                     NullableRepresentationFrame.Role.Ordinary) ?? variable;
