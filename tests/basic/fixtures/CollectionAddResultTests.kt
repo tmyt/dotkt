@@ -74,6 +74,8 @@ private class RejectingIndex<E>(items: List<E>) : List<E> by items {
 class CollectionAddResultTests {
     @TestAttribute
     fun authoredAddResultSurvivesEveryCollectionView() {
+        val local = DotKt.Runtime.CompilerServices.KotlinMutableCollectionAddSlot("local")
+        check(local.marker == "local")
         val rejecting: MutableSet<Int> = RejectingSet(mutableSetOf(1))
         try { rejecting.add(2); error("add returned") } catch (e: UnsupportedOperationException) { check(e.message == "add") }
         try { rejecting.addAll(listOf(2)); error("addAll returned") } catch (e: UnsupportedOperationException) { check(e.message == "addAll") }

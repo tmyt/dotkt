@@ -523,10 +523,11 @@ sealed partial class Emitter
                 // while a value owner is itself another addressable location (`array[i].box.value` recurses through
                 // `ldelema`; `holder.box.value` through the preceding `ldflda`). This is the address twin of the
                 // ordinary field read/write paths, which already make the same owner-type distinction.
-                if (IsValueType(ClrRef(e.OwnerType))) EmitAddr(e.Recv);
+                var field = PrimaryFromRef(e.MemberRef.OrDefault()) as FieldInfo
+                    ?? ResolveLocalField(ParseOwnerSlot(e.OwnerType), e.Name, out _, "field address");
+                if (IsValueType(field.DeclaringType)) EmitAddr(e.Recv);
                 else EmitExpr(e.Recv);
-                EmitField(_il, OpCodes.Ldflda, PrimaryFromRef(e.MemberRef.OrDefault()) as FieldInfo
-                    ?? ResolveLocalField(ParseOwnerSlot(e.OwnerType), e.Name, out _, "field address"));
+                EmitField(_il, OpCodes.Ldflda, field);
                 return;
             }
             case CirStaticField e:
