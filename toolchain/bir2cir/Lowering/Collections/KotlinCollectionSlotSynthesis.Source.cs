@@ -50,7 +50,8 @@ static partial class KotlinCollectionSlotSynthesis
             if (bridges.Count == 0) continue;
             var currentInterfaces = owner.Declaration.Interfaces.OrEmpty().ToList();
             foreach (var name in interfaces)
-                if (!currentInterfaces.OfType<TypeNode.Fqn>().Any(type => type.Name == name)) currentInterfaces.Add(new TypeNode.Fqn(name));
+                if (!currentInterfaces.OfType<TypeNode.Fqn>().Any(type => type.Name == name && type.Args is not { Length: > 0 }))
+                    currentInterfaces.Add(new TypeNode.Fqn(name));
             owner.Declaration.Interfaces = currentInterfaces.ToArray();
             owner.Declaration.Methods = owner.Methods.Concat(bridges).ToArray();
             onAppended?.Invoke(owner.Declaration, bridges);

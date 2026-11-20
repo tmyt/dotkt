@@ -67,7 +67,7 @@ sealed partial class Emitter
                 FieldInfo sfld; Type sft;
                 if (PrimaryFromRef(s.MemberRef.OrDefault()) is FieldInfo referencedStore) { sfld = referencedStore; sft = FieldTypeOf(sfld); }
                 else sfld = ResolveLocalField(ParseOwnerSlot(s.OwnerType), fnm, out sft, "field write");
-                if (IsValueType(ClrRef(s.OwnerType))) EmitAddr(s.Recv);
+                if (IsValueType(sfld.DeclaringType)) EmitAddr(s.Recv);
                 else EmitExpr(s.Recv);
                 EmitStoreCoerced(s.Value, sft);
                 MaybeVolatile(sfld, s.Volatile.OrDefault());
