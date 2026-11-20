@@ -25,6 +25,8 @@ open class Publisher<A, B> {
     fun fireWithTail(value: B, tail: () -> Array<Any?>) { Changed(value, *tail()) }
 }
 
+fun raiseProjected(source: Publisher<String, in Int>, value: Any?) { source.Changed(value) }
+
 class PublisherOuter<A> {
     inner class NestedPublisher<B> {
         val Changed: ClrEvent<System.Action2<A, B>> by clrEvent()

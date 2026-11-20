@@ -116,7 +116,9 @@ static partial class ClrEventImplBinding
         Require(!baseEvent.EventRaiseDeclarationId.IsPresent && !staticOwner.ClrEvents.Value[0].EventRaiseDeclarationId.IsPresent
             && raising.Expr.Value is BirCallInstance { Method.Value: "raisePhysical", DeclarationId.Value: "exact-raise",
                 Sig.Value: [TypeNode.Tv { Scope: "type", I: 1 }], Super.Value: true, Virtual.Value: false } raised
-            && ReferenceEquals(raised.Recv.Value, thisReceiver) && ReferenceEquals(raised.Args.Value[0], argument)
+            && ReferenceEquals(raised.Recv.Value, thisReceiver) && raised.Args.Value[0] is BirCast boxed
+            && boxed.Type.Value is TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any" } }
+            && ReferenceEquals(boxed.E.Value, argument)
             && !raised.Ret.IsPresent && !raised.Sty.IsPresent,
             "selected local raise identity/open signature/super receiver/argument single evaluation/fact absence");
         Require(raisingStatic.Expr.Value is BirCallStatic { Method.Value: "raiseStatic", DeclarationId.Value: "exact-static-raise",
