@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A same-named generic slot consumes the selected source ID without reopening its signature."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 from carrier_inspection import type_payloads
@@ -18,7 +18,7 @@ def nodes(value):
 
 def payloads(method, name):
     return [decoded_types[id(attribute)] if name == "KotlinType"
-            else json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+            else metadata_record(attribute["args"])
             for attribute in method.get("attrs", [])
             if attribute.get("attr", {}).get("name")
             == "DotKt.Runtime.CompilerServices." + name + "Attribute"]

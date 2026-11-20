@@ -47,7 +47,7 @@ static class CallableVisibilityLowering
             Attr = new TypeNode.Fqn(Carrier),
             ArgTypes = new TypeNode[] { text, new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
             Args = new IBirAttributeValue[] {
-                new BirConstant { Type = text, Value = new BirLiteral.TextLiteral(BirCarrier.JsonV1) },
+                new BirConstant { Type = text, Value = new BirLiteral.TextLiteral(BirCarrier.MessagePackV1) },
                 new BirOpaqueBytes { Bytes = RoundtripMetadata.VisibilityContent(source) },
             },
         }).ToArray();

@@ -37,6 +37,8 @@ text = 'x' * 512 + r'\uD800\u0000\uDFFF'
 pathlib.Path(sys.argv[1]).write_text('''package compression
 typealias LargeAlias = (String, String, String, String, String, String, String, String) -> String
 fun relay(value: LargeAlias): LargeAlias = value
+enum class Choice(val code: Int) { First(10), Second(20), RepeatedEntryThree(30), RepeatedEntryFour(40), RepeatedEntryFive(50) }
+inline fun <reified E : Enum<E>> lookup(name: String): E = enumValueOf<E>(name)
 var counter = 0
 fun next(): Int { counter += 1; return counter }
 inline fun <T> ordered(value: T, action: (T) -> T, first: Int = next(), second: Int = next(), marker: String = "''' + text + '''"): T {
@@ -55,6 +57,7 @@ fun main() {
     val text = defaultText()
     check(text.length == 515 && text[512] == '\uD800' && text[513] == '\u0000' && text[514] == '\uDFFF')
     check(tiny() == 7)
+    check(lookup<Choice>("Second") === Choice.Second && Choice.Second.name == "Second" && Choice.Second.ordinal == 1)
     val combine: LargeAlias = { a, b, c, d, e, f, g, h -> a + h }
     check(relay(combine)("a", "b", "c", "d", "e", "f", "g", "h") == "ah")
     println("PASS compressed Release dependency consumed by Debug")
@@ -86,7 +89,7 @@ def read(configuration):
     return records
 debug,release=read('Debug'),read('Release')
 assert all(r['codec']=='bir-msgpack/1' for r in debug), 'Debug performed carrier compression'
-for kind in ('KotlinInlineAttribute','KotlinDefaultAttribute','KotlinTypeAliasAttribute','KotlinTypeAttribute'):
+for kind in ('KotlinInlineAttribute','KotlinDefaultAttribute','KotlinTypeAliasAttribute','KotlinTypeAttribute','KotlinDeclarationIdentityAttribute','KotlinRichEnumAttribute'):
     assert any(r['name']==kind and r['codec']=='bir-msgpack+deflate/1' for r in release), kind+' missing compression'
 assert any(r['name']=='KotlinDefaultAttribute' and len(r['raw'])<128 and r['codec']=='bir-msgpack/1' for r in release), 'small default lost fallback'
 identity=lambda rows: collections.Counter((r['name'],r['index'],r['raw']) for r in rows)

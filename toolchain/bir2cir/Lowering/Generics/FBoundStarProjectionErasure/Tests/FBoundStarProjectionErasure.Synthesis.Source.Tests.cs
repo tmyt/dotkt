@@ -66,8 +66,8 @@ static partial class FBoundStarProjectionErasure
                 "slot identity, presence, result facts or separate naming domain changed");
             var sourceIdentity = slot.Attrs.Value.Single();
             Require(sourceIdentity.Attr.Value is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute" }
-                && sourceIdentity.Args.Value[0] is BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.JsonV1 } }
-                && System.Text.Encoding.UTF8.GetString(((BirOpaqueBytes)sourceIdentity.Args.Value[1]).Bytes.Value)
+                && sourceIdentity.Args.Value[0] is BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.MessagePackV1 } }
+                && BirCarrier.DecodeMetadata(BirCarrier.MessagePackV1, ((BirOpaqueBytes)sourceIdentity.Args.Value[1]).Bytes.Value).ToJsonString()
                     == "{\"name\":\"apply\",\"sourceDeclaration\":\"apply\"}",
                 "renamed slot lost the shared source method identity carrier or inferred identity from its physical spelling");
             var call = (BirCallInstance)((BirReturn)bridge.Body.Value.Single()).Value.Value;

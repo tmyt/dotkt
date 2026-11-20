@@ -1,29 +1,34 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
+using MessagePack;
 
 static partial class RoundtripMetadata
 {
-    internal static byte[] VisibilityContent(string visibility) => BirCarrier.EncodeBody(BirCarrier.JsonV1, visibility,
-        (writer, value) => { writer.WriteStartObject(); writer.WriteString("visibility", value); writer.WriteEndObject(); });
-
-    static byte[] PropertyStorageContent(string owner, string field) => BirCarrier.EncodeBody(
-        BirCarrier.JsonV1, (Owner: owner, Field: field), (writer, value) => {
-            writer.WriteStartObject(); writer.WriteString("owner", value.Owner); writer.WriteString("field", value.Field); writer.WriteEndObject();
+    internal static byte[] VisibilityContent(string visibility) => BirCarrier.EncodeMetadata(visibility,
+        static (ref MessagePackWriter writer, string value) => {
+            writer.WriteMapHeader(1); writer.Write("visibility"); IrMessagePack.WriteString(ref writer, value);
         });
 
-    static byte[] ExtensionCoreContent(string name) => BirCarrier.EncodeBody(BirCarrier.JsonV1, name,
-        (writer, value) => { writer.WriteStartObject(); writer.WriteString("name", value); writer.WriteEndObject(); });
-
-    static byte[] SourceMethodIdentityContent(string name, string declaration) => BirCarrier.EncodeBody(
-        BirCarrier.JsonV1, (Name: name, Declaration: declaration), (writer, value) => {
-            writer.WriteStartObject();
-            writer.WriteString("name", value.Name);
-            if (value.Declaration != null) writer.WriteString("sourceDeclaration", value.Declaration);
-            writer.WriteEndObject();
+    static byte[] PropertyStorageContent(string owner, string field) => BirCarrier.EncodeMetadata(
+        (owner, field), static (ref MessagePackWriter writer, (string owner, string field) value) => {
+            writer.WriteMapHeader(2); writer.Write("owner"); IrMessagePack.WriteString(ref writer, value.owner);
+            writer.Write("field"); IrMessagePack.WriteString(ref writer, value.field);
         });
 
-    static BirAttribute PlacementCarrier(string name, byte[] content, string codec = BirCarrier.JsonV1) => new() {
+    static byte[] ExtensionCoreContent(string name) => BirCarrier.EncodeMetadata(name,
+        static (ref MessagePackWriter writer, string value) => {
+            writer.WriteMapHeader(1); writer.Write("name"); IrMessagePack.WriteString(ref writer, value);
+        });
+
+    static byte[] SourceMethodIdentityContent(string name, string declaration) => BirCarrier.EncodeMetadata(
+        (name, declaration), static (ref MessagePackWriter writer, (string name, string declaration) value) => {
+            writer.WriteMapHeader(value.declaration == null ? 1 : 2);
+            writer.Write("name"); IrMessagePack.WriteString(ref writer, value.name);
+            if (value.declaration != null) { writer.Write("sourceDeclaration"); IrMessagePack.WriteString(ref writer, value.declaration); }
+        });
+
+    static BirAttribute PlacementCarrier(string name, byte[] content, string codec = BirCarrier.MessagePackV1) => new() {
         Attr = new TypeNode.Fqn(name),
         ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.String"), new TypeNode.Array(new TypeNode.Fqn("System.Byte")) },
         Args = new IBirAttributeValue[] {

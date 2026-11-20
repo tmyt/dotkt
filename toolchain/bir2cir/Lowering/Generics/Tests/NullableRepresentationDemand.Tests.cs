@@ -444,7 +444,7 @@ static partial class NullableRepresentationDemand
             var attribute = ((JsonArray)declaration["attrs"]).OfType<JsonObject>().Single(attr =>
                 TypeJson.OwnerName(attr["attr"]) == "DotKt.Runtime.CompilerServices." + name);
             var bytes = attribute["args"][1]["bytes"].GetValue<string>();
-            return BirCarrier.DecodeBody(BirCarrier.JsonV1, Convert.FromBase64String(bytes));
+            return BirCarrier.DecodeMetadata(BirCarrier.MessagePackV1, Convert.FromBase64String(bytes));
         }
         var typePayload = Payload(owner, "KotlinSupertypesAttribute");
         var methodPayload = Payload(method, "KotlinDeclarationIdentityAttribute");

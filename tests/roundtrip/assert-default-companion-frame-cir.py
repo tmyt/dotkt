@@ -1,5 +1,5 @@
 """Check that re-synthesized default closures retain their representation metadata."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -16,8 +16,8 @@ for declaration in closures:
                   "DotKt.Runtime.CompilerServices.KotlinSupertypesAttribute"]
     assert len(attributes) == 1, (declaration["name"], "Missing declaration-owned frame metadata")
     arguments = attributes[0]["args"]
-    assert arguments[0]["value"] == "bir-json/1"
-    frame = json.loads(base64.b64decode(arguments[1]["bytes"]))["nullableFrame"]
+    assert arguments[0]["value"] == "bir-msgpack/1"
+    frame = metadata_record(arguments)["nullableFrame"]
     source_arities.add(frame["sourceArity"])
     assert frame["nullable"] == [0], (declaration["name"], frame)
     expected_storage = {1: [], 2: [0]}[frame["sourceArity"]]

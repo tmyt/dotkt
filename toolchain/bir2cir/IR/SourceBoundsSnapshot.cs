@@ -28,6 +28,9 @@ sealed class SourceBoundsSnapshot
 
     internal string FrozenText => facts.FrozenText;
 
+    internal static void WriteMetadata(ref MessagePack.MessagePackWriter writer, SourceBoundsSnapshot value)
+        => SourceTypeFacts.WriteMetadata(ref writer, value.facts);
+
     internal void WritePayload(Utf8JsonWriter writer) => facts.WritePayload(writer);
 
     internal static void Write(Utf8JsonWriter writer, SourceBoundsSnapshot value) => SourceTypeFacts.Write(writer, value.facts);

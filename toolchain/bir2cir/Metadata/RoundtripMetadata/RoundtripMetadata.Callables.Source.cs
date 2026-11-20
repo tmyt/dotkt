@@ -1,4 +1,4 @@
-using System.Text.Json;
+using MessagePack;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
@@ -172,10 +172,10 @@ static partial class RoundtripMetadata
         var attributes = method.Attrs;
         if (method.Lateinit.OrDefault()) { attributes = Add(attributes, HeaderMarker(AKLateinit)); method.Lateinit = default; }
         if (method.RoundtripMethodBounds.HasValue)
-            attributes = Add(attributes, PayloadCarrier(AKTypeParameterBounds, method.RoundtripMethodBounds.Value, (writer, value) => value.WritePayload(writer)));
+            attributes = Add(attributes, PlacementCarrier(AKTypeParameterBounds, BirCarrier.EncodeMetadata(method.RoundtripMethodBounds.Value, SourceBoundsSnapshot.WriteMetadata)));
         if (method.ExistentialInnerConstructorFactory.HasValue)
         {
-            attributes = Add(attributes, HeaderCarrier(AKInnerConstructorFactory, method.ExistentialInnerConstructorFactory.Value));
+            attributes = Add(attributes, HeaderCarrier(AKInnerConstructorFactory, method.ExistentialInnerConstructorFactory.Value, EmbeddedBirMessagePack.WriteBirInnerConstructorFactory));
             method.ExistentialInnerConstructorFactory = default;
         }
         var identityPosition = attributes.OrEmpty().Length;
@@ -204,9 +204,7 @@ static partial class RoundtripMetadata
         }
         if (mods?.Inline.OrDefault() == true && method.InlineBir.HasValue)
         {
-            var inline = PlacementCarrier(AKInline, method.InlineBir.Value);
-            ((BirAttributeLiteral)inline.Args.Value[0]).Value = new BirLiteral.TextLiteral(ExecutableBirCodec.Codec);
-            attributes = Add(attributes, inline);
+            attributes = Add(attributes, PlacementCarrier(AKInline, method.InlineBir.Value, ExecutableBirCodec.Codec));
         }
         if (method.CompanionReceiver.HasValue)
         {
@@ -243,33 +241,32 @@ static partial class RoundtripMetadata
             if (identity.NullableRepresentationFrame.Value.PhysicalArity != physicalArity)
                 throw new InvalidOperationException("Nullable representation frame does not match emitted declaration arity");
         }
-        var carrier = PayloadCarrier(AKDeclarationIdentity, identity, (writer, value) => {
-            writer.WriteStartObject(); writer.WriteString("id", value.DeclarationId.Value);
-            writer.WriteString("name", !runtimeMode && constructor ? ".ctor" : value.DeclarationSourceName.Value);
-            if (value.DeclarationSignatureAllocation.OrDefault()) writer.WriteBoolean("signatureAllocation", true);
-            if (constructor && value.ConstructorPrimary.HasValue)
-                writer.WriteBoolean("constructorPrimary", value.ConstructorPrimary.Value);
-            if (!runtimeMode && !constructor)
-            {
-                if (value.DeclarationSemanticSignature.HasValue) { writer.WritePropertyName("signature"); value.DeclarationSemanticSignature.Value.WritePayload(writer); }
-                WriteIndices(writer, "reified", value.SemanticReifiedIndices);
-                WriteIndices(writer, "nullableWitness", value.NullableWitnessIndices);
-                WriteIndices(writer, "reflectedWitness", value.ReflectedWitnessIndices);
-                if (value.NullableRepresentationFrame.HasValue)
-                { writer.WritePropertyName(NullableRepresentationFrame.MetadataKey); value.NullableRepresentationFrame.Value.WriteJson(writer); }
-            }
-            writer.WriteEndObject();
-        });
+        var carrier = PlacementCarrier(AKDeclarationIdentity, BirCarrier.EncodeMetadata(identity,
+            (ref MessagePackWriter writer, BirRoundtripDeclarationIdentity value) => {
+                var source = !runtimeMode && !constructor;
+                var allocated = value.DeclarationSignatureAllocation.OrDefault();
+                var primary = constructor && value.ConstructorPrimary.HasValue;
+                writer.WriteMapHeader(2 + (allocated ? 1 : 0) + (primary ? 1 : 0) + (source ?
+                    (value.DeclarationSemanticSignature.HasValue ? 1 : 0) + (value.SemanticReifiedIndices.HasValue ? 1 : 0)
+                    + (value.NullableWitnessIndices.HasValue ? 1 : 0) + (value.ReflectedWitnessIndices.HasValue ? 1 : 0)
+                    + (value.NullableRepresentationFrame.HasValue ? 1 : 0) : 0));
+                writer.Write("id"); IrMessagePack.WriteString(ref writer, value.DeclarationId.Value);
+                writer.Write("name"); IrMessagePack.WriteString(ref writer, !runtimeMode && constructor ? ".ctor" : value.DeclarationSourceName.Value);
+                if (allocated) { writer.Write("signatureAllocation"); writer.Write(true); }
+                if (primary) { writer.Write("constructorPrimary"); writer.Write(value.ConstructorPrimary.Value); }
+                if (!source) return;
+                if (value.DeclarationSemanticSignature.HasValue) {
+                    writer.Write("signature"); SourceDeclarationSignature.WriteMessagePack(ref writer, value.DeclarationSemanticSignature.Value, 1);
+                }
+                if (value.SemanticReifiedIndices.HasValue) SourceTypeFacts.WriteIndices(ref writer, "reified", value.SemanticReifiedIndices.Value);
+                if (value.NullableWitnessIndices.HasValue) SourceTypeFacts.WriteIndices(ref writer, "nullableWitness", value.NullableWitnessIndices.Value);
+                if (value.ReflectedWitnessIndices.HasValue) SourceTypeFacts.WriteIndices(ref writer, "reflectedWitness", value.ReflectedWitnessIndices.Value);
+                if (value.NullableRepresentationFrame.HasValue) {
+                    writer.Write(NullableRepresentationFrame.MetadataKey); SourceTypeFacts.WriteFrame(ref writer, value.NullableRepresentationFrame.Value);
+                }
+            }));
         if (insertAt is not int index) return Add(attributes, carrier);
         return attributes.OrEmpty().Take(index).Append(carrier).Concat(attributes.OrEmpty().Skip(index)).ToArray();
-    }
-
-    static void WriteIndices(Utf8JsonWriter writer, string name, OptionalField<int[]> indices)
-    {
-        if (!indices.HasValue) return;
-        writer.WritePropertyName(name); writer.WriteStartArray();
-        foreach (var index in indices.Value) writer.WriteNumberValue(index);
-        writer.WriteEndArray();
     }
 
     static OptionalField<BirAttribute[]> StampSlotPrefix(OptionalField<BirAttribute[]> attributes,
@@ -285,24 +282,10 @@ static partial class RoundtripMetadata
         => attribute == null ? attributes : OptionalField<BirAttribute[]>.Of(prepend
             ? new[] { attribute }.Concat(attributes.OrEmpty()).ToArray() : attributes.OrEmpty().Append(attribute).ToArray());
 
-    static BirAttribute PayloadCarrier<T>(string name, T value, Action<Utf8JsonWriter, T> write)
-        => PlacementCarrier(name, BirCarrier.EncodeBody(BirCarrier.JsonV1, value, write));
     static BirAttribute TypeCarrier(string name, TypeNode type) => PlacementCarrier(name,
         TypeNodeCarrier.Encode(TypeNodeCarrier.Codec, type), TypeNodeCarrier.Codec);
-    // Carrier payload order belongs to this metadata encoding, not to the
-    // generated transport record's property order. Allocation has already
-    // selected every semantic field; this writer makes no new association.
     static BirAttribute PropertyAccessorCarrier(EventPropertySourceFacts fact)
-        => PayloadCarrier(AKPropertyAccessor, fact, (writer, value) => {
-            writer.WriteStartObject();
-            BirGraphJson.WriteOptional(writer, "name", value.Name, (writer, text) => writer.WriteStringValue(text));
-            BirGraphJson.WriteOptional(writer, "kind", value.Kind, (writer, text) => writer.WriteStringValue(text));
-            BirGraphJson.WriteOptional(writer, "association", value.Association, (writer, text) => writer.WriteStringValue(text));
-            BirGraphJson.WriteOptional(writer, "sourceAssociation", value.SourceAssociation, (writer, text) => writer.WriteStringValue(text));
-            BirGraphJson.WriteOptional(writer, "event", value.Event, (writer, text) => writer.WriteStringValue(text));
-            BirGraphJson.WriteOptional(writer, "inherited", value.Inherited, (writer, inherited) => writer.WriteBooleanValue(inherited));
-            writer.WriteEndObject();
-        });
+        => HeaderCarrier(AKPropertyAccessor, fact, EmbeddedBirMessagePack.WriteEventPropertySourceFacts);
     static BirAttribute NrtMarker(string name, BirAttribute attribute)
     { attribute.AttrExternal = true; attribute.AttrAssembly = "System.Runtime"; return attribute; }
     static BirAttribute NullableAttribute(OptionalField<int[]> flags)
@@ -317,10 +300,12 @@ static partial class RoundtripMetadata
     static BirAttribute CompanionExtension(TypeNode receiver, string name, string kind)
     {
         if (name == null || kind == null) throw new InvalidOperationException("companion extension has no source name or member kind");
-        return PayloadCarrier(AKCompanionExt, (receiver, name, kind), (writer, value) => {
-            writer.WriteStartObject(); writer.WritePropertyName("receiver"); TypeNode.WriteJson(writer, value.receiver);
-            writer.WriteString("name", value.name); writer.WriteString("kind", value.kind); writer.WriteEndObject();
-        });
+        return PlacementCarrier(AKCompanionExt, BirCarrier.EncodeMetadata((receiver, name, kind),
+            static (ref MessagePackWriter writer, (TypeNode receiver, string name, string kind) value) => {
+                writer.WriteMapHeader(3); writer.Write("receiver"); TypeNodeMessagePack.Write(ref writer, value.receiver);
+                writer.Write("name"); IrMessagePack.WriteString(ref writer, value.name);
+                writer.Write("kind"); IrMessagePack.WriteString(ref writer, value.kind);
+            }));
     }
     static bool HasReceiverFunction(TypeNode type) => type is TypeNode.Fn { Recv: not null, Suspend: false };
     static OptionalField<BirAttribute[]> RuntimeAttributes(OptionalField<BirAttribute[]> attributes)

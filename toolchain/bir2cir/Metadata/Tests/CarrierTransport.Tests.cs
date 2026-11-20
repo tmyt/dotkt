@@ -79,15 +79,21 @@ static class CarrierTransportTests
 
         // Only explicit compiler carrier declarations receive an emission policy.
         // Their exact selected codec and content must travel together in CIR.
-        foreach (var name in new[] { "KotlinInlineAttribute", "KotlinDefaultAttribute", "KotlinTypeAliasAttribute", "KotlinSourceCallableAttribute",
-                     "KotlinConstructorAdapterAttribute", "KotlinTypeAttribute", "KotlinNullableGenericAttribute",
-                     "KotlinCollectionIdentityAttribute", "KotlinSuspendFunctionTypeAttribute", "KotlinSuspendResultAttribute" })
+        var definitions = RoundtripMetadata.SynthDefsFile(ReferenceMetadataIndex.Build([typeof(object).Assembly.Location]));
+        foreach (var definition in definitions.Types)
         {
-            var slot = name == "KotlinDefaultAttribute" ? 1 : 0;
+            var signature = definition.Ctors.Value.Single().Params.Select(p => p.Type).ToArray();
+            var slot = signature switch {
+                [TypeNode.Fqn { Name: "System.String" }, TypeNode.Array { Elem: TypeNode.Fqn { Name: "System.Byte" } }] => 0,
+                [TypeNode.Fqn { Name: "System.Int32" }, TypeNode.Fqn { Name: "System.String" }, TypeNode.Array { Elem: TypeNode.Fqn { Name: "System.Byte" } }] => 1,
+                _ => -1,
+            };
+            Need(RoundtripMetadata.CarrierCodecSlot(definition.Name) == slot, "Wrong transport registration for " + definition.Name);
+            if (slot < 0) continue;
             var args = new List<A>();
             if (slot == 1) args.Add(new A.Int32Value(3));
             args.Add(new A.TextValue(BirCarrier.MessagePackV1)); args.Add(new A.BytesValue(raw));
-            var attr = new AttributeApplication(new TypeNode.Fqn("DotKt.Runtime.CompilerServices." + name), [], args.ToArray());
+            var attr = new AttributeApplication(new TypeNode.Fqn(definition.Name), [], args.ToArray());
             var selected = RoundtripMetadata.SelectCarrierTransport(attr, release: true);
             Need(selected.Args[slot] is A.TextValue { Value: BirCarrier.MessagePackDeflateV1 }
                 && selected.Args[slot + 1] is A.BytesValue bytes && Decode(release.Codec, bytes.Bytes).SequenceEqual(opaque),

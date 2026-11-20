@@ -153,8 +153,8 @@ if (mode is "core-visibility" or "forged-core")
     md.AddCustomAttribute(implementationMethod, coreAttributeCtor,
         StructuredAttr(blob =>
         {
-            SerString(blob, "bir-json/1");
-            var payload = System.Text.Encoding.UTF8.GetBytes("{\"name\":\"Core\"}");
+            SerString(blob, "bir-msgpack/1");
+            byte[] payload = [0x81, 0xa4, .."name"u8, 0xa4, .."Core"u8];
             blob.WriteInt32(payload.Length);
             blob.WriteBytes(payload);
         }));

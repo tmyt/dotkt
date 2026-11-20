@@ -62,13 +62,12 @@ internal static class PackageFailureProbe
         body.Emit(OpCodes.Ret);
         carrier.CreateType();
         var codec = tool.GetType("DotKt.Bir.BirCarrier", true)!;
-        var version = (string)codec.GetField("JsonV1")!.GetRawConstantValue()!;
+        var version = (string)codec.GetField("MessagePackV1")!.GetRawConstantValue()!;
         foreach (var name in new[] { "A", "B" })
         {
             var type = module.DefineType(name + ".Bad", TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
             var method = type.DefineMethod("Run", MethodAttributes.Public | MethodAttributes.Static, typeof(void), Type.EmptyTypes);
-            var bytes = (byte[])codec.GetMethod("EncodeBody", [typeof(string), typeof(JsonNode)])!.Invoke(null,
-                [version, new JsonObject { ["visibility"] = "bad" + name }])!;
+            var bytes = MessagePack.MessagePackSerializer.ConvertFromJson(new JsonObject { ["visibility"] = "bad" + name }.ToJsonString());
             method.SetCustomAttribute(new CustomAttributeBuilder(constructor, [version, bytes]));
             method.GetILGenerator().Emit(OpCodes.Ret);
             type.CreateType();

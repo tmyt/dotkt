@@ -316,7 +316,6 @@ MOD_KEYS = {
                                                  # trusted [KotlinExtensionReceiver] slot-role marker
 }
 VIS = {"public", "private", "protected", "internal", "protectedInternal"}
-CARRIER_VERSIONS = {"bir-json/1"}
 
 # The frozen node-kind set (§2.5) — the union of every kind the current toolchain emits across
 # a full fresh build (stdlib + apps), post-m5 canonical spellings. An unknown k (a typo, or a

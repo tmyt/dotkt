@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Native location/proof roles remain exact without changing ordinary Kotlin storage."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -16,7 +16,7 @@ def nodes(value):
 
 
 def facts(declaration, attribute):
-    return [json.loads(base64.b64decode(item["args"][1]["bytes"]))
+    return [metadata_record(item["args"])
             for item in declaration.get("attrs", [])
             if item.get("attr", {}).get("name")
             == "DotKt.Runtime.CompilerServices." + attribute + "Attribute"]
