@@ -261,7 +261,7 @@ static partial class RoundtripMetadata
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
-            AttrClass(AKTypeVisibility, Ctor(Param("System.String"), Param(ByteArrayType()))), // source visibility before physical accessibility promotion
+            AttrClass(AKTypeVisibility, Ctor(Param("System.String"), Param(ByteArrayType()))), // source visibility of internal and widened types
             AttrClass(CallableVisibilityLowering.Carrier, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds

@@ -1100,7 +1100,7 @@ internal sealed class CompanionReferenceCatalog
             {
                 var (carrier, owner) = association;
                 if (carrier.Visibility is not ("public" or "protected") ||
-                    !IsVisibleType(md, owner) || !IsVisibleType(md, handle))
+                    !PublicTypeCatalog.HasProjectedVisibility(md, owner) || !PublicTypeCatalog.HasProjectedVisibility(md, handle))
                     continue;
                 var semanticPackage = SignatureDecoderSeeds.DefinitionKotlinPackage(md, owner);
                 definitions.Add(new CompanionCatalogEntry(
@@ -1261,16 +1261,6 @@ internal sealed class CompanionReferenceCatalog
             throw new InvalidDataException("malformed [KotlinCompanion] carrier: invalid visibility");
         return new Carrier(
             kind, owner, name, visibility, physicalOwnerNode.GetString()!, arity);
-    }
-
-    private static bool IsVisibleType(MetadataReader md, TypeDefinitionHandle handle)
-    {
-        var def = md.GetTypeDefinition(handle);
-        var visibility = def.Attributes & TypeAttributes.VisibilityMask;
-        var parent = def.GetDeclaringType();
-        if (parent.IsNil) return visibility == TypeAttributes.Public;
-        return visibility is TypeAttributes.NestedPublic or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem &&
-            IsVisibleType(md, parent);
     }
 
     private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)
@@ -1697,7 +1687,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             // and therefore must be projected; its lifted carrier is a public physical bridge because a subclass of
             // the OUTER is unrelated to that carrier in CLR inheritance. ProjectClass restores protected Kotlin flags.
             if (carrier.Visibility is not ("public" or "protected") ||
-                !IsVisibleType(ownerHandle) || !IsVisibleType(handle))
+                !PublicTypeCatalog.HasProjectedVisibility(md, ownerHandle) || !PublicTypeCatalog.HasProjectedVisibility(md, handle))
                 continue;
             _companionCarriers.Add(handle, carrier);
             if (!_companionsByOwner.TryAdd(ownerHandle, carrier))
@@ -1757,7 +1747,7 @@ internal sealed partial class AssemblyScanner : IDisposable
     {
         var visible = _md.TypeDefinitions
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
-            .Where(x => IsPublicTopLevel(x.Definition))
+            .Where(x => x.Definition.GetDeclaringType().IsNil && PublicTypeCatalog.HasProjectedVisibility(_md, x.Handle))
             .Where(x => !_physicalCompanionCarriers.Contains(x.Handle))
             .Where(x => !_existentialCarriers.Contains(x.Handle))
             .Where(x => !_genericStaticCarriers.ContainsKey(x.Handle))
@@ -2254,20 +2244,15 @@ internal sealed partial class AssemblyScanner : IDisposable
         if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem
             || _protectedStaticNested.Contains(handle))
             result.Flags = Flags.AsProtected(result.Flags);
-        using (var sourceVisibility = _attrs.CarrierDocument(
-            handle, MetadataAttributes.DotKtNs + "KotlinTypeVisibilityAttribute"))
-            if (sourceVisibility is not null)
+        if (_attrs.SourceTypeVisibility(handle) is { } visibility)
+            result.Flags = (result.Flags & ~0xE) | (visibility switch
             {
-                var visibility = sourceVisibility.RootElement.GetProperty("visibility").GetString();
-                result.Flags = (result.Flags & ~0xE) | (visibility switch
-                {
-                    "internal" => 0,
-                    "private" => 2,
-                    "protected" => 4,
-                    "public" => 6,
-                    _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
-                });
-            }
+                "internal" => 0,
+                "private" => 2,
+                "protected" => 4,
+                "public" => 6,
+                _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
+            });
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         if (isAnnotation && KotlinAnnotationTargets(handle, names) is { } target)
             result.ClassAnnotation.Add(target);
@@ -2441,7 +2426,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             foreach (var candidateHandle in _md.TypeDefinitions)
             {
                 var candidate = _md.GetTypeDefinition(candidateHandle);
-                if (!IsVisibleType(candidate) || candidate.BaseType.IsNil) continue;
+                if (candidate.BaseType.IsNil || !PublicTypeCatalog.HasProjectedVisibility(_md, candidateHandle)) continue;
                 var candidateContext = new GenericContext(
                     candidateHandle,
                     default,
@@ -5386,14 +5371,12 @@ internal sealed partial class AssemblyScanner : IDisposable
             if (_csharp14Extensions.IsInfrastructure(childHandle))
                 continue;
             var childDef = _md.GetTypeDefinition(childHandle);
-            if (!IsPublicNested(childDef)) continue;
-            // CLR nesting is also the physical home of local/anonymous/closure/state-machine implementation
-            // types. Their standard generated marker is the declaration boundary: they remain present in the DLL
-            // for execution and lexical access, but are not Kotlin classifiers and must not enter NestedClassName.
-            if (_attrs.IsDotKtAssembly && _attrs.Has(
-                    childHandle,
-                    "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
-                    requireTrust: false))
+            // Generated implementation types are not source classifiers. An internal source
+            // declaration may itself have a user-authored CompilerGenerated attribute.
+            var generated = _attrs.IsDotKtAssembly && _attrs.Has(childHandle,
+                "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false);
+            if (!PublicTypeCatalog.HasProjectedVisibility(_md, childHandle) ||
+                (generated && _attrs.SourceTypeVisibility(childHandle) != "internal"))
                 continue;
             var child = ReadClass(childHandle, childDef, names, signatures, operatorPackage: fragment.Package);
             MergeGenericStaticCarrier(childHandle, child, names, signatures);
@@ -7405,19 +7388,6 @@ internal sealed partial class AssemblyScanner : IDisposable
         return string.IsNullOrEmpty(package) ? name : package + "." + name;
     }
 
-    private static bool IsPublicTopLevel(TypeDefinition def) =>
-        (def.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.Public;
-    private static bool IsPublicNested(TypeDefinition def) =>
-        (def.Attributes & TypeAttributes.VisibilityMask) is
-            TypeAttributes.NestedPublic or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem;
-    private bool IsVisibleType(TypeDefinitionHandle handle)
-    {
-        var def = _md.GetTypeDefinition(handle);
-        var parent = def.GetDeclaringType();
-        return parent.IsNil ? IsPublicTopLevel(def) : IsPublicNested(def) && IsVisibleType(parent);
-    }
-    private static bool IsVisibleType(TypeDefinition def) =>
-        IsPublicTopLevel(def) || IsPublicNested(def);
     private static bool IsPublicOrProtected(MethodAttributes attrs) =>
         (attrs & MethodAttributes.MemberAccessMask) is MethodAttributes.Public or MethodAttributes.Family or MethodAttributes.FamORAssem;
     private static bool IsPublicOrProtected(FieldAttributes attrs) =>

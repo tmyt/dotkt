@@ -156,10 +156,11 @@ There is no runtime alias TypeDef, dummy class, or type-forwarding/legacy recove
 continues to exclude its DLLs from projection because its dedicated frontend KLIB owns `kotlin.*`.
 
 ### Carrier envelopes
-- `KotlinTypeVisibilityAttribute(string version, byte[] content)` preserves a type declaration's
-  source visibility when bir2cir widens its physical CLR accessibility. Its `bir-json/1` payload is
-  `{visibility}` in Kotlin visibility vocabulary. dll2klib restores standard KLIB class visibility
-  from this trusted TypeDef carrier; it does not omit the declaration needed by public inline bodies.
+- `KotlinTypeVisibilityAttribute(string version, byte[] content)` records source visibility for
+  internal Kotlin classifiers and for types whose physical CLR accessibility is widened. Its
+  `bir-json/1` payload is `{visibility}` in Kotlin visibility vocabulary. dll2klib retains
+  an internal classifier in the dependency KLIB with Kotlin internal visibility: IR plugins can
+  inspect its declaration, while ordinary non-friend Kotlin source cannot access it.
   Ordinary CLR declarations without this carrier retain their ECMA-335 accessibility projection.
 - `KotlinCallableVisibilityAttribute(string version, byte[] content)` carries `{visibility}` in Kotlin
   vocabulary on MethodDefs and FieldDefs, including private backing storage. bir2cir captures non-public

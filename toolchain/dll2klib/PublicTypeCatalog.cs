@@ -72,7 +72,7 @@ internal sealed partial class PublicTypeCatalog : IDisposable
                 entries.Add(new PublicTypeCatalogEntry(
                     assemblyName,
                     DefinitionName(md, handle),
-                    IsPublic(md, handle),
+                    HasProjectedVisibility(md, handle),
                     (definition.Attributes & TypeAttributes.Interface) != 0,
                     path));
             }
@@ -311,7 +311,7 @@ internal sealed partial class PublicTypeCatalog : IDisposable
         {
             var definition = reader.GetTypeDefinition(handle);
             return new PublicTypeSurface(
-                IsPublic(reader, handle),
+                HasProjectedVisibility(reader, handle),
                 (definition.Attributes & TypeAttributes.Interface) != 0,
                 []);
         }
@@ -396,16 +396,15 @@ internal sealed partial class PublicTypeCatalog : IDisposable
         }
     }
 
-    private static bool IsPublic(MetadataReader md, TypeDefinitionHandle handle)
+    internal static bool HasProjectedVisibility(MetadataReader md, TypeDefinitionHandle handle)
     {
         var definition = md.GetTypeDefinition(handle);
         var visibility = definition.Attributes & TypeAttributes.VisibilityMask;
         var parent = definition.GetDeclaringType();
-        return parent.IsNil
-            ? visibility == TypeAttributes.Public
-            : visibility is TypeAttributes.NestedPublic or
-                TypeAttributes.NestedFamily or
-                TypeAttributes.NestedFamORAssem && IsPublic(md, parent);
+        var accessible = visibility is TypeAttributes.Public or TypeAttributes.NestedPublic
+            or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem
+            || SignatureDecoderSeeds.Attributes(md).SourceTypeVisibility(handle) == "internal";
+        return accessible && (parent.IsNil || HasProjectedVisibility(md, parent));
     }
 
     private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)
