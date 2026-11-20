@@ -44,6 +44,13 @@ class NonReturningInlineTests {
         try { throwAfterStep<String> { effects++ } }
         catch (e: IllegalStateException) { check(e.message == "after step"); caught = true }
         check(caught && effects == 1)
+        var messageCalls = 0
+        try {
+            requireWithMessage(false) { messageCalls++; "from caller" }
+            error("require did not throw")
+        } catch (e: IllegalArgumentException) {
+            check(e.message == "from caller" && messageCalls == 1)
+        }
         nonReturningFinallyCount = 0
         check(loopWithFinally() == "finally")
         check(nonReturningFinallyCount == 1)
@@ -58,6 +65,8 @@ class NonReturningInlineTests {
         check(returnStep { effects++; "tail" } == "tail")
         check(effects == 2)
         check(returnStep<Int?> { null } == null)
+        check(withMode(InlineMode.Second) { it + 10 } == 12)
+        check(localInlineModeValue() == 5)
     }
 
     @TestAttribute

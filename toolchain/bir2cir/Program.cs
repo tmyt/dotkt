@@ -436,7 +436,10 @@ sealed class Pipeline
                     captured[index], refs, collectionInputs.Helpers.Bind);
                 captured[index] = ReflectedKotlinType.Apply(captured[index], collectionInputs.Helpers);
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)ObjectSlotRename.Apply(captured[index]);
-                captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)PrimitiveOperatorLowering.Apply(captured[index], refs);
+                // Representation-independent failure intrinsics must also be resolved in
+                // the body frozen for local splicing and DLL consumers.
+                captured[index] = (BirFileDeclaration)SourceGraphRewrite.Rewrite(captured[index], (node, scope) =>
+                    PreconditionLowering.FailureIntrinsic(node) ?? PrimitiveOperatorLowering.RewriteNode(node, scope));
                 captured[index] = (DotKt.Bir.Lowering.BirFileDeclaration)FaithfulHintRecognition.Apply(captured[index], sourceTopLevelFns);
             }
         });
@@ -502,7 +505,7 @@ sealed class Pipeline
         foreach (var source in captured) InlineBirStash.Stash(source);
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(captured);
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(captured);
-        // Intrinsic failures and non-literal repeat lower before expansion, so
+        // Precondition helpers and non-literal repeat lower before expansion, so
         // discarded closures remain ingredients rather than orphan TypeDefs.
         // Expand original files in order against the complete frozen stash;
         // each file drains generated helpers before later owning passes.
