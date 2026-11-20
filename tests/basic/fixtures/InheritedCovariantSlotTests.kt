@@ -57,8 +57,21 @@ class ClassFactoryLeaf : ClassFactory() {
 
 private abstract class BoundReturnBase { internal open fun value(): Value = Value("base") }
 private class BoundReturn<T : Value>(private val item: T) : BoundReturnBase() { override fun value(): T = item }
-abstract class Copyable { abstract fun copy(): Copyable }
-class GenericCopy<T>(val payload: T) : Copyable() { override fun copy(): GenericCopy<T> = GenericCopy(payload) }
+abstract class Copyable { abstract fun copy(): Copyable; abstract fun maybe(): Copyable? }
+class GenericCopy<T>(val payload: T) : Copyable() {
+    override fun copy(): GenericCopy<T> = GenericCopy(payload)
+    override fun maybe(): GenericCopy<T>? = null
+}
+class NullableItems<T> : System.Collections.Generic.List<T?>()
+class FixedItems<T> : System.Collections.Generic.List<Int>()
+abstract class NativeLists {
+    abstract fun nullable(): System.Collections.Generic.List<Int?>
+    abstract fun fixed(): System.Collections.Generic.List<Int>
+}
+class GenericLists : NativeLists() {
+    override fun nullable(): NullableItems<Int> = NullableItems()
+    override fun fixed(): FixedItems<String> = FixedItems()
+}
 private abstract class BoxedReturnBase { abstract fun value(): Comparable<Int> }
 private class BoxedReturn : BoxedReturnBase() { override fun value(): Int = 7 }
 private abstract class MethodBoundBase { abstract fun <T : Value> choose(value: T): Value }
@@ -107,7 +120,9 @@ class InheritedCovariantSlotTests {
         check(bounded.value() === value)
         val original: Copyable = GenericCopy("copy")
         val copied = original.copy()
-        check(copied !== original && (copied as GenericCopy<*>).payload == "copy")
+        check(copied !== original && (copied as GenericCopy<*>).payload == "copy" && original.maybe() == null)
+        val lists: NativeLists = GenericLists()
+        check(lists.nullable().Count == 0 && lists.fixed().Count == 0)
         val boxed: BoxedReturnBase = BoxedReturn()
         check(boxed.value().compareTo(7) == 0)
         val methodBound: MethodBoundBase = MethodBound()
