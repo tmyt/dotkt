@@ -2,6 +2,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.AreSame as assertSame
 import inheritedclrnames.*
+import mpp.app.InheritedInterfaceSlots
 
 private class ConsumedNamedString : StringBody(), StringSlot, ValueSlot<String>
 private class ConsumedNamedOwner : OwnerBody<String>("constructed"), ValueSlot<String>
@@ -12,6 +13,16 @@ private class ConsumedProperty : PropertyBody(), PropertySlot
 private class ConsumedMutable : MutableBody<String>("before"), MutableSlot<String>
 
 class InheritedClrNameRoundtripTests {
+    @TestAttribute
+    fun inheritedInterfaceMembersDispatchAcrossThreeAssemblies() {
+        val throughMid: InheritedInterfaceSlots = object : InheritedInterfaceSlots {
+            override val tag: String get() = "property"
+            override fun read(): String = "method"
+        }
+        assertEquals("property", throughMid.tag)
+        assertEquals("method", throughMid.read())
+    }
+
     @TestAttribute
     fun importedInheritedFinalPropertiesKeepAccessorSlots() {
         val producer: PropertySlot = ProducedProperty()
