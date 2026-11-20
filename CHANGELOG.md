@@ -16,6 +16,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   the CLR rejecting its storage type argument.
 - Covariant property overrides on derived classes retain the constructed type arguments of their generic base.
 - A class inheriting an interface default now satisfies a sibling interface's abstract method or accessor slots.
+- A `Nothing`-returning override fills its selected base slot even when the base and derived classes compile together.
 - Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
