@@ -351,13 +351,18 @@ enum class EnumEmptyRich {
     fun marker(): Int = 1
 }
 
+private var enumArgumentTrace = ""
+private fun <T> recordEnumArgument(label: String, value: T): T { enumArgumentTrace += label; return value }
+
 enum class EnumSecondaryState(val value: Int, val label: String = "number:$value") {
-    PRIMARY(1, "primary"),
+    PRIMARY(label = recordEnumArgument("R", "primary"), value = recordEnumArgument("L", 1)),
     NUMBER("xx", true),
     TEXT("word"),
     CHAINED(true),
     DEFAULTED(value = 5L),
-    BODY("1234567", true) { override fun marker(): String = "body:$label" };
+    BODY(secondary = recordEnumArgument("B", true), input = recordEnumArgument("I", "1234567")) {
+        override fun marker(): String = "body:$label"
+    };
 
     var path = "initialized"
 
@@ -602,6 +607,7 @@ class EnumTests {
         assertEquals("3:yes", EnumSecondaryState.CHAINED.marker())
         assertEquals("5:long", EnumSecondaryState.DEFAULTED.marker())
         assertEquals("body:number:7", EnumSecondaryState.BODY.marker())
+        assertEquals("RLBI", enumArgumentTrace)
         assertEquals("initialized", EnumSecondaryState.PRIMARY.path)
         assertEquals("initialized:int", EnumSecondaryState.NUMBER.path)
         assertEquals("initialized:string", EnumSecondaryState.TEXT.path)
