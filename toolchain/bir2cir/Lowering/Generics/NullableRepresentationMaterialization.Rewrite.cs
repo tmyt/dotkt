@@ -92,6 +92,8 @@ static partial class NullableRepresentationMaterialization
             if (node is BirCallInline inline) inline.Ga = calledFrame.PhysicalArity;
         }
         var snapshot = NullableRepresentationViews.ReturnFacts(node);
+        if (node is BirArraySet set && NullableRepresentationDemand.UnstampedOpenElement(set) is { } inferred)
+            set.Elem = inferred;
         node.RewriteRepresentationParametersInPlace((role, parameters) => {
             var rewritten = RewriteDescriptorParameters(parameters, selected, mapping);
             var frame = role == BirRepresentationParameterRole.Method ? selected?.MethodFrame : selected?.OwnerFrame;
@@ -102,6 +104,7 @@ static partial class NullableRepresentationMaterialization
         node.RewriteRepresentationInPlace((ownership, role, type) => {
             if (NullableRepresentationViews.Frozen(ownership) || ownership == BirGenericFrameRole.SyntheticApplication) return type;
             if (role == BirRepresentationRole.TypeArguments && closedArguments != null) return type;
+            if (NullableRepresentationDemand.IsOpenArrayComponent(node, role, type)) return mapping.ElementArgument(type);
             if (node is BirCallLocal or BirLocalFunctionReference && role == BirRepresentationRole.Declaration) return type;
             if (role == BirRepresentationRole.DeclaredMemberType && mapping.IsNativeField(node)) return (selected ?? mapping).Argument(type);
             if (role is BirRepresentationRole.Declaration or BirRepresentationRole.DeclaredMemberType

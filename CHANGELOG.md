@@ -7,6 +7,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Rich enum entries can reorder named constructor arguments without changing their evaluation order, including entries with their own class body.
 
+- Kotlin array factories, collection-to-array conversion and varargs preserve unchecked views of Kotlin generic elements without copying them at CLR boundaries.
+
 - An inherited property such as `message` on a Kotlin exception from another DLL now resolves its getter and preserves virtual dispatch.
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
 - Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.

@@ -235,7 +235,8 @@ static partial class FBoundStarProjectionErasure
     {
         semanticElement = StripSourceNullability(element) as TypeNode.Fqn;
         physicalElement = null;
-        if (semanticElement?.Args is not { Length: > 0 } || !context.ProjectionCanChangeConstruction(semanticElement)
+        if (semanticElement?.Args is not { Length: > 0 }
+            || !(context.RequiresKotlinValueCarrier(semanticElement) || context.ProjectionCanChangeConstruction(semanticElement))
             || !context.TryExistentialCarrier(semanticElement.Name, out var carrier)) return false;
         physicalElement = new TypeNode.Fqn(carrier);
         return true;

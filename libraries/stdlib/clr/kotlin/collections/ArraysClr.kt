@@ -23,9 +23,13 @@ public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> = thi
 @Suppress("UNCHECKED_CAST")
 public actual inline fun <reified T> Collection<T>.toTypedArray(): Array<T> {
     // Unlike arrayOfNulls<T>, this keeps non-nullable CLR value components native.
-    val result = dotktNewTypedArray(T::class as DotktType, size) as Array<T>
+    val result = dotktNewTypedArray<T>(size)
+    // Transfer each original value to the allocated component. Narrowing it
+    // first to CLR T would reject a valid unchecked Kotlin generic view.
+    val destination = result as Array<in Any?>
+    val source: Collection<*> = this
     var index = 0
-    for (element in this) result[index++] = element
+    for (element in source) destination[index++] = element
     return result
 }
 

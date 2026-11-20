@@ -133,8 +133,17 @@ class InvariantValueStorageTests {
     @TestAttribute
     @Suppress("UNCHECKED_CAST")
     fun nativeLocationsRetainExactAliasingAndCheckIncompatibleWrites() {
-        val items = arrayOf(Box("array"))
-        check(NativeBoxApi.EchoBoxes(items) === items && items[0].value == "array")
+        val items = arrayOf(forwardedNativeBox())
+        val alias = items
+        check(NativeBoxApi.EchoBoxes(alias) === items && items[0].value == "forwarded")
+        val number = Box(42)
+        val erased = number as Box<String>
+        val kotlinItems = arrayOf(Box("initial"))
+        val writableAlias = kotlinItems
+        writableAlias[0] = erased
+        check((kotlinItems[0] as Any) === number)
+        check(try { NativeBoxApi.EchoBoxes(kotlinItems); false } catch (_: ClassCastException) { true })
+        check((kotlinItems[0] as Any) === number)
         val container = NativeBoxContainer(Box("container"))
         check(NativeBoxApi.EchoContainer(container) === container && container.Value.value == "container")
         check(NativeBoxApi.InvokeContainer(NativeBoxContainerFactory { container }) === container)

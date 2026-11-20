@@ -89,8 +89,8 @@ sealed class NullableRepresentationTypes
     };
 
     // Keep native array/function witnesses intact. Only a Kotlin-owned constructed
-    // classifier uses its existential face when used as a Kotlin list element.
-    TypeNode ElementArgument(TypeNode type) => type switch {
+    // classifier uses its existential face in Kotlin element storage.
+    internal TypeNode ElementArgument(TypeNode type) => type switch {
         TypeNode.Tv v => (v.Scope == "type" ? _owner : _method).Variable(v, NullableRepresentationFrame.Role.Element),
         TypeNode.Nullable n => NullableElementArgument(n.Of),
         TypeNode.Oblivious o => new TypeNode.Oblivious(ElementArgument(o.Of)),

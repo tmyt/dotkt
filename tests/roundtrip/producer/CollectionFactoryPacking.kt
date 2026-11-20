@@ -11,6 +11,8 @@ object TextReader : Reader<String> { override fun label() = "text" }
 @Suppress("UNCHECKED_CAST")
 fun reader(number: Boolean): Reader<Any?> = (if (number) NumberReader else TextReader) as Reader<Any?>
 
+fun labels(vararg values: Reader<Any?>): String = values.joinToString(",") { it.label() }
+
 fun <T> packElement(value: T): ArrayList<T> = ArrayList<T>().apply { add(value) }
 fun <T> literalElement(value: T): ArrayList<T> = arrayListOf(value)
 fun <U> forwardArray(value: Array<U>): ArrayList<Array<U>> = packElement(value)

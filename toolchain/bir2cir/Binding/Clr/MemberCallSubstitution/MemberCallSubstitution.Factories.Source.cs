@@ -194,16 +194,24 @@ static partial class MemberCallSubstitution
             return ListLiteral(node, element, elements);
         }
         if (arrayKind == null) return null;
+        var arrayFrame = local != null ? local.Frame : refs.NullableMethodFrame(declarationId);
+        TypeNode componentWitness = null;
+        if (arrayFrame != null && typeArguments != null && arrayFrame.SourceArity == 1)
+        {
+            var role = arrayFrame.NullableElementIndices.Contains(0) ? NullableRepresentationFrame.Role.NullableElement
+                : arrayFrame.ElementIndices.Contains(0) ? NullableRepresentationFrame.Role.Element : (NullableRepresentationFrame.Role?)null;
+            if (role.HasValue) componentWitness = typeArguments[arrayFrame.Variable(new TypeNode.Tv("method", 0), role.Value).I];
+        }
         if (arrayKind == "sized")
         {
-            var element = ArrayConstructionLowering.ArrayElementOf(node.Ret.OrDefault());
+            var element = componentWitness ?? ArrayConstructionLowering.ArrayElementOf(node.Ret.OrDefault());
             return element == null || arguments.Length < 1 ? null : new BirNewArraySized {
                 Elem = CanonicalArrayElem(element), Size = FactoryExpression(FactoryClone(arguments[0])),
             };
         }
         var wrapper = arguments.Length == 1 ? arguments[0] as BirNewArray : null;
         var resultElement = ArrayConstructionLowering.ArrayElementOf(node.Sty.OrDefault());
-        var arrayElement = resultElement ?? (typeArguments is { Length: > 0 } ? typeArguments[0] : null)
+        var arrayElement = componentWitness ?? resultElement ?? (typeArguments is { Length: > 0 } ? typeArguments[0] : null)
             ?? wrapper?.Elem.OrDefault() ?? (elementHint == null ? null : new TypeNode.Fqn(elementHint));
         if (arrayElement == null) return null;
         var canonical = CanonicalArrayElem(arrayElement);

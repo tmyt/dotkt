@@ -240,7 +240,7 @@ static partial class NullableTvErasureCallRealign
                 {
                     if (set.Elem.HasValue && !set.Elem.Value.Equals(flowed.Elem) && IsObjectErasureOf(flowed.Elem, set.Elem.Value))
                         set.Elem = BirGraphValue.CopyType(flowed.Elem);
-                    if (SourceCoerce(set.Value.OrDefault(), value, flowed.Elem) is { } wrapped)
+                    if (SourceCoerce(set.Value.OrDefault(), value, set.Elem.OrDefault() ?? flowed.Elem) is { } wrapped)
                         set.Value = OptionalField<IBirExpression>.Of(wrapped);
                 }
                 return node;

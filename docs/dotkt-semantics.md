@@ -119,15 +119,18 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   typed member operations still perform their required conversions. Source overload identity remains distinct
   when physical slots coincide. Imported CLR signatures and native override slots remain exact; a Kotlin binding
   alias still follows its binding-owned representation rather than acquiring an arbitrary native signature.
-  Native generic owner/method instantiation witnesses and closed array allocation components retain a closed
+  Native generic owner/method instantiation witnesses retain a closed
   invariant source-generic head, with nested arguments following their recorded declaration frame. Declaration-site
   variance, opaque collection aliases, and explicit projections retain their existing carrier/object representations.
   Imported native declaration signatures remain fully exact; native delegates adapt the necessary carrier-to-exact
   value boundary, not managed references. A compiler-generated `Task<R>` bridge instead wraps the Kotlin result's
   ordinary value representation: it is not an imported native declaration requesting an exact `R` construction.
-  Closed invariant CLR array components (including vararg arrays) keep the array contract described below; storing
-  an unchecked view into such an array can still fail its closed component check. This array contract is distinct
-  from ordinary Kotlin collection value storage.
+  Kotlin array and vararg elements may use the same erased view. An unchecked `G<Int> as G<String>` can be
+  stored, read back, and passed through a vararg without replacing the original object. This does not make
+  an erased array a native `G<string>[]`: an imported CLR signature requiring that vector checks the actual
+  backing array. A compatible array crosses unchanged; an incompatible array fails the cast, with no copy or
+  write-back. A literal supplying an exact native vector can allocate it directly when its elements fit.
+  A CLR-created vector continues to enforce its own component type on writes.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
 - **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to
@@ -2853,7 +2856,8 @@ What this is observable as, beyond the boxing already listed above:
 - **Native array boundaries remain exact, with no manual conversion API.** CLR arguments, results, overrides,
   nested native generic constructions and supported `ref`/`out` or live-reference locations retain the selected
   declaration's native array shape. Crossing from open Kotlin storage checks that shape without copying or
-  changing aliases. Kotlin allocation element witnesses likewise remain exact, separate from open value slots.
+  changing aliases. Kotlin allocations carry a separate element witness: native value types stay native,
+  while a Kotlin generic element can use its declaration's erased storage.
   Attribute constructor/field signatures and attribute blobs likewise retain concrete CLR array types, not open
   array storage; this does not change ordinary projected array slots on an annotated Kotlin method.
   A collection factory's native container element, key or value argument is such a witness too;
