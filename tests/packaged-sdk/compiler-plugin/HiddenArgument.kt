@@ -44,6 +44,11 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
                 override fun visitCall(expression: IrCall): IrExpression {
                     expression.transformChildrenVoid(this)
                     val callee = expression.symbol.owner
+                    if (fn.name.asString() == "nullableDispatch" && callee.name.asString() == "echo") {
+                        // Model a plugin which knows the value is present without refining its IR type.
+                        expression.arguments[0] = DeclarationIrBuilder(context, fn.symbol).irGet(fn.parameters.single())
+                        return expression
+                    }
                     if (callee.name.asString() == "compositeDiscard") {
                         val builder = DeclarationIrBuilder(context, fn.symbol, expression.startOffset, expression.endOffset)
                         return builder.irComposite(resultType = expression.type) {

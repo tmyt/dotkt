@@ -1547,10 +1547,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		val declClass = callee.parent as? IrClass
 		val memberType = when {
 			isStatic -> clrType
-			declClass != null && isExternalNetType(declClass) -> correspondingSupertypeInstantiation(
-				recv!!.type, declClass, allowCapturedArguments = true,
-			)?.let { birType(it) } ?: error("No selected member owner for ${callee.name} on ${recv.type}")
-			recvClass != null && isExternalNetType(recvClass) -> birType(recv.type)
+			declClass != null && isExternalNetType(declClass) -> selectedMemberOwner(declClass, recv!!.type)
+			recvClass != null && isExternalNetType(recvClass) -> birType(recv.type.makeNotNull())
 			// A type-PARAM receiver (`destination: C` where `C : MutableCollection<T>`, e.g. filterTo's body) has no
 			// recvClass -> use the type param's @Clr-bound BOUND with its args (clrg:ICollection[T]), not the raw
 			// clrName (System.Collections.Generic.ICollection without `1 -> ResolveType fails).
