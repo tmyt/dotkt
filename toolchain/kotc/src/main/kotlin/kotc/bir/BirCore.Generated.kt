@@ -2323,6 +2323,7 @@ data class BirClassDefinition(
     val ctors: List<BirConstructor>,
     val methods: List<BirFunctionDeclaration>,
     val generated: Boolean? = null,
+    val localClassifierName: String? = null,
     val companionCaptureOwner: String? = null,
     val typeParams: List<TypeParameterDeclaration>? = null,
     val semanticOwner: String? = null,
@@ -2359,6 +2360,10 @@ data class BirClassDefinition(
         if (base == null) output.append("null")
         else {
             base.writeJson(output)
+        }
+        localClassifierName?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"localClassifierName\":")
+            TypeNodeJson.writeString(value, output)
         }
         companionCaptureOwner?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"companionCaptureOwner\":")
@@ -3803,12 +3808,17 @@ data class BirCompanionValue(
 }
 
 data class BirClassReference(
-    val type: TypeNode
+    val type: TypeNode,
+    val reifiedLiteral: Boolean? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"classRef\"")
         output.append(",\"type\":")
         type.writeJson(output)
+        reifiedLiteral?.let { value ->
+            output.append(",\"reifiedLiteral\":")
+            output.append(value)
+        }
         output.append('}')
     }
 }

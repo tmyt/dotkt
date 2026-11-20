@@ -7,6 +7,10 @@ using DotKt.Cir;
 // to the CLR storage type of the generic parameter.
 static class ReflectedKotlinType
 {
+    internal static string SourceName(TypeNode.Fqn f) => f.Classifier is { } logical
+        ? string.Join(".", new[] { logical.PackageName }.Concat(logical.OwnerPath).Append(logical.Name).Where(part => part.Length != 0))
+        : f.Name;
+
     static readonly TypeNode String = new TypeNode.Fqn("kotlin.String"), Boolean = new TypeNode.Fqn("kotlin.Boolean"),
         Classifier = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.reflect.KClassifier")),
         KType = new TypeNode.Fqn("kotlin.reflect.KType"), Projection = new TypeNode.Fqn("kotlin.reflect.KTypeProjection");
@@ -66,9 +70,7 @@ static class ReflectedKotlinType
                 [leaf, new BirConstant { Type = Boolean, Value = new BirLiteral.BooleanLiteral(true) }], KType) : leaf;
         }
         var (name, classifier, arguments) = core switch {
-            TypeNode.Fqn f => (f.Classifier is { } logical
-                ? string.Join(".", new[] { logical.PackageName }.Concat(logical.OwnerPath).Append(logical.Name).Where(part => part.Length != 0))
-                : f.Name, (TypeNode)(f with { Args = f.Args?.Select(_ => (TypeNode)new TypeNode.Star()).ToArray() }), f.Args ?? []),
+            TypeNode.Fqn f => (SourceName(f), (TypeNode)(f with { Args = f.Args?.Select(_ => (TypeNode)new TypeNode.Star()).ToArray() }), f.Args ?? []),
             TypeNode.Array array => ("kotlin.Array", (TypeNode)(array with { Elem = new TypeNode.Star() }), new[] { array.Elem }),
             TypeNode.Fn fn => Function(fn),
             _ => throw new InvalidOperationException($"No Kotlin reflected classifier for {core}"),

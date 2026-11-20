@@ -1930,7 +1930,7 @@ internal object BirMessagePack {
 
     private fun writeBirClassDefinition(value: BirClassDefinition, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(7 + (if (value.generated == null) 0 else 1) + (if (value.companionCaptureOwner == null) 0 else 1) + (if (value.typeParams == null) 0 else 1) + (if (value.semanticOwner == null) 0 else 1) + (if (value.isAbstract == null) 0 else 1) + (if (value.vis == null) 0 else 1) + (if (value.mods == null) 0 else 1) + (if (value.properties == null) 0 else 1) + (if (value.attrs == null) 0 else 1) + (if (value.pos == null) 0 else 1) + (if (value.staticSemanticOwner == null) 0 else 1) + (if (value.outerTypeParamCount == null) 0 else 1) + (if (value.outerTypeParamOffset == null) 0 else 1) + (if (value.kotlinCompanion == null) 0 else 1) + (if (value.inheritedDefaultAccessors == null) 0 else 1) + (if (value.inheritedDefaultMethods == null) 0 else 1) + (if (value.inheritedClassMethods == null) 0 else 1) + (if (value.clrEvents == null) 0 else 1) + (if (value.clrEventForwarders == null) 0 else 1) + (if (value.enumRich == null) 0 else 1) + (if (value.richEnum == null) 0 else 1))
+        packer.packMapHeader(7 + (if (value.generated == null) 0 else 1) + (if (value.localClassifierName == null) 0 else 1) + (if (value.companionCaptureOwner == null) 0 else 1) + (if (value.typeParams == null) 0 else 1) + (if (value.semanticOwner == null) 0 else 1) + (if (value.isAbstract == null) 0 else 1) + (if (value.vis == null) 0 else 1) + (if (value.mods == null) 0 else 1) + (if (value.properties == null) 0 else 1) + (if (value.attrs == null) 0 else 1) + (if (value.pos == null) 0 else 1) + (if (value.staticSemanticOwner == null) 0 else 1) + (if (value.outerTypeParamCount == null) 0 else 1) + (if (value.outerTypeParamOffset == null) 0 else 1) + (if (value.kotlinCompanion == null) 0 else 1) + (if (value.inheritedDefaultAccessors == null) 0 else 1) + (if (value.inheritedDefaultMethods == null) 0 else 1) + (if (value.inheritedClassMethods == null) 0 else 1) + (if (value.clrEvents == null) 0 else 1) + (if (value.clrEventForwarders == null) 0 else 1) + (if (value.enumRich == null) 0 else 1) + (if (value.richEnum == null) 0 else 1))
         packer.packString("name")
         MessagePackText.write(packer, value.name)
         packer.packString("kind")
@@ -1943,6 +1943,10 @@ internal object BirMessagePack {
         if (value.base == null) packer.packNil()
         else {
             writeType(value.base, packer, depth + 1)
+        }
+        value.localClassifierName?.let { child ->
+            packer.packString("localClassifierName")
+            MessagePackText.write(packer, child)
         }
         value.companionCaptureOwner?.let { child ->
             packer.packString("companionCaptureOwner")
@@ -3055,11 +3059,15 @@ internal object BirMessagePack {
 
     private fun writeBirClassReference(value: BirClassReference, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(2)
+        packer.packMapHeader(2 + (if (value.reifiedLiteral == null) 0 else 1))
         packer.packString("k")
         packer.packString("classRef")
         packer.packString("type")
         writeType(value.type, packer, depth + 1)
+        value.reifiedLiteral?.let { child ->
+            packer.packString("reifiedLiteral")
+            packer.packBoolean(child)
+        }
     }
 
     private fun writeBirReflectedType(value: BirReflectedType, packer: MessagePacker, depth: Int) {

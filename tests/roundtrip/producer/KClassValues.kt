@@ -16,6 +16,7 @@ open class ImportedManual : OrdinaryBase("base"), KClass<Any> {
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = 29
 }
+@ImportedTyped
 open class ImportedPlainBase<T>(val expected: T) {
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = 43
@@ -44,3 +45,4 @@ fun classIdentity(value: KClass<*>): KClass<*> = value
 fun annotatedIdentity(value: KAnnotatedElement): KAnnotatedElement = value
 fun <T : KClassifier> boundedIdentity(value: T): T = value
 inline fun <reified T> matches(value: Any?): Boolean = value is T
+inline fun <reified T : Any> reflectedLiteral(): KClass<T> = T::class

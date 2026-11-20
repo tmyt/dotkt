@@ -3,41 +3,9 @@ using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
-// A `kotlin.reflect.KClass` member read (`T::class.simpleName` / `.qualifiedName`) -> the Kotlin name.
-// kotc emits the pure-Kotlin property read `callInstance(kotlin.reflect.KClass[..].get_simpleName, recv = <::class>)`.
-// The `::class` receiver is a System.Type token, emitted by kotc as either:
-//   • `classRef`  — an UNBOUND class literal on a type (`Int::class`, `Foo::class`, `Box::class`, a reified `T::class`
-//     after inline-splice substitution): `{"k":"classRef","type":<Kotlin FQN>}` = a static `typeof`.
-//   • `getType`   — a BOUND class reference on a value (`1::class`, `"x"::class`, `x::class`): `{"k":"getType","e":<expr>}`
-//     = a run-time `<expr>.GetType()`, reflecting the value's RUNTIME class.
-// Native class literals are System.Type values; ordinary KClass implementations remain supported. This pass owns
-// the statically-known Kotlin<->CLR NAME reversal (#138). Because it runs
-// BEFORE BirTypeLowering, every `type`/`sty` slot is still a pure Kotlin FQN (`kotlin.Int`, `kotlin.String`, a user
-// FQN), so where the Kotlin type identity is statically known it CONST-FOLDS the accessor straight off that token —
-// `qualifiedName` = the FQN verbatim, `simpleName` = its last `.`-segment. No CLR->Kotlin reverse TABLE is needed: the
-// Kotlin identity is still in hand. Foldable cases:
-//   • classRef — ALWAYS: the token IS the literal type (`Int::class` -> "Int"/"kotlin.Int", `Box::class` -> "Box").
-//   • getType — when the argument's static type is a KNOWN-FINAL builtin (the primitive tower, String, the specialized
-//     arrays, Unit/Nothing) AND folding the argument away drops no evaluation (Q2, `ValueStability.IsDroppable`: a
-//     `const`/`local`/`this`/plan read, NOT a wrapper/call — see below). A final type has no subtypes, so the RUNTIME
-//     class == the static type;
-//     `1::class` -> "Int"/"kotlin.Int", `"x"::class` -> "String"/"kotlin.String" — the reported failures. (Not folding a
-//     side-effecting `foo()::class` receiver keeps `foo()`'s evaluation.)
-// Everything else keeps its semantic member read for the declaration-owned runtime adapter:
-//   • a BOUND `getType` on an OPEN/interface static type (`x: Any`, `list: List<Int>`) — the runtime class is a subtype,
-//     so the name is genuinely dynamic. Closing that (CLR-renamed builtins + generic backtick mangling surfacing at run
-//     time) needs a run-time CLR->Kotlin reverse-map HELPER (a stdlib runtime fn this pass would route to) — §5g of
-//     docs/dotkt-semantics.md, a sequenced cross-layer stdlib follow-up, NOT a bir2cir-only const-fold.
-//   • a BOUND `getType` on a FINAL USER class — for a NON-GENERIC, TOP-LEVEL user type `Type.FullName`/`.Name` already
-//     ARE the Kotlin qualified/simple name (no CLR rename), so the run-time read is correct. A GENERIC user class reads
-//     back backtick-mangled (`Box`1`) and a NESTED one uses the CLR `+` separator (`Outer+Inner`); those two shapes join
-//     the §5g dynamic follow-up (an UNBOUND `Box::class`/`Outer.Inner::class` is already exact via the classRef fold).
-//   • a BOUND `getType` whose receiver is a SMART-CAST wrapper (`cast`/`nullableValue`) — not folded (a `cast` node
-//     also carries a throwing explicit `as`, so dropping it would drop the throw); §5g dynamic follow-up.
-//   • a BOUND `getType` on a `classRef` — the DOUBLE class literal `(Int::class)::class`, whose receiver is a KClass,
-//     not an Int. A classRef's type slot names the REFERENCED type, so reading it as the value's type would fold to
-//     the wrong name. Routed to the run-time read like any other KClass-typed receiver.
-// Non-ref only. Replace owning expression slots while declaration/ownership indices keep their existing nodes.
+// Fold names while their Kotlin identities are still available; never drop evaluation of a receiver.
+// Dynamic and reified literals instead resolve against the runtime declaration's classifier metadata.
+// CLR storage tokens (including the element type used for array allocation) are not Kotlin literals.
 static class KClassMemberBinding
 {
     // Kotlin builtin types that are FINAL (no subtypes), so a bound `value::class` on one is statically resolvable
@@ -56,28 +24,63 @@ static class KClassMemberBinding
         "kotlin.UIntArray", "kotlin.ULongArray", "kotlin.UShortArray", "kotlin.UByteArray",
     };
 
-    public static void Apply(BirFileDeclaration root)
+    internal static BirAttribute Identity(string token, string declaration, string name, bool local) => new() {
+        Attr = new TypeNode.Fqn(RoundtripMetadata.RuntimeClassifierAttribute),
+        ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.Type"), new TypeNode.Fqn("System.Type"),
+            new TypeNode.Fqn("System.String"), new TypeNode.Fqn("System.Boolean") },
+        Args = new IBirAttributeValue[] {
+            new BirClassReference { Type = new TypeNode.Fqn(token), DefinitionToken = true },
+            new BirClassReference { Type = new TypeNode.Fqn(declaration), DefinitionToken = true },
+            new BirConstant { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(name) },
+            new BirConstant { Type = new TypeNode.Fqn("System.Boolean"), Value = new BirLiteral.BooleanLiteral(local) },
+        },
+    };
+
+    internal static HashSet<string> BindLocalDeclarations(BirFileDeclaration root)
+    {
+        var locals = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>()) {
+            if (type.LocalClassifierName.OrDefault() is not string sourceName) continue;
+            var owner = type.Name.Value;
+            locals.Add(owner);
+            type.Attrs = type.Attrs.OrEmpty().Append(Identity(owner, owner, sourceName, true)).ToArray();
+            type.LocalClassifierName = default;
+        }
+        return locals;
+    }
+
+    public static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs = null, HashSet<string> locals = null)
     {
         BirGraphValue Walk(BirGraphValue node)
         {
-            if (node is IBirExecutablePayload) return node;
+            if (node is IBirExecutablePayload or BirAttribute) return node;
+            if (node is BirCallInstance call && call.OwnerType.OrDefault() is TypeNode.Fqn { Name: "kotlin.reflect.KClass" }
+                && call.Prop.OrDefault() == "get" && call.Method.OrDefault() is "simpleName" or "qualifiedName"
+                && call.Recv.OrDefault() is IBirExpression receiver && StaticKotlinFqn(receiver, refs) is string name
+                && locals?.Contains(name) != true)
+                return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
+                    Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
-            if (node is not BirCallInstance call || call.OwnerType.OrDefault() is not TypeNode.Fqn { Name: "kotlin.reflect.KClass" }
-                || call.Prop.OrDefault() != "get" || call.Method.OrDefault() is not ("simpleName" or "qualifiedName")
-                || call.Recv.OrDefault() is not IBirExpression receiver || StaticKotlinFqn(receiver) is not string name)
-                return node;
-            return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
-                Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
+            IBirExpression operand;
+            if (node is BirRuntimeClass runtime) operand = runtime;
+            else if (node is BirClassReference literal && (literal.ReifiedLiteral.OrDefault()
+                || literal.Type.OrDefault() is TypeNode.Fqn f && locals?.Contains(f.Name) == true)) {
+                literal.ReifiedLiteral = default;
+                operand = literal;
+            } else return node;
+            var type = new TypeNode.Fqn("System.Type");
+            return new BirCallStatic { Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt"),
+                Method = "runtimeKClass", Sig = new TypeNode[] { type }, Ret = type, Args = new[] { operand } };
         }
         Walk(root);
     }
 
     // The statically-known Kotlin FQN a `::class` receiver names, or null when the class is only known at run time.
-    static string StaticKotlinFqn(IBirExpression recv) => recv switch
+    static string StaticKotlinFqn(IBirExpression recv, ReferenceMetadataIndex refs) => recv switch
     {
         // Unbound class literal — the token IS the literal type; always resolvable (finality is irrelevant, it is a type,
         // not a reflected instance).
-        BirClassReference value => FqnOf(value.Type.OrDefault()),
+        BirClassReference value => FqnOf(value.Type.OrDefault(), refs),
         // Bound `value::class` — resolvable iff the value's static type is a known-final builtin (runtime class == static
         // type) AND folding the receiver away drops no evaluation. That last test is Q2 of the value questions
         // (bir-common/ValueStability.cs), asked here for the same reason CallEvalLowering asks it of a binding nothing
@@ -86,17 +89,17 @@ static class KClassMemberBinding
         // (Int::class)::class as though that token were an Int would be wrong.
         BirRuntimeClass value when value.E.OrDefault() is BirGraphNode e && ValueStability.IsDroppable(e.Tag)
             && e is not BirClassReference
-            && FqnOf(e.ResultTypeStamp ?? e.ExplicitSourceType) is string st && KnownFinal.Contains(st) => st,
+            && FqnOf(e.ResultTypeStamp ?? e.ExplicitSourceType, refs) is string st && KnownFinal.Contains(st) => st,
         _ => null,
     };
 
     // The Kotlin FQN a type slot names — the bare Fqn, or a nullable-of-Fqn unwrapped to its core (an inline-spliced
     // `T::class` with a nullable T arg, or a `String?` receiver; the Kotlin answer is the non-null identity's name).
     // Null for any other token shape (tv/array/fn), which the caller routes to the run-time read instead of folding.
-    static string FqnOf(TypeNode typeNode) => typeNode switch
+    static string FqnOf(TypeNode typeNode, ReferenceMetadataIndex refs) => typeNode switch
     {
-        TypeNode.Fqn f => f.Name,
-        TypeNode.Nullable { Of: TypeNode.Fqn f } => f.Name,
+        TypeNode.Fqn f => refs?.TryExistentialPhysicalOwner(f.Name, out _) == true ? ReflectedKotlinType.SourceName(f) : f.Name,
+        TypeNode.Nullable nullable => FqnOf(nullable.Of, refs),
         _ => null,
     };
 

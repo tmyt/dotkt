@@ -547,7 +547,8 @@ sealed class Pipeline
         // actual post-inline graph before closure ingredients become TypeDefs.
         foreach (var source in captured)
         {
-            if (!referenceBuild) KClassMemberBinding.Apply(source);
+            var localClassifiers = KClassMemberBinding.BindLocalDeclarations(source);
+            if (!referenceBuild) KClassMemberBinding.Apply(source, refs, localClassifiers);
             valueRepresentations.BindOperations(source);
             ReifiedNullabilityWitnessLowering.Apply(source, nullableWitnessDemand, refs, valueRepresentations, RetireDeclaration, collectionInputs.Helpers, declarationParameters);
         }
