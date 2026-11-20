@@ -61,17 +61,17 @@ static partial class KotlinOverrideSlotBridge
         internal bool Assignable(TypeNode source, TypeNode target, bool boxing = false) =>
             FBoundStarProjectionErasure.IsClrAssignable(source, target, Index.Declarations, References,
                 physicalTypes: true, allowBoxing: boxing);
-        internal bool CarrierSeam(TypeNode left, TypeNode right)
+        internal bool HasCarrier(TypeNode exact, TypeNode view)
         {
             static TypeNode Core(TypeNode type) => type switch {
                 TypeNode.Nullable nullable => Core(nullable.Of), TypeNode.Oblivious oblivious => Core(oblivious.Of), _ => type,
             };
-            bool Matches(TypeNode exact, TypeNode view) => Core(exact) is TypeNode.Fqn { Args.Length: > 0 } construction
+            return Core(exact) is TypeNode.Fqn { Args.Length: > 0 } construction
                 && Core(view) is TypeNode.Fqn carrier
                 && (carriers?.TryGetValue(construction.Name, out var local) == true && local == carrier.Name
                     || References.TryExistentialPhysicalOwner(construction.Name, out var referenced) && referenced == carrier.Name);
-            return Matches(left, right) || Matches(right, left);
         }
+        internal bool CarrierSeam(TypeNode left, TypeNode right) => HasCarrier(left, right) || HasCarrier(right, left);
         internal void Append(IBirTypeDeclaration owner, BirFunctionDeclaration method)
         {
             owner.Methods = owner.Methods.OrEmpty().Append(method).ToArray();
@@ -140,6 +140,11 @@ static partial class KotlinOverrideSlotBridge
         bool CanReturn(TypeNode source, TypeNode target, OverrideMethod method)
         {
             var semantic = method.Source?.RetKotlinType.OrDefault() ?? method.Header?.RetKotlinType.OrDefault();
+            // A generated interface can carry a generic class result without itself
+            // deriving from the class's base. The forwarder casts back to the
+            // base only for that recorded carrier and a proven class conversion.
+            if (semantic != null && context.HasCarrier(semantic, source)
+                && context.Assignable(context.Physical(semantic), target)) return true;
             if (LowersToObject(source, refs) && semantic is TypeNode.Tv variable)
                 source = (variable.Scope == "method" ? method.Frame : mapping.OwnerFrame)?.Variable(variable,
                     NullableRepresentationFrame.Role.Ordinary) ?? variable;

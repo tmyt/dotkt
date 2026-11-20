@@ -57,6 +57,8 @@ class ClassFactoryLeaf : ClassFactory() {
 
 private abstract class BoundReturnBase { internal open fun value(): Value = Value("base") }
 private class BoundReturn<T : Value>(private val item: T) : BoundReturnBase() { override fun value(): T = item }
+abstract class Copyable { abstract fun copy(): Copyable }
+class GenericCopy<T>(val payload: T) : Copyable() { override fun copy(): GenericCopy<T> = GenericCopy(payload) }
 private abstract class BoxedReturnBase { abstract fun value(): Comparable<Int> }
 private class BoxedReturn : BoxedReturnBase() { override fun value(): Int = 7 }
 private abstract class MethodBoundBase { abstract fun <T : Value> choose(value: T): Value }
@@ -103,6 +105,9 @@ class InheritedCovariantSlotTests {
         val value = Narrow("bounded")
         val bounded: BoundReturnBase = BoundReturn(value)
         check(bounded.value() === value)
+        val original: Copyable = GenericCopy("copy")
+        val copied = original.copy()
+        check(copied !== original && (copied as GenericCopy<*>).payload == "copy")
         val boxed: BoxedReturnBase = BoxedReturn()
         check(boxed.value().compareTo(7) == 0)
         val methodBound: MethodBoundBase = MethodBound()

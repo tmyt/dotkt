@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
 - Compiler plugins can look up internal Kotlin classifiers and read their constants from referenced DLLs.
 - A generic Kotlin class can be passed to a function with a class upper bound without
   the CLR rejecting its storage type argument.
