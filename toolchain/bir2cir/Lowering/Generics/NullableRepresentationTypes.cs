@@ -95,6 +95,8 @@ sealed class NullableRepresentationTypes
         TypeNode.Nullable n => NullableElementArgument(n.Of),
         TypeNode.Oblivious o => new TypeNode.Oblivious(ElementArgument(o.Of)),
         TypeNode.Projection p => p with { Of = ElementArgument(p.Of) },
+        TypeNode.Array a when GenericArrayStorageLowering.NeedsStorage(a, hasVariableWitness: true) =>
+            new TypeNode.Fqn("System.Array"),
         TypeNode.Fqn f => Named(f, NullableGenericErasure.Pos.Argument, storage: true),
         _ => Argument(type),
     };
