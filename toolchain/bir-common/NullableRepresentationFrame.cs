@@ -10,7 +10,7 @@ using System.Text.Json.Nodes;
 namespace DotKt.Bir;
 
 // A declaration-owned correspondence, independent of parameter names or Kotlin reified markers.
-// The canonical frame is source parameters followed by nullable, storage and nullable-storage companions.
+// The canonical frame is source parameters followed by their demanded representation companions.
 // Each companion describes a representation of the same SOURCE argument, not a new source type parameter.
 // PhysicalOrder maps physical slots
 // to that canonical frame, allowing a nested CLR type to retain its complete enclosing-type prefix.
