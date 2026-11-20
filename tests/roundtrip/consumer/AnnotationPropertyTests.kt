@@ -9,6 +9,9 @@ import roundtrip.annotationproperties.producedArrays
 import roundtrip.annotationproperties.ImportedTags
 import roundtrip.annotationproperties.ImportedTypes
 import roundtrip.annotationproperties.CallbackMarker
+import roundtrip.annotationproperties.PreviewApi
+import roundtrip.annotationproperties.PreviewMarker
+import roundtrip.annotationproperties.PreviewWarning
 import roundtrip.annotationproperties.producedTags
 import roundtrip.annotationproperties.producedTypes
 import roundtrip.annotationproperties.ProducerDefaultLabel
@@ -17,6 +20,14 @@ import roundtrip.kclassvalues.ImportedTyped
 @ImportedLabel(code = 19)
 @ImportedTyped
 private class ConsumerDefaultLabel
+
+@SubclassOptInRequired(PreviewMarker::class)
+private interface PreviewSubApi : PreviewApi
+
+@OptIn(PreviewMarker::class)
+private class PreviewImpl : PreviewSubApi { override fun name() = "preview" }
+
+@PreviewWarning private fun warningOnly() = "warning"
 
 private annotation class NestedLabel(val label: ImportedLabel = ImportedLabel())
 private annotation class LabelArray(val code: Int = 7, vararg val labels: ImportedLabel)
@@ -27,9 +38,11 @@ class AnnotationPropertyRoundtripTests {
     private fun <@CallbackMarker T> invokeMarked(callback: @CallbackMarker () -> T): T = callback()
 
     @TestAttribute
-    fun importedAnnotationRetainsItsKotlinTargets() {
+    fun importedAnnotationRetainsItsTargetsAndOptInRequirement() {
         val callback: @CallbackMarker () -> Int = { 17 }
         assertEquals(17, invokeMarked(callback))
+        assertEquals("preview", PreviewImpl().name())
+        assertEquals("warning", warningOnly())
     }
 
     @TestAttribute

@@ -27,4 +27,7 @@ grep -Fq "$expected" "$work/compiler.log" \
 grep -F "ExcludedClass.kt:" "$work/compiler.log" | grep -Fq "this annotation is not applicable to target 'class'" \
 	|| die "expected imported @Target to exclude class declarations: $(cat "$work/compiler.log")"
 
-echo "imported Kotlin reified and annotation target restrictions enforced"
+grep -F "MissingMarkerOptIn.kt:" "$work/compiler.log" | grep -Fiq "preview API" \
+	|| die "expected the imported marker's error message: $(cat "$work/compiler.log")"
+
+echo "imported Kotlin reified, annotation target, and opt-in restrictions enforced"

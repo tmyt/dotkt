@@ -41,23 +41,24 @@ static partial class ClrMemberResolution
     {
         if (attr.MemberRef.IsPresent) return;
         if (attr.Attr.OrDefault() is not TypeNode.Fqn attrFqn) return;
-        // Kotlin's target meta-annotation comes from the frontend stdlib KLIB,
-        // not a CLR projection. Bind its real stdlib constructor when imported.
-        var kotlinTarget = !attr.AttrExternal.OrDefault() && attrFqn.Name == "kotlin.annotation.Target"
+        // Frontend stdlib meta-annotations are not CLR imports. Bind the
+        // actual stdlib constructor before publishing them on a marker type.
+        var stdlibMeta = !attr.AttrExternal.OrDefault()
+            && attrFqn.Name is "kotlin.annotation.Target" or "kotlin.RequiresOptIn"
             && bindingLocalTypes?.Contains(attrFqn.Name) != true;
-        if (!attr.AttrExternal.OrDefault() && !kotlinTarget) return;
+        if (!attr.AttrExternal.OrDefault() && !stdlibMeta) return;
         var assembly = attr.AttrAssembly.OrDefault();
-        if (kotlinTarget)
+        if (stdlibMeta)
             assembly = bindingReferences.CompileStdlibName
-                ?? throw new InvalidOperationException("Kotlin @Target requires the stdlib in the compile references");
+                ?? throw new InvalidOperationException($"{attrFqn.Name} requires the stdlib in the compile references");
         var arguments = attr.ArgTypes.OrEmpty();
         if (ResolveAppliedAttributeCtor(bindingLocalTypes, bindingReferences, attrFqn, assembly, arguments) is { } selected)
         {
             attr.AttrExternal = true;
             attr.MemberRef = BirMemberReference.FromPhysical(selected);
         }
-        else if (kotlinTarget)
-            throw new InvalidOperationException($"Kotlin @Target constructor not found in '{assembly}'");
+        else if (stdlibMeta)
+            throw new InvalidOperationException($"{attrFqn.Name} constructor not found in '{assembly}'");
     }
 
     internal static AttributeApplication ResolveAttributeCtor(IReadOnlySet<string> bindingLocalTypes, AttributeApplication attribute, ReferenceMetadataIndex refs)

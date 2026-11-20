@@ -2254,8 +2254,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
             });
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
-        if (isAnnotation && KotlinAnnotationTargets(handle, names) is { } target)
-            result.ClassAnnotation.Add(target);
+        if (isAnnotation)
+            result.ClassAnnotation.Add(KotlinMarkerAnnotations(handle, names));
         result.Flags |= 1;
         if (_sourceViews.View(_definitionPath, ExactMetadataTypeName(handle)) is { } sourceView)
             result.Supertype.Add(signatures.NamedType(sourceView));

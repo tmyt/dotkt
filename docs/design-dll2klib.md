@@ -482,6 +482,8 @@ When projecting an annotation class, dll2klib restores its Kotlin `@Target`
 from the actual stdlib attribute constructor and enum literals. An explicit
 empty target list remains empty; an absent attribute leaves Kotlin's defaults
 in effect. CLR `AttributeUsage` is not a substitute for Kotlin target metadata.
+An applied stdlib `@RequiresOptIn` likewise projects its message and declared
+`Level` enum entry, so consumers can use the imported annotation as an opt-in marker.
 
 - Direct CLI mode reports a warning and ignores a marked stdlib assembly.
 - Batch/response-file mode silently removes marked stdlib assemblies because
