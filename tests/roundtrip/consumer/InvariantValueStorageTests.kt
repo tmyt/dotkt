@@ -10,7 +10,15 @@ import roundtrip.genericvalueinterop.Box
 import roundtrip.invariantstorage.*
 
 private fun forwardedNativeBox(): Box<String> = Box("forwarded")
+private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String>>) -> Unit): Any {
+    val items = arrayOf(Box("before"))
+    change(items)
+    if (cross) NativeBoxApi.EchoBoxes(items)
+    return items[0]
+}
+private class DelegatedVector : GenericValueInterop.NativeVectorBase(arrayOf(roundtrip.genericvalueinterop.Derived<String>()))
 private class LocalStoredBox<T>(val value: T)
+private fun readMixed(vararg values: LocalStoredBox<String>): String = values[0].value + values[1].value
 private interface LocalStoredCallback<T> { fun apply(value: T, transform: (T) -> Any): String }
 private class LocalStoredIntCallback : LocalStoredCallback<Int> {
     override fun apply(value: Int, transform: (Int) -> Any): String = transform(value).toString()
@@ -41,6 +49,8 @@ class InvariantValueStorageTests {
 
     @TestAttribute
     fun sourceContainerElementsRetainUncheckedIdentityAcrossDlls() {
+        val tail = arrayOf(LocalStoredBox("tail"))
+        check(readMixed(LocalStoredBox("head"), *tail) == "headtail")
         val elements = storedList()
         check(elements[0] === UniversalStoredView && elements[0].code(42) == 7)
         val pair = storedPair()
@@ -82,13 +92,16 @@ class InvariantValueStorageTests {
 
     @TestAttribute
     fun nativeMethodWitnessesAndGenericReferencesKeepExactLocations() {
+        check(DelegatedVector().Count == 1)
         val empty: Array<Box<String>> = System.Array.Empty<Box<String>>()
         check(empty.size == 0)
+        check(NativeBoxApi.IsNativeBoxMatrix(System.Array.Empty<Array<Box<String>>>()))
         val repeated = System.Linq.Enumerable.Repeat(Box("repeat"), 2)
         check(System.Linq.Enumerable.Count(repeated) == 2)
         var values = arrayOf(Box("resize"))
+        values[0] = forwardedNativeBox()
         System.Array.Resize(byref(values), 4)
-        check(values.size == 4 && values[0].value == "resize")
+        check(values.size == 4 && values[0].value == "forwarded")
         check(NativeBoxApi.EchoBoxes(values) === values)
         var location = Box("before")
         touchReference(byref(location))
@@ -138,6 +151,7 @@ class InvariantValueStorageTests {
         check(NativeBoxApi.EchoBoxes(alias) === items && items[0].value == "forwarded")
         val number = Box(42)
         val erased = number as Box<String>
+        check(mutateBeforeNativeBoundary(false) { it[0] = erased } === number)
         val kotlinItems = arrayOf(Box("initial"))
         val writableAlias = kotlinItems
         writableAlias[0] = erased

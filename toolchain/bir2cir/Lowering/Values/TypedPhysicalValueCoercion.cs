@@ -307,6 +307,13 @@ static class TypedPhysicalValueCoercion
     static BirGraphValue Coerce(BirGraphValue value, TypeNode target, Scope scope, Index index)
     {
         target = SignatureValueTypes.Of(target);
+        // The actual storage slot is known for an immediate allocation, including
+        // constructor delegation and the initializer of a byref local. There is
+        // no existing array identity or escaped alias to reinterpret here.
+        if (!index.ReferenceBuild && value is BirNewArray literal && literal.Elem.OrDefault() is TypeNode.Fqn component
+            && target is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } exact } vector
+            && index.HasDeclaredCarrier(exact, component))
+            value = NativeLiteral(literal, vector, scope, index);
         if (target != null && value is BirConditional { Type.HasValue: false } conditional
             && (Underlying(target) is TypeNode.Fn { Suspend: false }
                 || NeedsConversion(ExprType(Graph(conditional.Then.OrDefault()), scope, index), target, index)
@@ -422,7 +429,28 @@ static class TypedPhysicalValueCoercion
                 || node is BirValueBlock block && !block.TransparentScope.OrDefault())
                 declarations = new(declarations, StringComparer.Ordinal);
             node.VisitChildren(child => Visit(child, declarations));
-            if (nativeArray != null && node is BirArraySet write) writes.Add((write.Array.OrDefault(), write.Value.OrDefault()));
+            if (nativeArray != null)
+            {
+                // Ordinary calls, callbacks and published values can expose the
+                // same array to Kotlin code whose writes we cannot inspect here.
+                void Escapes(IBirExpression value) { if (value != null) writes.Add((value, null)); }
+                switch (node)
+                {
+                    case BirDelegateInvoke invoke:
+                        foreach (var arg in invoke.Args.OrEmpty()) Escapes(arg);
+                        break;
+                    case BirNewClosure closure:
+                        foreach (var arg in closure.Captures.OrEmpty()) Escapes(arg);
+                        break;
+                    case BirArraySet write:
+                        writes.Add((write.Array.OrDefault(), write.Value.OrDefault()));
+                        Escapes(write.Value.OrDefault()); break;
+                    case BirSetField field: Escapes(field.Value.OrDefault()); break;
+                    case BirStaticFieldSet field: Escapes(field.Value.OrDefault()); break;
+                    case BirFieldSetExpression field: Escapes(field.Value.OrDefault()); break;
+                    case BirPropertySet property: Escapes(property.Value.OrDefault()); break;
+                }
+            }
             if (node is BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance
                     or BirGenericStatic or BirGenericInstance or BirNew or BirNewClr
                 && Arguments(node) is { } arguments && ParameterTypes(node) is { } callParameters
@@ -535,18 +563,24 @@ static class TypedPhysicalValueCoercion
         var closed = new BirNewArray { Elem = exact, Elems = temps.Select(temp => (IBirExpression)Cast(Read(temp), exact)).ToArray() };
         var open = new BirNewArray { Elem = carrier, Elems = temps.Select(temp => (IBirExpression)Read(temp)).ToArray() };
         IBirExpression Bool(bool value) => new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(value) };
-        IBirExpression ok = Bool(true);
-        foreach (var temp in temps.Reverse())
+        IBirExpression FitsRange(int start, int length)
         {
+            if (length == 0) return Bool(true);
+            if (length > 1)
+            {
+                var half = length / 2;
+                return new BirConditional { Type = boolean, Cond = Field(FitsRange(start, half)),
+                    Then = Field(FitsRange(start + half, length - half)), Else = Field(Bool(false)) };
+            }
+            var temp = temps[start];
             var isNull = new BirBinaryOperation { Op = "==", Lhs = Read(temp), Rhs = new BirConstant {
                 Type = Object, Value = new BirLiteral.NullLiteral() } };
-            var fits = new BirConditional { Type = boolean, Cond = isNull, Then = Field(Bool(true)),
+            return new BirConditional { Type = boolean, Cond = isNull, Then = Field(Bool(true)),
                 Else = new BirIsInstance { Type = exact, E = Read(temp) } };
-            ok = new BirConditional { Type = boolean, Cond = fits, Then = Field(ok), Else = Field(Bool(false)) };
         }
         var result = new TypeNode.Array(carrier);
         return new BirValueBlock { Type = result, Stmts = temps.Cast<IBirStatement>().ToArray(), Result = new BirConditional {
-            Type = result, Cond = Field(ok), Then = closed, Else = open } };
+            Type = result, Cond = Field(FitsRange(0, temps.Length)), Then = closed, Else = open } };
     }
 
     static string NativeParameterName(BirGraphValue declaration) => declaration switch {
@@ -810,7 +844,15 @@ static class TypedPhysicalValueCoercion
             case BirNewClosure value: CoerceVector(value.Captures.OrDefault(), index.ClosureParameters(value), scope, index); break;
             case BirDelegateInvoke value: CoerceDelegateArguments(value, scope, index); break;
             case BirPropertySet value: value.Value = C(value.Value, FieldTarget(value, scope, index)); break;
-            case BirArraySet value: value.Value = C(value.Value, value.Elem.OrDefault()); break;
+            case BirArraySet value:
+                // A native location can hold an exact vector although Kotlin reads
+                // its elements through the declaration carrier. A store must supply
+                // the CLR component of that location, not just its readable view.
+                if (value.Elem.OrDefault() is TypeNode.Fqn carrier &&
+                    ExprType(Graph(value.Array.OrDefault()), scope, index) is TypeNode.Array { Elem: TypeNode.Fqn exact } &&
+                    exact.Args is { Length: > 0 } && index.HasDeclaredCarrier(exact, carrier))
+                    value.Elem = exact;
+                value.Value = C(value.Value, value.Elem.OrDefault()); break;
             case BirStackSet value: value.Value = C(value.Value, value.Elem.OrDefault()); break;
             case BirByRefStore value: value.Value = C(value.Value, value.Elem.OrDefault()); break;
             case BirNewArray value: CoerceArray(value.Elems.OrDefault(), value.Elem.OrDefault(), scope, index); break;

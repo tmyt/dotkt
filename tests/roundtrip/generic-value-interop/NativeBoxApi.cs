@@ -9,6 +9,7 @@ public interface NativeBoxReceiver
 }
 
 public sealed class NativeBoxContainer<T>(T value) { public T Value { get; } = value; }
+public class NativeVectorBase(Derived<string>[] values) { public int Count => values.Length; }
 public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactory();
 public interface NativeBoxCreator { Box<string, string> Create(); }
 public delegate Box<string, string> NativeBoxFactory();
@@ -24,6 +25,7 @@ public static class NativeBoxApi
 
     public static Box<string, string> Echo(Box<string, string> value) => value;
     public static Box<string, string>[] EchoBoxes(Box<string, string>[] values) => values;
+    public static bool IsNativeBoxMatrix(object value) => value is Box<string, string>[][];
     public static NativeBoxContainer<Box<string, string>> EchoContainer(NativeBoxContainer<Box<string, string>> value) => value;
     public static NativeBoxContainer<Box<string, string>> InvokeContainer(NativeBoxContainerFactory factory) => factory();
     public static Box<string, string> InvokeCreator(NativeBoxCreator factory) => factory.Create();

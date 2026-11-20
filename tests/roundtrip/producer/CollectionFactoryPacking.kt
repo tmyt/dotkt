@@ -4,6 +4,18 @@ import ProjectedConstructionInterop.ObliviousBox
 
 fun <T> copyForwardedArrayList(values: Array<T>): ArrayList<T> = arrayListOf(*values)
 
+fun <T> setSelected(first: Boolean, left: Array<T>, right: Array<T>, value: T) {
+    (if (first) left else right)[0] = value
+}
+
+@Suppress("UNCHECKED_CAST")
+inline fun <reified T> Collection<T>.packByIteration(): Array<T> {
+    val values = arrayOfNulls<T>(size)
+    var index = 0
+    for (element in this) values[index++] = element
+    return values as Array<T>
+}
+
 interface Reader<T> { fun label(): String }
 object NumberReader : Reader<Int> { override fun label() = "number" }
 object TextReader : Reader<String> { override fun label() = "text" }

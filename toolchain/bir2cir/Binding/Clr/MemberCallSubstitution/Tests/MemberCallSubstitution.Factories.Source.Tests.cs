@@ -114,6 +114,7 @@ static partial class MemberCallSubstitution
             var forwarded = Factory("array", new IBirExpression[] { new BirLocal { Name = "integers" } }, new TypeNode[] { integer });
             forwarded.Sty = new TypeNode.Array(any);
             var spread = (BirSpreadConcat)TryFactorySubst(forwarded, refs, context);
+            BindSpreadOperands(spread, context, _isValue);
             Require(spread.Elem.Value == any && spread.Parts.Value.Single().E.Value is BirGenericStatic adapter
                 && adapter.TypeArgs.Value.Single() == any && adapter.ResolvedMemberParams.Value.Single() == new TypeNode.Fqn("System.Collections.IEnumerable"),
                 "widened array spread lost its fresh-copy/non-generic boxed enumeration adapter");
@@ -121,7 +122,7 @@ static partial class MemberCallSubstitution
                 new BirSpreadPart { E = Number(1) },
                 new BirSpreadPart { Spread = true, E = new BirLocal { Name = "integers" } },
             } };
-            TransformSpread(mixed, context);
+            BindSpreadOperands(TransformSpread(mixed), context, _isValue);
             Require(mixed.Parts.Value[0].E.Value is BirCast { Type.Value: TypeNode.Fqn { Name: "object" } }
                 && mixed.Parts.Value[1].E.Value is BirGenericStatic, "mixed spread omitted scalar boxing or array element adaptation");
             Require(CompilerMetadataIntrinsicValue("dotkt.equalityStorage.Set", refs) is BirNewArray {

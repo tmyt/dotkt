@@ -221,7 +221,6 @@ static partial class MemberCallSubstitution
                 : new BirSpreadConcat { Parts = new[] { new BirSpreadPart { Spread = true,
                     E = FactoryExpression(FactoryClone(arguments[0])) } } };
             spread.Elem = FactoryType(canonical);
-            NormalizeSpreadParts(spread, canonical, context);
             return spread;
         }
         return new BirNewArray { Elem = FactoryType(canonical), Elems = (wrapper?.Elems.OrEmpty() ?? Array.Empty<IBirExpression>()).Select(FactoryClone).ToArray() };
@@ -235,15 +234,26 @@ static partial class MemberCallSubstitution
         return null;
     }
 
-    internal static BirSpreadConcat TransformSpread(BirSpreadConcat spread, CollectionHelperBinding.CollectionSourceContext context)
+    internal static BirSpreadConcat TransformSpread(BirSpreadConcat spread)
     {
         var element = CanonicalArrayElem(spread.Elem.OrDefault());
         spread.Elem = element == null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(element);
-        NormalizeSpreadParts(spread, element, context);
         return spread;
     }
 
-    static void NormalizeSpreadParts(BirSpreadConcat spread, TypeNode target, CollectionHelperBinding.CollectionSourceContext context)
+    // A spread enumerates into the selected destination vector. Establish its
+    // adapters only after carrier projection; the operand keeps its own ABI.
+    internal static void BindSpreadOperands(BirGraphValue root, CollectionHelperBinding.CollectionSourceContext context,
+        ValueTypeOracle isValue)
+    {
+        if (root is IBirExecutablePayload) return;
+        var nested = context.Extend(root);
+        root.VisitChildren(child => BindSpreadOperands(child, nested, isValue));
+        if (root is BirSpreadConcat spread) NormalizeSpreadParts(spread, spread.Elem.OrDefault(), nested, isValue);
+    }
+
+    static void NormalizeSpreadParts(BirSpreadConcat spread, TypeNode target, CollectionHelperBinding.CollectionSourceContext context,
+        ValueTypeOracle isValue)
     {
         foreach (var part in spread.Parts.OrEmpty())
         {
@@ -258,7 +268,7 @@ static partial class MemberCallSubstitution
             }
             else
             {
-                var physicalSource = source == null ? null : NullableGenericErasure.EraseNullableTv(source, _isValue);
+                var physicalSource = source == null ? null : NullableGenericErasure.EraseNullableTv(source, isValue);
                 if (physicalSource != null && physicalSource.Equals(target)) continue;
                 part.E = new BirCast { Type = FactoryType(target), E = FactoryExpression(FactoryClone(operand)) };
             }

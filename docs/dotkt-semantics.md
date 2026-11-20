@@ -2827,7 +2827,8 @@ What this is observable as, beyond the boxing already listed above:
   value- and reference-component vectors without copying. An `in X` component has readable bound `Any?`, so
   `as Array<in X>` does not require the allocation's component to be `X`; an incompatible subsequent store throws
   `ArrayTypeMismatchException`. Nested open components accept their selected `System.Array` storage as well as
-  native vector components. Closed invariant element reads still cast to their exact constructed type.
+  native vector components. Reads of Kotlin generic elements use their declaration's projected storage;
+  reading back an unchecked element does not cast it to a closed CLR instantiation.
 - **An unchecked generic array cast checks the erased component bound, not the caller's concrete `T`.**
   `arrayOfNulls<Node>(n) as Array<T?>` inside `fun <T : Node>` is valid internal storage. The cast checks vector
   shape and Kotlin's representative upper bound (class bound, otherwise first interface bound), including nested

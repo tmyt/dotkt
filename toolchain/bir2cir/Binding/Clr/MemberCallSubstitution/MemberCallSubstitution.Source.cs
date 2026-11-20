@@ -39,7 +39,7 @@ static partial class MemberCallSubstitution
         if (node is BirCallStatic call) call.DotktProjectedCollection = default;
         return node switch {
             BirNew value => TransformNew(value, refs) as BirGraphValue ?? value,
-            BirSpreadConcat value => (BirGraphValue)TransformSpread(value, childContext),
+            BirSpreadConcat value => (BirGraphValue)TransformSpread(value),
             BirCallInstance value => TransformCall(value, refs, childContext) ?? value,
             BirCallStatic value => TransformCall(value, refs, childContext) ?? value,
             BirStaticFieldGet value => TransformStaticField(value, refs) as BirGraphValue ?? value,

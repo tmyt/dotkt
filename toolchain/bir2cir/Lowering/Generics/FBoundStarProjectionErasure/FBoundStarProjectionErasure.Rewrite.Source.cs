@@ -12,6 +12,7 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlySet<int> ExistentialTypes { get; init; }
         internal IReadOnlySet<int> ExistentialMethods { get; init; }
         internal TypeNode.Fqn ThisType { get; init; }
+        internal TypeNode.Fqn BaseType { get; init; }
         internal GenericArrayStorageLowering.SourceTypeOperationFrame OwnerFrame { get; init; }
         internal GenericArrayStorageLowering.SourceTypeOperationFrame MethodFrame { get; init; }
         internal bool Bound { get; init; }
@@ -64,6 +65,7 @@ static partial class FBoundStarProjectionErasure
             if (!typesOnly) ProjectDependentTypeConstraintsSource(type, state.Projection);
             var facts = NullableRepresentationViews.TypeFacts(node);
             return scope with { TypeParameters = parameters, MethodParameters = null,
+                BaseType = type.Base.OrDefault() as TypeNode.Fqn,
                 ExistentialTypes = SourceExistentialParameters(parameters, "type"), ExistentialMethods = null,
                 ThisType = type.Name.HasValue ? new TypeNode.Fqn(type.Name.Value,
                     Enumerable.Range(0, type.TypeParams.OrEmpty().Length).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray()) : scope.ThisType,
@@ -163,8 +165,14 @@ static partial class FBoundStarProjectionErasure
                     preserveConstructedHead: field == "argTypes" && index < arguments.Length && SourceExactOuter((BirGraphValue)arguments[index])
                         || IsSourceInnerOuterSlot(node, index, state), preserveArrayShape: shape);
             if (field == "delegationSig" && node is BirConstructor constructor)
+            {
+                var nativeBase = !constructor.ThisArgs.HasValue && constructor.BaseArgs.HasValue
+                    && scope.BaseType != null && IsNativeArrayOwner(scope.BaseType, state.References, state.LocalClrAliases);
                 return state.Projection.Rewrite(type, bound,
-                    preserveConstructedHead: constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index);
+                    preserveConstructedHead: constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index
+                        || nativeBase && IsExactNativeArrayWitness(type, state.Projection),
+                    preserveArrayShape: nativeBase);
+            }
             if (field == "constraints" && scope.ParameterOwner != null
                 && state.Demand.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
             return state.Projection.Rewrite(type, bound, preserveConstructedHead:
@@ -229,7 +237,8 @@ static partial class FBoundStarProjectionErasure
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
         return state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
             preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
-                && (PreservesNativeWitnessHead(argument, state.Projection) || factory
+                && (PreservesNativeWitnessHead(argument, state.Projection)
+                    || preserveArray && IsExactNativeArrayWitness(argument, state.Projection) || factory
                     || state.Demand.NativeProofs.ExactMethodArgument(selected, identity, index)
                     || StripSourceNullability(argument) is TypeNode.Fqn alias && state.Projection.RequiresOpaqueVariantAlias(alias)
                         && !ContainsExistentialProjection(alias) && !state.Projection.ProjectionCanChangeConstruction(alias)));

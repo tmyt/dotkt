@@ -104,6 +104,8 @@ static partial class NullableRepresentationMaterialization
         node.RewriteRepresentationInPlace((ownership, role, type) => {
             if (NullableRepresentationViews.Frozen(ownership) || ownership == BirGenericFrameRole.SyntheticApplication) return type;
             if (role == BirRepresentationRole.TypeArguments && closedArguments != null) return type;
+            if (NullableRepresentationDemand.ReifiedArrayTarget(node, role, type, mapping.ElementArgument) is { } arrayTarget)
+                return arrayTarget;
             if (NullableRepresentationDemand.IsOpenArrayComponent(node, role, type)) return mapping.ElementArgument(type);
             if (node is BirCallLocal or BirLocalFunctionReference && role == BirRepresentationRole.Declaration) return type;
             if (role == BirRepresentationRole.DeclaredMemberType && mapping.IsNativeField(node)) return (selected ?? mapping).Argument(type);
