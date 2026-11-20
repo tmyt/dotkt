@@ -1810,6 +1810,16 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     public bool IsEnumType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "enum";
     public bool IsClassType(TypeNode.Fqn type) => ReferencedTypeKind(type) == "class";
 
+    internal bool IsNonPublicStorageType(TypeNode.Fqn type)
+    {
+        var arity = type.Args?.Length ?? 0;
+        var name = TryResolveClrOwner(type.Name, out var alias, out _) ? alias : RecordedPhysicalTypeName(type.Name);
+        if (!HasExactOwnerPunctuation(name) && TryExactPhysicalTypeName(name, arity, out var exact) && exact != null)
+            name = exact;
+        // For a nested TypeDef the captured outer arguments are not its own arity.
+        return ResolveRefType(name, HasExactOwnerPunctuation(name) ? 0 : arity) is { IsVisible: false };
+    }
+
     public bool IsInterfaceType(TypeNode.Fqn type)
     {
         var kind = ReferencedTypeKind(type);

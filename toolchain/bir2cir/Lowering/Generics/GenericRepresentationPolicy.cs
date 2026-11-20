@@ -15,6 +15,7 @@ sealed partial class GenericRepresentationPolicy
     readonly Dictionary<string, string> _aliases;
     readonly ReferenceMetadataIndex _references;
     readonly HashSet<string> _localOwners = new(StringComparer.Ordinal);
+    readonly Dictionary<string, (string Visibility, string Enclosing)> _sourceVisibility = new(StringComparer.Ordinal);
     IReadOnlyDictionary<string, SupertypeGraph.Def> _sourceHierarchy = new Dictionary<string, SupertypeGraph.Def>();
     readonly HashSet<string> _existentialOwners = new(StringComparer.Ordinal);
     readonly HashSet<(string Owner, string Name, bool Static, string Receiver)> _nativeFieldNames = new();
@@ -124,15 +125,34 @@ sealed partial class GenericRepresentationPolicy
         var erased = new List<TypeNode>();
         foreach (var bound in bounds)
         {
-            if (!IsNominalStorageBound(bound)) { physical.Add(bound); continue; }
+            if (!IsNominalStorageBound(bound) && CanReferenceStorageProof(bound)) { physical.Add(bound); continue; }
             erased.Add(bound);
-            // Forward the base class's interface proofs when R : Base flows into R : Interface.
+            // Use the same public proof set at both ends of an open generic call,
+            // including when its source bound is an explicitly named hidden interface.
             var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
             foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
-                if (isInterface && StorageConstraint(parent) is { } proof) physical.Add(proof);
+                if (isInterface && StorageConstraint(parent) is { } proof && CanReferenceStorageProof(proof)) physical.Add(proof);
         }
         if (physical.Count != 0) parameter.Constraints = physical.Distinct().ToArray();
         if (erased.Count != 0) parameter.ErasedInnerConstraints = erased.ToArray();
+    }
+
+    // Inferred storage evidence is part of the callable ABI. It must be usable
+    // both here and in another DLL forwarding its own open storage parameter.
+    bool CanReferenceStorageProof(TypeNode proof)
+    {
+        var accessible = true;
+        BirGraphNameFields.VisitTypeNodes(proof, node => {
+            if (!accessible || node is not TypeNode.Fqn named) return;
+            if (!_localOwners.Contains(named.Name))
+            {
+                if (_references?.IsNonPublicStorageType(named) == true) accessible = false;
+                return;
+            }
+            for (var owner = named.Name; owner != null && _sourceVisibility.TryGetValue(owner, out var scope); owner = scope.Enclosing)
+                if (scope.Visibility is not (null or "public")) { accessible = false; break; }
+        });
+        return accessible;
     }
 
     internal bool OwnsMethodValueSlots(bool intrinsic, IEnumerable<TypeNode> overrideOwners) =>

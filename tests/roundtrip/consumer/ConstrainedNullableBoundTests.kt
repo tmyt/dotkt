@@ -11,15 +11,31 @@ import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.localItemResult
 import roundtrip.constrainedbound.StreamChunk
 import roundtrip.constrainedbound.firstChunk
+import roundtrip.constrainedbound.UsableBound
+import roundtrip.constrainedbound.keepBound
+import roundtrip.constrainedbound.ScopedBoundOwner
+import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
 
+private class ForeignBoundHolder<T : VisibleBoundBase>(val element: T) {
+    fun read(): String = publicBoundName(keepBound(element))
+}
+private fun <T : UsableBound> publicBoundName(value: T): String = value.name
+private class ScopedBoundConsumer : ScopedBoundOwner() {
+    private fun <T : State> keep(value: T): T = value
+    fun <T : ScopedBoundOwner.Item> forward(value: T): T = keep(value)
+}
+
 class ConstrainedNullableBoundTests {
     @TestAttribute
     fun constructedAndStarredSubclassesSatisfyTheClassBound() {
         check(localItemResult() == 17L)
+        check(ForeignBoundHolder(VisibleBoundBase()).read() == "base")
+        val scoped = ScopedBoundOwner.Item()
+        check(ScopedBoundConsumer().forward(scoped) === scoped)
         val queue = PendingItems<ResultItem<*>>()
         val numeric = ResultItem(42L)
         val text = ResultItem("text")

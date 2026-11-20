@@ -32,6 +32,8 @@ sealed partial class GenericRepresentationPolicy
                 var owner = Owner(declaration);
                 if (owner.Name == null || !owner.HasKind) continue;
                 policy._localOwners.Add(owner.Name);
+                policy._sourceVisibility[owner.Name] = (PublishedApiTypeVisibilityLowering.ResolveVisibility(declaration),
+                    declaration.SemanticOwner.OrDefault() ?? declaration.NestedIn.OrDefault());
                 var alias = owner.Attributes.Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" });
                 if (FBoundStarProjectionErasure.IsSourceGeneric(owner.Name, owner.Generated, alias, owner.Parameters.Length))
                     policy._existentialOwners.Add(owner.Name);
