@@ -4,8 +4,8 @@ using DotKt.Bir.Lowering;
 // APPLIED-ATTRIBUTE EXTERNAL NORMALIZE — mint the ilemit-facing `attrExternal` bool for an applied attribute (#48).
 // The `attr` type is a structured `{t:fqn}` identity node; ilemit's BuildCab/StampMemberAttrs/DefineParamNames stamp
 // an applied attribute ONLY when its type is emitted in THIS assembly (`_types`) or is flagged EXTERNAL
-// (`attrExternal:true`, resolved from a referenced .NET assembly). Kotlin's @Target has no CLR origin
-// marker in the frontend KLIB; attribute constructor binding selects it from the compiler's stdlib.
+// (`attrExternal:true`, resolved from a referenced .NET assembly). Kotlin's @Target and @RequiresOptIn
+// have no CLR origin marker in the frontend KLIB; constructor binding selects them from the compiler's stdlib.
 //
 // kotc flags an imported .NET attribute (a reference-KLIB-projected annotation class) with `"attrClr":true`.
 // Consume that frontend origin fact in every build: drop `attrClr` and set `attrExternal:true`. The type lives

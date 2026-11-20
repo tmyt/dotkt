@@ -28,8 +28,10 @@ internal sealed partial class AssemblyScanner
             if (blob.ReadUInt16() != 1) throw new BadImageFormatException($"Invalid {annotation} prolog");
             if (optIn)
             {
-                var message = blob.ReadSerializedString() ?? throw new BadImageFormatException("Missing opt-in message");
-                var level = entries[blob.ReadInt32()];
+                var message = blob.ReadSerializedString();
+                // CLR can supply null or an unnamed enum value. Neither is
+                // a Kotlin annotation argument; other declarations remain importable.
+                if (!entries.TryGetValue(blob.ReadInt32(), out var level) || message is null) continue;
                 EnsureEnd(blob, annotation);
                 yield return new Annotation { Id = names.Class(annotation), Argument = {
                     new Annotation.Types.Argument { NameId = names.String("message"), Value = new Value {
@@ -84,12 +86,12 @@ internal sealed partial class AssemblyScanner
 internal sealed partial class PublicTypeCatalog
 {
     // One cache for the entire resolved reference universe, shared by package
-    // workers and input assemblies. Never cache an application or its target list.
+    // workers and input assemblies. Cache enum definitions, not applications.
     private readonly ConcurrentDictionary<(MetadataReader, TypeDefinitionHandle, TypeDefinitionHandle),
-        Lazy<Dictionary<int, string>?>> _kotlinTargets = new();
+        Lazy<Dictionary<int, string>?>> _kotlinMetaEnums = new();
 
     internal Dictionary<int, string>? KotlinMetaEnumEntries(ResolvedTypeDefinition target, ResolvedTypeDefinition enumeration, bool optIn)
-        => _kotlinTargets.GetOrAdd((target.Reader, target.Handle, enumeration.Handle),
+        => _kotlinMetaEnums.GetOrAdd((target.Reader, target.Handle, enumeration.Handle),
             _ => new(() => ReadMetaEntries(target, enumeration, optIn))).Value;
 
     private Dictionary<int, string>? ReadMetaEntries(ResolvedTypeDefinition target, ResolvedTypeDefinition enumeration, bool optIn)

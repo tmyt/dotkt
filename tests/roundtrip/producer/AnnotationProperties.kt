@@ -13,6 +13,9 @@ annotation class CallbackMarker
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
 annotation class PreviewMarker
 
+@RequiresOptIn(level = RequiresOptIn.Level.WARNING)
+annotation class PreviewWarning
+
 @SubclassOptInRequired(PreviewMarker::class)
 interface PreviewApi { fun name(): String }
 
