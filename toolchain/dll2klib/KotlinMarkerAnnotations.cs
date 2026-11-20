@@ -8,19 +8,37 @@ internal sealed partial class AssemblyScanner
     private const string TargetAnnotation = "kotlin.annotation.Target";
     private const string TargetEnum = "kotlin.annotation.AnnotationTarget";
 
-    private Annotation? KotlinAnnotationTargets(TypeDefinitionHandle owner, NameTable names)
+    private const string OptInAnnotation = "kotlin.RequiresOptIn";
+    private static readonly string[] MarkerMetaAnnotations = [TargetAnnotation, OptInAnnotation];
+
+    private IEnumerable<Annotation> KotlinMarkerAnnotations(TypeDefinitionHandle owner, NameTable names)
     {
-        foreach (var (type, ctor, value) in _attrs.Applications(owner, TargetAnnotation))
+        foreach (var annotation in MarkerMetaAnnotations)
+        foreach (var (type, ctor, value) in _attrs.Applications(owner, annotation))
         {
             if (!_publicTypeCatalog.TryResolveDefinition(_md, type, out var definition, _definitionPath))
                 continue;
-            var enumHandle = TargetParameter(_md, ctor);
+            var optIn = annotation == OptInAnnotation;
+            var enumHandle = EnumParameter(_md, ctor, optIn);
             if (enumHandle.IsNil || !_publicTypeCatalog.TryResolveDefinition(_md, enumHandle, out var enumeration, _definitionPath)
                 || definition.DefinitionPath != enumeration.DefinitionPath) continue;
-            var entries = _publicTypeCatalog.KotlinTargetEntries(definition, enumeration);
+            var entries = _publicTypeCatalog.KotlinMetaEnumEntries(definition, enumeration, optIn);
             if (entries is null) continue;
             var blob = _md.GetBlobReader(value);
-            if (blob.ReadUInt16() != 1) throw new BadImageFormatException("Invalid Kotlin @Target prolog");
+            if (blob.ReadUInt16() != 1) throw new BadImageFormatException($"Invalid {annotation} prolog");
+            if (optIn)
+            {
+                var message = blob.ReadSerializedString() ?? throw new BadImageFormatException("Missing opt-in message");
+                var level = entries[blob.ReadInt32()];
+                EnsureEnd(blob, annotation);
+                yield return new Annotation { Id = names.Class(annotation), Argument = {
+                    new Annotation.Types.Argument { NameId = names.String("message"), Value = new Value {
+                        Type = Value.Types.Type.String, StringValue = names.String(message) } },
+                    new Annotation.Types.Argument { NameId = names.String("level"), Value = new Value {
+                        Type = Value.Types.Type.Enum, ClassId = names.Class("kotlin", ["RequiresOptIn", "Level"]),
+                        EnumValueId = names.String(level) } } } };
+                continue;
+            }
             var count = blob.ReadInt32();
             if (count < 0 || count > (blob.RemainingBytes - 2) / sizeof(int))
                 throw new BadImageFormatException("Invalid Kotlin @Target array");
@@ -28,17 +46,21 @@ internal sealed partial class AssemblyScanner
             for (var index = 0; index < count; ++index)
                 array.ArrayElement.Add(new Value { Type = Value.Types.Type.Enum, ClassId = names.Class(TargetEnum),
                     EnumValueId = names.String(entries[blob.ReadInt32()]) });
-            if (blob.ReadUInt16() != 0 || blob.RemainingBytes != 0)
-                throw new BadImageFormatException("Unexpected Kotlin @Target arguments");
-            return new Annotation { Id = names.Class(TargetAnnotation), Argument = {
+            EnsureEnd(blob, annotation);
+            yield return new Annotation { Id = names.Class(TargetAnnotation), Argument = {
                 new Annotation.Types.Argument { NameId = names.String("allowedTargets"), Value = array } } };
         }
-        return null;
     }
 
-    // A custom-attribute blob has no parameter type tags. Decode its integers
-    // only for an actual instance .ctor(enum[]) in the resolved stdlib.
-    private static EntityHandle TargetParameter(MetadataReader reader, EntityHandle constructor)
+    private static void EnsureEnd(BlobReader blob, string annotation)
+    {
+        if (blob.ReadUInt16() != 0 || blob.RemainingBytes != 0)
+            throw new BadImageFormatException($"Unexpected {annotation} arguments");
+    }
+
+    // The blob has no parameter tags. Verify .ctor(enum[]) or .ctor(string, enum)
+    // and resolve the actual enum in the same stdlib as the applied attribute.
+    private static EntityHandle EnumParameter(MetadataReader reader, EntityHandle constructor, bool optIn)
     {
         var (name, signature) = constructor.Kind switch {
             HandleKind.MethodDefinition => (reader.GetMethodDefinition((MethodDefinitionHandle)constructor).Name,
@@ -51,8 +73,8 @@ internal sealed partial class AssemblyScanner
         var blob = reader.GetBlobReader(signature);
         var header = blob.ReadSignatureHeader();
         if (!header.IsInstance || header.IsGeneric || header.CallingConvention != SignatureCallingConvention.Default
-            || blob.ReadCompressedInteger() != 1 || blob.ReadSignatureTypeCode() != SignatureTypeCode.Void
-            || blob.ReadSignatureTypeCode() != SignatureTypeCode.SZArray
+            || blob.ReadCompressedInteger() != (optIn ? 2 : 1) || blob.ReadSignatureTypeCode() != SignatureTypeCode.Void
+            || blob.ReadSignatureTypeCode() != (optIn ? SignatureTypeCode.String : SignatureTypeCode.SZArray)
             || blob.ReadByte() != (byte)SignatureTypeKind.ValueType) return default;
         var element = blob.ReadTypeHandle();
         return blob.RemainingBytes == 0 ? element : default;
@@ -66,15 +88,17 @@ internal sealed partial class PublicTypeCatalog
     private readonly ConcurrentDictionary<(MetadataReader, TypeDefinitionHandle, TypeDefinitionHandle),
         Lazy<Dictionary<int, string>?>> _kotlinTargets = new();
 
-    internal Dictionary<int, string>? KotlinTargetEntries(ResolvedTypeDefinition target, ResolvedTypeDefinition enumeration)
+    internal Dictionary<int, string>? KotlinMetaEnumEntries(ResolvedTypeDefinition target, ResolvedTypeDefinition enumeration, bool optIn)
         => _kotlinTargets.GetOrAdd((target.Reader, target.Handle, enumeration.Handle),
-            _ => new(() => ReadTargetEntries(target, enumeration))).Value;
+            _ => new(() => ReadMetaEntries(target, enumeration, optIn))).Value;
 
-    private Dictionary<int, string>? ReadTargetEntries(ResolvedTypeDefinition target, ResolvedTypeDefinition enumeration)
+    private Dictionary<int, string>? ReadMetaEntries(ResolvedTypeDefinition target, ResolvedTypeDefinition enumeration, bool optIn)
     {
         var reader = target.Reader;
         var definition = reader.GetTypeDefinition(enumeration.Handle);
-        if (!reader.StringComparer.Equals(definition.Namespace, "kotlin.annotation")
+        if (optIn
+            ? definition.GetDeclaringType() != target.Handle || !reader.StringComparer.Equals(definition.Name, "Level")
+            : !reader.StringComparer.Equals(definition.Namespace, "kotlin.annotation")
             || !reader.StringComparer.Equals(definition.Name, "AnnotationTarget") || !definition.GetDeclaringType().IsNil)
             return null;
         var metadata = new MetadataAttributes(reader);

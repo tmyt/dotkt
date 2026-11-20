@@ -9,6 +9,13 @@ annotation class ImportedTypes(val nested: ImportedLabel, val kind: DeprecationL
 @Target(AnnotationTarget.TYPE, AnnotationTarget.TYPE_PARAMETER, AnnotationTarget.FUNCTION)
 annotation class CallbackMarker
 
+@RequiresOptIn(message = "Preview API", level = RequiresOptIn.Level.ERROR)
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)
+annotation class PreviewMarker
+
+@SubclassOptInRequired(PreviewMarker::class)
+interface PreviewApi { fun name(): String }
+
 fun producedLabel(): ImportedLabel = ImportedLabel("producer", 17)
 fun producedArrays(): ImportedArrays = ImportedArrays(arrayOf("one", "two"), intArrayOf(7, 9))
 fun producedTags(): ImportedTags = ImportedTags("one", "two")
