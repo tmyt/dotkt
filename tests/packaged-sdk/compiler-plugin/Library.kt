@@ -20,8 +20,14 @@ object Codes {
     @get:Marker val String.code: Int get() = 19
 }
 class CompositeBox<T>(var value: T)
-interface Relay<T> { fun echo(value: T): T }
-class TextRelay : Relay<String> { override fun echo(value: String) = value }
+interface Relay<T> {
+    fun echo(value: T): T
+    operator fun get(index: Int): T
+}
+class TextRelay : Relay<String> {
+    override fun echo(value: String) = value
+    override fun get(index: Int) = "nullable receiver $index"
+}
 @get:Marker val <T> CompositeBox<T>.number: Int get() = 19
 @Marker
 companion fun Tag.marked(content: @Marker () -> Int): Int = -1

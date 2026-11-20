@@ -1477,8 +1477,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		if (recv != null && ixOwner != null && isExternalNetType(ixOwner) && extensionReceiverParam(ixDeclaration) == null) {
 			// Keep the selected declaration's constructed owner, not the receiver's subclass.
 			// The latter may be a Kotlin class with no referenced CLR indexer declaration.
-			val mt = correspondingSupertypeInstantiation(recv.type, ixOwner, allowCapturedArguments = true)
-				?.let { birType(it) } ?: error("No selected indexer owner for ${callee.name} on ${recv.type}")
+			val mt = selectedMemberOwner(ixOwner, recv.type)
 			val (ixArgs, ixArgTypes) = clrCallArgs(call, ixDeclaration)
 			val ixSignature = overloadSignature(ixDeclaration)
 			val ixTypeArgs = typeArguments(call)

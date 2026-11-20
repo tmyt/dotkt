@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.expressions.IrCall
 import org.jetbrains.kotlin.ir.expressions.IrBlockBody
 import org.jetbrains.kotlin.ir.expressions.IrExpression
+import org.jetbrains.kotlin.ir.expressions.IrFunctionReference
 import org.jetbrains.kotlin.ir.expressions.IrStatementOrigin
 import org.jetbrains.kotlin.ir.expressions.IrTypeOperator
 import org.jetbrains.kotlin.ir.util.hasAnnotation
@@ -41,10 +42,16 @@ fun lowerHiddenArgument(module: IrModuleFragment, context: IrPluginContext) {
             if (fn.parent is IrClass) fn.metadata = null
         } else {
             fn.transformChildrenVoid(object : IrElementTransformerVoid() {
+                override fun visitFunctionReference(expression: IrFunctionReference): IrExpression {
+                    expression.transformChildrenVoid(this)
+                    if (fn.name.asString() == "nullableDispatch" && expression.symbol.owner.name.asString() == "echo")
+                        expression.arguments[0] = DeclarationIrBuilder(context, fn.symbol).irGet(fn.parameters.single())
+                    return expression
+                }
                 override fun visitCall(expression: IrCall): IrExpression {
                     expression.transformChildrenVoid(this)
                     val callee = expression.symbol.owner
-                    if (fn.name.asString() == "nullableDispatch" && callee.name.asString() == "echo") {
+                    if (fn.name.asString() == "nullableDispatch" && callee.name.asString() in setOf("echo", "get")) {
                         // Model a plugin which knows the value is present without refining its IR type.
                         expression.arguments[0] = DeclarationIrBuilder(context, fn.symbol).irGet(fn.parameters.single())
                         return expression

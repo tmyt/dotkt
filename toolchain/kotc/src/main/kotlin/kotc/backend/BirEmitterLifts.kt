@@ -880,12 +880,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 		val declarationOwner = declaration.parent as? IrClass
 		val externalDeclaration = declarationOwner?.let { isExternalNetType(it) } == true
 		val signature = overloadSignature(if (externalDeclaration) declaration else fn)
-		val callOwner = if (externalDeclaration) {
-			val constructed = correspondingSupertypeInstantiation(
-				boundRecv.type, declarationOwner!!, allowCapturedArguments = true,
-			) ?: error("No selected reference owner for ${declaration.name} on ${boundRecv.type}")
-			birType(constructed)
-		} else owner
+		val callOwner = if (externalDeclaration) selectedMemberOwner(declarationOwner!!, boundRecv.type) else owner
 		val resultType = resolvedFuncType.ret
 		val overrideTarget = if (externalDeclaration) declaration else fn
 		val overrideFacts = inMemberDeclarationFrame(overrideTarget) { overrideDeclarations(overrideTarget) }
