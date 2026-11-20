@@ -505,9 +505,9 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		// implementer overrides it. Emitted below alongside the interface's static fields.
 		.filterNot { isKotlinStaticFunction(it) }
 		// Keep inherited declarations in BIR. ifaceMethod records the frontend-selected concrete implementation as an
-		// explicit inheritedImplementation fact. Abstract fake overrides instead carry override edges; bir2cir
-		// can reuse the slot when an edge selects a single imported interface declaration. Neither rule guesses
-		// from whether an IR/BIR body happens to be present.
+		// explicit inheritedImplementation fact; bir2cir then elides only declarations carrying that fact. In particular,
+		// neither layer guesses DIM-ness from whether an IR/BIR body happens to be present (referenced declarations may
+		// legitimately have no body). Abstract fake overrides carry no selected implementation and remain as slots.
 		.map { ifaceMethod(it) }
 	val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 		.filterNot { isKotlinStaticProperty(it) }

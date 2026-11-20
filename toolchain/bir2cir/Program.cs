@@ -664,7 +664,7 @@ sealed class Pipeline
             // Inherited interface implementations supply an existing slot, not
             // a second abstract declaration. Preserve their selected source row
             // before retiring the exact fake override occurrence.
-            InheritedDefaultFakeOverrideElision.Apply(source, RetireDeclaration, refs);
+            InheritedDefaultFakeOverrideElision.Apply(source, RetireDeclaration);
             RoundtripMetadata.FreezeSourceDeclarations(source);
         }
         // Finish every source-use pass before representation/name allocation

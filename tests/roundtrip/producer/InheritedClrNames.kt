@@ -19,7 +19,6 @@ open class OwnerBody<T>(private val value: T) {
 interface MethodSlot { fun <T> identity(value: T): T }
 interface BoundSlot<T> { fun <R : T> identity(value: R): R }
 interface BoundValue
-interface BoundChoice { fun <T : BoundValue> choose(value: T): Int }
 class BoundPayload : BoundValue
 open class BoundBody<T> {
     @kotlin.clr.ClrName("BoundIdentity")
