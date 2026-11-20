@@ -46,6 +46,9 @@ open class ExternalIteratorProvider<T>(private val items: List<T>) {
     open operator fun iterator(): Iterator<T> = items.iterator()
 }
 
+open class ExternalBottomIterator {
+    open operator fun iterator(): Nothing = throw UnsupportedOperationException("inherited iterator")
+}
 interface ExternalDefaultIterator {
     operator fun iterator(): Iterator<Int> = listOf(4, 5, 6).iterator()
 }

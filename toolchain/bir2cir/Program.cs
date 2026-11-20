@@ -902,7 +902,7 @@ sealed class Pipeline
         // Once a slot is selected on the projected parent edge, its closed CLR signature
         // is fixed. Ordinary value positions in a new bridge body still undergo projection.
         var selectedSlotOwners = new HashSet<BirMethodImpl>(ReferenceEqualityComparer.Instance);
-        KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
+        var bottomIterators = KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
             valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
                 if (method != null) suspendTransitions.PublishMethods(file, owner, new[] { method });
@@ -1144,7 +1144,7 @@ sealed class Pipeline
                          type => referencedValues.Rewrite(type), suspendTransitions.PublishTypes))
                 physicalPreparation.EmittedLocalTypes.Add(name);
             foreach (var adapter in ReverseEnumeratorBridgeSynthesis.ApplyAll(captured, refs,
-                         suspendTransitions.PublishMethods, suspendTransitions.PublishTypes))
+                         suspendTransitions.PublishMethods, suspendTransitions.PublishTypes, bottomIterators))
                 physicalPreparation.EmittedLocalTypes.Add(adapter.Name.Value);
         }
         refs.SetLocalEmittedTypes(inventory.EmittedTypeFqns.Concat(physicalPreparation.EmittedLocalTypes)

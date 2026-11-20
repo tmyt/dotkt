@@ -98,21 +98,70 @@ static partial class ReverseEnumeratorBridgeSynthesis
 
     internal static SlotReservation ReserveSlots(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
-        => Plan(def, defs, refs, declarations) is { } plan ? new SlotReservation(plan.Element) : null;
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, BottomSlot> bottom = null)
+    {
+        if (Plan(def, defs, refs, declarations) is not { } plan) return null;
+        if (bottom != null && NodeType.IsNothing(plan.Iterator.SemanticReturn))
+            bottom[def.Name] = new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId, plan.Element);
+        return new SlotReservation(plan.Element);
+    }
+
+    internal sealed record BottomSlot(string Owner, string Method, string DeclarationId, TypeNode Element);
 
     static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IReadOnlyDictionary<string, BottomSlot> reserved = null)
     {
-        if (def.Kind != "class" || FindIteratorProvider(def, defs, refs, declarations) is not { } iterator
-            || Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
+        if (def.Kind != "class") return null;
+        if (reserved != null && reserved.TryGetValue(def.Name, out var slot))
+        {
+            // Nothing and Nothing? can both have become System.Object. Bind the
+            // reserved provider's current declaring type and physical return.
+            var owner = slot.Owner == def.Name ? (TypeNode.Fqn)SelfOwner(def.Name, def.Arity)
+                : SupertypeGraph.Reachable(def, defs, refs).Select(edge => edge.spec).Single(type => type.Name == slot.Owner);
+            var name = slot.Method;
+            TypeNode ret;
+            if (defs.TryGetValue(owner.Name, out var local))
+            {
+                var method = IteratorDeclarations(local, declarations).Single(m =>
+                    !m.Static && m.Parameters == 0 && m.Arity == 0 &&
+                    (slot.DeclarationId != null ? m.Declaration.DeclarationId.OrDefault() == slot.DeclarationId : m.Name == slot.Method));
+                name = method.Name;
+                ret = SupertypeGraph.SubstOwnerTvs(method.Return, SupertypeGraph.EffectiveArgs(owner, local.Arity));
+            }
+            else ret = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
+                .Single(m => m.PhysicalName == slot.Method && m.Parameters.Length == 0).Return;
+            return (new IteratorProvider(owner, name, ret, new TypeNode.Fqn("kotlin.Nothing"), false), slot.Element);
+        }
+        if (FindIteratorProvider(def, defs, refs, declarations) is not { } iterator) return null;
+        if (NodeType.IsNothing(iterator.SemanticReturn))
+        {
+            if (reserved != null) return null;
+            // Bottom has no element argument. Select the actual Kotlin iterable
+            // obligation, not an unrelated, co-implemented native enumerable.
+            var edges = SupertypeGraph.Reachable(def, defs, refs).Where(edge => edge.isInterface).Select(edge => edge.spec);
+            var semantic = edges.FirstOrDefault(face => Bare(face.Name) == "kotlin.collections.Iterable" && face.Args is { Length: 1 });
+            if (semantic == null && declarations.TryGetValue(iterator.Owner.Name, out var source))
+            {
+                var method = source.Methods.OrEmpty().Single(m =>
+                    (iterator.DeclarationId != null ? m.DeclarationId.OrDefault() == iterator.DeclarationId : m.Name.OrDefault() == iterator.Name)
+                    && m.Params.OrEmpty().Length == 0 && m.TypeParams.OrEmpty().Length == 0);
+                semantic = method.Overrides.OrEmpty().Select(edge => edge.Owner.OrDefault()).OfType<TypeNode.Fqn>()
+                    .FirstOrDefault(face => Bare(face.Name) is "kotlin.collections.Iterable" or IEnumerableT && face.Args is { Length: 1 });
+                if (semantic != null) semantic = SupertypeGraph.SubstOwnerTvs(semantic, iterator.Owner.Args ?? []) as TypeNode.Fqn;
+            }
+            if (semantic == null) return null;
+            return (iterator, BirTypeLowering.LowerPhysicalType(semantic.Args[0], refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: true, localTypeNames: defs.Keys.ToHashSet(StringComparer.Ordinal)));
+        }
+        if (Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
         return (iterator, element);
     }
 
     // Preserved Kotlin declaration facts choose the iteration protocol; the
     // current emitted return independently selects the physical call descriptor.
-    sealed record IteratorProvider(TypeNode.Fqn Owner, string Name, TypeNode Return, TypeNode SemanticReturn, bool Abstract);
+    sealed record IteratorProvider(TypeNode.Fqn Owner, string Name, TypeNode Return, TypeNode SemanticReturn, bool Abstract,
+        string DeclarationId = null);
 
     // Resolve the declaration that supplies `iterator()` in the receiver's own type-parameter frame. Class members
     // win before interface defaults, exactly as CLR dispatch does. For interfaces, retain only the most-specific
@@ -165,7 +214,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
     }
 
     // This class's own `Iterable.iterator()` implementation: an instance, nullary, non-generic declaration under the
-    // Kotlin member name whose result IS a `kotlin.collections.Iterator`. Both halves are the Kotlin contract —
+    // Kotlin member name whose result is an iterator subtype, or the non-returning bottom type.
     // `Iterable<T>.iterator(): Iterator<T>` — and the return is checked through the supertype graph rather than
     // against a list of names, because an override may narrow it to any subtype (`MutableIterator<T>`,
     // `ListIterator<T>`, the primitive `IntIterator`/`CharIterator`/`LongIterator`, or a user iterator class).
@@ -180,17 +229,17 @@ static partial class ReverseEnumeratorBridgeSynthesis
         var candidates = IteratorDeclarations(def, declarations)
             .Where(method => (!inherited || method.Visibility != "private")
                 && method.SourceName == IteratorMember && !method.Static && method.Parameters == 0
-                && method.Arity == 0 && method.SemanticReturn is TypeNode.Fqn ret
-                && IteratorElement(ret, defs, refs) != null)
+                && method.Arity == 0 && method.SemanticReturn != null)
             .Select(method => new IteratorProvider(owner, method.Name,
                 SupertypeGraph.SubstOwnerTvs(method.Return, args),
-                SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract))
+                SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract, method.Declaration.DeclarationId.OrDefault()))
+            .Where(provider => NodeType.IsNothing(provider.SemanticReturn) || IteratorElement(provider.SemanticReturn, defs, refs) != null)
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;
     }
 
     sealed record IteratorDeclaration(string SourceName, string Name, string Visibility, bool Static,
-        int Parameters, int Arity, TypeNode Return, TypeNode SemanticReturn, bool Abstract);
+        int Parameters, int Arity, TypeNode Return, TypeNode SemanticReturn, bool Abstract, BirFunctionDeclaration Declaration);
 
     static IEnumerable<IteratorDeclaration> IteratorDeclarations(SupertypeGraph.Def definition,
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
@@ -199,7 +248,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             yield return new(method.DeclarationSourceName.OrDefault() ?? method.KotlinSourceMember.OrDefault() ?? method.Name.OrDefault(),
                 method.Name.OrDefault(), method.Vis.OrDefault(), method.Static.OrDefault(),
                 method.Params.HasValue ? method.Params.Value.Length : -1, method.TypeParams.OrEmpty().Length,
-                method.Ret.OrDefault(), method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault());
+                method.Ret.OrDefault(), method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault(), method);
     }
 
     static IteratorProvider ReferencedIterator(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
@@ -208,7 +257,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         var candidates = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
             .Where(method => method.Parameters.Length == 0
                 && method.SemanticReturn is TypeNode.Fqn ret
-                && IteratorElement(ret, new Dictionary<string, SupertypeGraph.Def>(), refs) != null)
+                && (NodeType.IsNothing(ret) || IteratorElement(ret, new Dictionary<string, SupertypeGraph.Def>(), refs) != null))
             .Select(method => new IteratorProvider(owner, method.PhysicalName, method.Return, method.SemanticReturn, method.IsAbstract))
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;

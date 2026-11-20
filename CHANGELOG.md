@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- A Kotlin collection whose `iterator()` returns `Nothing` now loads on the CLR. Both enumerable interfaces propagate the original override's exception.
 - Reference and runtime DLLs now use MessagePack for all embedded BIR metadata. Release builds also compress declaration metadata when doing so saves space.
 - An instance of a Kotlin generic class has the same reflection classifier as its class literal and `typeOf` classifier, including when used as a map key across DLLs.
 - Rich enum entries can reorder named constructor arguments without changing their evaluation order, including entries with their own class body.
