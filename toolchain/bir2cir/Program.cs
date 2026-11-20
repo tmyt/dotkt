@@ -467,6 +467,8 @@ sealed class Pipeline
             captured, sourceIsValue, refs, policy: genericRepresentations, declaredMethods: declaredMethodFrames);
         restoreDefaultFrames();
         var localFactories = MemberCallSubstitution.CollectLocalFactories(captured);
+        if (!referenceBuild)
+            foreach (var root in captured) MemberCallSubstitution.PrepareElementLiterals(root, refs, localFactories, sourceIndex.DeclarationIds);
         // Keep the physical placement order explicit. Each pass owns its
         // decisions; late consumers receive the resulting scalar associations.
         GenericStaticOwnerBinding.Materialize(captured);

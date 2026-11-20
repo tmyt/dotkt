@@ -24,7 +24,8 @@ static partial class NullableRepresentationMaterialization
             .Select(slot => slot.SourceIndex).OrderBy(index => index);
         return new NullableRepresentationFrame(captures.Length, Indices(NullableRepresentationFrame.Role.Nullable),
             storageIndices: Indices(NullableRepresentationFrame.Role.Storage),
-            nullableStorageIndices: Indices(NullableRepresentationFrame.Role.NullableStorage));
+            nullableStorageIndices: Indices(NullableRepresentationFrame.Role.NullableStorage),
+            elementIndices: Indices(NullableRepresentationFrame.Role.Element), nullableElementIndices: Indices(NullableRepresentationFrame.Role.NullableElement));
     }
 
 }

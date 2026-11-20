@@ -55,11 +55,12 @@ for call in calls:
     assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(call))
 
 derived = next(item for item in consumer["types"] if item["name"] == "roundtriptests.operatorresults.ReturningList")
+arity = len(physical["typeParams"])
+assert derived["base"] == {"t": "fqn", "name": f"{owner}`{arity}",
+                           "args": [{"t": "tv", "scope": "type", "i": i} for i in range(arity)]}
 super_calls = [node for node in nodes(derived["methods"])
                if node.get("k") == "callInstance" and node.get("method") == "set_Item"
-               and node.get("ownerType", {}).get("name") == owner + "`2"]
+               and node.get("ownerType") == derived["base"]]
 assert len(super_calls) == 1
-assert super_calls[0]["ownerType"]["args"] == [
-    {"t": "tv", "scope": "type", "i": 0}, {"t": "tv", "scope": "type", "i": 1}]
 assert super_calls[0].get("virtual") is False
 print("selected imported operators use their exact associated carrier slots; lexical super frames remain exact")

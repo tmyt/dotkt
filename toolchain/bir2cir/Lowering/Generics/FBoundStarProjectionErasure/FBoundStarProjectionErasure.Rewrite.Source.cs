@@ -221,11 +221,13 @@ static partial class FBoundStarProjectionErasure
             : state.References.NullableMethodFrame(identity);
         if (frame != null && frame.PhysicalArity != call.ApplicationTypeArguments.Value.Length)
             throw new InvalidOperationException("Selected method arguments disagree with the declaration's representation frame");
-        var witness = frame == null || frame.PhysicalSlot(index).Representation
+        var role = frame?.PhysicalSlot(index).Representation;
+        var elementWitness = role is NullableRepresentationFrame.Role.Element or NullableRepresentationFrame.Role.NullableElement;
+        var witness = frame == null || role
             is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
         var factory = call switch { BirCallInstance value => value._innerFactoryArguments.OrDefault(),
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
-        return state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray,
+        return state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
             preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
                 && (PreservesNativeWitnessHead(argument, state.Projection) || factory
                     || state.Demand.NativeProofs.ExactMethodArgument(selected, identity, index)

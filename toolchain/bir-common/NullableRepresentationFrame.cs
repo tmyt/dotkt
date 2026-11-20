@@ -10,7 +10,7 @@ using System.Text.Json.Nodes;
 namespace DotKt.Bir;
 
 // A declaration-owned correspondence, independent of parameter names or Kotlin reified markers.
-// The canonical frame is source parameters followed by nullable, storage and nullable-storage companions.
+// The canonical frame is source parameters followed by their demanded representation companions.
 // Each companion describes a representation of the same SOURCE argument, not a new source type parameter.
 // PhysicalOrder maps physical slots
 // to that canonical frame, allowing a nested CLR type to retain its complete enclosing-type prefix.
@@ -21,6 +21,8 @@ internal sealed class NullableRepresentationFrame
     public IReadOnlyList<int> NullableIndices { get; }
     public IReadOnlyList<int> StorageIndices { get; }
     public IReadOnlyList<int> NullableStorageIndices { get; }
+    public IReadOnlyList<int> ElementIndices { get; }
+    public IReadOnlyList<int> NullableElementIndices { get; }
     public IReadOnlyList<int> PhysicalOrder { get; }
     readonly int[] _canonicalToPhysical;
     readonly Slot[] _canonical;
@@ -28,12 +30,13 @@ internal sealed class NullableRepresentationFrame
     public bool RequiresMetadata => PhysicalArity != SourceArity || PhysicalOrder.Where((slot, index) => slot != index).Any();
     public IEnumerable<Slot> Companions => _canonical.Skip(SourceArity);
 
-    public enum Role { Ordinary, Nullable, Storage, NullableStorage }
+    public enum Role { Ordinary, Nullable, Storage, NullableStorage, Element, NullableElement }
     public readonly record struct Slot(int SourceIndex, Role Representation);
 
     public NullableRepresentationFrame(int sourceArity, IEnumerable<int> nullableIndices,
         IEnumerable<int>? physicalOrder = null, IEnumerable<int>? storageIndices = null,
-        IEnumerable<int>? nullableStorageIndices = null)
+        IEnumerable<int>? nullableStorageIndices = null, IEnumerable<int>? elementIndices = null,
+        IEnumerable<int>? nullableElementIndices = null)
     {
         if (sourceArity < 0) throw new ArgumentException("Invalid representation source arity");
         static IReadOnlyList<int> Indices(IEnumerable<int> values, int arity)
@@ -48,10 +51,14 @@ internal sealed class NullableRepresentationFrame
         NullableIndices = Indices(nullableIndices, sourceArity);
         StorageIndices = Indices(storageIndices ?? Array.Empty<int>(), sourceArity);
         NullableStorageIndices = Indices(nullableStorageIndices ?? Array.Empty<int>(), sourceArity);
+        ElementIndices = Indices(elementIndices ?? Array.Empty<int>(), sourceArity);
+        NullableElementIndices = Indices(nullableElementIndices ?? Array.Empty<int>(), sourceArity);
         _canonical = Enumerable.Range(0, sourceArity).Select(i => new Slot(i, Role.Ordinary))
             .Concat(NullableIndices.Select(i => new Slot(i, Role.Nullable)))
             .Concat(StorageIndices.Select(i => new Slot(i, Role.Storage)))
-            .Concat(NullableStorageIndices.Select(i => new Slot(i, Role.NullableStorage))).ToArray();
+            .Concat(NullableStorageIndices.Select(i => new Slot(i, Role.NullableStorage)))
+            .Concat(ElementIndices.Select(i => new Slot(i, Role.Element)))
+            .Concat(NullableElementIndices.Select(i => new Slot(i, Role.NullableElement))).ToArray();
         var order = physicalOrder?.ToArray() ?? Enumerable.Range(0, PhysicalArity).ToArray();
         if (!order.OrderBy(i => i).SequenceEqual(Enumerable.Range(0, PhysicalArity)))
             throw new ArgumentException("Invalid nullable representation physical order");
@@ -88,7 +95,8 @@ internal sealed class NullableRepresentationFrame
     // would lose precisely the distinction this frame exists to preserve.
     public TypeNode[] Close(IReadOnlyList<TypeNode> sourceArguments,
         Func<TypeNode, TypeNode> ordinary, Func<TypeNode, TypeNode> nullable,
-        Func<TypeNode, TypeNode>? storage = null, Func<TypeNode, TypeNode>? nullableStorage = null)
+        Func<TypeNode, TypeNode>? storage = null, Func<TypeNode, TypeNode>? nullableStorage = null,
+        Func<TypeNode, TypeNode>? element = null, Func<TypeNode, TypeNode>? nullableElement = null)
     {
         if (sourceArguments.Count != SourceArity)
             throw new ArgumentException("Source generic arity does not match nullable representation frame");
@@ -99,6 +107,8 @@ internal sealed class NullableRepresentationFrame
             Role.Nullable => nullable,
             Role.Storage => storage!,
             Role.NullableStorage => nullableStorage!,
+            Role.Element => element ?? throw new InvalidOperationException("Missing element representation"),
+            Role.NullableElement => nullableElement ?? throw new InvalidOperationException("Missing nullable element representation"),
             _ => throw new InvalidOperationException("Invalid representation role"),
         })(sourceArguments[slot.SourceIndex])).ToArray();
         return PhysicalOrder.Select(index => canonical[index]).ToArray();
@@ -115,7 +125,7 @@ internal sealed class NullableRepresentationFrame
         }).ToArray();
         var captured = prefix.ToHashSet();
         return new NullableRepresentationFrame(SourceArity, NullableIndices,
-            prefix.Concat(PhysicalOrder.Where(index => !captured.Contains(index))), StorageIndices, NullableStorageIndices);
+            prefix.Concat(PhysicalOrder.Where(index => !captured.Contains(index))), StorageIndices, NullableStorageIndices, ElementIndices, NullableElementIndices);
     }
 
     // Compose independent declaration frames without changing either emitted physical parameter vector.
@@ -126,12 +136,13 @@ internal sealed class NullableRepresentationFrame
         var combined = new NullableRepresentationFrame(SourceArity + following.SourceArity,
             Join(NullableIndices, following.NullableIndices),
             storageIndices: Join(StorageIndices, following.StorageIndices),
-            nullableStorageIndices: Join(NullableStorageIndices, following.NullableStorageIndices));
+            nullableStorageIndices: Join(NullableStorageIndices, following.NullableStorageIndices),
+            elementIndices: Join(ElementIndices, following.ElementIndices), nullableElementIndices: Join(NullableElementIndices, following.NullableElementIndices));
         IEnumerable<int> Rebase(NullableRepresentationFrame frame, int offset) =>
             frame.PhysicalOrder.Select(index => frame._canonical[index])
                 .Select(slot => Array.IndexOf(combined._canonical, new Slot(offset + slot.SourceIndex, slot.Representation)));
         return new NullableRepresentationFrame(combined.SourceArity, combined.NullableIndices,
-            Rebase(this, 0).Concat(Rebase(following, SourceArity)), combined.StorageIndices, combined.NullableStorageIndices);
+            Rebase(this, 0).Concat(Rebase(following, SourceArity)), combined.StorageIndices, combined.NullableStorageIndices, combined.ElementIndices, combined.NullableElementIndices);
     }
 
     public NullableRepresentationFrame RetainSources(IReadOnlyList<int> retained)
@@ -142,11 +153,12 @@ internal sealed class NullableRepresentationFrame
         int[] Remap(IReadOnlyList<int> indices) => indices.Where(renumber.ContainsKey)
             .Select(index => renumber[index]).OrderBy(index => index).ToArray();
         var result = new NullableRepresentationFrame(retained.Count, Remap(NullableIndices),
-            storageIndices: Remap(StorageIndices), nullableStorageIndices: Remap(NullableStorageIndices));
+            storageIndices: Remap(StorageIndices), nullableStorageIndices: Remap(NullableStorageIndices),
+            elementIndices: Remap(ElementIndices), nullableElementIndices: Remap(NullableElementIndices));
         var order = PhysicalOrder.Select(index => _canonical[index]).Where(slot => renumber.ContainsKey(slot.SourceIndex))
             .Select(slot => Array.IndexOf(result._canonical, new Slot(renumber[slot.SourceIndex], slot.Representation)));
         return new NullableRepresentationFrame(result.SourceArity, result.NullableIndices, order,
-            result.StorageIndices, result.NullableStorageIndices);
+            result.StorageIndices, result.NullableStorageIndices, result.ElementIndices, result.NullableElementIndices);
     }
 
     // An application can enumerate source arguments differently from its declaration's TVs.
@@ -163,14 +175,15 @@ internal sealed class NullableRepresentationFrame
         int[] Remap(IReadOnlyList<int> indices) => indices.Select(index => declarationToApplication[index])
             .OrderBy(index => index).ToArray();
         var canonical = new NullableRepresentationFrame(SourceArity, Remap(NullableIndices),
-            storageIndices: Remap(StorageIndices), nullableStorageIndices: Remap(NullableStorageIndices));
+            storageIndices: Remap(StorageIndices), nullableStorageIndices: Remap(NullableStorageIndices),
+            elementIndices: Remap(ElementIndices), nullableElementIndices: Remap(NullableElementIndices));
         var order = applicationPhysicalSlots.Select(physical => {
             var slot = PhysicalSlot(physical);
             return canonical.Variable(new TypeNode.Tv("type", declarationToApplication[slot.SourceIndex]),
                 slot.Representation).I;
         }).ToArray();
         return new NullableRepresentationFrame(SourceArity, canonical.NullableIndices, order,
-            canonical.StorageIndices, canonical.NullableStorageIndices);
+            canonical.StorageIndices, canonical.NullableStorageIndices, canonical.ElementIndices, canonical.NullableElementIndices);
     }
 
     public TypeNode SemanticVariable(TypeNode.Tv physical)
@@ -179,7 +192,7 @@ internal sealed class NullableRepresentationFrame
             throw new ArgumentException("Physical generic variable does not match nullable representation frame");
         var slot = PhysicalSlot(physical.I);
         var source = new TypeNode.Tv(physical.Scope, slot.SourceIndex);
-        return slot.Representation is Role.Nullable or Role.NullableStorage ? new TypeNode.Nullable(source) : source;
+        return slot.Representation is Role.Nullable or Role.NullableStorage or Role.NullableElement ? new TypeNode.Nullable(source) : source;
     }
 
     // Drops only the frame's added arguments. The retained physical arguments still require the ordinary
@@ -204,6 +217,8 @@ internal sealed class NullableRepresentationFrame
         Indices("nullable", NullableIndices);
         Indices("storage", StorageIndices);
         Indices("nullableStorage", NullableStorageIndices);
+        if (ElementIndices.Count != 0) Indices("element", ElementIndices);
+        if (NullableElementIndices.Count != 0) Indices("nullableElement", NullableElementIndices);
         Indices("order", PhysicalOrder);
         writer.WriteEndObject();
     }
@@ -212,7 +227,7 @@ internal sealed class NullableRepresentationFrame
     {
         if (reader.TokenType != JsonTokenType.StartObject) throw new FormatException();
         int? arity = null;
-        int[]? nullable = null, storage = null, nullableStorage = null, order = null;
+        int[]? nullable = null, storage = null, nullableStorage = null, order = null, element = null, nullableElement = null;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         static int[] Indices(ref Utf8JsonReader input)
         {
@@ -233,23 +248,30 @@ internal sealed class NullableRepresentationFrame
                 case "nullable": nullable = Indices(ref reader); break;
                 case "storage": storage = Indices(ref reader); break;
                 case "nullableStorage": nullableStorage = Indices(ref reader); break;
+                case "element": element = Indices(ref reader); break;
+                case "nullableElement": nullableElement = Indices(ref reader); break;
                 case "order": order = Indices(ref reader); break;
                 default: throw new FormatException();
             }
         }
         if (reader.TokenType != JsonTokenType.EndObject || arity == null || nullable == null
             || storage == null || nullableStorage == null || order == null) throw new FormatException();
-        return new NullableRepresentationFrame(arity.Value, nullable, order, storage, nullableStorage);
+        return new NullableRepresentationFrame(arity.Value, nullable, order, storage, nullableStorage, element, nullableElement);
     }
 
-    public JsonObject ToJson() => new()
+    public JsonObject ToJson()
     {
-        ["sourceArity"] = SourceArity,
-        ["nullable"] = new JsonArray(NullableIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
-        ["storage"] = new JsonArray(StorageIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
-        ["nullableStorage"] = new JsonArray(NullableStorageIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
-        ["order"] = new JsonArray(PhysicalOrder.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
-    };
+        var result = new JsonObject {
+            ["sourceArity"] = SourceArity,
+            ["nullable"] = new JsonArray(NullableIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
+            ["storage"] = new JsonArray(StorageIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
+            ["nullableStorage"] = new JsonArray(NullableStorageIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
+            ["order"] = new JsonArray(PhysicalOrder.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray()),
+        };
+        if (ElementIndices.Count != 0) result["element"] = new JsonArray(ElementIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray());
+        if (NullableElementIndices.Count != 0) result["nullableElement"] = new JsonArray(NullableElementIndices.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray());
+        return result;
+    }
 
     public string FrozenText
     {
@@ -276,7 +298,7 @@ internal sealed class NullableRepresentationFrame
 
     public static NullableRepresentationFrame Read(JsonNode node)
     {
-        if (node is not JsonObject obj || obj.Count != 5
+        if (node is not JsonObject obj || obj.Count != 5 + (obj.ContainsKey("element") ? 1 : 0) + (obj.ContainsKey("nullableElement") ? 1 : 0)
             || obj["sourceArity"] is not JsonValue arityNode || !arityNode.TryGetValue<int>(out var arity)
             || obj["nullable"] is not JsonArray indices || obj["order"] is not JsonArray order
             || obj["storage"] is not JsonArray storage || obj["nullableStorage"] is not JsonArray nullableStorage)
@@ -285,6 +307,8 @@ internal sealed class NullableRepresentationFrame
             item is JsonValue value && value.TryGetValue<int>(out var index) ? index
                 : throw new ArgumentException("Malformed representation index"));
         return new NullableRepresentationFrame(arity, ReadIndices(indices), ReadIndices(order),
-            ReadIndices(storage), ReadIndices(nullableStorage));
+            ReadIndices(storage), ReadIndices(nullableStorage),
+            obj.ContainsKey("element") ? ReadIndices(obj["element"]!.AsArray()) : null,
+            obj.ContainsKey("nullableElement") ? ReadIndices(obj["nullableElement"]!.AsArray()) : null);
     }
 }

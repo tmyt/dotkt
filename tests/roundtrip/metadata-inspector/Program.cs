@@ -1322,12 +1322,12 @@ static void VerifyReverseEnumeratorBridge(string producerPath)
     // The implementer's two halves. `TrackedBag` is the cross-module fixture; its `iterator()` is Kotlin's only
     // iteration member, so both CLR enumerable slots exist solely because bir2cir stated them.
     var bagHandle = md.TypeDefinitions.Single(handle =>
-        md.GetString(md.GetTypeDefinition(handle).Name) == "TrackedBag`2");
+        StripArities(TypeName(md, handle)) == "roundtrip.collslots.TrackedBag");
     var bag = md.GetTypeDefinition(bagHandle);
     foreach (var name in new[] { "GetEnumerator", "dotkt$NonGenericGetEnumerator" })
         Require(bag.GetMethods().Any(handle => md.GetString(md.GetMethodDefinition(handle).Name) == name),
-            $"'TrackedBag`2' is missing the synthesized '{name}'");
-    RequireMethodImpls(bagHandle, "TrackedBag`2", new[]
+            $"'TrackedBag' is missing the synthesized '{name}'");
+    RequireMethodImpls(bagHandle, "TrackedBag", new[]
     {
         (enumerableT, "GetEnumerator"), (enumerable, "GetEnumerator"),
     });

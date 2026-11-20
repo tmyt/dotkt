@@ -129,6 +129,36 @@ static partial class MemberCallSubstitution
         }
     }
 
+    static BirNewList ListLiteral(BirCallStatic call, TypeNode element, IEnumerable<IBirExpression> elements) => new() {
+        Elem = FactoryType(element), Elems = elements.Select(FactoryClone).ToArray(),
+        Sty = call.Sty.HasValue ? OptionalField<TypeNode>.Of(FactoryType(call.Sty.Value)) : default,
+    };
+
+    // An unpacked list literal has no intermediate T[] allocation. Expose its
+    // actual element before scalar/array coercion can narrow each operand to T.
+    internal static void PrepareElementLiterals(BirFileDeclaration root, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, LocalFactory> factories, IReadOnlySet<string> localIds)
+    {
+        BirGraphValue Rewrite(BirGraphValue node)
+        {
+            if (node == null || node is IBirExecutablePayload) return node;
+            node.VisitChildSlots(slot => slot.Replace(Rewrite(slot.Value)));
+            if (node is not BirCallStatic call || call.DeclarationId.OrDefault() is not { } id
+                || call.TypeArgs.OrDefault() is not { Length: > 1 } arguments) return node;
+            factories.TryGetValue(id, out var local);
+            if (local != null ? local.CollectionKind != "list"
+                : localIds.Contains(id) || !refs.TryDeclarationFactory(id, out var kind, out _, out _) || kind != "list")
+                return node;
+            var frame = local?.Frame ?? refs.NullableMethodFrame(id);
+            if (frame?.ElementIndices.Contains(0) != true) return node;
+            var element = arguments[frame.Variable(new TypeNode.Tv("method", 0), NullableRepresentationFrame.Role.Element).I];
+            if (element == arguments[frame.SourcePosition(0)]) return node;
+            var elements = FactoryElems(call.Args.OrEmpty(), local?.VarargPositions ?? refs.DeclarationFactoryVarargPositions(id));
+            return elements == null ? node : ListLiteral(call, element, elements);
+        }
+        Rewrite(root);
+    }
+
     internal static IBirExpression TryFactorySubst(BirCallStatic node, ReferenceMetadataIndex refs,
         CollectionHelperBinding.CollectionSourceContext context)
     {
@@ -150,7 +180,10 @@ static partial class MemberCallSubstitution
             var elements = FactoryElems(arguments, local?.VarargPositions ?? refs.DeclarationFactoryVarargPositions(declarationId));
             if (elements == null || typeArguments == null) return null;
             var frame = local != null ? local.Frame : refs.NullableMethodFrame(declarationId);
-            var element = typeArguments[frame?.SourcePosition(0) ?? 0];
+            var elementSlot = collectionKind != "set" && frame?.ElementIndices.Contains(0) == true
+                ? frame.Variable(new TypeNode.Tv("method", 0), NullableRepresentationFrame.Role.Element).I
+                : frame?.SourcePosition(0) ?? 0;
+            var element = typeArguments[elementSlot];
             if (element == null) return null;
             if (collectionKind == "set")
             {
@@ -158,8 +191,7 @@ static partial class MemberCallSubstitution
                 if (node.Sty.HasValue) literal.Sty = FactoryType(node.Sty.Value);
                 return literal;
             }
-            return new BirNewList { Elem = FactoryType(element), Elems = elements.Select(FactoryClone).ToArray(),
-                Sty = node.Sty.HasValue ? OptionalField<TypeNode>.Of(FactoryType(node.Sty.Value)) : default };
+            return ListLiteral(node, element, elements);
         }
         if (arrayKind == null) return null;
         if (arrayKind == "sized")

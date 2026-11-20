@@ -8,10 +8,12 @@ static partial class NullableBodyDispatch
         NullableRepresentationFrame ownerFrame, NullableRepresentationFrame entryFrame,
         NullableRepresentationDemand.Variables bodyDemand, Action<BirFunctionDeclaration, NullableRepresentationFrame> prepare)
     {
-        var roles = new[] { NullableRepresentationFrame.Role.Nullable, NullableRepresentationFrame.Role.Storage, NullableRepresentationFrame.Role.NullableStorage };
+        var roles = Enum.GetValues<NullableRepresentationFrame.Role>().Where(role => role != NullableRepresentationFrame.Role.Ordinary);
         IEnumerable<int> Declared(NullableRepresentationFrame.Role role) => role switch {
             NullableRepresentationFrame.Role.Nullable => entryFrame.NullableIndices,
-            NullableRepresentationFrame.Role.Storage => entryFrame.StorageIndices, _ => entryFrame.NullableStorageIndices,
+            NullableRepresentationFrame.Role.Storage => entryFrame.StorageIndices, NullableRepresentationFrame.Role.NullableStorage => entryFrame.NullableStorageIndices,
+            NullableRepresentationFrame.Role.Element => entryFrame.ElementIndices, NullableRepresentationFrame.Role.NullableElement => entryFrame.NullableElementIndices,
+            _ => throw new InvalidOperationException("Unknown companion role"),
         };
         var missing = roles.SelectMany(role => bodyDemand.For("method", role).Except(Declared(role))
             .OrderBy(index => index).Select(index => (Index: index, Role: role))).ToArray();
@@ -27,7 +29,9 @@ static partial class NullableBodyDispatch
             indices[demand.Role].Add(demand.Index);
             var frame = new NullableRepresentationFrame(entryFrame.SourceArity, indices[NullableRepresentationFrame.Role.Nullable].OrderBy(index => index),
                 storageIndices: indices[NullableRepresentationFrame.Role.Storage].OrderBy(index => index),
-                nullableStorageIndices: indices[NullableRepresentationFrame.Role.NullableStorage].OrderBy(index => index));
+                nullableStorageIndices: indices[NullableRepresentationFrame.Role.NullableStorage].OrderBy(index => index),
+                elementIndices: indices[NullableRepresentationFrame.Role.Element].OrderBy(index => index),
+                nullableElementIndices: indices[NullableRepresentationFrame.Role.NullableElement].OrderBy(index => index));
             var suffix = 0;
             string name;
             do { name = "$nullableBody$" + suffix++; } while (!names.Add(name));
@@ -59,7 +63,9 @@ static partial class NullableBodyDispatch
                     type => currentFrame.Variable((TypeNode.Tv)type, NullableRepresentationFrame.Role.Ordinary),
                     type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Nullable),
                     type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Storage),
-                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage));
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableStorage),
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.Element),
+                    type => Argument((TypeNode.Tv)type, NullableRepresentationFrame.Role.NullableElement));
                 TypeNode Argument(TypeNode.Tv variable, NullableRepresentationFrame.Role requested) => variable.I == index && requested == role
                     ? chosen : currentFrame.Variable(variable, requested);
                 return new BirCallInstance {
@@ -70,16 +76,27 @@ static partial class NullableBodyDispatch
                     DynRet = current.Ret,
                 };
             }
-            if (role != NullableRepresentationFrame.Role.Nullable)
+            if (role is NullableRepresentationFrame.Role.Storage or NullableRepresentationFrame.Role.NullableStorage)
                 current.Body = new IBirStatement[] { new BirReturn { Value = Call(new TypeNode.Fqn("object")) } };
-            else current.Body = new IBirStatement[] { new BirReturn { Value = new BirConditional {
-                Type = current.Ret,
-                Cond = new BirPropertyGet {
+            else
+            {
+                var ordinary = currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary);
+                var token = new BirClassReference { Type = ordinary };
+                var boolean = new TypeNode.Fqn("kotlin.Boolean");
+                IBirExpression box = role == NullableRepresentationFrame.Role.Nullable ? new BirPropertyGet {
                     Type = new TypeNode.Fqn("System.Type"), Name = "IsValueType", Static = false, Ret = new TypeNode.Fqn("kotlin.Boolean"),
-                    Recv = new BirClassReference { Type = currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary) },
-                }, Then = Call(new TypeNode.Fqn("object")),
-                Else = Call(currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary)),
-            } } };
+                    Recv = token,
+                } : new BirCallStatic {
+                    Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.EnumRuntimeKt"), Method = "kotlinNeedsErasedListElement",
+                    Sig = new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), boolean }, Ret = boolean,
+                    Args = new IBirExpression[] { token, new BirConstant { Type = boolean,
+                        Value = new BirLiteral.BooleanLiteral(role == NullableRepresentationFrame.Role.NullableElement) } },
+                };
+                current.Body = new IBirStatement[] { new BirReturn { Value = new BirConditional {
+                    Type = current.Ret, Cond = OptionalField<IBirExpression>.Of(box),
+                    Then = Call(new TypeNode.Fqn("object")), Else = Call(ordinary),
+                } } };
+            }
         }
     }
 }

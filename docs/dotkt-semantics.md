@@ -1120,6 +1120,15 @@ The existing §9c-bis nullable-generic limitation remains: `Int?` values use `ob
 
 ## 5c-quater. Mutable iterator and collection-only members dispatch through compiler-owned slot interfaces
 
+Kotlin `ArrayList<E>` selects its native list element from the Kotlin element representation. A constructed
+Kotlin type with an erased interface can use that interface, so an unchecked `Reader<Int> as Reader<Any?>`
+can be stored without copying or changing the reader. A virtual method with no element witness in its
+signature can instead use `object` for this storage. Neither promises a CLR `List<Reader<object>>`.
+Use an explicit `System.Collections.Generic.List<E>` when a native API needs that exact type; there is
+no implicit list copy. An array with a known component keeps its ordinary CLR type (for example,
+`ArrayList<Array<Int>>` is a `List<int[]>`). A projected array such as `Array<*>` uses
+`System.Array`, so the same Kotlin list can hold both an `int[]` and a `string[]`.
+
 `MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and `MutableList<E>` IS `IList<E>`, and neither
 BCL interface has a slot for Kotlin's `removeAll(elements)`, `retainAll(elements)`, `addAll(elements)` or
 `MutableList.addAll(index, elements)`. Native void `Add` cannot carry Kotlin's authored Boolean `add` result.

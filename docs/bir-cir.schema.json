@@ -32,6 +32,8 @@
         "nullable": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
         "storage": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
         "nullableStorage": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "element": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "nullableElement": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
         "order": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
       },
       "required": ["sourceArity", "nullable", "storage", "nullableStorage", "order"], "additionalProperties": false

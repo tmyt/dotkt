@@ -9,7 +9,7 @@ using RepresentationRole = DotKt.Bir.NullableRepresentationFrame.Role;
 static partial class NullableRepresentationDemand
 {
     static readonly RepresentationRole[] CompanionRoles = {
-        RepresentationRole.Nullable, RepresentationRole.Storage, RepresentationRole.NullableStorage,
+        RepresentationRole.Nullable, RepresentationRole.Storage, RepresentationRole.NullableStorage, RepresentationRole.Element, RepresentationRole.NullableElement,
     };
 
     internal sealed class Variables
@@ -32,38 +32,38 @@ static partial class NullableRepresentationDemand
     {
         if (type is TypeNode.Tv variable) result.Add(variable, role);
         else if (type is TypeNode.Nullable nullable)
-            RequireRepresentation(nullable.Of, role == RepresentationRole.Storage ? RepresentationRole.NullableStorage : role, result);
+            RequireRepresentation(nullable.Of, role switch { RepresentationRole.Storage => RepresentationRole.NullableStorage, RepresentationRole.Element => RepresentationRole.NullableElement, _ => role }, result);
         else if (type is TypeNode.Oblivious oblivious) RequireRepresentation(oblivious.Of, role, result);
         else if (type is TypeNode.Projection projection) RequireRepresentation(projection.Of, role, result);
     }
 
     static void Visit(TypeNode type, bool argument, Variables result,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, GenericRepresentationPolicy policy, bool storage = false)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> frames, GenericRepresentationPolicy policy, bool element = false)
     {
         switch (type)
         {
             case TypeNode.Nullable { Of: TypeNode.Tv variable } when argument:
-                result.Add(variable, storage ? RepresentationRole.NullableStorage : RepresentationRole.Nullable);
+                result.Add(variable, element ? RepresentationRole.NullableElement : RepresentationRole.Nullable);
                 break;
-            case TypeNode.Tv variable when argument && storage:
-                result.Add(variable, RepresentationRole.Storage);
+            case TypeNode.Tv variable when argument && element:
+                result.Add(variable, RepresentationRole.Element);
                 break;
             case TypeNode.Nullable nullable:
                 if (argument) RequireRepresentation(nullable.Of,
-                    storage ? RepresentationRole.NullableStorage : RepresentationRole.Nullable, result);
+                    element ? RepresentationRole.NullableElement : RepresentationRole.Nullable, result);
                 Visit(nullable.Of, false, result, frames, policy);
                 break;
             case TypeNode.Oblivious oblivious:
-                Visit(oblivious.Of, argument, result, frames, policy, storage);
+                Visit(oblivious.Of, argument, result, frames, policy, element);
                 break;
             case TypeNode.Projection projection:
-                Visit(projection.Of, argument, result, frames, policy, storage);
+                Visit(projection.Of, argument, result, frames, policy, element);
                 break;
             case TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn or FunctionPointerVocabulary.Pointer }:
                 break;
             case TypeNode.Fqn { Args: { } arguments } named:
                 foreach (var item in arguments) Visit(item, true, result, frames, policy,
-                    policy?.UsesStorageArguments(named.Name) == true);
+                    policy?.UsesElementArguments(named.Name) == true);
                 if (frames.TryGetValue(named.Name, out var frame))
                 {
                     if (arguments.Length != frame.SourceArity)

@@ -345,7 +345,7 @@ static partial class NullableTvErasureCallRealign
             var frame = variable.Scope == "type" ? OwnerNullableFrame : MethodNullableFrame;
             return frame != null && variable.I >= 0 && variable.I < frame.PhysicalArity
                 && frame.PhysicalSlot(variable.I).Representation is
-                    NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage;
+                    NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement;
         }
     }
 
@@ -554,16 +554,16 @@ static partial class NullableTvErasureCallRealign
     {
         SourceSnapshotSelfTest();
         UnsafeSourceSelfTest();
-        var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 2, 0, 3, 1 },
-            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
-        var methodRoleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 3, 0, 2 },
-            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 });
+        var roleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 2, 5, 0, 3, 4, 1 },
+            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 }, elementIndices: new[] { 0 }, nullableElementIndices: new[] { 0 });
+        var methodRoleFrame = new NullableRepresentationFrame(1, new[] { 0 }, new[] { 1, 4, 3, 0, 5, 2 },
+            storageIndices: new[] { 0 }, nullableStorageIndices: new[] { 0 }, elementIndices: new[] { 0 }, nullableElementIndices: new[] { 0 });
         var roleContext = new Ctx { OwnerNullableFrame = roleFrame, MethodNullableFrame = methodRoleFrame };
         foreach (var scope in new[] { "type", "method" })
             foreach (var role in Enum.GetValues<NullableRepresentationFrame.Role>())
                 if (roleContext.IsNullableCompanion((scope == "type" ? roleFrame : methodRoleFrame)
                         .Variable(new TypeNode.Tv(scope, 0), role))
-                    != (role is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage))
+                    != (role is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement))
                     throw new InvalidOperationException("Nullable result realignment confused a storage companion with a nullable slot");
 
         var innerDeclaration = new BirClassDefinition {

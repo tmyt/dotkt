@@ -56,7 +56,7 @@ sealed class ReflectedDeclarationParameters
             var slot = frame?.PhysicalSlot(physical.I);
             var active = new HashSet<(string Declaration, int Index)>();
             return Build(new TypeNode.Tv(physical.Scope, slot?.SourceIndex ?? physical.I),
-                nullable || slot?.Representation is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage, Type);
+                nullable || slot?.Representation is NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement, Type);
 
             IBirExpression Build(TypeNode.Tv tv, bool marked, Declaration typeFrame)
             {

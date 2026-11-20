@@ -10,17 +10,18 @@ using DotKt.Cir;
 // All access is materialized here as ordinary CLR calls, not reconstructed by ilemit.
 static partial class GenericArrayStorageLowering
 {
-    internal static bool NeedsStorage(TypeNode.Array array) =>
-        array.SzArray && array.Rank == 1 && ContainsOpenComponent(array.Elem);
+    internal static bool NeedsStorage(TypeNode.Array array, bool hasVariableWitness = false) =>
+        array.SzArray && array.Rank == 1 && ContainsOpenComponent(array.Elem, hasVariableWitness);
 
-    static bool ContainsOpenComponent(TypeNode type) => type switch {
+    static bool ContainsOpenComponent(TypeNode type, bool hasVariableWitness) => type switch {
         // A projection's bound is not the allocation's component: Array<out Any?>
         // can hold an Int32[] just as Array<*> can.
-        TypeNode.Tv or TypeNode.Star or TypeNode.Projection => true,
-        TypeNode.Nullable n => ContainsOpenComponent(n.Of),
-        TypeNode.Oblivious o => ContainsOpenComponent(o.Of),
-        TypeNode.Array a => ContainsOpenComponent(a.Elem),
-        TypeNode.Fqn { Args: { } args } => args.Any(ContainsOpenComponent),
+        TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Tv => !hasVariableWitness,
+        TypeNode.Nullable n => ContainsOpenComponent(n.Of, hasVariableWitness),
+        TypeNode.Oblivious o => ContainsOpenComponent(o.Of, hasVariableWitness),
+        TypeNode.Array a => ContainsOpenComponent(a.Elem, hasVariableWitness),
+        TypeNode.Fqn { Args: { } args } => args.Any(arg => ContainsOpenComponent(arg, hasVariableWitness)),
         _ => false,
     };
 

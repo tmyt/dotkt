@@ -48,6 +48,8 @@ static partial class AliasHelperHoist
             type => Argument(type, NullableRepresentationFrame.Role.Ordinary),
             type => Argument(type, NullableRepresentationFrame.Role.Nullable),
             type => Argument(type, NullableRepresentationFrame.Role.Storage),
-            type => Argument(type, NullableRepresentationFrame.Role.NullableStorage)));
+            type => Argument(type, NullableRepresentationFrame.Role.NullableStorage),
+            type => Argument(type, NullableRepresentationFrame.Role.Element),
+            type => Argument(type, NullableRepresentationFrame.Role.NullableElement)));
     }
 }

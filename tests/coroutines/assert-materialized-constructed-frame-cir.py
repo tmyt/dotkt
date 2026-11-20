@@ -59,9 +59,10 @@ for state_machine_name, box_name, expected in (
     state_machine = state_machines[0]
     frame = [parameter["name"] for parameter in
              state_machine.get("capturedTypeParams", []) + state_machine.get("typeParams", [])]
-    if frame != ["dotkt$outer0", "dotkt$outer1"]:
+    # Both enclosing owners store T and construct a Kotlin list with T elements.
+    if frame != ["dotkt$outer0", "dotkt$outer1", "dotkt$outer2"]:
         raise SystemExit(
-            f"CIR: {state_machine_name} does not capture its enclosing owner's native/storage frame"
+            f"CIR: {state_machine_name} does not capture its enclosing owner's native/storage/element frame: {frame}"
         )
 
     constructions = [

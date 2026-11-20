@@ -83,7 +83,7 @@ static partial class ReifiedNullabilityWitnessLowering
                         var slot = frame.PhysicalSlot(physical);
                         if (slot.SourceIndex != index) continue;
                         witnesses[physical] = slot.Representation is NullableRepresentationFrame.Role.Nullable
-                            or NullableRepresentationFrame.Role.NullableStorage
+                            or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement
                             ? KotlinRuntimeTypeWitness.NullableValue(value, demand.Reflected?.Indices(identity).Contains(index) == true ? helpers : null) : SourceCopy(value);
                     }
                 }

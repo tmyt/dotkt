@@ -1020,6 +1020,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && a.NullableIndices.SequenceEqual(b.NullableIndices)
             && a.StorageIndices.SequenceEqual(b.StorageIndices)
             && a.NullableStorageIndices.SequenceEqual(b.NullableStorageIndices)
+            && a.ElementIndices.SequenceEqual(b.ElementIndices)
+            && a.NullableElementIndices.SequenceEqual(b.NullableElementIndices)
             && a.PhysicalOrder.SequenceEqual(b.PhysicalOrder);
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>

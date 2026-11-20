@@ -59,6 +59,8 @@ sealed class SourceTypeFacts
             || !prior.NullableIndices.SequenceEqual(frame.NullableIndices)
             || !prior.StorageIndices.SequenceEqual(frame.StorageIndices)
             || !prior.NullableStorageIndices.SequenceEqual(frame.NullableStorageIndices)
+            || !prior.ElementIndices.SequenceEqual(frame.ElementIndices)
+            || !prior.NullableElementIndices.SequenceEqual(frame.NullableElementIndices)
             || !prior.PhysicalOrder.SequenceEqual(frame.PhysicalOrder)))
             throw new InvalidOperationException("Conflicting declaration-owned nullable representation frames");
         return new SourceTypeFacts(Base, Interfaces, Bounds,
@@ -279,7 +281,7 @@ sealed class SourceTypeFacts
         if (methodReader.Read() || methodRoundtrip.Bounds[0][0] != snapshot.Bounds[0][0]
             || SourceBoundsSnapshot.ToDom(methodRoundtrip).GetValue<string>() != SourceBoundsSnapshot.ToDom(methodBounds).GetValue<string>())
             throw new InvalidOperationException("Method bounds lost their bounds-only contract or earliest source frame");
-        const string framed = """{"bounds":{"0":[]},"nullableFrame":{"sourceArity":2,"nullable":[1],"storage":[0],"nullableStorage":[1],"order":[3,0,2,1,4]}}""";
+        const string framed = """{"bounds":{"0":[]},"nullableFrame":{"sourceArity":2,"nullable":[1],"storage":[0],"nullableStorage":[1],"element":[0],"nullableElement":[1],"order":[3,0,2,1,4,6,5]}}""";
         var saved = ReadFrozenText(framed);
         var extended = saved.Merge(new Dictionary<int, TypeNode[]> { [1] = new[] { new TypeNode.Fqn("System.Object") } });
         if (saved.FrozenText != framed || !ReferenceEquals(saved.NullableFrame, extended.NullableFrame)
@@ -288,7 +290,9 @@ sealed class SourceTypeFacts
             || !saved.NullableFrame.NullableIndices.SequenceEqual(new[] { 1 })
             || !saved.NullableFrame.StorageIndices.SequenceEqual(new[] { 0 })
             || !saved.NullableFrame.NullableStorageIndices.SequenceEqual(new[] { 1 })
-            || !saved.NullableFrame.PhysicalOrder.SequenceEqual(new[] { 3, 0, 2, 1, 4 }))
+            || !saved.NullableFrame.ElementIndices.SequenceEqual(new[] { 0 })
+            || !saved.NullableFrame.NullableElementIndices.SequenceEqual(new[] { 1 })
+            || !saved.NullableFrame.PhysicalOrder.SequenceEqual(new[] { 3, 0, 2, 1, 4, 6, 5 }))
             throw new InvalidOperationException("Source type facts lost the saved nullable/storage correspondence");
         const string variantText = """{"variances":{"1":"out","0":"in"},"interfaces":[],"bounds":{}}""";
         var variant = ReadFrozenText(variantText);

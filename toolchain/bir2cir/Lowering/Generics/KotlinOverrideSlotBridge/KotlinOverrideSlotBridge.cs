@@ -195,7 +195,7 @@ static partial class KotlinOverrideSlotBridge
         var leftSlot = ownerFrame.PhysicalSlot(left.I);
         var rightSlot = ownerFrame.PhysicalSlot(right.I);
         static bool Nullable(NullableRepresentationFrame.Role role) => role is
-            NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage;
+            NullableRepresentationFrame.Role.Nullable or NullableRepresentationFrame.Role.NullableStorage or NullableRepresentationFrame.Role.NullableElement;
         return leftSlot.SourceIndex == rightSlot.SourceIndex
             && Nullable(leftSlot.Representation) == Nullable(rightSlot.Representation);
     }

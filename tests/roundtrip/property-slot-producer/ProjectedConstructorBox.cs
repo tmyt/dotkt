@@ -8,6 +8,10 @@ public sealed class NonNullBox<T> where T : class
 }
 
 public interface IMarker { }
+public static class NativeListShape
+{
+    public static bool IsExact<T>(object value) => value is System.Collections.Generic.List<T>;
+}
 public sealed class MarkerValue<T> : IMarker { }
 public sealed class ConstrainedBox<T> where T : IMarker
 {
