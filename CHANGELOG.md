@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
+- Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.
 - Generic storage parameters now retain publicly usable interface constraints consistently across DLLs without exposing non-public types.
 - An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
 - Kotlin function objects returned by a generic function remain callable and retain their identity.
