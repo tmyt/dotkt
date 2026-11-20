@@ -317,8 +317,7 @@ static partial class KotlinOverrideSlotBridge
                 else if (phase == Phase.PhysicalBridges && accessorKind != null
                     && refs.HasDotKtOwner(selectedSpec.Name) && !refs.IsInterfaceType(physicalSelectedSpec))
                 {
-                    if (supIsInterface || refs.ExactReflectedOwner(spec.Name, supArgs.Length) !=
-                        refs.ExactReflectedOwner(physicalSelectedSpec.Name, physicalSelectedSpec.Args?.Length ?? 0)) continue;
+                    if (supIsInterface || !SupertypeGraph.SameDeclaration(spec, physicalSelectedSpec, refs.PhysicalTypeNames)) continue;
                     physicalSelectedSpec = spec;
                 }
                 // Kotlin-owned applications close V? as object, while the implementing scalar getter keeps
