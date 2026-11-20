@@ -118,12 +118,15 @@ static partial class KotlinOverrideSlotBridge
         foreach (var selected in SelectInheritedMethods(owner, defs, context.Views, refs, isValue,
                      SourceInheritedFacts(declaration, false), false, false, false))
             inherited.Add(context.Views.Method(selected.Method), selected);
-        foreach (var selected in SelectInheritedMethods(owner, defs, context.Views, refs, isValue,
-                     SourceInheritedFacts(declaration, true).Where(fact =>
-                         fact.ImplementationOwner is TypeNode.Fqn body && fact.Header.Overrides.OrEmpty().Any(edge =>
-                             edge.Owner.OrDefault() is TypeNode.Fqn target && !SupertypeGraph.ReachesDeclaration(body, target, defs, refs))),
-                     false, true, false))
-            inherited.Add(context.Views.Method(selected.Method), selected);
+        if (definition.Kind == "class")
+            foreach (var selected in SelectInheritedMethods(owner, defs, context.Views, refs, isValue,
+                         SourceInheritedFacts(declaration, true).Where(fact =>
+                             fact.ImplementationOwner is TypeNode.Fqn body && fact.Header.Overrides.OrEmpty().Any(edge =>
+                                 edge.Owner.OrDefault() is TypeNode.Fqn target
+                                 && !SupertypeGraph.ReachesDeclaration(body, target, defs, refs)
+                                 && !SupertypeGraph.ReachesDeclaration(target, body, defs, refs))),
+                         false, true, false))
+                inherited.Add(context.Views.Method(selected.Method), selected);
         var candidates = owner.Methods.Concat(inherited.Keys).ToArray();
         var signatures = inherited.ToDictionary(pair => pair.Key, pair => pair.Value.SelectionParameters);
         var bridges = new Dictionary<string, BirFunctionDeclaration>(StringComparer.Ordinal);
