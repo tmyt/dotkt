@@ -7,7 +7,8 @@ static partial class ReverseEnumeratorBridgeSynthesis
     internal static IReadOnlyList<BirClassDefinition> ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs,
         Action<BirFileDeclaration, IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> publishMethods,
-        Action<BirFileDeclaration, IReadOnlyList<IBirTypeDeclaration>> publishTypes)
+        Action<BirFileDeclaration, IReadOnlyList<IBirTypeDeclaration>> publishTypes,
+        IReadOnlyDictionary<string, BottomSlot> bottom = null)
     {
         var definitions = SupertypeGraph.CollectSource(roots);
         var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -19,7 +20,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             {
                 if (type.Kind.OrDefault() != "class" || string.IsNullOrEmpty(type.Name.OrDefault())
                     || !type.Methods.HasValue || !definitions.TryGetValue(type.Name.Value, out var definition)
-                    || Plan(definition, definitions, refs, declarations) is not { } plan) continue;
+                    || Plan(definition, definitions, refs, declarations, bottom) is not { } plan) continue;
                 var nameTaken = type.Methods.Value.Any(method => method.Name.OrDefault() == GetEnumeratorName
                     && !method.Static.OrDefault() && method.Params.HasValue && method.Params.Value.Length == 0
                     && method.TypeParams.OrEmpty().Length == 0);
@@ -30,12 +31,24 @@ static partial class ReverseEnumeratorBridgeSynthesis
                     Recv = E(new BirThis()), Method = iterator.Name, Sig = Array.Empty<TypeNode>(),
                     Ret = BirGraphValue.CopyType(iterator.Return), Args = Array.Empty<IBirExpression>(),
                 };
-                var generic = SourceMethod(genericName, nameTaken ? "private" : "public", Constructed(IEnumeratorT, element),
-                    new IBirStatement[] { SourceReturn(new BirNew {
+                IBirExpression result;
+                if (NodeType.IsNothing(iterator.SemanticReturn))
+                {
+                    // The face supplies E, but there is no iterator value to adapt.
+                    iteratorCall.Sty = iterator.SemanticReturn;
+                    result = MaterializedExecutable.ReturnedCall(iteratorCall);
+                }
+                else
+                {
+                    result = new BirNew {
                         Type = Constructed(AdapterName, BirGraphValue.CopyType(element)),
                         ArgTypes = new[] { KotlinIteratorPhysicalProtocol.Carrier(refs) },
                         Args = new IBirExpression[] { iteratorCall }, LocalCtorIndex = 0,
-                    }) });
+                    };
+                    adapterHost ??= root;
+                }
+                var generic = SourceMethod(genericName, nameTaken ? "private" : "public", Constructed(IEnumeratorT, element),
+                    new IBirStatement[] { SourceReturn(result) });
                 if (nameTaken) generic.Generated = true;
                 generic.ClrInterfaceImpls = new[] { SourceDescriptor(Constructed(IEnumerableT, element),
                     GetEnumeratorName, Constructed(IEnumeratorT, element)) };
@@ -51,7 +64,6 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 var appended = new[] { generic, nonGeneric };
                 type.Methods = type.Methods.Value.Concat(appended).ToArray();
                 publishMethods(root, type, appended);
-                adapterHost ??= root;
             }
         if (adapterHost == null) return Array.Empty<BirClassDefinition>();
         var adapter = AdapterSource(AdapterName, refs);

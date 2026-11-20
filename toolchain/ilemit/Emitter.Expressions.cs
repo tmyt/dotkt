@@ -61,7 +61,7 @@ sealed partial class Emitter
                 // this path through EmitAddr above; a genuine public CLR field must do the same.  The field token is the
                 // physical source of truth here (including a referenced constructed generic owner), so this is direct
                 // CIR -> CIL emission rather than reconstruction of Kotlin member semantics.
-                if (IsValueType(ClrRef(e.OwnerType))) EmitAddr(e.Recv);
+                if (IsValueType(fb.DeclaringType)) EmitAddr(e.Recv);
                 else EmitExpr(e.Recv);
                 MaybeVolatile(fb, e.Volatile.OrDefault());
                 EmitField(_il, OpCodes.Ldfld, fb);
@@ -88,7 +88,7 @@ sealed partial class Emitter
                     sfet = FieldTypeOf(sfefld);
                 }
                 else sfefld = ResolveLocalField(son, snm, out sfet, "field write");
-                if (IsValueType(ClrRef(e.OwnerType))) EmitAddr(e.Recv);
+                if (IsValueType(sfefld.DeclaringType)) EmitAddr(e.Recv);
                 else EmitExpr(e.Recv);
                 EmitStoreCoerced(e.Value, sfet);
                 MaybeVolatile(sfefld, e.Volatile.OrDefault());

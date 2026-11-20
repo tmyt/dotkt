@@ -38,6 +38,7 @@ private open class VirtualBody(private val gate: Gate<String>) {
 private open class VirtualMiddle(gate: Gate<String>) : VirtualBody(gate), Slot<String>
 private class DerivedOverride(gate: Gate<String>) : VirtualMiddle(gate) {
     override suspend fun read(): String = super.read() + "!"
+    internal suspend inline fun readBase(f: (String) -> String) = f(super.read())
 }
 
 private class Completion<T> : Continuation<T> {
@@ -94,6 +95,9 @@ class InheritedSuspendTests {
         val baseGate = Gate<String>()
         val base: VirtualBody = DerivedOverride(baseGate)
         verifySuspension(baseGate, "base", "base!") { base.read() }
+        val inlineGate = Gate<String>()
+        val derived = DerivedOverride(inlineGate)
+        verifySuspension(inlineGate, "base", "base") { derived.readBase { it } }
 
         val callbackGate = Gate<String>()
         val callback: CallbackResult = NarrowCallbackResult(callbackGate)

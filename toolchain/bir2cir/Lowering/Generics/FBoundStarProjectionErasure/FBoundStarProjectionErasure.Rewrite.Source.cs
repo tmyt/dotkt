@@ -218,15 +218,20 @@ static partial class FBoundStarProjectionErasure
     }
 
     static TypeNode RewriteSourceMethodArgument(BirGraphValue call, TypeNode argument, int index,
-        SourceRewriteState state, bool bound, bool preserveArray)
+        SourceRewriteState state, bool bound, bool preserveArray, HashSet<int> closing = null)
     {
-        var identity = call.DeclarationIdentityFact.OrDefault();
+        if (state.MethodWitnesses.TryGetValue(call, out var byIndex) && byIndex.TryGetValue(index, out var established) && established == argument)
+            return established;
+        var selection = state.SelectedMethodArgumentSlots.GetValueOrDefault(call);
+        var identity = selection.Slot ?? call.DeclarationIdentityFact.OrDefault();
         var owner = SourceSelectedOwner(call) as TypeNode.Fqn;
         var selected = owner != null && identity != null
             && state.Demand.Preparation.Bindings.SourceLocalDeclarations.TryGetValue((owner.Name, identity), out var declaration)
             ? declaration : state.Demand.NativeProofs.LocalSourceMethodBinding(identity);
-        var frame = selected != null ? (selected.Source as BirFunctionDeclaration)?.NullableRepresentationFrame.OrDefault()
-            : state.References.NullableMethodFrame(identity);
+        var source = selection.Source == null ? selected : state.Demand.NativeProofs.LocalSourceMethodBinding(selection.Source);
+        var sourceId = selection.Source ?? identity;
+        var frame = source != null ? (source.Source as BirFunctionDeclaration)?.NullableRepresentationFrame.OrDefault()
+            : state.References.NullableMethodFrame(sourceId);
         if (frame != null && frame.PhysicalArity != call.ApplicationTypeArguments.Value.Length)
             throw new InvalidOperationException("Selected method arguments disagree with the declaration's representation frame");
         var role = frame?.PhysicalSlot(index).Representation;
@@ -235,13 +240,29 @@ static partial class FBoundStarProjectionErasure
             is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
         var factory = call switch { BirCallInstance value => value._innerFactoryArguments.OrDefault(),
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
-        return state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
+        var projected = state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
             preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
                 && (PreservesNativeWitnessHead(argument, state.Projection)
                     || preserveArray && IsExactNativeArrayWitness(argument, state.Projection) || factory
-                    || state.Demand.NativeProofs.ExactMethodArgument(selected, identity, index)
+                    || state.Demand.NativeProofs.ExactMethodArgument(source, sourceId, index)
                     || StripSourceNullability(argument) is TypeNode.Fqn alias && state.Projection.RequiresOpaqueVariantAlias(alias)
                         && !ContainsExistentialProjection(alias) && !state.Projection.ProjectionCanChangeConstruction(alias)));
+        if (!witness || StripSourceNullability(argument) is not TypeNode.Fqn { Args.Length: > 0 } application
+            || !state.Projection.TryExistentialCarrier(application.Name, out var carrier)
+            || StripSourceNullability(projected) is not TypeNode.Fqn p || p.Name != carrier) return projected;
+        closing ??= new();
+        if (!closing.Add(index)) return projected;
+        var arguments = call.ApplicationTypeArguments.Value;
+        var result = state.Projection.MethodClassWitness(selected?.Source as BirFunctionDeclaration, identity,
+            frame, owner, arguments, index, application, projected,
+            i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing));
+        closing.Remove(index);
+        if (result != projected && result is TypeNode.Fqn { Args.Length: > 0 })
+        {
+            if (byIndex == null) state.MethodWitnesses[call] = byIndex = new();
+            byIndex[index] = result;
+        }
+        return result;
     }
 
     static TypeNode SourceSelectedOwner(BirGraphValue node) => node switch {

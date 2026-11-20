@@ -245,12 +245,7 @@ sealed partial class Emitter
                 foreach (var i in implementingDeclaration.Interfaces.OrEmpty())
                 {
                     if (i is not DotKt.Bir.TypeNode.Fqn iFqn) continue;
-                    // A REFERENCED interface (not in `_types` — a .NET Continuation<int>) is resolved by reflection; an
-                    // emitted Kotlin interface (`Container<int>`) comes from `_types` (constructed via ParseOwnerT).
-                    Type itype;
-                    if (!_types.ContainsKey(iFqn.Name)) itype = MapType(iFqn);
-                    else { var (open, constructed) = ParseOwnerT(iFqn); itype = constructed ?? (Type)_types[open].TB; }
-                    ti.TB.AddInterfaceImplementation(itype);
+                    ti.TB.AddInterfaceImplementation(InterfaceOwnerType(iFqn, out _));
                 }
             }
         }
@@ -304,22 +299,10 @@ sealed partial class Emitter
                 {
                     var specFqn = ifWork.Dequeue();
                     var spec = SigCanon(specFqn);            // the canonical overload/dedup key for this interface spec
-                    var specName = specFqn.Name;
                     if (!ifSeen.Add(spec)) continue;
-                    // A canonicalized shared synthetic (`dotkt$CharSequence`) this app REFERENCES from the rt stdlib
-                    // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
-                    // overrides to it by reflection, so the interface slots are wired
-                    // explicitly rather than relying on an implicit name/sig match a canonicalized supertype must not
-                    // depend on. (Covers both a user `class S : CharSequence` and the synthesized `dotkt$StringCharSequence`.)
-                    // Checked on the structured Fqn's bare name so constructed arguments cannot affect this identity test.
-                    bool externalSynthIface = ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(specName)
-                        && !_types.ContainsKey(specName) && ResolvesExternally(specName);
-                    // A REFERENCED interface (not emitted in THIS assembly — a .NET-mapped Continuation<int>, or an
-                    // external canonical synthetic): bind each interface method to the class method of the same .NET name
-                    // by reflection. An EMITTED interface (in `_types`) follows the structured local-owner path below.
-                    if (!_types.ContainsKey(specName) || externalSynthIface)
+                    var itype = InterfaceOwnerType(specFqn, out var iface);
+                    if (iface == null)
                     {
-                        var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
                         var reanchor = ContainsTypeBuilder(itype);
                         var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
                         var ifaceMs = NamedInterfaceSlots(ti, specFqn, slotOwner);
@@ -341,8 +324,6 @@ sealed partial class Emitter
                         }
                         continue;
                     }
-                    var (open, constructed) = ParseOwnerT(specFqn);
-                    if (!_types.TryGetValue(open, out var iface)) continue;
                     // The interface's instantiation args (the concrete args at this implementer): `Comparable<Self>` ->
                     // [Self]. An interface method's declared type names the INTERFACE's OWN params as `Tv{type,i}`;
                     // SubstTv re-anchors each to specArgs[i] so it matches the class's own (concrete) member signature.
@@ -369,7 +350,7 @@ sealed partial class Emitter
                             // arg like Continuation.resumeWith(Result<T>) substitutes correctly, not just a bare gp).
                             var subSig = SigKey(physicalInterfaceName, DeclaredMethodArity(imDef),
                                 imDef.Params.Select(p => SubstTv(p.Type, specArgs)));
-                            var ifaceMethod = constructed != null ? AnchorMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
+                            var ifaceMethod = specArgs is { Length: > 0 } ? AnchorMethod(itype, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // A bir2cir-resolved exact MethodImpl bridge. The decision and exact slot signature are
                             // already CIR facts; this is mechanical consumption only. In particular, do not also wire
                             // the narrow Kotlin declaration, whose covariant return is not a byte-exact CLR MethodImpl.
@@ -413,12 +394,12 @@ sealed partial class Emitter
                 // A same-assembly interface slot is already named by bir2cir's exact MethodImpl descriptor. Consume
                 // that instruction directly; selecting a DIM from concrete methods, names, or hierarchy order would
                 // re-resolve frontend override semantics in the emitter.
-                if (_types.ContainsKey(ibF.Name))
+                var itype = InterfaceOwnerType(ibF, out var localBase);
+                if (localBase != null)
                 {
                     WireResolvedEmittedInterfaceImpls(ti, ibF, dimImplSeen);
                     continue;
                 }
-                var itype = MapType(ibF);
                 var reanchor = ContainsTypeBuilder(itype);
                 var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
                 var ifaceMs = NamedInterfaceSlots(ti, ibF, slotOwner);

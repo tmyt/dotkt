@@ -685,12 +685,9 @@ static class ReferenceMetadataReader
                         // resolution, never either payload.
                         if (CallableDefaultsOf(method, coreName => mlc.CoreAssembly.GetType(coreName, throwOnError: false)) is Dictionary<int, IBirExpression> defaults)
                         {
-                            AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
+                            AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults, declarationIdentity?.Id);
                             if (exactPhysicalOwner != indexedOwnerFqn)
                                 AddKotlinDefaults(metadata, exactPhysicalOwner, method.Name, method.GetParameters(), defaults);
-                            if (declarationIdentity?.Id is string declarationId
-                                && !metadata.KotlinDefaultsByDeclarationId.TryAdd(declarationId, defaults))
-                                throw new InvalidDataException($"duplicate defaults for Kotlin declaration identity '{declarationId}'");
                         }
                         // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
                         // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
@@ -904,7 +901,9 @@ static class ReferenceMetadataReader
                         }
                         if (CallableDefaultsOf(ctor, coreName => mlc.CoreAssembly.GetType(coreName, throwOnError: false)) is Dictionary<int, IBirExpression> cdefaults)
                         {
-                            AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
+                            var identity = dotKtAuthored ? KotlinDeclarationIdentityPayload(
+                                ctor.GetCustomAttributesData(), ctor.DeclaringType?.Assembly, 0)?.Id : null;
+                            AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults, identity);
                             if (exactPhysicalOwner != ownerFqn)
                                 AddKotlinDefaults(metadata, exactPhysicalOwner, CtorKeyName, ctor.GetParameters(), cdefaults);
                         }
@@ -2778,19 +2777,18 @@ static class ReferenceMetadataReader
         TypeKeyKind.Float32 or TypeKeyKind.Float64 or TypeKeyKind.Boolean or TypeKeyKind.Char or
         TypeKeyKind.UInt8 or TypeKeyKind.UInt16 or TypeKeyKind.UInt32 or TypeKeyKind.UInt64;
 
-    /// Record one declaration's @KotlinDefault carriers under BOTH keys the splice can look up: `owner|name|arity|sigKey`
+    /// Index defaults by Kotlin declaration identity when present, and by `owner|name|arity|sigKey`
     /// (the exact overload — a call site reproduces that signature from its own declared parameter vector) and
     /// `owner|name|arity` (the fallback when no signature is available). The arity key is written once; a SECOND
     /// declaration of the same name+arity whose defaults differ marks it CONFLICTED, so the fallback refuses instead of
     /// serving whichever declaration the metadata scan happened to reach last.
     static void AddKotlinDefaults(ReferenceDotKtMetadata metadata, string ownerFqn, string name, ParameterInfo[] ps,
-        Dictionary<int, IBirExpression> defaults)
+        Dictionary<int, IBirExpression> defaults, string declarationId = null)
     {
+        if (declarationId != null && !metadata.KotlinDefaultsByDeclarationId.TryAdd(declarationId, defaults))
+            throw new InvalidDataException($"duplicate defaults for Kotlin declaration identity '{declarationId}'");
         var arityKey = new DefaultKey(ownerFqn, name, ps.Length);
         var sig = SigKeyOf(ps);
-        // The callee's DECLARED parameter types, for a call site that carries none of its own — a constructor
-        // DELEGATION rides the ctor declaration, so `baseArgs` is a bare array with no signature vector. The splice
-        // needs them to type the temp it binds each spliced value to.
         Put(new DefaultKey(ownerFqn, name, ps.Length, sig), defaults);
         Put(new DefaultKey(ownerFqn, name, ps.Length, SigKeyOf(ps, relaxed: true), Relaxed: true), defaults);
         if (metadata.KotlinDefaults.TryGetValue(arityKey, out var prior))

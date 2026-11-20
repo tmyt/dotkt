@@ -55,7 +55,8 @@ static partial class KotlinOverrideSlotBridge
                             !method.SuspendSourceParams.HasValue || !method.SuspendSourceRet.HasValue)) continue;
                     foreach (var source in sources)
                     {
-                        var slotParameters = source.Params.OrEmpty().Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter.Type.OrDefault(),arguments)).ToArray();
+                        var slotParameters = source.Params.OrEmpty().Select(parameter =>
+                            SupertypeGraph.SubstOwnerTvs(FunctionSignatureIdentity.SignatureType(parameter),arguments)).ToArray();
                         var result = SupertypeGraph.SubstOwnerTvs(source.Ret.OrDefault(),arguments);
                         Add(fact.Member.Value,null,spec,SelectedMethodHeader.FromSource(source),null,
                             new[] { SourceImplDescriptor(spec,source.ExplicitClrName.OrDefault() ?? source.Name.OrDefault(),arity,
@@ -79,7 +80,7 @@ static partial class KotlinOverrideSlotBridge
                     : refs.TrySelectedSourceMethodDeclaration(spec.Name,implementation.Member.Value,arity,fact.Params.Value,fact.Ret.Value,
                         selectedArguments,SemanticMethodTypeParameters(implementation),semanticArguments,out selected);
                 if (!found || selected.Return == null || selected.Parameters == null || selected.Parameters.Any(type => type == null)) continue;
-                var physicalParameters = selected.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type,selectedArguments)).ToArray();
+                var physicalParameters = selected.SignatureParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type,selectedArguments)).ToArray();
                 var physicalReturn = SupertypeGraph.SubstOwnerTvs(selected.PhysicalReturn,selectedArguments);
                 var owner = new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name,spec.Args?.Length ?? 0),spec.Args);
                 var selectedParameters = selected.TypeParams;
@@ -190,8 +191,10 @@ static partial class KotlinOverrideSlotBridge
     {
         if (!source.Params.HasValue || !source.Ret.HasValue) return;
         var sourceParameters = source.Params.Value.Select(parameter=>parameter.Type.OrDefault() is {} type
-            ? SupertypeGraph.SubstOwnerTvs(type,sourceArguments) : null).ToArray();
+            ? SupertypeGraph.SubstOwnerTvs(SignatureValueTypes.Of(type),sourceArguments) : null).ToArray();
         if (sourceParameters.Any(type=>type==null)) return;
+        var callSignature = source.Params.Value.Select(parameter=>SupertypeGraph.SubstOwnerTvs(
+            FunctionSignatureIdentity.SignatureType(parameter.Type.Value,parameter.FunctionSignatureType.OrDefault()),sourceArguments)).ToArray();
         var result=SupertypeGraph.SubstOwnerTvs(source.Ret.Value,sourceArguments);
         var parameters=SubstituteParameters(source.TypeParams.OrDefault(),sourceArguments);
         var member=source.ExplicitClrName.OrDefault() ?? source.Name.OrDefault();
@@ -205,7 +208,8 @@ static partial class KotlinOverrideSlotBridge
             var slotParameters=descriptor.Params.Value.Select(type=>type==null ? null : SupertypeGraph.SubstOwnerTvs(type,descriptorArguments)).ToArray();
             if (slotParameters.Any(type=>type==null)) continue;
             var slotReturn=SupertypeGraph.SubstOwnerTvs(descriptor.Ret.Value,descriptorArguments);
-            if (!HasFinalSourceCollision(definition,declaration,descriptor.Member.Value,descriptor.Arity.Value,slotParameters,slotReturn,context,true)) continue;
+            if (!HasFinalSourceCollision(definition,declaration,descriptor.Member.Value,descriptor.Arity.Value,slotParameters,slotReturn,context,true,
+                    methodSignature:accessor==null)) continue;
             if (SupertypeGraph.SubstOwnerTvs(originalOwner,descriptorArguments) is not TypeNode.Fqn owner) continue;
             var slotTypeParameters=SubstituteParameters(descriptor.TypeParams.OrDefault(),descriptorArguments);
             var property=accessor is "get" or "set";
@@ -220,9 +224,11 @@ static partial class KotlinOverrideSlotBridge
                 }).ToArray();
                 header.Ret=result;
                 if (parameters!=null) header.TypeParams=parameters;
-                bridge=BuildBridgeSource(declaration,header,slotParameters,slotReturn,
+                bridge=BuildBridgeSource(declaration,header,slotParameters.Select(SignatureValueTypes.Of).ToArray(),slotReturn,
                     $"dotkt${(property ? "$dimprop" : "$dimmethod")}${SafeName(name)}${ordinal++}",
-                    context.IsValue,context.References,callOwner,virtualCall,member,physicalImplementation:true);
+                    context.IsValue,context.References,callOwner,virtualCall,member,physicalImplementation:true,declarationSignature:callSignature);
+                for (var index=0;index<slotParameters.Length;index++)
+                    bridge.Params.Value[index].Type=BirGraphValue.CopyType(slotParameters[index]);
                 if (!property) RoundtripMetadata.AddSourceMethodIdentity(bridge,name);
                 else KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(bridge,name,accessor,association);
                 bridges[key]=bridge;
@@ -234,7 +240,7 @@ static partial class KotlinOverrideSlotBridge
     }
 
     static bool HasFinalSourceCollision(Def definition,IBirTypeDeclaration declaration,string member,int arity,
-        TypeNode[] parameters,TypeNode result,FinalSourceContext context,bool includeNonVirtual)
+        TypeNode[] parameters,TypeNode result,FinalSourceContext context,bool includeNonVirtual,bool methodSignature=false)
     {
         // CLR prefers an ordinary class method over a selected DIM. The exact MethodImpl repair
         // protects that default even when the colliding public method is inherited from a base.
@@ -249,7 +255,9 @@ static partial class KotlinOverrideSlotBridge
                     || !method.Params.HasValue || method.Params.Value.Length!=parameters.Length || !method.Ret.HasValue
                     || !includeNonVirtual && !(method.Override.OrDefault() || method.Virtual.OrDefault() || method.Abstract.OrDefault()
                         || method.ObjectOverride.OrDefault() || method.PendingOverrideOwner.HasValue)) continue;
-                var types=method.Params.Value.Select(parameter=>parameter.Type.OrDefault()).ToArray();
+                // Property accessor facts supply value parameters; method descriptors carry exact declaration signatures.
+                var types=method.Params.Value.Select(parameter=>methodSignature
+                    ? FunctionSignatureIdentity.SignatureType(parameter) : parameter.Type.OrDefault()).ToArray();
                 if (types.All(type=>type!=null) && SamePhysicalSignature(types.Select(type=>SupertypeGraph.SubstOwnerTvs(type,arguments)).ToArray(),
                         SupertypeGraph.SubstOwnerTvs(method.Ret.Value,arguments),parameters,result,context.References,context.IsValue,context.HasClassifier)) return true;
             }
@@ -267,7 +275,7 @@ static partial class KotlinOverrideSlotBridge
                 current=parent.Base==null ? null : SupertypeGraph.SubstOwnerTvs(parent.Base,arguments) as TypeNode.Fqn;
                 continue;
             }
-            foreach (var candidate in context.References.AccessibleDeclaredInstanceMethods(current,member,arity))
+            foreach (var candidate in context.References.AccessibleDeclaredInstanceMethods(current,member,arity,methodSignature))
                 if ((includeNonVirtual || candidate.IsVirtual) && SamePhysicalSignature(candidate.Parameters,candidate.Return,
                         parameters,result,context.References,context.IsValue,context.HasClassifier)) return true;
             var args=current.Args ?? [];

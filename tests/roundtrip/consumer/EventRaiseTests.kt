@@ -6,6 +6,7 @@ import roundtrip.eventraise.Publisher
 import roundtrip.eventraise.PublisherOuter
 import roundtrip.eventraise.PolicyPublisher
 import roundtrip.eventraise.localInheritedRaises
+import roundtrip.eventraise.raiseProjected
 import roundtrip.eventraise.SuperPublisher
 import roundtrip.eventraise.WidePublisher
 import roundtrip.eventraise.RaiseCountingPolicy
@@ -32,6 +33,36 @@ private class ImportedSuperChild : SuperPublisher() {
 private fun <A, B> raiseGeneric(source: Publisher<A, B>, value: B) { source.Changed(value) }
 
 class EventRaiseTests {
+    @TestAttribute
+    fun projectedRaisesUseTheActualHandlerTypeAcrossModules() {
+        fun imported(source: Publisher<String, in Int>, value: Any?) { source.Changed(value) }
+        val broad = Publisher<String, Any?>()
+        var received = ""
+        val broadToken = broad.Changed.subscribe { received += "$it," }
+        raiseProjected(broad, "local")
+        imported(broad, "imported")
+        imported(broad, 42)
+        broadToken.close()
+        assertEquals("local,imported,42,", received)
+
+        val narrow = Publisher<String, Int>()
+        var total = 0
+        val narrowToken = narrow.Changed.subscribe { total += it }
+        imported(narrow, 7)
+        try {
+            imported(narrow, "not an integer")
+            error("a projected raise must still check the concrete handler's argument")
+        } catch (_: ClassCastException) {}
+        narrowToken.close()
+        assertEquals(7, total)
+
+        val fixed = PolicyPublisher()
+        try {
+            fixed.Changed("not an integer")
+            error("a concrete integer slot must reject a string before dispatch")
+        } catch (_: ClassCastException) {}
+    }
+
     @TestAttribute
     fun wideFunctionEventsUseCallableDelegatesAcrossModules() {
         val source = WidePublisher()

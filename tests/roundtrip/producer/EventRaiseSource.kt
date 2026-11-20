@@ -25,6 +25,8 @@ open class Publisher<A, B> {
     fun fireWithTail(value: B, tail: () -> Array<Any?>) { Changed(value, *tail()) }
 }
 
+fun raiseProjected(source: Publisher<String, in Int>, value: Any?) { source.Changed(value) }
+
 class PublisherOuter<A> {
     inner class NestedPublisher<B> {
         val Changed: ClrEvent<System.Action2<A, B>> by clrEvent()
@@ -61,13 +63,15 @@ private class LocalSuperChild : SuperPublisher() {
     override val Changed: ClrEvent<System.Action1<Int>> by clrEvent(policy)
     fun fireBase(value: Int) { super.Changed(value) }
     fun later(value: Int): () -> Unit = { super.Changed(*arrayOf<Any?>(value)) }
+    internal inline fun fireBasePacked(args: () -> Array<Any?>) { super.Changed(*args()) }
 }
 
 fun localInheritedRaises(): Int {
     val base = LocalSuperChild()
     base.fireBase(20)
     base.later(22)()
-    check(base.basePolicy.total == 42 && base.policy.total == 0)
+    base.fireBasePacked { arrayOf<Any?>(1) }
+    check(base.basePolicy.total == 43 && base.policy.total == 0)
     val source = LocalChild()
     var result = 0
     val token = source.Changed.subscribe { result += it }

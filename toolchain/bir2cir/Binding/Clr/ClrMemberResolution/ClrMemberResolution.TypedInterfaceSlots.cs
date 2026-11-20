@@ -18,10 +18,10 @@ static partial class ClrMemberResolution
         ReferenceMetadataIndex refs, bool metadataBuild = false)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
-        var definitions = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
+        var definitions = new Dictionary<(string Name, int Arity), IBirTypeDeclaration>();
         foreach (var root in roots)
             foreach (var type in root.Types.OrEmpty())
-                if (type.Name.HasValue) definitions[type.Name.Value] = type;
+                if (type.Name.HasValue) definitions[(type.Name.Value, TypeParameterFrame.Count(type))] = type;
         foreach (var root in roots)
             root.Visit(node => {
                 if (node is IBirTypeDeclaration type && type.Name.HasValue)
@@ -49,7 +49,7 @@ static partial class ClrMemberResolution
         TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return);
 
     static void StampInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IBirTypeDeclaration type,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild)
+        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild)
     {
         if (InterfaceSlotSets(type).IsPresent || !type.Methods.HasValue) return;
         var methods = type.Methods.Value;
@@ -63,7 +63,7 @@ static partial class ClrMemberResolution
             var iface = group.First().Owner;
             // An application's canonical runtime template is not an emitted local
             // declaration when the reference set owns its actual CLR identity.
-            if (definitions.TryGetValue(iface.Name, out var local)
+            if (definitions.TryGetValue((iface.Name, iface.Args?.Length ?? 0), out var local)
                 && (!local.Generated.OrDefault() || !ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(iface.Name)
                     || refs.PhysicalTypeNamed(iface.Name, TypeParameterFrame.Count(local)) == null))
             {

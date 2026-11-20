@@ -1285,10 +1285,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     // Exact declared public instance methods on a referenced class, expressed in the constructed owner's TypeNode
     // frame. KotlinOverrideSlotBridge uses this only to determine whether an INHERITED ordinary CLR method can capture
-    // an interface DIM property slot. Returning the declaration vector keeps the physical-signature comparison in
+    // an interface default. Returning the matching parameter view keeps the physical-signature comparison in
     // bir2cir; no accessor role is inferred from the method name here.
     public IEnumerable<(TypeNode[] Parameters, TypeNode Return, bool IsVirtual, bool IsAbstract)> AccessibleDeclaredInstanceMethods(
-        TypeNode.Fqn ownerSpec, string methodName, int methodArity)
+        TypeNode.Fqn ownerSpec, string methodName, int methodArity, bool methodSignature)
     {
         if (ownerSpec == null || string.IsNullOrEmpty(methodName)) yield break;
         var ownerNames = new List<string> { BareOwnerFqn(ownerSpec.Name) };
@@ -1301,12 +1301,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             if (!_membersByOwner.TryGetValue(owner, out var members)) continue;
             foreach (var member in members)
             {
+                var parameters = methodSignature ? member.SignatureParameters : member.ParamTypeNodes;
                 if (!seen.Add(member) || member.IsStatic || !member.IsPublic
                     || member.Name != methodName || member.MethodArity != methodArity
-                    || member.ParamTypeNodes == null || member.ReturnTypeNode == null)
+                    || parameters == null || member.ReturnTypeNode == null)
                     continue;
                 yield return (
-                    member.ParamTypeNodes.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
+                    parameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                     SupertypeGraph.SubstOwnerTvs(member.ReturnTypeNode, args),
                     member.IsVirtual,
                     member.IsAbstract);
@@ -2617,9 +2618,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
         out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,
-        out TypeNode declarationResult, out TypeNode physicalResult)
+        out TypeNode declarationResult, out TypeNode physicalResult, out (string Source, string Slot) selection)
     {
         erasedOwner = erasedMember = null;
+        selection = default;
         erasedSignature = null;
         declarationResult = null;
         physicalResult = null;
@@ -2718,6 +2720,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         erasedOwner = candidateOwner;
         erasedMember = candidates[0].Name;
         erasedSignature = candidates[0].SignatureParameters ?? candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
+        selection = (declarations[0].DeclarationId, candidates[0].DeclarationId);
         declarationResult = declarations[0].NullableGenericRet
             ?? declarations[0].SuspendReturnType
             ?? declarations[0].KotlinReturnType
