@@ -159,6 +159,19 @@ class InvariantValueStorageTests {
         check(try { NativeBoxApi.EchoBoxes(kotlinItems); false } catch (_: ClassCastException) { true })
         check((kotlinItems[0] as Any) === number)
         val container = NativeBoxContainer(Box("container"))
+        fun initialized(badIndex: Int) {
+            var calls = 0
+            val initial = forwardedNativeBox()
+            val a = Array(3) { i -> check(i == calls++); if (i == badIndex) erased else initial }
+            check(calls == 3 && a[0] === initial)
+            if (badIndex < 0) check(NativeBoxApi.EchoBoxes(a) === a)
+            else {
+                check((a[badIndex] as Any) === number)
+                check(try { NativeBoxApi.EchoBoxes(a); false } catch (_: ClassCastException) { true })
+            }
+        }
+        initialized(-1)
+        initialized(2)
         check(NativeBoxApi.EchoContainer(container) === container && container.Value.value == "container")
         check(NativeBoxApi.InvokeContainer(NativeBoxContainerFactory { container }) === container)
         var location = Box("before")

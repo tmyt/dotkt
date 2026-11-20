@@ -89,7 +89,7 @@ static class TypedPhysicalValueCoercion
         internal IReadOnlyDictionary<string, string> LocalCarriers;
         internal BirFileDeclaration Document;
         internal BirTemporaryNames ArrayNames;
-        internal readonly Dictionary<BirNewArray, TypeNode.Array> NativeLiteralTargets = new(ReferenceEqualityComparer.Instance);
+        internal readonly Dictionary<BirGraphValue, TypeNode.Array> NativeArrayTargets = new(ReferenceEqualityComparer.Instance);
         internal TypedPhysicalDelegateAdapter DelegateAdapters;
 
         internal Index(IReadOnlyList<BirFileDeclaration> roots, Func<IBirExpression> unitValue)
@@ -234,7 +234,7 @@ static class TypedPhysicalValueCoercion
                 AllocateNativeLocals(constructor.PreStmts.OrEmpty().Cast<BirGraphValue>()
                     .Concat((constructor.ThisArgs.OrDefault() ?? constructor.BaseArgs.OrEmpty()).Cast<BirGraphValue>())
                     .Concat(constructor.Body.OrEmpty().Cast<BirGraphValue>()), constructor.Params.OrEmpty(), prefix, index.ArrayNames,
-                    nativeArray: (array, target) => RecordNativeLiteral(array, target, index));
+                    nativeArray: (array, target) => RecordNativeArray(array, target, index));
                 if (constructor.PreStmts.IsPresent || prefix.Count != 0) constructor.PreStmts = prefix.ToArray();
             }
             var scope = Scope.Frame(constructor.Params.OrEmpty(),
@@ -254,7 +254,7 @@ static class TypedPhysicalValueCoercion
                 {
                     var body = method.Body.Value.ToList();
                     AllocateNativeLocals(method.Body.Value.Cast<BirGraphValue>(), method.Params.OrEmpty(), body, index.ArrayNames,
-                        nativeArray: (array, target) => RecordNativeLiteral(array, target, index));
+                        nativeArray: (array, target) => RecordNativeArray(array, target, index));
                     method.Body = body.ToArray();
                 }
                 RewriteStatements(method.Body.Value, scope, index);
@@ -310,10 +310,8 @@ static class TypedPhysicalValueCoercion
         // The actual storage slot is known for an immediate allocation, including
         // constructor delegation and the initializer of a byref local. There is
         // no existing array identity or escaped alias to reinterpret here.
-        if (!index.ReferenceBuild && value is BirNewArray literal && literal.Elem.OrDefault() is TypeNode.Fqn component
-            && target is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } exact } vector
-            && index.HasDeclaredCarrier(exact, component))
-            value = NativeLiteral(literal, vector, scope, index);
+        if (!index.ReferenceBuild && target is TypeNode.Array vector && CanSelectNativeArray(value, vector, index))
+            value = SelectNativeArray(value, vector, scope, index);
         if (target != null && value is BirConditional { Type.HasValue: false } conditional
             && (Underlying(target) is TypeNode.Fn { Suspend: false }
                 || NeedsConversion(ExprType(Graph(conditional.Then.OrDefault()), scope, index), target, index)
@@ -391,14 +389,14 @@ static class TypedPhysicalValueCoercion
 
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, BirParameter[] parameters,
         List<IBirStatement> prologue, BirTemporaryNames arrayNames = null,
-        bool genericParametersOnly = false, Action<BirNewArray, TypeNode.Array> nativeArray = null)
+        bool genericParametersOnly = false, Action<BirGraphValue, TypeNode.Array> nativeArray = null)
         => AllocateNativeLocals(body, parameters.Cast<BirGraphValue>().ToArray(), prologue, arrayNames, genericParametersOnly, nativeArray);
 
     // Named functions and suspend lambdas supply their actual declarations to
     // the same storage decision; a lambda parameter is not a fabricated method parameter.
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, IReadOnlyList<BirGraphValue> parameters,
         List<IBirStatement> prologue, BirTemporaryNames arrayNames = null,
-        bool genericParametersOnly = false, Action<BirNewArray, TypeNode.Array> nativeArray = null)
+        bool genericParametersOnly = false, Action<BirGraphValue, TypeNode.Array> nativeArray = null)
     {
         var required = new Dictionary<BirGraphValue, TypeNode>(ReferenceEqualityComparer.Instance);
         var uses = new Dictionary<BirGraphValue, List<BirGraphValue>>(ReferenceEqualityComparer.Instance);
@@ -464,7 +462,7 @@ static class TypedPhysicalValueCoercion
                         if (node is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance or BirNewClr
                             && (physical is TypeNode.ByRef byref ? byref.Of : physical) is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } } target)
                             calls.Add((operand, target));
-                        else if (operand is BirLocal or BirNewArray or BirValueBlock or BirCast or BirConditional)
+                        else if (operand is BirLocal or BirNewArray or BirNewArrayInit or BirNewArraySized or BirValueBlock or BirCast or BirConditional)
                             writes.Add((operand, null)); // a callee can mutate or retain an incoming array
                     }
                     if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference) continue;
@@ -493,10 +491,10 @@ static class TypedPhysicalValueCoercion
             // Use declaration-bound aliases (including assignments), never a global
             // name lookup. A potential Kotlin store must not fail early merely
             // because another alias later reaches an exact native parameter.
-            IEnumerable<BirNewArray> Origins(IBirExpression operand, HashSet<BirGraphValue> seen)
+            IEnumerable<BirGraphValue> Origins(IBirExpression operand, HashSet<BirGraphValue> seen)
             {
                 if (operand is not BirGraphValue node || !seen.Add(node)) yield break;
-                if (node is BirNewArray literal) { yield return literal; yield break; }
+                if (node is BirNewArray or BirNewArrayInit or BirNewArraySized) { yield return node; yield break; }
                 IEnumerable<IBirExpression> Inputs() {
                     if (node is BirLocal local && bindings.TryGetValue(local, out var declaration)) {
                         if (declaration is BirVariable slot) yield return slot.Init.OrDefault();
@@ -537,13 +535,28 @@ static class TypedPhysicalValueCoercion
         prologue.InsertRange(0, prefix);
     }
 
-    static void RecordNativeLiteral(BirNewArray array, TypeNode.Array requested, Index index)
+    static bool CanSelectNativeArray(BirGraphValue array, TypeNode.Array requested, Index index)
     {
-        if (requested.Elem is not TypeNode.Fqn { Args.Length: > 0 } exact
-            || array.Elem.OrDefault() is not TypeNode.Fqn carrier || !index.HasDeclaredCarrier(exact, carrier)) return;
-        if (index.NativeLiteralTargets.TryGetValue(array, out var other) && other != requested)
-            index.NativeLiteralTargets[array] = null;
-        else index.NativeLiteralTargets[array] = requested;
+        var component = array switch { BirNewArray a => a.Elem.OrDefault(), BirNewArrayInit a => a.Elem.OrDefault(),
+            BirNewArraySized a => a.Elem.OrDefault(), _ => null };
+        return requested.Elem is TypeNode.Fqn { Args.Length: > 0 } exact && component is TypeNode.Fqn carrier
+            && index.HasDeclaredCarrier(exact, carrier);
+    }
+
+    static void RecordNativeArray(BirGraphValue array, TypeNode.Array requested, Index index)
+    {
+        if (!CanSelectNativeArray(array, requested, index)) return;
+        if (index.NativeArrayTargets.TryGetValue(array, out var other) && other != requested)
+            index.NativeArrayTargets[array] = null;
+        else index.NativeArrayTargets[array] = requested;
+    }
+
+    static BirGraphValue SelectNativeArray(BirGraphValue array, TypeNode.Array target, Scope scope, Index index)
+    {
+        if (array is BirNewArray literal) return NativeLiteral(literal, target, scope, index);
+        if (array is BirNewArrayInit initialized) return NativeInitializedArray(initialized, target, scope, index);
+        ((BirNewArraySized)array).Elem = target.Elem;
+        return array;
     }
 
     // Pick the backing vector at creation, not by copying on interop. An erased
@@ -583,6 +596,56 @@ static class TypedPhysicalValueCoercion
             Type = result, Cond = Field(FitsRange(0, temps.Length)), Then = closed, Else = open } };
     }
 
+    // Select storage while the initializer still owns the unpublished result.
+    // The usual fully compatible path allocates one exact vector. Widen at most
+    // once, before publishing, without ever replaying the user's initializer.
+    static BirGraphValue NativeInitializedArray(BirNewArrayInit source, TypeNode.Array target, Scope scope, Index index)
+    {
+        var carrier = source.Elem.Value;
+        var vector = new TypeNode.Array(carrier);
+        var integer = new TypeNode.Fqn("System.Int32");
+        var boolean = new TypeNode.Fqn("System.Boolean");
+        var invoke = source.InvokeRef.Value;
+        var fnType = source.FuncType.OrDefault() ?? ExprType(Graph(source.Init.Value), scope, index);
+        var parameter = Close(invoke.ParameterTypes.Value.Single(), OwnerArgs(invoke), []);
+        var result = Close(invoke.ReturnType.Value, OwnerArgs(invoke), []);
+        if (result == target.Elem) { source.Elem = target.Elem; return source; }
+        BirVariable Var(string hint, TypeNode type, IBirExpression initial) => new() {
+            Name = index.ArrayNames.Next(hint), Type = type, Init = Field(initial) };
+        static BirLocal Read(BirVariable variable) => new() { Name = variable.Name, Sty = variable.Type };
+        BirConstant Num(int n) => new() { Type = integer, Value = new BirLiteral.IntegerLiteral(n) };
+        BirConstant Bool(bool b) => new() { Type = boolean, Value = new BirLiteral.BooleanLiteral(b) };
+        static BirBinaryOperation Bin(string op, IBirExpression left, IBirExpression right) =>
+            new() { Op = op, Lhs = Field(left), Rhs = Field(right) };
+        static BirSetLocal Set(BirVariable variable, IBirExpression value) => new() { Name = variable.Name, Value = Field(value) };
+        BirSetLocal Step(BirVariable i) => Set(i, Bin("+", Read(i), Num(1)));
+        BirExpressionStatement Store(BirVariable array, BirVariable pos, IBirExpression value) => new() {
+            Expr = new BirArraySet { Array = Read(array), Index = Read(pos), Elem = carrier, Value = Field(value) } };
+        var size = Var("$arraySize$", integer, source.Size.Value);
+        var fn = Var("$arrayInit$", fnType, source.Init.Value);
+        BirNewArraySized Allocate(TypeNode type) => new() { Elem = type, Size = Read(size) };
+        var array = Var("$arrayStorage$", vector, Allocate(target.Elem));
+        var narrow = Var("$arrayExact$", boolean, Bool(true));
+        var i = Var("$arrayIndex$", integer, Num(0));
+        var item = Var("$arrayItem$", carrier, Cast(new BirDelegateInvoke {
+            FuncType = fnType, Recv = Read(fn), InvokeRef = invoke,
+            Args = new IBirExpression[] { Cast(Read(i), parameter) } }, carrier));
+        var wide = Var("$arrayWide$", vector, Allocate(carrier));
+        var j = Var("$arrayCopied$", integer, Num(0));
+        var widen = new BirIf { Branches = new[] { new BirBranch {
+            Cond = new BirConditional { Type = boolean, Cond = Read(narrow), Else = Bool(false),
+                Then = new BirConditional { Type = boolean,
+                    Cond = Bin("==", Read(item), new BirConstant { Type = Object, Value = new BirLiteral.NullLiteral() }),
+                    Then = Bool(false), Else = Bin("==", new BirIsInstance { Type = target.Elem, E = Read(item) }, Bool(false)) } },
+            Body = new IBirStatement[] { wide, j, new BirWhile { Cond = Bin("<", Read(j), Read(i)),
+                Body = new IBirStatement[] { Store(wide, j, new BirArrayGet { Array = Read(array), Index = Read(j), Elem = carrier }), Step(j) } },
+                Set(array, Read(wide)), Set(narrow, Bool(false)) },
+        } } };
+        return new BirValueBlock { Type = vector,
+            Stmts = new IBirStatement[] { size, fn, array, narrow, i, new BirWhile { Cond = Bin("<", Read(i), Read(size)),
+                Body = new IBirStatement[] { item, widen, Store(array, i, Read(item)), Step(i) } } }, Result = Read(array) };
+    }
+
     static string NativeParameterName(BirGraphValue declaration) => declaration switch {
         BirParameter parameter => parameter.Name.OrDefault(),
         BirLambdaParameter parameter => parameter.Name.OrDefault(),
@@ -615,8 +678,9 @@ static class TypedPhysicalValueCoercion
         }
         RewriteChildren(node, scope, index, resultUsed);
 
-        if (node is BirNewArray literal && index.NativeLiteralTargets.Remove(literal, out var target) && target != null)
-            return NativeLiteral(literal, target, scope, index);
+        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized
+            && index.NativeArrayTargets.Remove(node, out var target) && target != null)
+            return SelectNativeArray(node, target, scope, index);
 
         var array = node switch { BirArrayGet value => value.Array.OrDefault(), BirArraySet value => value.Array.OrDefault(),
             BirArrayLength value => value.Array.OrDefault(), BirForArray value => value.Array.OrDefault(), _ => null };
