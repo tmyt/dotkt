@@ -21,13 +21,16 @@ static partial class FBoundStarProjectionErasure
         readonly Dictionary<BirGraphValue, TypeNode> arrayElements = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BirArrayGet> projectedReads = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BirFunctionDeclaration> normalizedMethods = new(ReferenceEqualityComparer.Instance);
-        internal Dictionary<BirGraphValue, string> SelectedMethodArgumentSlots { get; } = new(ReferenceEqualityComparer.Instance);
+        internal Dictionary<BirGraphValue, (string Source, string Slot)> SelectedMethodArgumentSlots { get; }
+        internal Dictionary<BirGraphValue, Dictionary<int, TypeNode>> MethodWitnesses { get; }
 
         internal SourceRewriteState(CarrierRealizationContext realization,
             Func<TypeNode, IBirExpression, IBirExpression> componentPredicate,
             CurrentPhysicalTypeView currentPhysical = null, CarrierProjectionContext projection = null)
         {
             Demand = realization.Demand;
+            MethodWitnesses = realization.MethodWitnesses;
+            SelectedMethodArgumentSlots = realization.MethodSlotSelections;
             Declarations = realization.Declarations;
             References = realization.References;
             Projection = projection ?? realization.Projection;

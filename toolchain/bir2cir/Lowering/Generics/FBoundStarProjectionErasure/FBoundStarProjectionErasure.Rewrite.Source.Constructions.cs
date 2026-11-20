@@ -175,11 +175,11 @@ static partial class FBoundStarProjectionErasure
                 || StripSourceNullability(state.Projection.Rewrite(argument)) != new TypeNode.Fqn(carrier))).Any();
     }
 
-    static bool NeedsOperandWitness(TypeNode parameter, int index, string scope = "type")
+    static bool NeedsOperandWitness(TypeNode parameter, int index)
     {
         if (StripSourceNullability(parameter) is TypeNode.Tv) return false;
         var used = false;
-        BirGraphNameFields.VisitTypeNodes(parameter, node => used |= node is TypeNode.Tv tv && tv.Scope == scope && tv.I == index);
+        BirGraphNameFields.VisitTypeNodes(parameter, node => used |= node is TypeNode.Tv { Scope: "type" } tv && tv.I == index);
         return used;
     }
 

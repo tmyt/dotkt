@@ -112,6 +112,8 @@ static partial class FBoundStarProjectionErasure
             call.Name = row.Slot.ExplicitClrName.OrDefault() ?? row.Slot.Name.OrDefault();
             call.Parameters(row.Slot.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()),
                 row.Slot.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType));
+            if (arity != 0 && row.Slot.DeclarationId.HasValue)
+                state.SelectedMethodArgumentSlots[node] = (row.Declaration.DeclarationId.OrDefault(), row.Slot.DeclarationId.Value);
             MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor,
                 row.Declaration.DeclarationId.OrDefault() is { } identity ? ExistentialSlotIdentity(identity, declaring.Name) : null);
             var declarationResult = row.Declaration.Ret.OrDefault() ?? new TypeNode.Fqn("kotlin.Unit");
@@ -126,6 +128,8 @@ static partial class FBoundStarProjectionErasure
             call.Name = BaseStarMethodNameSource(declaring, (IBirTypeDeclaration)context.Preparation.Bindings.SourceDefinitions[declaring].Source, declaration);
             call.Parameters(declaration.Params.OrEmpty().Select(parameter => EraseOwnerTv(parameter.Type.OrDefault(), state.Owners, refs)),
                 writeCallee: false);
+            if (arity != 0 && declaration.DeclarationId.OrDefault() is string inheritedId)
+                state.SelectedMethodArgumentSlots[node] = (inheritedId, ExistentialSlotIdentity(inheritedId, bridgeOwner.Name));
             MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor,
                 declaration.DeclarationId.OrDefault() is { } identity ? ExistentialSlotIdentity(identity, bridgeOwner.Name) : null);
             var declarationResult = declaration.Ret.OrDefault() ?? new TypeNode.Fqn("kotlin.Unit");
@@ -144,12 +148,12 @@ static partial class FBoundStarProjectionErasure
                         sourceProperty, accessor, constructedOwner: referenceOwner);
                 }
         if (refs.TryStarProjectionMember(owner, sourceMember, accessor, arity, authored, count, call.Identity,
-            out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationReturn, out var physicalReturn, out var slotId))
+            out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationReturn, out var physicalReturn, out var selection))
         {
             CloseResult(declarationReturn);
             call.BindOwner(erasedOwner); call.Name = erasedMethod; call.Parameters(erasedSignature);
-            // The selected slot owns the MethodSpec frame, not a new frontend call identity.
-            if (slotId != null && call.Arguments.Length != 0) state.SelectedMethodArgumentSlots[node] = slotId;
+            // Slot constraints and source representation roles belong to different declarations.
+            if (selection.Slot != null && call.Arguments.Length != 0) state.SelectedMethodArgumentSlots[node] = selection;
             MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor);
             return Align(physicalReturn, declarationReturn, ownerArguments);
         }
@@ -172,6 +176,8 @@ static partial class FBoundStarProjectionErasure
                 CloseResult(sourceResult, frame);
                 call.BindOwner(slotOwner); call.Name = referenceSlot.Name;
                 call.Parameters(referenceSlot.ParamTypeNodes, referenceSlot.SignatureParameters);
+                if (arity != 0 && referenceSlot.DeclarationId != null)
+                    state.SelectedMethodArgumentSlots[node] = (referenceSlot.SourceMethodDeclaration ?? id, referenceSlot.DeclarationId);
                 MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor, referenceSlot.DeclarationId);
                 return Align(referenceSlot.SuspendReturnType ?? referenceSlot.ReturnTypeNode, sourceResult, frame);
             }

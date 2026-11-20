@@ -2617,10 +2617,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
         out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,
-        out TypeNode declarationResult, out TypeNode physicalResult, out string selectedSlotId)
+        out TypeNode declarationResult, out TypeNode physicalResult, out (string Source, string Slot) selection)
     {
         erasedOwner = erasedMember = null;
-        selectedSlotId = null;
+        selection = default;
         erasedSignature = null;
         declarationResult = null;
         physicalResult = null;
@@ -2719,7 +2719,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         erasedOwner = candidateOwner;
         erasedMember = candidates[0].Name;
         erasedSignature = candidates[0].SignatureParameters ?? candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
-        selectedSlotId = candidates[0].DeclarationId;
+        selection = (declarations[0].DeclarationId, candidates[0].DeclarationId);
         declarationResult = declarations[0].NullableGenericRet
             ?? declarations[0].SuspendReturnType
             ?? declarations[0].KotlinReturnType

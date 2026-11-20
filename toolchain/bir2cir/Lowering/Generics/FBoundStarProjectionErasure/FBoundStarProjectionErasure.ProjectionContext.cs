@@ -137,28 +137,29 @@ static partial class FBoundStarProjectionErasure
         }
 
         internal TypeNode MethodClassWitness(BirFunctionDeclaration local, string identity, NullableRepresentationFrame frame,
-            TypeNode.Fqn owner, TypeNode[] arguments, int index, TypeNode source, TypeNode projected)
+            TypeNode.Fqn owner, TypeNode[] arguments, int index, TypeNode.Fqn application, TypeNode projected,
+            Func<int, TypeNode> closeArgument)
         {
-            if (StripSourceNullability(source) is not TypeNode.Fqn { Args.Length: > 0 } application
-                || !TryExistentialCarrier(application.Name, out var carrier)
-                || StripSourceNullability(projected) is not TypeNode.Fqn p || p.Name != carrier) return projected;
             var parameters = local?.TypeParams.OrDefault();
             if (local == null && identity != null && !referencedMethodWitnessParameters.TryGetValue(identity, out parameters))
                 referencedMethodWitnessParameters[identity] = parameters = References.PhysicalMethodTypeParametersInPhysicalFrame(identity);
-            var common = SharedClassWitness(parameters, frame, "method", index, application,
-                bound => SubstituteDeclarationTypeArguments(bound, owner?.Args ?? [], arguments));
-            if (common == null) return projected;
-            // Passing a Leaf as Root is identity preserving; passing List<Leaf> as List<Root>
-            // is not. A common ancestor cannot supply that nested CLR construction.
-            bool NeedsExact(TypeNode type) => type != null && NeedsOperandWitness(SignatureValueTypes.Of(type), index, "method");
-            if (local != null ? local.Params.OrEmpty().Any(p => NeedsExact(p.Type.OrDefault())) || NeedsExact(local.Ret.OrDefault())
-                : References.PhysicalMethodSignatureByIdentity(identity) is not {} signature
-                    || signature.Parameters.Any(NeedsExact) || NeedsExact(signature.Return)) return projected;
-            return common;
+            TypeNode CloseBound(TypeNode bound)
+            {
+                TypeNode[] physical = null;
+                BirGraphNameFields.VisitTypeNodes(bound, part => {
+                    if (part is TypeNode.Tv { Scope: "method" } tv && tv.I != index)
+                        (physical ??= (TypeNode[])arguments.Clone())[tv.I] = closeArgument(tv.I);
+                });
+                return SubstituteDeclarationTypeArguments(bound, owner?.Args ?? [], physical ?? arguments);
+            }
+            return SharedClassWitness(parameters, frame, "method", index, application, CloseBound,
+                local == null ? null : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(local, i, bound)),
+                arguments) ?? projected;
         }
 
         TypeNode.Fqn SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
-            int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute)
+            int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute,
+            Func<int, TypeNode, TypeNode> physicalBound = null, TypeNode[] methodArguments = null)
         {
             if (parameters == null || index >= parameters.Length) return null;
             var linked = new HashSet<int> { index };
@@ -176,10 +177,24 @@ static partial class FBoundStarProjectionErasure
                     { linked.Add(ordinary); linked.Add(nullable); }
                 }
             }
+            // A physical slot (including a synthesized slot without a source frame)
+            // may constrain another slot closed over the very same projected type.
+            if (methodArguments != null)
+            {
+                bool changed;
+                do {
+                    changed = false;
+                    for (int i = 0; i < parameters.Length; i++)
+                        foreach (var edge in parameters[i].Constraints.OrEmpty().OfType<TypeNode.Tv>())
+                            if (edge.Scope == scope && methodArguments[i] == methodArguments[edge.I]
+                                && (linked.Contains(i) || linked.Contains(edge.I)))
+                            { changed |= linked.Add(i); changed |= linked.Add(edge.I); }
+                } while (changed);
+            }
             if (linked.Any(i => parameters[i].SpecialConstraints.OrEmpty().Any(special => special != "class"))) return null;
-            var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty())
+            var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty().Select(bound => physicalBound?.Invoke(i, bound) ?? bound))
                 .Where(bound => bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
-                .Select(substitute).Distinct().ToArray();
+                .Select(bound => StripSourceNullability(substitute(bound))).Distinct().ToArray();
             if (bounds.Length == 0) return null;
             TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
                 ? References.PhysicalConstraintType(type) : type;
