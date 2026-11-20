@@ -869,9 +869,7 @@ sealed partial class Emitter
             interfaceAbstract = m.Abstract.Value;
         }
         var clrInterfaceSlotBridge = ti.IsInterface && m.ClrInterfaceSlotBridge.OrDefault();
-        // Source interface members are public. A bir2cir-authored explicit MethodImpl body retains its stated private
-        // visibility and finality; this is direct consumption of the CIR slot instruction.
-        var attrs = ti.IsInterface && !clrInterfaceSlotBridge ? MethodAttributes.Public : AccessOf(m.Vis);
+        var attrs = AccessOf(m.Vis);
         // A method's own `static` flag (companion methods are static members of a user class).
         isStatic = isStatic || m.Static;
         var objOverride = m.ObjectOverride.OrDefault();
@@ -885,7 +883,9 @@ sealed partial class Emitter
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
         // (a static abstract interface method would demand an implementer). Only genuine instance interface members
         // become virtual slots / abstract DIMs.
-        if (ti.IsInterface && !isStatic)
+        // A private concrete body is callable within the interface, not a
+        // slot to be inherited. Explicit MethodImpl bodies still need a slot.
+        if (interfaceSlot && (attrs != MethodAttributes.Private || clrInterfaceSlotBridge))
         {
             attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
             if (clrInterfaceSlotBridge)

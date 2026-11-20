@@ -6,6 +6,12 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.ArraySegment
 import roundtrip.nullablegenericsignature.*
 
+private interface ImportedReader : GenericReader
+private object Reader : ImportedReader
+private class ReadValue<T>(val value: T) : ReadStrategy<T> {
+    override fun read(reader: GenericReader): T = value
+}
+
 class NullableGenericSignatureTests {
     @TestAttribute
     fun importedNullableOverloadsPreserveSelection() {
@@ -20,6 +26,10 @@ class NullableGenericSignatureTests {
 
     @TestAttribute
     fun importedOwnerAndMethodFramesRemainDistinct() {
+        val reader: ImportedReader = Reader
+        check(reader.readNullable(ReadValue<Int?>(41)) == 41)
+        check(reader.readNullable(ReadValue<String?>("reader")) == "reader")
+        check(reader.readNullable(ReadValue<String?>(null)) == null)
         val owner = SegmentEcho<String>()
         assertTrue(owner.echo(null) == null)
         assertEquals(1, owner.echo(ArraySegment<String>(arrayOf("owner")))!!.Count)
