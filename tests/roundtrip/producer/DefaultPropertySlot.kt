@@ -37,7 +37,11 @@ interface ReferencedEmptyDefaultSlot : IEmptyDefaultSlot {
 // identity compareTo. The explicit source-method carrier is the cross-module edge between those two facts.
 interface ReferencedRenamedDefaultMethodSlot : Comparable<ReferencedRenamedDefaultMethodSlot> {
     override fun compareTo(other: ReferencedRenamedDefaultMethodSlot): Int = 360
+    @kotlin.clr.ClrName("Clash")
+    fun callback(f: () -> Int): Int = f() + 1
 }
+
+open class ReferencedCallbackBase { fun Clash(f: () -> Int): Int = f() + 2 }
 
 class ReferencedCompareMarker<T>(val value: T)
 

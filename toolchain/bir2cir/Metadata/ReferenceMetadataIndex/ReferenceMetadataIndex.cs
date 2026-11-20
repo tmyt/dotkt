@@ -1285,10 +1285,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     // Exact declared public instance methods on a referenced class, expressed in the constructed owner's TypeNode
     // frame. KotlinOverrideSlotBridge uses this only to determine whether an INHERITED ordinary CLR method can capture
-    // an interface DIM property slot. Returning the declaration vector keeps the physical-signature comparison in
+    // an interface default. Returning the matching parameter view keeps the physical-signature comparison in
     // bir2cir; no accessor role is inferred from the method name here.
     public IEnumerable<(TypeNode[] Parameters, TypeNode Return, bool IsVirtual, bool IsAbstract)> AccessibleDeclaredInstanceMethods(
-        TypeNode.Fqn ownerSpec, string methodName, int methodArity)
+        TypeNode.Fqn ownerSpec, string methodName, int methodArity, bool methodSignature)
     {
         if (ownerSpec == null || string.IsNullOrEmpty(methodName)) yield break;
         var ownerNames = new List<string> { BareOwnerFqn(ownerSpec.Name) };
@@ -1301,12 +1301,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             if (!_membersByOwner.TryGetValue(owner, out var members)) continue;
             foreach (var member in members)
             {
+                var parameters = methodSignature ? member.SignatureParameters : member.ParamTypeNodes;
                 if (!seen.Add(member) || member.IsStatic || !member.IsPublic
                     || member.Name != methodName || member.MethodArity != methodArity
-                    || member.ParamTypeNodes == null || member.ReturnTypeNode == null)
+                    || parameters == null || member.ReturnTypeNode == null)
                     continue;
                 yield return (
-                    member.ParamTypeNodes.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
+                    parameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                     SupertypeGraph.SubstOwnerTvs(member.ReturnTypeNode, args),
                     member.IsVirtual,
                     member.IsAbstract);
