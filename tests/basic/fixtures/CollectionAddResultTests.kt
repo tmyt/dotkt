@@ -47,6 +47,22 @@ private class RejectingSet<E>(items: MutableSet<E>) : MutableSet<E> by items {
     override fun add(element: E): Nothing = throw UnsupportedOperationException("add")
     override fun addAll(elements: Collection<E>): Nothing = throw UnsupportedOperationException("addAll")
 }
+
+private abstract class PartialSet<E> : MutableSet<E> {
+    override val size get() = 0
+    override fun isEmpty() = true
+    override fun clear() {}
+    override fun contains(element: E) = false
+    override fun containsAll(elements: Collection<E>) = elements.isEmpty()
+    override fun iterator() = mutableSetOf<E>().iterator()
+    override fun remove(element: E) = false
+    override fun removeAll(elements: Collection<E>) = false
+    override fun retainAll(elements: Collection<E>) = false
+}
+private class ReadOnlyStringSet : PartialSet<String>() {
+    override fun add(element: String): Nothing = throw UnsupportedOperationException(element)
+    override fun addAll(elements: Collection<String>): Nothing = throw UnsupportedOperationException("all")
+}
 private class RejectingIndex<E>(items: List<E>) : List<E> by items {
     override fun indexOf(element: E): Nothing = throw UnsupportedOperationException("indexOf")
 }
@@ -60,6 +76,10 @@ class CollectionAddResultTests {
         val list: List<Int> = RejectingIndex(listOf(1))
         try { list.indexOf(1); error("indexOf returned") } catch (e: UnsupportedOperationException) { check(e.message == "indexOf") }
         check(rejecting.size == 1)
+        val inheritedSlots: PartialSet<String> = ReadOnlyStringSet()
+        try { inheritedSlots.add("one"); error("add returned") } catch (e: UnsupportedOperationException) { check(e.message == "one") }
+        val throughInterface: MutableSet<String> = inheritedSlots
+        try { throughInterface.addAll(listOf("two")); error("addAll returned") } catch (e: UnsupportedOperationException) { check(e.message == "all") }
 
         val value = CollectionAddResultList(mutableListOf(1))
         check(value.add(2))
