@@ -128,6 +128,27 @@ static partial class FBoundStarProjectionErasure
             || !owner.Args.Any(ContainsExistentialProjection) || !construction.MemberSignature.HasValue
             || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return node;
         var signature = construction.MemberSignature.Value;
+        if (construction.ConstructorDeclarationId.OrDefault() is string id &&
+            state.Projection.StorageFrame(owner.Name) is { } layout &&
+            state.Projection.ProjectedConstructorArguments(owner, layout) is { } physicalArguments)
+        {
+            var factoryId = StorageFactoryId(id);
+            if (!state.Declarations.ProjectedConstructors.TryGetValue(factoryId, out var factory))
+            {
+                if (!state.References.TryDeclarationIdentity(factoryId, out var name, out var carrier, out _, out _))
+                    throw new InvalidOperationException($"Projected constructor '{id}' has no physical factory");
+                factory = (carrier, name);
+            }
+            var methodArgs = Enumerable.Range(0, physicalArguments.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+            var call = new BirCallStatic {
+                Owner = new TypeNode.Fqn(factory.Owner), Method = factory.Name, DeclarationId = factoryId,
+                Sig = signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, methodArgs)).ToArray(),
+                Args = construction.Args, TypeArgs = physicalArguments, Ret = new TypeNode.Fqn(factory.Owner),
+            };
+            state.MethodWitnesses.Add(call, physicalArguments.Select((type, index) => (type, index))
+                .ToDictionary(row => row.index, row => row.type));
+            return call;
+        }
         if (signature.Any(type => type == null) || !ConstructionHasHiddenWitnessSource(owner, state, signature)) return node;
         var result = state.Projection.Rewrite(owner);
         if (result is TypeNode.Fqn projected && projected.Name == owner.Name) return node;

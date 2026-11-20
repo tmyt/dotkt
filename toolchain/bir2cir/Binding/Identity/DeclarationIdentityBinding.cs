@@ -23,6 +23,7 @@ static partial class DeclarationIdentityBinding
     internal const string ReferencedFactoryKey = "declarationReferencedFactory";
     internal const string PhysicalOnlySuffix = "|clr-physical-only";
     internal const string ExistentialSlotMarker = PhysicalOnlySuffix + "|existential-slot:";
+    internal const string ProjectedConstructorRole = "projected-constructor";
     internal const string IndependentAliasSlotKey = "independentAliasSlot";
 
     internal static string PhysicalOnlyId(string declarationId, string role) =>

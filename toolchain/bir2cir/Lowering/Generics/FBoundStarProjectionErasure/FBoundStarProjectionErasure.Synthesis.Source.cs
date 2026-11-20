@@ -127,6 +127,7 @@ static partial class FBoundStarProjectionErasure
         BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, owner.Name, false);
         definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
         erased.Attrs = new[] { ClassifierIdentity() };
+        RegisterProjectedStorage(owner, definition, erased, context);
         if (PublishedApiTypeVisibilityLowering.ResolveVisibility(definition) is { } visibility) erased.Vis = visibility;
         context.AttachType(root, erased);
         foreach (var slot in methods)

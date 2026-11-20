@@ -121,24 +121,89 @@ static partial class FBoundStarProjectionErasure
                 || !TryExistentialCarrier(application.Name, out var carrier)
                 || StripSourceNullability(projected) is not TypeNode.Fqn p
                 || p.Name != carrier && !ContainsExistentialProjection(application)) return projected;
-            return SharedClassWitness(owner, index, application, closeArgument) ?? projected;
+            var exact = !ContainsExistentialProjection(application);
+            var proof = ClassStorageWitness(owner, index, application, closeArgument, allowIntersection: exact);
+            if (proof == null) return projected;
+            // With no hidden argument the authored constructed class is itself a
+            // genuine witness of the conjunction, even if no ancestor is one.
+            return proof.Interfaces.Length == 0 ? proof.Class : Rewrite(application, preserveConstructedHead: true);
         }
 
         internal TypeNode.Fqn SharedClassWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application,
             Func<int, TypeNode> closeArgument = null)
+            => ClassStorageWitness(owner, index, application, closeArgument, allowIntersection: false)?.Class;
+
+        internal sealed record StorageWitness(TypeNode.Fqn Class, TypeNode.Fqn[] Interfaces);
+
+        BirTypeParameter[] ConstraintParameters(string owner)
         {
-            BirTypeParameter[] parameters;
-            if (Preparation.Bindings.SourceDefinitions.TryGetValue(owner.Name, out var local))
-                parameters = TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray();
-            else if (!referencedWitnessParameters.TryGetValue(owner.Name, out parameters))
-                referencedWitnessParameters[owner.Name] = parameters = References.PhysicalOwnerTypeParametersInPhysicalFrame(owner.Name);
+            if (Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var local))
+                return TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray();
+            if (!referencedWitnessParameters.TryGetValue(owner, out var parameters))
+                referencedWitnessParameters[owner] = parameters = References.PhysicalOwnerTypeParametersInPhysicalFrame(owner);
+            return parameters;
+        }
+
+        string BoundKind(TypeNode.Fqn bound)
+        {
+            if (Preparation.SourceSupertypes.TryGetValue(bound.Name, out var def)) return def.Kind;
+            if (References.PhysicalConstraintType(bound) is not TypeNode.Fqn exact) return null;
+            var native = References.PhysicalTypeForProof(exact.Name, exact.Args?.Length ?? 0);
+            return native?.IsInterface == true ? "interface" : native?.IsClass == true ? "class" : null;
+        }
+
+        internal ProjectedClassStorageFrame StorageFrame(string owner)
+        {
+            if (ConstraintParameters(owner) is not { Length: > 0 } parameters) return null;
+            Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var declaration);
+            return ProjectedClassStorageFrame.Plan(parameters, (index, bound) => {
+                // The local source may say Base<T> even though its emitted constraint is
+                // the Kotlin value interface. A pair of interfaces is not a class intersection.
+                var type = declaration == null ? bound :
+                    Rewrite(bound, NativeProofs.IsPhysicalConstraint(declaration, index, bound)) as TypeNode.Fqn;
+                if (type == null || IsObjectish(type)) return (type, null);
+                if (type.Name != bound.Name && TryExistentialCarrier(bound.Name, out var carrier) && type.Name == carrier)
+                    return (type, "interface");
+                return (type, BoundKind(type));
+            });
+        }
+
+        internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner, ProjectedClassStorageFrame layout)
+        {
+            var primary = ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args;
+            var visited = new bool[primary.Length];
+            var split = false;
+            var unproven = false;
+            TypeNode Close(int i)
+            {
+                if (!visited[i] && StripSourceNullability(owner.Args[i]) is TypeNode.Fqn arg && ContainsExistentialProjection(arg))
+                {
+                    visited[i] = true;
+                    if (ClassStorageWitness(owner, i, arg, Close, allowIntersection: true) is { } proof)
+                    {
+                        primary[i] = proof.Class;
+                        split |= proof.Interfaces.Length != 0;
+                    }
+                    else if (layout.Interfaces.Any(slot => slot.OwnerIndex == i))
+                        unproven = true;
+                }
+                return primary[i];
+            }
+            for (var i = 0; i < primary.Length; i++) Close(i);
+            return split && !unproven ? layout.Close(primary) : null;
+        }
+
+        internal StorageWitness ClassStorageWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application,
+            Func<int, TypeNode> closeArgument, bool allowIntersection)
+        {
+            var parameters = ConstraintParameters(owner.Name);
             var frame = Owners.TryGetValue(owner.Name, out var definition) ? OwnerFrame(definition)
                 : References.NullableTypeFrames.GetValueOrDefault(owner.Name);
             TypeNode[] closed = null;
             closeArgument ??= i => (closed ??= ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args)[i];
             return SharedClassWitness(parameters, frame, "type", index, application,
                 bound => SupertypeGraph.SubstOwnerTvs(bound, BoundArguments(bound, "type", index, owner.Args, closeArgument)),
-                applicationArguments: owner.Args);
+                applicationArguments: owner.Args, allowIntersection: allowIntersection);
         }
 
         static TypeNode[] BoundArguments(TypeNode bound, string scope, int index, TypeNode[] arguments,
@@ -163,12 +228,13 @@ static partial class FBoundStarProjectionErasure
                 BoundArguments(bound, "method", index, arguments, closeArgument));
             return SharedClassWitness(parameters, frame, "method", index, application, CloseBound,
                 local == null ? null : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(local, i, bound)),
-                arguments) ?? projected;
+                arguments)?.Class ?? projected;
         }
 
-        TypeNode.Fqn SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
+        StorageWitness SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
             int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute,
-            Func<int, TypeNode, TypeNode> physicalBound = null, TypeNode[] applicationArguments = null)
+            Func<int, TypeNode, TypeNode> physicalBound = null, TypeNode[] applicationArguments = null,
+            bool allowIntersection = false)
         {
             if (parameters == null || index >= parameters.Length) return null;
             var linked = new HashSet<int> { index };
@@ -207,23 +273,30 @@ static partial class FBoundStarProjectionErasure
             if (bounds.Length == 0) return null;
             TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
                 ? References.PhysicalConstraintType(type) : type;
-            if (!bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound)
-                && (Preparation.SourceSupertypes.TryGetValue(bound.Name, out var def) ? def.Kind == "class"
-                    : Identity(bound) is TypeNode.Fqn exact
-                        && References.PhysicalTypeForProof(exact.Name, exact.Args?.Length ?? 0)?.IsClass == true))) return null;
+            if (!bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class")) return null;
 
             // A nominal Kotlin value interface cannot witness a CLR class bound. Use a real
             // shared base of the possible constructions only if it proves every constraint.
             // Prove the ancestor independently of hidden or variant Kotlin arguments. A
             // Mid<object> inferred from the static view need not be a base of Mid<string>.
             var common = application with { Args = application.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray() };
-            foreach (var (ancestor, isInterface) in SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = common },
-                Preparation.SourceSupertypes, References).Skip(1).Reverse())
-                if (!isInterface && !ContainsExistentialProjection(ancestor)
-                    && bounds.All(bound => IsObjectish(bound) || bound is TypeNode.Fqn required
-                        && SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = ancestor }, Preparation.SourceSupertypes,
-                            References).Any(edge => Identity(edge.spec) == Identity(required)))) return ancestor;
-            return null;
+            var supers = SupertypeGraph.ReachableFromClass(common, Preparation.SourceSupertypes, References).Skip(1).ToArray();
+            StorageWitness split = null;
+            foreach (var (ancestor, isInterface) in supers.Reverse())
+            {
+                if (isInterface || ContainsExistentialProjection(ancestor)) continue;
+                var nominal = SupertypeGraph.ReachableFromClass(ancestor, Preparation.SourceSupertypes, References)
+                    .Select(edge => Identity(edge.spec)).ToHashSet();
+                var missing = bounds.Where(bound => !IsObjectish(bound) && !nominal.Contains(Identity(bound))).ToArray();
+                if (missing.Length == 0) return new(ancestor, []);
+                // The value, not its common base, must implement each additional interface.
+                // Only a projected implementation with independent slots may use this proof.
+                if (allowIntersection && split == null && missing.All(bound => bound is TypeNode.Fqn required
+                    && !ContainsExistentialProjection(required) && supers.Any(edge => edge.isInterface
+                        && Identity(edge.spec) == Identity(required))))
+                    split = new(ancestor, missing.Cast<TypeNode.Fqn>().ToArray());
+            }
+            return split;
         }
 
         internal bool IsCapturedInner(TypeNode type)

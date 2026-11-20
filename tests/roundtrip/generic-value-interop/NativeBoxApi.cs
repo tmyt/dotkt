@@ -3,6 +3,8 @@ using roundtrip.invariantstorage;
 
 namespace GenericValueInterop;
 
+public interface IProjectedMark { }
+
 public interface NativeBoxReceiver
 {
     object Accept(Box<string, string> value);
@@ -16,6 +18,7 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T KeepMarkedStream<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => item;
     static Box<string, string> live = new("initial");
     public static void ResetLive() => live = new("initial");
     public static ref Box<string, string> Live() => ref live;

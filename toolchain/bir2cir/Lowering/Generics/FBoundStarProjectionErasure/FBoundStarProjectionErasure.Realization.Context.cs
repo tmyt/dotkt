@@ -39,6 +39,7 @@ static partial class FBoundStarProjectionErasure
 
     internal sealed class SourceCarrierDeclarations
     {
+        internal Dictionary<string, (string Owner, string Name)> ProjectedConstructors { get; } = new(StringComparer.Ordinal);
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceSlot>> slots = new();
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceInnerFactory>> factories = new();
         internal Dictionary<string, string> PhysicalDeclarationSources { get; } = new(StringComparer.Ordinal);
@@ -83,6 +84,7 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlyDictionary<string, DeclarationBinding> SourceDefinitions => Bindings.SourceDefinitions;
         internal IReadOnlyDictionary<string, string> Aliases { get; }
         internal SourceCarrierDeclarations Declarations { get; } = new();
+        internal List<ProjectedStorageOwner> ProjectedStorage { get; } = new();
         // A proven constructed CLR MethodSpec argument is physical, even when
         // the same spelling in an ordinary Kotlin value slot requires erasure.
         internal Dictionary<BirGraphValue, Dictionary<int, TypeNode>> MethodWitnesses { get; } = new(ReferenceEqualityComparer.Instance);

@@ -34,6 +34,10 @@ class ItemSlot<A : PendingItems.Item> {
 
 class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 
+class MarkedItemSlot<A> where A : PendingItems.Item, A : ResultSource.Mark {
+    var item: A? = null
+}
+
 fun <A : PendingItems.Item?> keepItem(value: A?): A? = value
 
 fun checkLocalMethodBounds(value: ResultSource.ResultItem<*>) {

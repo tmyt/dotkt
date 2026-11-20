@@ -10,6 +10,8 @@ import roundtrip.constrainedbound.PendingItems
 import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
+import roundtrip.constrainedbound.MarkedItemSlot
+import roundtrip.constrainedbound.ResultSource.Mark
 import roundtrip.constrainedbound.localRelatedItem
 import roundtrip.constrainedbound.localItemResult
 import roundtrip.constrainedbound.keepItem
@@ -21,6 +23,9 @@ import roundtrip.constrainedbound.keepBound
 import roundtrip.constrainedbound.ScopedBoundOwner
 import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
+import GenericValueInterop.IProjectedMark
+import GenericValueInterop.NativeBoxApi
+import System.IO.MemoryStream
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
@@ -35,6 +40,34 @@ private class ScopedBoundConsumer : ScopedBoundOwner() {
 }
 
 class ConstrainedNullableBoundTests {
+    private class ClientItem<T>(val payload: T) : PendingItems.Item(), Mark
+    private class MarkedStream<T> : MemoryStream(), IProjectedMark
+    private class StreamSlot<A>(var item: A) where A : MemoryStream, A : IProjectedMark {
+        fun keep(value: A): A = NativeBoxApi.KeepMarkedStream<A>(value)
+    }
+
+    @TestAttribute
+    fun separateClassAndInterfaceBoundsAcceptHeterogeneousProjectedValues() {
+        val number = ClientItem(42L)
+        val text = ClientItem("text")
+        val slot = MarkedItemSlot<ClientItem<*>>()
+        slot.item = number
+        check(slot.item === number)
+        slot.item = text
+        check(slot.item === text)
+        val any: Any = slot
+        check(any is MarkedItemSlot<*> && any::class == MarkedItemSlot::class)
+        val exact = MarkedItemSlot<ClientItem<Long>>()
+        exact.item = number
+        check(exact.item === number)
+        val first = MarkedStream<Long>()
+        val second = MarkedStream<String>()
+        val streams = StreamSlot<MarkedStream<*>>(first)
+        check(streams.item === first && streams.keep(first) === first)
+        streams.item = second
+        check(streams.item === second && streams.keep(second) === second)
+    }
+
     @TestAttribute
     fun constructedAndStarredSubclassesSatisfyTheClassBound() {
         check(localItemResult() == 17L)
