@@ -18,6 +18,7 @@ private fun withCompositeLocal() {
     check(slot.value == "updated")
 }
 fun main() {
+    check(FixtureNative.CompositeRef.InternalTypesKeepClrVisibility())
     withCompositeLocal()
     var evaluations = 0
     check(compositeDiscard(++evaluations) === Unit && evaluations == 1)

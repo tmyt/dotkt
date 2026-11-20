@@ -9,8 +9,15 @@ fun <T> render(content: @Marker () -> T): Int = -1
 
 fun render(content: Int): Int = content
 
-class Tag
-internal object InternalCodes { const val version = 43 }
+class Tag {
+    @System.Runtime.CompilerServices.CompilerGeneratedAttribute
+    internal object NestedCodes { const val version = 44 }
+}
+internal interface Versioned
+internal sealed class CodeGroup : Versioned {
+    companion object { const val version = 45 }
+}
+internal object InternalCodes : CodeGroup() { const val version = 43 }
 class Sample { @get:Marker val number: Int get() = 19 }
 class Writable { @get:Marker var number: Int = 19 }
 @get:Marker val transformedDefault: Int = 19
