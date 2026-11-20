@@ -590,10 +590,14 @@ internal fun BirEmitter.clrExternalMember(
 /** The selected Kotlin declaration's constructed frame, not its fake override's receiver frame. */
 internal fun BirEmitter.externalMemberDeclarationOwner(declaration: IrSimpleFunction, receiver: IrType): TypeNode {
 	val owner = declaration.parent as? IrClass ?: error("Selected external member has no declaration class")
-	val constructed = correspondingSupertypeInstantiation(receiver, owner, allowCapturedArguments = true)
-		?: error("Selected external member declaration is not a supertype of its receiver")
-	return birType(constructed)
+	return selectedMemberOwner(owner, receiver)
 }
+
+/** A member belongs to a constructed classifier, not to the nullable type of the receiver expression. */
+internal fun BirEmitter.selectedMemberOwner(owner: IrClass, receiver: IrType): TypeNode =
+	correspondingSupertypeInstantiation(receiver, owner, allowCapturedArguments = true)
+		?.let { birType(it.makeNotNull()) }
+		?: error("Selected member declaration is not a supertype of its receiver")
 
 /** The Kotlin-facing declaration owner written by dll2klib. This fact is kept distinct from the exact TypeDef name;
  *  an arity clash can rename a projected classifier (`Outer<T>` -> `Outer1`) without changing CLR metadata. */

@@ -9,6 +9,10 @@ import kotlin.clr.byref
 
 fun original(): String = Leaf.Method()
 fun replacement(): String = Middle.Method()
+private fun nullableDispatch(relay: pluginprobe.api.Relay<String>?): String {
+    val bound = relay!!::echo
+    return bound(relay!!.echo(relay!![7]))
+}
 private fun compositeDiscard(value: Int): Any = value
 private fun observe(value: Int) { check(value == 0) }
 private fun withCompositeLocal() {
@@ -18,6 +22,7 @@ private fun withCompositeLocal() {
     check(slot.value == "updated")
 }
 fun main() {
+    check(nullableDispatch(pluginprobe.api.TextRelay()) == "nullable receiver 7")
     check(FixtureNative.CompositeRef.InternalTypesKeepClrVisibility())
     withCompositeLocal()
     var evaluations = 0
