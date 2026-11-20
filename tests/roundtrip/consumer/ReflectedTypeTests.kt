@@ -67,6 +67,7 @@ class ReflectedTypeTests {
         check(reflectAfter<CharSequence> { calls++ } == typeOf<CharSequence>() && calls == 1)
         val direct = typeOf<List<String?>>()
         val imported = reflected<List<String?>>()
+        check(listOf("a", "b").reflected() == 2)
         val composed = reflectedList<String>()
         check(direct == imported && direct == composed)
         check(direct == reflectedInLambda<String>()())
