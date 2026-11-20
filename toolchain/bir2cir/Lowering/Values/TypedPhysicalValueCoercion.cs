@@ -768,8 +768,8 @@ static class TypedPhysicalValueCoercion
         { ReplaceResultStamps(node, actual, includeSty: false); return node; }
         // An erased result can be the original Kotlin function object, not a CLR delegate.
         // Leave the call at its physical return type until its function view is obtained.
-        if (resultUsed && Underlying(declared) is TypeNode.Fn { Suspend: false }
-            && FunctionViewOperand(node, actual, declared, index) is { } functionView)
+        if (resultUsed && invocation && Underlying(declared) is TypeNode.Fn { Suspend: false }
+            && FunctionViewOperand(node, FunctionSlot(actual, declared, index), declared, index) is { } functionView)
         {
             ReplaceResultStamps(node, actual);
             return Cast(functionView, declared);

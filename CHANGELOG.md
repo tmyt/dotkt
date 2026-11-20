@@ -6,7 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - An override returning a generic Kotlin class through its erased interface now fills the base class's covariant method slot.
-- Calling a nominal Kotlin function returned through erased generic storage now obtains its callable view before casting.
+- Kotlin function objects returned by a generic function remain callable and retain their identity.
 - Compiler plugins can look up internal Kotlin classifiers and read their constants from referenced DLLs.
 - A reified function using `typeOf<T>()` can be called across DLLs even when a generic overload has the same name.
 - A generic Kotlin class can be passed to a function with a class upper bound without

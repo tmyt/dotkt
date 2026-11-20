@@ -1,6 +1,8 @@
 package roundtriptests.functionvariance
 
 import NUnit.Framework.TestAttribute
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 import roundtrip.functionvariance.*
 
 private class DerivedConstructorCallbacks : ConstructorCallbacks {
@@ -18,6 +20,8 @@ private class DerivedGenericCallbacks : GenericCallbackBase<Int>(11) {
 }
 
 private class ConsumerInheritedCallbacks : CallbackParent(), InheritedCallbackSlot
+
+private fun replaceCallback(slot: ClrRef<(Int) -> Int>, next: (Int) -> Int) { slot.value = next }
 
 private class ConsumerGenericInheritedCallbacks : GenericInheritedCallbackParent<Int>(43), GenericInheritedCallbackSlot<Int>
 
@@ -41,6 +45,12 @@ class FunctionVarianceTests {
         val function: (Int) -> Int = direct
         check(retainFunctionValue(function)(21) == 42)
         check((retainFunctionValue(function) as Any) === direct)
+        val lambda: (Int) -> Int = { it + 1 }
+        check(retainFunctionValue(lambda) === lambda)
+        check(retainFunctionValue<((Int) -> Int)?>(null) == null)
+        val writable = WritableCallback<String>(lambda)
+        replaceCallback(byref(writable.callback), function)
+        check(writable.callback(21) == 42)
         check(invokeDefault(21, direct) == 42)
         val imported: NominalUnary = NominalTwice()
         check(imported(21) == 42 && CallbackChild(imported).callback(21) == 42)
