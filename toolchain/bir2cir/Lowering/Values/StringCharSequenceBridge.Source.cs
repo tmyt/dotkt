@@ -40,6 +40,9 @@ static partial class StringCharSequenceBridge
         return _fired ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
     }
 
+    internal static IReadOnlyList<BirClassDefinition> EmitPendingAdapter(BirFileDeclaration file) =>
+        _fired && !_adapterEmitted ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
+
     static IReadOnlyList<BirClassDefinition> EmitSourceAdapter(BirFileDeclaration file)
     {
         if (_adapterEmitted) return Array.Empty<BirClassDefinition>();
@@ -313,7 +316,7 @@ static partial class StringCharSequenceBridge
             return SourceWrapAdapter(new BirCallStatic { Owner = new TypeNode.Fqn("kotlin.LibraryKt"), Method = "toString",
                 Sig = new TypeNode[] { new TypeNode.Fqn("object") }, Args = new[] { value } });
         if (conversion == CharSequenceConversion.NullableString)
-            return SourceWrapAdapterNullable(value, env);
+            return SourceWrapAdapterNullable(value, source);
         if (conversion == CharSequenceConversion.Branches && value is BirConditional conditional)
         {
             if (conditional.Then.HasValue) conditional.Then = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Then.Value, env, target));
@@ -415,14 +418,23 @@ static partial class StringCharSequenceBridge
         Type = new TypeNode.Fqn(Adapter), ArgTypes = new TypeNode[] { new TypeNode.Fqn("kotlin.String") }, Args = new[] { value },
     };
 
-    static IBirExpression SourceWrapAdapterNullable(IBirExpression value, SourceBridgeEnv env)
+    internal static bool CanAdaptStringReturn(TypeNode source, TypeNode target) =>
+        IsScalarCharSequence(target)
+        && IsStringTokT(source switch {
+            TypeNode.Nullable optional => optional.Of, TypeNode.Oblivious platform => platform.Of, _ => source,
+        });
+
+    internal static IBirExpression AdaptStringReturn(IBirExpression value, TypeNode source) =>
+        source is TypeNode.Nullable or TypeNode.Oblivious ? SourceWrapAdapterNullable(value, source) : SourceWrapAdapter(value);
+
+    static IBirExpression SourceWrapAdapterNullable(IBirExpression value, TypeNode source)
     {
         IBirExpression read = value;
         BirVariable temp = null;
         if (!ValueStability.IsReReadable(((BirGraphNode)value).Tag))
         {
             var name = "__cswrap$" + System.Threading.Interlocked.Increment(ref _counter);
-            temp = new BirVariable { Name = name, Type = BirGraphValue.CopyType(BirGraphStaticType.Surface(value, env.Vars)) ?? new TypeNode.Fqn("kotlin.String"),
+            temp = new BirVariable { Name = name, Type = BirGraphValue.CopyType(source),
                 Init = OptionalField<IBirExpression>.Of(value) };
             read = new BirLocal { Name = name };
         }

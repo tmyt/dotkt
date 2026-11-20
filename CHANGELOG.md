@@ -16,6 +16,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A generic Kotlin class can be passed to a function with a class upper bound without
   the CLR rejecting its storage type argument.
 - Covariant property overrides on derived classes retain the constructed type arguments of their generic base.
+- A Kotlin base-class slot returning `CharSequence` can dispatch to an override returning `String`, preserving null for nullable properties.
 - A class inheriting an interface default now satisfies a sibling interface's abstract method or accessor slots.
 - A `Nothing`-returning override fills its selected base slot even when the base and derived classes compile together.
 - Compiler plugins can call a referenced interface method on a nullable-typed reference receiver.
