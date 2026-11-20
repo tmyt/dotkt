@@ -121,3 +121,5 @@ interface GenericInheritedCallbackSlot<T> {
 }
 
 class GenericInheritedCallbackChild : GenericInheritedCallbackParent<Int>(40), GenericInheritedCallbackSlot<Int>
+fun <T> retainFunctionValue(value: T): T = value
+class WritableCallback<T>(@kotlin.clr.ClrField var callback: (Int) -> Int)
