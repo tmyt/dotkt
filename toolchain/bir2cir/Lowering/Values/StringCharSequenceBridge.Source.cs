@@ -58,11 +58,24 @@ static partial class StringCharSequenceBridge
             foreach (var type in file.Types.OrEmpty())
                 foreach (var ctor in type.Ctors.OrEmpty())
                     if (ctor.DeclarationId.OrDefault() is string id && ctor.Params.OrDefault() is { } parameters
-                        && parameters.Any(p => IsScalarCharSequence(p.Type.OrDefault())))
+                        && parameters.Any(p => PotentialView(p.Type.OrDefault())))
                         local[(type.Name.Value, id)] = parameters.Select(p => p.Type.OrDefault()).ToArray();
-        return node => node.Type.OrDefault() is not TypeNode.Fqn owner ? null
-            : node.ConstructorDeclarationId.OrDefault() is string id && local.TryGetValue((owner.Name, id), out var slots)
-                ? slots : refs?.OwnerCtorParamTypes(owner.Name);
+        return node => {
+            if (node.Type.OrDefault() is not TypeNode.Fqn owner) return null;
+            if (node.ConstructorDeclarationId.OrDefault() is string id && local.TryGetValue((owner.Name, id), out var slots))
+                return owner.Args is { Length: > 0 } args
+                    ? slots.Select(slot => SubstCallTvs(slot, args, Array.Empty<TypeNode>())).ToArray() : slots;
+            // Reflection supplies only the CLR type of a generated capture,
+            // not its Kotlin nullability. Preserve null when adapting it.
+            return refs?.OwnerCtorParamTypes(owner.Name)?.Select(slot =>
+                IsScalarCharSequence(slot) || IsSourceCharSeqT(slot) ? new TypeNode.Nullable(slot) : slot).ToArray();
+        };
+        static bool PotentialView(TypeNode type) => type switch {
+            TypeNode.Tv { Scope: "type" } => true,
+            TypeNode.Nullable nullable => PotentialView(nullable.Of),
+            TypeNode.Oblivious platform => PotentialView(platform.Of),
+            _ => IsScalarCharSequence(type),
+        };
     }
 
     // This entry owns the continuing source graph. Newly authored callback
