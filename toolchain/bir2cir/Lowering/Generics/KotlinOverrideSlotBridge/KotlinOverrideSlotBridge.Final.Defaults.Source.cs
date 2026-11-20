@@ -55,7 +55,8 @@ static partial class KotlinOverrideSlotBridge
                             !method.SuspendSourceParams.HasValue || !method.SuspendSourceRet.HasValue)) continue;
                     foreach (var source in sources)
                     {
-                        var slotParameters = source.Params.OrEmpty().Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter.Type.OrDefault(),arguments)).ToArray();
+                        var slotParameters = source.Params.OrEmpty().Select(parameter =>
+                            SupertypeGraph.SubstOwnerTvs(FunctionSignatureIdentity.SignatureType(parameter),arguments)).ToArray();
                         var result = SupertypeGraph.SubstOwnerTvs(source.Ret.OrDefault(),arguments);
                         Add(fact.Member.Value,null,spec,SelectedMethodHeader.FromSource(source),null,
                             new[] { SourceImplDescriptor(spec,source.ExplicitClrName.OrDefault() ?? source.Name.OrDefault(),arity,
@@ -190,8 +191,10 @@ static partial class KotlinOverrideSlotBridge
     {
         if (!source.Params.HasValue || !source.Ret.HasValue) return;
         var sourceParameters = source.Params.Value.Select(parameter=>parameter.Type.OrDefault() is {} type
-            ? SupertypeGraph.SubstOwnerTvs(type,sourceArguments) : null).ToArray();
+            ? SupertypeGraph.SubstOwnerTvs(SignatureValueTypes.Of(type),sourceArguments) : null).ToArray();
         if (sourceParameters.Any(type=>type==null)) return;
+        var callSignature = source.Params.Value.Select(parameter=>SupertypeGraph.SubstOwnerTvs(
+            FunctionSignatureIdentity.SignatureType(parameter.Type.Value,parameter.FunctionSignatureType.OrDefault()),sourceArguments)).ToArray();
         var result=SupertypeGraph.SubstOwnerTvs(source.Ret.Value,sourceArguments);
         var parameters=SubstituteParameters(source.TypeParams.OrDefault(),sourceArguments);
         var member=source.ExplicitClrName.OrDefault() ?? source.Name.OrDefault();
@@ -220,9 +223,11 @@ static partial class KotlinOverrideSlotBridge
                 }).ToArray();
                 header.Ret=result;
                 if (parameters!=null) header.TypeParams=parameters;
-                bridge=BuildBridgeSource(declaration,header,slotParameters,slotReturn,
+                bridge=BuildBridgeSource(declaration,header,slotParameters.Select(SignatureValueTypes.Of).ToArray(),slotReturn,
                     $"dotkt${(property ? "$dimprop" : "$dimmethod")}${SafeName(name)}${ordinal++}",
-                    context.IsValue,context.References,callOwner,virtualCall,member,physicalImplementation:true);
+                    context.IsValue,context.References,callOwner,virtualCall,member,physicalImplementation:true,declarationSignature:callSignature);
+                for (var index=0;index<slotParameters.Length;index++)
+                    bridge.Params.Value[index].Type=BirGraphValue.CopyType(slotParameters[index]);
                 if (!property) RoundtripMetadata.AddSourceMethodIdentity(bridge,name);
                 else KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(bridge,name,accessor,association);
                 bridges[key]=bridge;
@@ -249,7 +254,7 @@ static partial class KotlinOverrideSlotBridge
                     || !method.Params.HasValue || method.Params.Value.Length!=parameters.Length || !method.Ret.HasValue
                     || !includeNonVirtual && !(method.Override.OrDefault() || method.Virtual.OrDefault() || method.Abstract.OrDefault()
                         || method.ObjectOverride.OrDefault() || method.PendingOverrideOwner.HasValue)) continue;
-                var types=method.Params.Value.Select(parameter=>parameter.Type.OrDefault()).ToArray();
+                var types=method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray();
                 if (types.All(type=>type!=null) && SamePhysicalSignature(types.Select(type=>SupertypeGraph.SubstOwnerTvs(type,arguments)).ToArray(),
                         SupertypeGraph.SubstOwnerTvs(method.Ret.Value,arguments),parameters,result,context.References,context.IsValue,context.HasClassifier)) return true;
             }
