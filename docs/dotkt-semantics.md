@@ -770,8 +770,8 @@ their own null handling. Direct and reified non-null Number casts still reject n
 
 This is not a Kotlin-reflection implementation. Under the native class-token contract (§2, §5g),
 `Number::class` names its physical alias, `System.Object`. A generic `T::class`
-without classifier operations receives no semantic witness and reports its physical type argument: instantiating it
-with Number also exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
+without classifier operations receives no semantic witness. It looks up the Kotlin declaration associated with
+its physical type argument when one exists (§5g). Instantiating it with Number exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
 not the semantic classifier used by Kotlin `is`/`as` operations. Native `KClass.isInstance` uses that physical
 CLR type's membership; an ordinary Kotlin implementation retains its own method.
 
@@ -1398,7 +1398,7 @@ off it — `qualifiedName` = the FQN verbatim, `simpleName` = its last `.`-segme
 the Kotlin identity is still in hand. It folds two cases:
 
 - **Unbound `classRef`** (`Int::class`, `Foo::class`, a generic `Box::class`, a reified `T::class` after inline-splice):
-  always foldable — the token IS the literal type. `Box::class.simpleName` = `"Box"` (class literals drop type args).
+  foldable for a named non-local type — the token IS the literal type. `Box::class.simpleName` = `"Box"` (class literals drop type args).
 - **Bound `getType`** on a **known-final builtin** — the primitive tower + `String` (`1::class`, `"x"::class`). A final
   type has no subtypes, so the runtime class == the static type carried on the argument's `sty`/`type` slot; the fold is
   sound (and gated to a side-effect-free `const`/`local` receiver so no evaluation is dropped). `1::class.simpleName` =
@@ -1414,7 +1414,9 @@ as declared in source code"), so reporting the Kotlin name (not `Int32`/`System.
 generic declaration with an existential interface, its constructed CLR types and that interface identify the same
 Kotlin classifier. Thus `Box(1)::class`, `Box::class` and `typeOf<Box<String>>().classifier` compare equal and can
 be used interchangeably as map keys, including across DLLs. Its stored `KClass` reports the source name, not the
-physical interface name. A non-generic subclass still reports its own class; classifiers are not inherited from a base.
+physical interface name. A reified `T::class` for the same declaration yields the same key. Reading annotations
+uses the declaration, not its implementation interface. A local class has no qualified name and an anonymous
+object has no simple name either. A subclass still reports its own class; classifier metadata is never inherited.
 
 This does not change a CLR `GetType()` call or erase generic arguments from native CLR types. For dynamic types with
 no Kotlin classifier association, names still come from CLR reflection. For example, a nested CLR type can report

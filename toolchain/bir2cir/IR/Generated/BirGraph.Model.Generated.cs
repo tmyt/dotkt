@@ -14631,6 +14631,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
     public OptionalField<string> Kind { get; set; }
     public OptionalField<bool> Generated { get; set; }
     public OptionalField<TypeNode> Base { get; set; }
+    public OptionalField<string> LocalClassifierName { get; set; }
     public OptionalField<string> CompanionCaptureOwner { get; set; }
     public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
     public OptionalField<string> SemanticOwner { get; set; }
@@ -14760,6 +14761,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (Name.HasValue) { visit((string)Name.Value); }
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (Base.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Base.Value, visit); }
+        if (LocalClassifierName.HasValue) { visit((string)LocalClassifierName.Value); }
         if (CompanionCaptureOwner.HasValue) { visit((string)CompanionCaptureOwner.Value); }
         if (SemanticOwner.HasValue) { visit((string)SemanticOwner.Value); }
         if (Interfaces.HasValue) { foreach (var item0 in Interfaces.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
@@ -15121,6 +15123,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
             && EqualField(Kind, value.Kind, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Generated, value.Generated, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Base, value.Base, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(LocalClassifierName, value.LocalClassifierName, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(CompanionCaptureOwner, value.CompanionCaptureOwner, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(TypeParams, value.TypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(SemanticOwner, value.SemanticOwner, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -15171,6 +15174,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         WriteOptional(writer, "kind", Kind, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "generated", Generated, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "base", Base, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "localClassifierName", LocalClassifierName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionCaptureOwner", CompanionCaptureOwner, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "semanticOwner", SemanticOwner, (writer, value) => { writer.WriteStringValue(value); });
@@ -15223,6 +15227,7 @@ internal sealed record BirClassDefinition : BirGraphValue, IBirTypeDeclaration
         if (Kind.IsPresent) result["kind"] = Kind.IsNull ? null : JsonValue.Create(Kind.Value);
         if (Generated.IsPresent) result["generated"] = Generated.IsNull ? null : JsonValue.Create(Generated.Value);
         if (Base.IsPresent) result["base"] = Base.IsNull ? null : TypeNode.Write(Base.Value);
+        if (LocalClassifierName.IsPresent) result["localClassifierName"] = LocalClassifierName.IsNull ? null : JsonValue.Create(LocalClassifierName.Value);
         if (CompanionCaptureOwner.IsPresent) result["companionCaptureOwner"] = CompanionCaptureOwner.IsNull ? null : JsonValue.Create(CompanionCaptureOwner.Value);
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (SemanticOwner.IsPresent) result["semanticOwner"] = SemanticOwner.IsNull ? null : JsonValue.Create(SemanticOwner.Value);
@@ -23607,8 +23612,10 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
 {
     public override string Tag => "classRef";
     public OptionalField<TypeNode> Type { get; set; }
+    public OptionalField<bool> ReifiedLiteral { get; set; }
     public OptionalField<TypeNode> SuspendFnTypePre { get; set; }
     public OptionalField<bool> KotlinClassifierRef { get; set; }
+    public OptionalField<bool> DefinitionToken { get; set; }
     public override TypeNode? CallBindingTypeHint => Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Type.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault();
@@ -23720,15 +23727,19 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirClassReference value
             && EqualField(Type, value.Type, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(ReifiedLiteral, value.ReifiedLiteral, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(SuspendFnTypePre, value.SuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
-            && EqualField(KotlinClassifierRef, value.KotlinClassifierRef, (left, right) => EqualityComparer<bool>.Default.Equals(left, right));
+            && EqualField(KotlinClassifierRef, value.KotlinClassifierRef, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
+            && EqualField(DefinitionToken, value.DefinitionToken, (left, right) => EqualityComparer<bool>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
         writer.WriteString("k", "classRef");
         WriteOptional(writer, "type", Type, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "reifiedLiteral", ReifiedLiteral, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "suspendFnTypePre", SuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
         WriteOptional(writer, "kotlinClassifierRef", KotlinClassifierRef, (writer, value) => { writer.WriteBooleanValue(value); });
+        WriteOptional(writer, "definitionToken", DefinitionToken, (writer, value) => { writer.WriteBooleanValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -23736,8 +23747,10 @@ internal sealed record BirClassReference : BirGraphNode, IBirExpression, IBirAtt
         var result = new JsonObject();
         result["k"] = "classRef";
         if (Type.IsPresent) result["type"] = Type.IsNull ? null : TypeNode.Write(Type.Value);
+        if (ReifiedLiteral.IsPresent) result["reifiedLiteral"] = ReifiedLiteral.IsNull ? null : JsonValue.Create(ReifiedLiteral.Value);
         if (SuspendFnTypePre.IsPresent) result["suspendFnTypePre"] = SuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(SuspendFnTypePre.Value));
         if (KotlinClassifierRef.IsPresent) result["kotlinClassifierRef"] = KotlinClassifierRef.IsNull ? null : JsonValue.Create(KotlinClassifierRef.Value);
+        if (DefinitionToken.IsPresent) result["definitionToken"] = DefinitionToken.IsNull ? null : JsonValue.Create(DefinitionToken.Value);
         projected?.Invoke(this, result);
         return result;
     }

@@ -124,14 +124,7 @@ static partial class FBoundStarProjectionErasure
         };
         // The physical generic and its existential interface denote one source classifier.
         // Give reflection the actual allocated token, not a convention for parsing CLR names.
-        BirAttribute ClassifierIdentity() => new() {
-            Attr = new TypeNode.Fqn(RoundtripMetadata.RuntimeClassifierAttribute),
-            ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.Type"), new TypeNode.Fqn("System.String") },
-            Args = new IBirAttributeValue[] {
-                new BirClassReference { Type = new TypeNode.Fqn(owner.ErasedName) },
-                new BirConstant { Type = new TypeNode.Fqn("System.String"), Value = new BirLiteral.TextLiteral(owner.Name) },
-            },
-        };
+        BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, owner.Name, false);
         definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
         erased.Attrs = new[] { ClassifierIdentity() };
         if (PublishedApiTypeVisibilityLowering.ResolveVisibility(definition) is { } visibility) erased.Vis = visibility;

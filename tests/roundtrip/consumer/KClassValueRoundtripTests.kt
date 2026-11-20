@@ -47,10 +47,16 @@ class KClassValueRoundtripTests {
         val runtime = token(ImportedPlainBase(1))
         check(mapOf(literal to "registered")[runtime] == "registered")
         check(runtime == classifier && runtime == token(ImportedPlainBase("text")))
+        check(runtime == roundtrip.kclassvalues.reflectedLiteral<ImportedPlainBase<String>>())
+        check(runtime.annotations.any { it is ImportedTyped })
         check(classifier.simpleName == "ImportedPlainBase" && runtime.qualifiedName == "roundtrip.kclassvalues.ImportedPlainBase")
         check(ImportedPlainBase::class.qualifiedName == runtime.qualifiedName)
         check(literal.isInstance(KClassValueImportedPlain()))
         check(token(KClassValueImportedPlain()) == KClassValueImportedPlain::class)
+        class Local<T>(val value: T)
+        val local = token(Local(1))
+        check(local == token(Local("text")) && local.isInstance(Local("text")))
+        check(local.simpleName == "Local" && local.qualifiedName == null)
     }
 
     @TestAttribute

@@ -23,7 +23,7 @@ public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> = thi
 @Suppress("UNCHECKED_CAST")
 public actual inline fun <reified T> Collection<T>.toTypedArray(): Array<T> {
     // Unlike arrayOfNulls<T>, this keeps non-nullable CLR value components native.
-    val result = dotktNewTypedArray(T::class as DotktType, size) as Array<T>
+    val result = dotktNewTypedArray<T>(size, false)
     var index = 0
     for (element in this) result[index++] = element
     return result

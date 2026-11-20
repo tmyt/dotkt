@@ -743,6 +743,7 @@
       "type": "object", "x-dotkt-model": { "name": "BirClassDefinition", "domain": "birCoreValues", "interfaces": ["BirTypeDeclaration"], "loweringKinds": ["struct", "delegate"], "loweringSourceFields": ["clrEvents"], "loweringProperties": { "kotlinSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText" }, "_ownerConstraintDispatchBounds": { "$ref": "#/$defs/ownerConstraintDispatchBoundsText" }, "_syntheticFrameBound": { "type": "boolean" }, "staticCarrier": { "$ref": "#/$defs/birStaticCarrier" }, "companionCarrier": { "$ref": "#/$defs/birCompanionCarrier" }, "roundtripSupertypesPre": { "$ref": "#/$defs/sourceTypeFactsText", "x-dotkt-frame-role": "FrozenSourceFact" }, "roundtripTypeHeaderPending": { "type": "boolean" }, "dotktKotlinMutableCollectionContract": { "$ref": "#/$defs/sourceTypeVectorText", "x-dotkt-frame-role": "FrozenSourceFact" } } },
       "properties": {
         "name": { "type": "string" }, "kind": { "const": "class" }, "generated": { "const": true }, "base": { "oneOf": [{ "$ref": "#/$defs/type" }, { "type": "null" }] },
+        "localClassifierName": { "type": "string", "description": "Source simple name of a local class, or empty for an anonymous object." },
         "companionCaptureOwner": { "type": "string" },
         "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "semanticOwner": { "type": "string" },
         "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
@@ -1128,8 +1129,8 @@
       "required": ["k", "ownerType", "companionType", "name"], "additionalProperties": false
     },
     "birClassReference": {
-      "type": "object", "x-dotkt-model": { "name": "BirClassReference", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinClassifierRef": { "type": "boolean" } } },
-      "properties": { "k": { "const": "classRef" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" } },
+      "type": "object", "x-dotkt-model": { "name": "BirClassReference", "domain": "birCore", "role": "expression", "loweringProperties": { "suspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true }, "kotlinClassifierRef": { "type": "boolean" }, "definitionToken": { "type": "boolean" } } },
+      "properties": { "k": { "const": "classRef" }, "type": { "x-dotkt-representation-role": "ValueType", "$ref": "#/$defs/type" }, "reifiedLiteral": { "type": "boolean" } },
       "required": ["k", "type"], "additionalProperties": false
     },
     "birReflectedType": {

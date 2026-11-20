@@ -227,7 +227,7 @@ static partial class RoundtripMetadata
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
-            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.String"))),
+            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(DefaultBirCarrier.AttributeName, Ctor(Param("System.Int32"), Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKReadOnly, Ctor()),
@@ -269,7 +269,7 @@ static partial class RoundtripMetadata
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
         if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias),
-            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.String"))),
+            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKData, Ctor()),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),

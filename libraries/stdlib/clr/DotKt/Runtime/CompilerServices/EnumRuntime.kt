@@ -168,6 +168,8 @@ private interface EnumRuntimeType {
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.Assembly")
 private interface EnumRuntimeAssembly {
+    @kotlin.clr.ClrIntrinsic("GetType")
+    fun findType(name: String): EnumRuntimeType?
     @kotlin.clr.ClrIntrinsic("GetCustomAttributesData")
     fun getCustomAttributesData(): EnumRuntimeList<EnumRuntimeAttribute>
 }
@@ -422,13 +424,16 @@ private fun EnumRuntimeField.declarationOrdinal(owner: EnumRuntimeAssembly): Int
 
 internal fun readClassifierIdentity(token: StarProjectionType): KotlinClassifierIdentity? {
     val type = token as EnumRuntimeType
+    val name = "DotKt.Runtime.CompilerServices.KotlinClassifierIdentityAttribute"
+    if (type.assembly.findType(name) == null) return null
     val attributes = type.getCustomAttributesData()
     for (index in 0 until attributes.count) {
         val attr = attributes[index]
-        if (!attr.isCompilerCarrier("DotKt.Runtime.CompilerServices.KotlinClassifierIdentityAttribute", type.assembly)) continue
+        if (!attr.isCompilerCarrier(name, type.assembly)) continue
         if (!type.assembly.isCompilerAssembly()) return null
         val args = attr.constructorArguments
-        return KotlinClassifierIdentity(args[0].value as StarProjectionType, args[1].value as String)
+        return KotlinClassifierIdentity(args[0].value as StarProjectionType, args[1].value as StarProjectionType,
+            args[2].value as String, args[3].value as Boolean)
     }
     return null
 }
