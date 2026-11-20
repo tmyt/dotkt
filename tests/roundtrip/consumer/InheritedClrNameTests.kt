@@ -11,6 +11,7 @@ private class ConsumedNamedBound : BoundBody<BoundValue>(), BoundSlot<BoundValue
 private class ConsumedNamedUnit : UnitBody(), ValueSlot<Unit>
 private class ConsumedProperty : PropertyBody(), PropertySlot
 private class ConsumedMutable : MutableBody<String>("before"), MutableSlot<String>
+private class ConsumedExtensionDefault : IntExtensionDefault, TaggedExtensionSlot<Int>
 
 class InheritedClrNameRoundtripTests {
     @TestAttribute
@@ -34,6 +35,10 @@ class InheritedClrNameRoundtripTests {
         assertEquals("before", mutable.value)
         mutable.value = "after"
         assertEquals("after", body.value)
+        val tagged: TaggedExtensionSlot<Int> = ConsumedExtensionDefault()
+        val cell = ExtensionCell<String>(9)
+        assertEquals(9, tagged.exchange(cell, 42))
+        assertEquals(42, cell.n)
     }
 
     @TestAttribute

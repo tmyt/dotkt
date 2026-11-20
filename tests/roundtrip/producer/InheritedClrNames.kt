@@ -6,6 +6,20 @@ interface PropertySlot { val tag: String }
 open class PropertyBody { val tag: String get() = "property" }
 class ProducedProperty : PropertyBody(), PropertySlot
 interface MutableSlot<T> { var value: T }
+class ExtensionCell<R>(var n: Int)
+interface ExtensionSlot<T> { var <R> ExtensionCell<R>.value: T }
+interface TaggedExtensionSlot<T> : ExtensionSlot<T> {
+    fun <R> exchange(cell: ExtensionCell<R>, next: T): T {
+        val old = cell.value
+        cell.value = next
+        return old
+    }
+}
+interface IntExtensionDefault : ExtensionSlot<Int> {
+    override var <R> ExtensionCell<R>.value: Int
+        get() = n
+        set(value) { n = value }
+}
 open class MutableBody<T>(initial: T) { var value: T = initial }
 open class StringBody {
     @kotlin.clr.ClrName("ReadText")
