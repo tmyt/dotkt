@@ -181,7 +181,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             .Where(method => (!inherited || method.Visibility != "private")
                 && method.SourceName == IteratorMember && !method.Static && method.Parameters == 0
                 && method.Arity == 0 && method.SemanticReturn is TypeNode.Fqn ret
-                && IteratorElement(ret, defs, refs) != null)
+                && (NodeType.IsNothing(ret) || IteratorElement(ret, defs, refs) != null))
             .Select(method => new IteratorProvider(owner, method.Name,
                 SupertypeGraph.SubstOwnerTvs(method.Return, args),
                 SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract))
@@ -199,7 +199,8 @@ static partial class ReverseEnumeratorBridgeSynthesis
             yield return new(method.DeclarationSourceName.OrDefault() ?? method.KotlinSourceMember.OrDefault() ?? method.Name.OrDefault(),
                 method.Name.OrDefault(), method.Vis.OrDefault(), method.Static.OrDefault(),
                 method.Params.HasValue ? method.Params.Value.Length : -1, method.TypeParams.OrEmpty().Length,
-                method.Ret.OrDefault(), method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault());
+                method.Ret.OrDefault(), method.RetNothing.OrDefault() ? new TypeNode.Fqn("kotlin.Nothing")
+                    : method.RetKotlinType.OrDefault() ?? method.Ret.OrDefault(), method.Abstract.OrDefault());
     }
 
     static IteratorProvider ReferencedIterator(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
@@ -208,7 +209,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         var candidates = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
             .Where(method => method.Parameters.Length == 0
                 && method.SemanticReturn is TypeNode.Fqn ret
-                && IteratorElement(ret, new Dictionary<string, SupertypeGraph.Def>(), refs) != null)
+                && (NodeType.IsNothing(ret) || IteratorElement(ret, new Dictionary<string, SupertypeGraph.Def>(), refs) != null))
             .Select(method => new IteratorProvider(owner, method.PhysicalName, method.Return, method.SemanticReturn, method.IsAbstract))
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;

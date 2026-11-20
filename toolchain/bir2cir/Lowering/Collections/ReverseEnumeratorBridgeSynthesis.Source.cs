@@ -30,12 +30,24 @@ static partial class ReverseEnumeratorBridgeSynthesis
                     Recv = E(new BirThis()), Method = iterator.Name, Sig = Array.Empty<TypeNode>(),
                     Ret = BirGraphValue.CopyType(iterator.Return), Args = Array.Empty<IBirExpression>(),
                 };
-                var generic = SourceMethod(genericName, nameTaken ? "private" : "public", Constructed(IEnumeratorT, element),
-                    new IBirStatement[] { SourceReturn(new BirNew {
+                IBirExpression result;
+                if (NodeType.IsNothing(iterator.SemanticReturn))
+                {
+                    // The face supplies E, but there is no iterator value to adapt.
+                    iteratorCall.Sty = iterator.SemanticReturn;
+                    result = MaterializedExecutable.ReturnedCall(iteratorCall);
+                }
+                else
+                {
+                    result = new BirNew {
                         Type = Constructed(AdapterName, BirGraphValue.CopyType(element)),
                         ArgTypes = new[] { KotlinIteratorPhysicalProtocol.Carrier(refs) },
                         Args = new IBirExpression[] { iteratorCall }, LocalCtorIndex = 0,
-                    }) });
+                    };
+                    adapterHost ??= root;
+                }
+                var generic = SourceMethod(genericName, nameTaken ? "private" : "public", Constructed(IEnumeratorT, element),
+                    new IBirStatement[] { SourceReturn(result) });
                 if (nameTaken) generic.Generated = true;
                 generic.ClrInterfaceImpls = new[] { SourceDescriptor(Constructed(IEnumerableT, element),
                     GetEnumeratorName, Constructed(IEnumeratorT, element)) };
@@ -51,7 +63,6 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 var appended = new[] { generic, nonGeneric };
                 type.Methods = type.Methods.Value.Concat(appended).ToArray();
                 publishMethods(root, type, appended);
-                adapterHost ??= root;
             }
         if (adapterHost == null) return Array.Empty<BirClassDefinition>();
         var adapter = AdapterSource(AdapterName, refs);
