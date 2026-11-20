@@ -1,4 +1,5 @@
 using static ReferenceMetadataReader;
+using DotKt.Bir;
 using DotKt.Bir.Lowering;
 
 sealed partial class ReferenceMetadataIndex
@@ -17,4 +18,8 @@ sealed partial class ReferenceMetadataIndex
     internal BirTypeParameter[] PhysicalMethodTypeParametersInPhysicalFrame(string identity)
         => PhysicalMethodForParameterFacts(identity) is { } method
             ? method.GetGenericArguments().Select(GenericParamSourceDeclaration).ToArray() : null;
+
+    internal (TypeNode[] Parameters, TypeNode Return)? PhysicalMethodSignatureByIdentity(string identity)
+        => identity != null && _declarationById.TryGetValue(identity, out var member)
+            ? PhysicalDeclarationSignature(member) : null;
 }

@@ -109,7 +109,7 @@ static partial class ExistentialReceiverBinding
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
                     ga, authoredSignature, pc, selectedId,
                     out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
-                    out var erasedResult)
+                    out var erasedResult, out _)
                 && IsReachableReferenceCarrier(referencedReceiver, erasedOwner, refs))
             {
                 declaringOwner = erasedOwner;

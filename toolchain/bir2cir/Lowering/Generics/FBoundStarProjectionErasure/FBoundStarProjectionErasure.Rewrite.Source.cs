@@ -212,7 +212,7 @@ static partial class FBoundStarProjectionErasure
     static TypeNode RewriteSourceMethodArgument(BirGraphValue call, TypeNode argument, int index,
         SourceRewriteState state, bool bound, bool preserveArray)
     {
-        var identity = call.DeclarationIdentityFact.OrDefault();
+        var identity = state.SelectedMethodArgumentSlots.GetValueOrDefault(call) ?? call.DeclarationIdentityFact.OrDefault();
         var owner = SourceSelectedOwner(call) as TypeNode.Fqn;
         var selected = owner != null && identity != null
             && state.Demand.Preparation.Bindings.SourceLocalDeclarations.TryGetValue((owner.Name, identity), out var declaration)
@@ -227,12 +227,14 @@ static partial class FBoundStarProjectionErasure
             is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
         var factory = call switch { BirCallInstance value => value._innerFactoryArguments.OrDefault(),
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
-        return state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
+        var projected = state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
             preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
                 && (PreservesNativeWitnessHead(argument, state.Projection) || factory
                     || state.Demand.NativeProofs.ExactMethodArgument(selected, identity, index)
                     || StripSourceNullability(argument) is TypeNode.Fqn alias && state.Projection.RequiresOpaqueVariantAlias(alias)
                         && !ContainsExistentialProjection(alias) && !state.Projection.ProjectionCanChangeConstruction(alias)));
+        return witness ? state.Projection.MethodClassWitness(selected?.Source as BirFunctionDeclaration, identity,
+            frame, owner, call.ApplicationTypeArguments.Value, index, argument, projected) : projected;
     }
 
     static TypeNode SourceSelectedOwner(BirGraphValue node) => node switch {

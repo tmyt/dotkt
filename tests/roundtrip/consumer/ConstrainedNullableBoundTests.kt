@@ -9,6 +9,7 @@ import roundtrip.constrainedbound.ReferencedIntBoundSink
 import roundtrip.constrainedbound.PendingItems
 import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.localItemResult
+import roundtrip.constrainedbound.keepItem
 import roundtrip.constrainedbound.StreamChunk
 import roundtrip.constrainedbound.firstChunk
 import roundtrip.constrainedbound.UsableBound
@@ -39,6 +40,8 @@ class ConstrainedNullableBoundTests {
         val queue = PendingItems<ResultItem<*>>()
         val numeric = ResultItem(42L)
         val text = ResultItem("text")
+        val projected: ResultItem<*> = text
+        check(keepItem(projected) === text && queue.select(projected).result == "text")
         queue.put(numeric)
         queue.put(text)
         check(queue.get(0) === numeric && queue.get(0).result == 42L)

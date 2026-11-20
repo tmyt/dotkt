@@ -144,10 +144,12 @@ static partial class FBoundStarProjectionErasure
                         sourceProperty, accessor, constructedOwner: referenceOwner);
                 }
         if (refs.TryStarProjectionMember(owner, sourceMember, accessor, arity, authored, count, call.Identity,
-            out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationReturn, out var physicalReturn))
+            out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationReturn, out var physicalReturn, out var slotId))
         {
             CloseResult(declarationReturn);
             call.BindOwner(erasedOwner); call.Name = erasedMethod; call.Parameters(erasedSignature);
+            // The selected slot owns the MethodSpec frame, not a new frontend call identity.
+            if (slotId != null && call.Arguments.Length != 0) state.SelectedMethodArgumentSlots[node] = slotId;
             MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor);
             return Align(physicalReturn, declarationReturn, ownerArguments);
         }

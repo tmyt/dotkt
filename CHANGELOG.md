@@ -13,6 +13,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Reading a nullable class-bounded type parameter from a native generic call or indexer now produces verifiable IL.
 
 - An inherited property such as `message` on a Kotlin exception from another DLL now resolves its getter and preserves virtual dispatch.
+- A star-projected Kotlin subclass can be passed to a class-bounded generic method without a CLR constraint exception.
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
 - An inline member's `super` call keeps its original base implementation when expanded outside the declaring class.
 - Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.

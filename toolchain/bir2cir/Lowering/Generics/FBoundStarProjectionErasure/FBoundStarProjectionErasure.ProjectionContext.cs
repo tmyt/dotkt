@@ -15,6 +15,7 @@ static partial class FBoundStarProjectionErasure
         readonly Func<string, ProjectionDeclaration> declaration;
         readonly CurrentPhysicalTypeView currentPhysical;
         readonly Dictionary<string, BirTypeParameter[]> referencedWitnessParameters = new(StringComparer.Ordinal);
+        readonly Dictionary<string, BirTypeParameter[]> referencedMethodWitnessParameters = new(StringComparer.Ordinal);
         internal CurrentDeclarationPreparation Preparation { get; }
         internal IReadOnlyDictionary<string, Owner> Owners { get; }
         internal ReferenceMetadataIndex References { get; }
@@ -129,9 +130,37 @@ static partial class FBoundStarProjectionErasure
                 parameters = TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray();
             else if (!referencedWitnessParameters.TryGetValue(owner.Name, out parameters))
                 referencedWitnessParameters[owner.Name] = parameters = References.PhysicalOwnerTypeParametersInPhysicalFrame(owner.Name);
-            if (parameters == null || index >= parameters.Length) return null;
             var frame = Owners.TryGetValue(owner.Name, out var definition) ? OwnerFrame(definition)
                 : References.NullableTypeFrames.GetValueOrDefault(owner.Name);
+            return SharedClassWitness(parameters, frame, "type", index, application,
+                bound => SupertypeGraph.SubstOwnerTvs(bound, owner.Args));
+        }
+
+        internal TypeNode MethodClassWitness(BirFunctionDeclaration local, string identity, NullableRepresentationFrame frame,
+            TypeNode.Fqn owner, TypeNode[] arguments, int index, TypeNode source, TypeNode projected)
+        {
+            if (StripSourceNullability(source) is not TypeNode.Fqn { Args.Length: > 0 } application
+                || !TryExistentialCarrier(application.Name, out var carrier)
+                || StripSourceNullability(projected) is not TypeNode.Fqn p || p.Name != carrier) return projected;
+            var parameters = local?.TypeParams.OrDefault();
+            if (local == null && identity != null && !referencedMethodWitnessParameters.TryGetValue(identity, out parameters))
+                referencedMethodWitnessParameters[identity] = parameters = References.PhysicalMethodTypeParametersInPhysicalFrame(identity);
+            var common = SharedClassWitness(parameters, frame, "method", index, application,
+                bound => SubstituteDeclarationTypeArguments(bound, owner?.Args ?? [], arguments));
+            if (common == null) return projected;
+            // Passing a Leaf as Root is identity preserving; passing List<Leaf> as List<Root>
+            // is not. A common ancestor cannot supply that nested CLR construction.
+            bool NeedsExact(TypeNode type) => type != null && NeedsOperandWitness(SignatureValueTypes.Of(type), index, "method");
+            if (local != null ? local.Params.OrEmpty().Any(p => NeedsExact(p.Type.OrDefault())) || NeedsExact(local.Ret.OrDefault())
+                : References.PhysicalMethodSignatureByIdentity(identity) is not {} signature
+                    || signature.Parameters.Any(NeedsExact) || NeedsExact(signature.Return)) return projected;
+            return common;
+        }
+
+        TypeNode.Fqn SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
+            int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute)
+        {
+            if (parameters == null || index >= parameters.Length) return null;
             var linked = new HashSet<int> { index };
             if (frame != null && frame.PhysicalArity == parameters.Length)
             {
@@ -140,17 +169,17 @@ static partial class FBoundStarProjectionErasure
                     && frame.NullableIndices.Contains(slot.SourceIndex))
                 {
                     var ordinary = frame.SourcePosition(slot.SourceIndex);
-                    var nullable = frame.NullableVariable(new TypeNode.Tv("type", slot.SourceIndex)).I;
+                    var nullable = frame.NullableVariable(new TypeNode.Tv(scope, slot.SourceIndex)).I;
                     // A : nullableA is an edge between two physical slots for the same source A.
                     // Closing both to one class satisfies that edge, not any unrelated B : A.
-                    if (parameters[ordinary].Constraints.OrEmpty().Contains(new TypeNode.Tv("type", nullable)))
+                    if (parameters[ordinary].Constraints.OrEmpty().Contains(new TypeNode.Tv(scope, nullable)))
                     { linked.Add(ordinary); linked.Add(nullable); }
                 }
             }
             if (linked.Any(i => parameters[i].SpecialConstraints.OrEmpty().Any(special => special != "class"))) return null;
             var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty())
-                .Where(bound => bound is not TypeNode.Tv { Scope: "type" } tv || !linked.Contains(tv.I))
-                .Select(bound => SupertypeGraph.SubstOwnerTvs(bound, owner.Args)).Distinct().ToArray();
+                .Where(bound => bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
+                .Select(substitute).Distinct().ToArray();
             if (bounds.Length == 0) return null;
             TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
                 ? References.PhysicalConstraintType(type) : type;

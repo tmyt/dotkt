@@ -30,16 +30,21 @@ class ItemSlot<A : PendingItems.Item> {
     var item: A? = null
 }
 
+fun <A : PendingItems.Item> keepItem(value: A): A = value
+
 class PendingItems<A : PendingItems.Item> {
     abstract class Item
     private val items = ArrayList<A>()
     fun put(item: A) { items.add(item) }
     fun get(index: Int): A = items[index]
+    fun <T : Item> select(value: T): T = value
 }
 
 fun localItemResult(): Long {
     val slot = ItemSlot<ResultSource.ResultItem<Long>>()
     slot.item = ResultSource.ResultItem(17L)
+    val projected: ResultSource.ResultItem<*> = slot.item!!
+    check(keepItem(projected) === projected)
     return slot.item!!.result
 }
 

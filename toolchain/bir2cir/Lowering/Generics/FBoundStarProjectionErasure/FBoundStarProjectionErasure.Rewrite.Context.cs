@@ -21,6 +21,7 @@ static partial class FBoundStarProjectionErasure
         readonly Dictionary<BirGraphValue, TypeNode> arrayElements = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BirArrayGet> projectedReads = new(ReferenceEqualityComparer.Instance);
         readonly HashSet<BirFunctionDeclaration> normalizedMethods = new(ReferenceEqualityComparer.Instance);
+        internal Dictionary<BirGraphValue, string> SelectedMethodArgumentSlots { get; } = new(ReferenceEqualityComparer.Instance);
 
         internal SourceRewriteState(CarrierRealizationContext realization,
             Func<TypeNode, IBirExpression, IBirExpression> componentPredicate,
