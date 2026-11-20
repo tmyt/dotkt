@@ -150,10 +150,7 @@ static partial class MemberCallSubstitution
             var elements = FactoryElems(arguments, local?.VarargPositions ?? refs.DeclarationFactoryVarargPositions(declarationId));
             if (elements == null || typeArguments == null) return null;
             var frame = local != null ? local.Frame : refs.NullableMethodFrame(declarationId);
-            var elementSlot = frame?.StorageIndices.Contains(0) == true
-                ? frame.Variable(new TypeNode.Tv("method", 0), NullableRepresentationFrame.Role.Storage).I
-                : frame?.SourcePosition(0) ?? 0;
-            var element = typeArguments[elementSlot];
+            var element = typeArguments[frame?.SourcePosition(0) ?? 0];
             if (element == null) return null;
             if (collectionKind == "set")
             {

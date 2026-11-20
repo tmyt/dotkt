@@ -160,6 +160,9 @@ internal interface StarProjectionType {
     @kotlin.clr.ClrIntrinsic("GetMethods")
     fun getMethods(): Array<StarProjectionMethod>
 
+    @kotlin.clr.ClrIntrinsic("GetMethod")
+    fun functionInvoke(name: String): StarProjectionMethod?
+
     @kotlin.clr.ClrIntrinsic("GetConstructors")
     fun getConstructors(flags: StarProjectionBindingFlags): Array<StarProjectionConstructor>
 

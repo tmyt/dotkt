@@ -152,10 +152,6 @@ sealed class NullableRepresentationTypes
             // follows the ordinary/native argument frame, not a value slot's
             // independently demanded storage companion.
             TypeNode.ByRef byRef => new TypeNode.ByRef(NativeReferent(byRef.Of)),
-            // Kotlin function storage retains the original object, which may
-            // implement invoke without inheriting a CLR delegate. Invocation
-            // and native delegate positions still use the callable view.
-            TypeNode.Fn { Suspend: false, Clr: null } when storage => new TypeNode.Fqn("object"),
             TypeNode.Fn function => function with {
                 Ret = Argument(function.Ret), Params = function.Params.Select(Slot).ToArray(),
                 Recv = function.Recv == null ? null : Slot(function.Recv), Ctx = function.Ctx?.Select(Slot).ToArray(),

@@ -37,6 +37,17 @@ internal fun kotlinFunctionView(value: Any?, arity: Int): Any? {
     } finally { exitFunctionViews(cell) }
 }
 
+// A generic value slot can close over the original nominal class or over
+// its callable delegate. Keep the original unless the exact slot admits a view.
+@PublishedApi
+internal fun kotlinFunctionSlot(value: Any?, slot: StarProjectionType): Any? {
+    if (value !is KotlinFunctionSource || slot.isAssignableFrom(value.starProjectionRuntimeType())) return value
+    if (!(FunctionDelegate::class as StarProjectionType).isAssignableFrom(slot)) return value
+    val invoke = slot.functionInvoke("Invoke") ?: return value
+    val view = kotlinFunctionView(value, invoke.getParameters().size) ?: return value
+    return if (slot.isAssignableFrom(view.starProjectionRuntimeType())) view else value
+}
+
 @kotlin.clr.ClrTypeAlias("System.Delegate")
 @PublishedApi
 internal abstract class FunctionDelegate {
