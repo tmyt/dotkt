@@ -91,7 +91,11 @@ readonly = "roundtriptests.iterableidentity.ImportedIterableChild"
 child = next(item for item in iterable["types"] if item["name"] == readonly)
 view = next(item for item in iterable["types"]
             if any(fact.get("name") == readonly for fact in facts(item, "KotlinType")))
-assert child["base"]["name"] == "roundtrip.iterableidentity.ReadOnlyIterable`2"
+readonly_base = next(item for item in iterable_producer["types"]
+                     if item["name"] == "roundtrip.iterableidentity.ReadOnlyIterable")
+arity = len(readonly_base["typeParams"])
+assert child["base"] == {"t": "fqn", "name": f"{readonly_base['name']}`{arity}",
+                         "args": [tv(i) for i in range(arity)]}
 assert any(edge["name"] == "roundtrip.iterableidentity.ReadOnlyIterable$star" for edge in view["interfaces"])
 assert not any(edge["name"] == "DotKt.Runtime.CompilerServices.KotlinMutableIterableClassifier"
                for declaration in (child, view) for edge in declaration.get("interfaces", []))
@@ -114,6 +118,6 @@ assert not any(item.get("k") == "callStatic" and item.get("method") == inline["n
                and item.get("owner", {}).get("name") == payload["owner"] for item in nodes(iterable))
 spliced, = [item for item in nodes(iterable) if item.get("k") == "new"
             and item.get("type", {}).get("name") == selected_new["type"]["name"]]
-assert spliced["type"]["args"] == [{"t": "fqn", "name": "System.String"}] * 2
+assert spliced["type"]["args"] == [{"t": "fqn", "name": "System.String"}] * len(declaration["typeParams"])
 assert spliced["memberRef"]["kind"] == "ctor" and spliced["memberRef"]["declaringType"] == spliced["type"]
 print("opaque direct/chained results retain exact constructor frames; imported/inline classifiers stay readonly")
