@@ -28,8 +28,11 @@ private class MapEntryView<E>(val source: Set<E>) : AbstractSet<E>(), EntryView<
     override val size get() = source.size
     override fun iterator() = source.iterator()
 }
-private class NarrowMap<K, V>(source: Map<K, V>) : AbstractMap<K, V>() {
+private open class NarrowMap<K, V>(source: Map<K, V>) : AbstractMap<K, V>() {
     override val entries: EntryView<Map.Entry<K, V>> = MapEntryView(source.entries)
+}
+private class KeyMap(source: Map<Key<Any?>, String>) : NarrowMap<Key<Any?>, String>(source) {
+    override val entries: EntryView<Map.Entry<Key<Any?>, String>> get() = super.entries
 }
 private fun <K, V> baseEntries(map: AbstractMap<K, V>): Set<Map.Entry<K, V>> = map.entries
 
@@ -38,6 +41,8 @@ class InheritedMapSlotTests {
         val map = NarrowMap(mapOf("key" to 7))
         check(baseEntries(map) === map.entries)
         check(map.entries.size == 1)
+        val keyMap = KeyMap(mapOf(Key<Any?> { "key" } to "value"))
+        check(baseEntries(keyMap) === keyMap.entries && keyMap.entries.single().value == "value")
     }
 
     @TestAttribute fun dispatchesInheritedAndRedeclaredSlotsThroughClosedInterface() {

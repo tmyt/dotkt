@@ -8,6 +8,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Compiler plugins can look up internal Kotlin classifiers and read their constants from referenced DLLs.
 - A generic Kotlin class can be passed to a function with a class upper bound without
   the CLR rejecting its storage type argument.
+- Covariant property overrides on derived classes retain the constructed type arguments of their generic base.
 - Kotlin classes implementing ordinary function types can be passed and invoked as functions,
   including through interfaces imported from another DLL.
 
