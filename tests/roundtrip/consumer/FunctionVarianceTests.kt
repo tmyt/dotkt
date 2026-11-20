@@ -45,6 +45,10 @@ class FunctionVarianceTests {
         val function: (Int) -> Int = direct
         check(retainFunctionValue(function)(21) == 42)
         check((retainFunctionValue(function) as Any) === direct)
+        val fromBox = boxedValue(function).value
+        val fromList = singletonValue(function).single()
+        check(fromBox(21) == 42 && (fromBox as Any) === direct)
+        check(fromList(21) == 42 && (fromList as Any) === direct)
         val lambda: (Int) -> Int = { it + 1 }
         check(retainFunctionValue(lambda) === lambda)
         check(retainFunctionValue<((Int) -> Int)?>(null) == null)
