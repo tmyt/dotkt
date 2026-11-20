@@ -1,5 +1,7 @@
 package roundtrip.throwablesource
 
+open class LibraryArgumentError(message: String) : IllegalArgumentException(message)
+
 fun acceptThrowable(error: Throwable): String? = error.message
 fun echoException(error: Exception): Exception = error
 fun echoRuntimeException(error: RuntimeException): RuntimeException = error

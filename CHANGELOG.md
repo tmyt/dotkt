@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- An inherited property such as `message` on a Kotlin exception from another DLL now resolves its getter and preserves virtual dispatch.
 - An exhaustive `when` inside an inline function can be spliced locally or from a DLL without an unresolved compiler intrinsic.
 - Strings passed to local constructors taking a polymorphic `CharSequence` are adapted to the selected parameter, including nullable values.
 - Generic classes can omit a noncapturing lambda argument in constructors and member functions without producing an invalid delegate owner.

@@ -517,7 +517,7 @@ static partial class MemberCallSubstitution
         var hasIdentity = node.HasIdentity(out var sourceProperty, out var sourceKind);
         var propertyName = hasIdentity ? OptionalField<string>.Of(sourceProperty) : default;
         var propertyAccessor = hasIdentity ? OptionalField<string>.Of(sourceKind) : default;
-        var super = marker == null || extension != null ? node.Super : default;
+        var super = isStatic ? default : node.Super;
         return writes
             ? new BirPropertySet { Type = CopyCallType(owner), Name = property, Static = isStatic, Recv = receiver,
                 PropertyName = propertyName, PropertyAccessor = propertyAccessor, DeclarationId = node.DeclarationId,
