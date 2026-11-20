@@ -193,9 +193,8 @@ internal static class MetadataProjectionProbe
         md.AddCustomAttribute(semantic, nullableCtor, B(1, 0, 2, 0, 0));
         md.AddCustomAttribute(physical, foreignCtor, B(0));
         var carrier = tool.GetType("DotKt.Bir.BirCarrier", true)!;
-        var version = (string)carrier.GetField("JsonV1")!.GetRawConstantValue()!;
-        var bytes = (byte[])carrier.GetMethod("EncodeBody", [typeof(string), typeof(JsonNode)])!.Invoke(null,
-            [version, new JsonObject { ["owner"] = owner }])!;
+        var version = (string)carrier.GetField("MessagePackV1")!.GetRawConstantValue()!;
+        var bytes = MessagePack.MessagePackSerializer.ConvertFromJson(new JsonObject { ["owner"] = owner }.ToJsonString());
         for (var index = 0; index < copies; index++)
             md.AddCustomAttribute(wrongTarget ? assembly : physical, carrierCtor,
                 malformed ? B(0) : Blob(blob =>

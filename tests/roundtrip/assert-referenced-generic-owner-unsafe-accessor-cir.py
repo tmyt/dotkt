@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 from collections import Counter
@@ -39,7 +39,7 @@ for call in calls:
 assert not any(owner.get("name", "").startswith("dotkt$unsafe$holder$") for owner in root["types"])
 
 def facts(declaration, name):
-    return [decoded_types[id(attr)] if name == "KotlinType" else json.loads(base64.b64decode(attr["args"][1]["bytes"]))
+    return [decoded_types[id(attr)] if name == "KotlinType" else metadata_record(attr["args"])
             for attr in declaration.get("attrs", [])
             if attr.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 

@@ -158,7 +158,7 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
 ### Carrier envelopes
 - `KotlinTypeVisibilityAttribute(string version, byte[] content)` records source visibility for
   internal Kotlin classifiers and for types whose physical CLR accessibility is widened. Its
-  `bir-json/1` payload is `{visibility}` in Kotlin visibility vocabulary. dll2klib retains
+  MessagePack payload is `{visibility}` in Kotlin visibility vocabulary. dll2klib retains
   an internal classifier in the dependency KLIB with Kotlin internal visibility: IR plugins can
   inspect its declaration, while ordinary non-friend Kotlin source cannot access it.
   Ordinary CLR declarations without this carrier retain their ECMA-335 accessibility projection.
@@ -173,12 +173,10 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   not by repeating the base declaration's annotation. The full override closure makes this independent of source
   order; a newly introduced setter over a `val` has no inherited setter declaration and is not widened with its getter.
 - **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
-  codec identifier. `bir-json/1` represents structured UTF-8 JSON; `bir-msgpack/1` represents MessagePack maps
-  with the same logical keys and values. Source alias, executable inline/default/constructor-adapter, and
-  TypeNode carriers (`KotlinType`, `KotlinNullableGeneric`, `KotlinCollectionIdentity`,
-  `KotlinSuspendFunctionType`, `KotlinSuspendResult`) emit MessagePack. Remaining metadata object carriers
-  emit JSON until their typed codecs migrate. Neither identifier is a
-  compiler-compatibility promise.
+  codec identifier. All structured BIR metadata, including declaration identity, supertypes, bounds and
+  visibility, is written as a MessagePack record. Scalar CLR markers and external attributes are not BIR.
+  Runtime generic enum reflection uses the exact member names from a scalar `KotlinEnumRuntimeApi`
+  attribute and ordinal-marked enum literals; it does not load a compiler codec.
 - `bir-msgpack+deflate/1` is one complete raw RFC 1951 DEFLATE stream of the same MessagePack bytes,
   without a zlib/gzip wrapper, dictionary or shared assembly table. It is an explicitly registered codec;
   readers require stream completion, no trailing compressed data and no trailing decoded MessagePack value.
@@ -203,9 +201,8 @@ continues to exclude its DLLs from projection because its dedicated frontend KLI
   With the selected fallback policy, the strict runtime reader decoded the same corpus in about 26 ms
   with about 22 MiB of managed allocation for transport buffers/output, excluding BIR parsing and the
   already-materialized input corpus. These are reference measurements, not performance guarantees.
-- `BirCarrier` entry points select the declared codec. Typed binary domains supply their JSON and MessagePack
-  callbacks through `BirCarrier.MessagePack.cs`; the remaining domains use JSON-only overloads in `TypeNode.cs`
-  until they migrate. Unsupported identifiers fail with `NotSupportedException`, never silent mis-decoding.
+- Readers dispatch on the declared codec. Source file formats and diagnostic JSON views are independent
+  of embedded transport; no reader guesses an attribute's format from its content.
 - MessagePack scalar strings use UTF-8 unless the logical UTF-16 value contains a lone surrogate. Such strings
   use extension type `1`, whose payload is the complete sequence of little-endian 16-bit code units. Map keys
   retain their logical names; integer signedness/width and raw floating-point bits remain schema-owned facts.

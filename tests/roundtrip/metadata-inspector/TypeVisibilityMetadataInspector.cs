@@ -32,10 +32,11 @@ internal static class TypeVisibilityMetadataInspector
                     md.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType()) == Carrier).ToArray();
             Require(attributes.Length == 1, name + ": expected one declaration visibility carrier");
             var blob = md.GetBlobReader(attributes[0].Value);
-            Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "wrong carrier envelope");
+            Require(blob.ReadUInt16() == 1, "wrong carrier envelope");
+        var codec = blob.ReadSerializedString() ?? throw new InvalidDataException("missing metadata codec");
             var length = blob.ReadInt32();
             Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid carrier length");
-            using var declaration = JsonDocument.Parse(blob.ReadBytes(length));
+            using var declaration = JsonSerializer.SerializeToDocument(DotKt.Bir.BirCarrier.DecodeMetadata(codec, blob.ReadBytes(length)));
             Require(declaration.RootElement.GetProperty("visibility").GetString() == "internal", "source fact changed");
             Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected carrier arguments");
             var klass = fragment.Class.Single(klass => QualifiedName(fragment, klass.FqName) == Package + "." + name);

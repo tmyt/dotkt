@@ -1,5 +1,7 @@
 """Inspect carriers through their shared typed codecs in the existing C# inspector."""
+import atexit
 import json
+import os
 import subprocess
 
 
@@ -24,3 +26,20 @@ def executable_payload(attribute, inspector):
     return json.loads(subprocess.check_output([
         "dotnet", inspector, "--decode-carrier", codec, attribute["args"][1]["bytes"],
     ], text=True))
+
+_record_reader = None
+
+def metadata_record(arguments):
+    """Read declaration records with the production codec; reuse one inspector per fixture."""
+    global _record_reader
+    if _record_reader is None:
+        _record_reader = subprocess.Popen(
+            ["dotnet", os.environ["METADATA_INSPECTOR_DLL"], "--decode-metadata-lines"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        def finish():
+            _record_reader.stdin.close()
+            _record_reader.wait()
+        atexit.register(finish)
+    request = [arguments[0]["value"], arguments[1]["bytes"]]
+    print(json.dumps(request), file=_record_reader.stdin, flush=True)
+    return json.loads(_record_reader.stdout.readline())

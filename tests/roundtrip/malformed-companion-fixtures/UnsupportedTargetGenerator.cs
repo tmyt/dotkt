@@ -47,11 +47,12 @@ md.AddCustomAttribute(MetadataTokens.EntityHandle(TableIndex.Assembly, 1), assem
 md.AddCustomAttribute(fileAttr, noArgCtor, Attr(_ => { }));
 md.AddCustomAttribute(companionAttr, noArgCtor, Attr(_ => { }));
 md.AddCustomAttribute(interfaceImpl, companionCtor, Attr(blob => {
-    SerString(blob, "bir-json/1");
-    var payload = System.Text.Encoding.UTF8.GetBytes(
-        staticCarrier
-            ? "{\"owner\":\"Fixture.Implementation\"}"
-            : "{\"receiver\":{\"t\":\"fqn\",\"name\":\"Fixture.Implementation\"},\"name\":\"bad\",\"kind\":\"function\"}");
+    SerString(blob, "bir-msgpack/1");
+    byte[] payload = staticCarrier
+        ? [0x81, 0xa5, .."owner"u8, 0xb6, .."Fixture.Implementation"u8]
+        : [0x83, 0xa8, .."receiver"u8, 0x82, 0xa1, .."t"u8, 0xa3, .."fqn"u8,
+           0xa4, .."name"u8, 0xb6, .."Fixture.Implementation"u8, 0xa4, .."name"u8, 0xa3, .."bad"u8,
+           0xa4, .."kind"u8, 0xa8, .."function"u8];
     blob.WriteInt32(payload.Length);
     blob.WriteBytes(payload);
 }));

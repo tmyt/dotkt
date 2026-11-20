@@ -51,6 +51,16 @@ if (args.Length == 2 && args[0] is "--constructor-kinds" or "--native-constructo
     return;
 }
 
+if (args is ["--decode-metadata-lines"])
+{
+    while (Console.ReadLine() is { } line)
+    {
+        var fields = JsonSerializer.Deserialize<string[]>(line)!;
+        Console.WriteLine(BirCarrier.DecodeMetadata(fields[0], Convert.FromBase64String(fields[1])).ToJsonString());
+    }
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--decode-type-carriers")
 {
     using var input = JsonDocument.Parse(Console.In.ReadToEnd());
@@ -1418,7 +1428,7 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
         foreach (var attribute in (type["attrs"] as JsonArray ?? []).OfType<JsonObject>())
             if (Text(attribute["attr"]?["name"]) == StaticCarrierAttribute)
             {
-                var payload = BirCarrier.DecodeBody(Text(attribute["args"]?[0]?["value"])!,
+                var payload = BirCarrier.DecodeMetadata(Text(attribute["args"]?[0]?["value"])!,
                     Convert.FromBase64String(Text(attribute["args"]?[1]?["bytes"])!));
                 staticOwners.Add(Text(payload["owner"])!, Text(type["name"])!);
             }
@@ -1956,7 +1966,7 @@ static void VerifyDll(string path)
         var payload = blob.ReadBytes(length);
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0,
             "unexpected named arguments in KotlinCompanionAttribute");
-        using var doc = JsonDocument.Parse(BirCarrier.DecodeBody(version, payload).ToJsonString());
+        using var doc = JsonDocument.Parse(BirCarrier.DecodeMetadata(version, payload).ToJsonString());
         var root = doc.RootElement;
         var carrierKind = root.GetProperty("kind").GetString();
         Require(carrierKind is "nested" or "sidecar", "companion carrier kind is neither nested nor sidecar");
@@ -2690,7 +2700,7 @@ static bool HasCarrierOwner(MetadataReader md, TypeDefinitionHandle handle, stri
         var version = blob.ReadSerializedString();
         var length = blob.ReadInt32();
         if (version is null || length < 0 || length > blob.RemainingBytes - 2) return false;
-        using var doc = JsonDocument.Parse(BirCarrier.DecodeBody(version, blob.ReadBytes(length)).ToJsonString());
+        using var doc = JsonDocument.Parse(BirCarrier.DecodeMetadata(version, blob.ReadBytes(length)).ToJsonString());
         return blob.ReadUInt16() == 0 && blob.RemainingBytes == 0 &&
             doc.RootElement.TryGetProperty("owner", out var value) && value.GetString() == owner;
     }
@@ -2820,7 +2830,7 @@ static (string Version, byte[] Payload) CarrierPayload(
 static JsonDocument DecodeCarrierContent(string version, byte[] payload) =>
     JsonDocument.Parse(version == BirCarrier.MessagePackV1
         ? MessagePack.MessagePackSerializer.ConvertToJson(payload)
-        : BirCarrier.DecodeBody(version, payload).ToJsonString());
+        : BirCarrier.DecodeMetadata(version, payload).ToJsonString());
 
 static void VerifyNestedTypeCarriers(string path)
 {

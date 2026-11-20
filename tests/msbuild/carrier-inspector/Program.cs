@@ -14,11 +14,19 @@ foreach (var handle in metadata.CustomAttributes)
     var owner = metadata.GetTypeDefinition(metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType());
     if (metadata.GetString(owner.Namespace) != "DotKt.Runtime.CompilerServices") continue;
     var name = metadata.GetString(owner.Name);
-    if (name is not ("KotlinInlineAttribute" or "KotlinDefaultAttribute" or "KotlinTypeAliasAttribute"
-        or "KotlinTypeAttribute")) continue;
+    // Inspect every embedded record declared by the compiler, including newly
+    // added carriers. Skip native scalar attributes based on their actual ctor.
+    var signature = metadata.GetBlobReader(metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).Signature);
+    signature.ReadSignatureHeader();
+    var arity = signature.ReadCompressedInteger();
+    if (signature.ReadSignatureTypeCode() != SignatureTypeCode.Void || arity is not (2 or 3)) continue;
+    if (arity == 3 && signature.ReadSignatureTypeCode() != SignatureTypeCode.Int32) continue;
+    if (signature.ReadSignatureTypeCode() != SignatureTypeCode.String ||
+        signature.ReadSignatureTypeCode() != SignatureTypeCode.SZArray ||
+        signature.ReadSignatureTypeCode() != SignatureTypeCode.Byte || signature.RemainingBytes != 0) continue;
     var blob = metadata.GetBlobReader(attribute.Value);
     if (blob.ReadUInt16() != 1) throw new Exception("Invalid attribute prolog");
-    int? index = name == "KotlinDefaultAttribute" ? blob.ReadInt32() : null;
+    int? index = arity == 3 ? blob.ReadInt32() : null;
     var codec = blob.ReadSerializedString();
     var length = blob.ReadInt32();
     var content = blob.ReadBytes(length);

@@ -163,7 +163,7 @@ internal sealed class MetadataAttributes
             var attr = Decode(name, exact[0].Value);
             if (attr.StringValue is not { } version || attr.BytesValue is not { } bytes)
                 throw new BadImageFormatException("expected (version, byte[]) carrier arguments");
-            var body = BirCarrier.DecodeBody(version, bytes);
+            var body = BirCarrier.DecodeMetadata(version, bytes);
             return System.Text.Json.JsonDocument.Parse(body.ToJsonString(), DotKt.Bir.BirJson.DocOptions);
         }
         catch (Exception ex)
@@ -246,6 +246,7 @@ internal sealed class MetadataAttributes
         }
         if (name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
             name is not (DotKtNs + "KotlinFileClassAttribute"
+                or DotKtNs + "KotlinEnumRuntimeApiAttribute"
                 or DotKtNs + "KotlinReadOnlyAttribute"
                 or DotKtNs + "KotlinLateinitAttribute"
                 or DotKtNs + "KotlinFunInterfaceAttribute"

@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
+using MessagePack;
 
 // Declaration-owned source types, before physical representation changes them.
 // Text is emitted only at the frozen metadata leaf's codec boundary.
@@ -237,6 +238,56 @@ sealed class SourceTypeFacts
                     writer.WriteEndObject(); break;
             }
         writer.WriteEndObject();
+    }
+
+    internal static void WriteMetadata(ref MessagePackWriter writer, SourceTypeFacts facts)
+    {
+        writer.WriteMapHeader(facts.order.Length);
+        foreach (var part in facts.order)
+            switch (part)
+            {
+                case Part.Base: writer.Write("base"); TypeNodeMessagePack.Write(ref writer, facts.Base); break;
+                case Part.Interfaces:
+                    writer.Write("interfaces"); WriteTypes(ref writer, facts.Interfaces); break;
+                case Part.NullableFrame:
+                    writer.Write("nullableFrame"); WriteFrame(ref writer, facts.NullableFrame); break;
+                case Part.Variances:
+                    writer.Write("variances"); writer.WriteMapHeader(facts.Variances.Count);
+                    foreach (var (index, variance) in facts.Variances) {
+                        writer.Write(index.ToString(CultureInfo.InvariantCulture)); writer.Write(variance);
+                    }
+                    break;
+                case Part.Bounds:
+                    writer.Write("bounds"); writer.WriteMapHeader(facts.Bounds.Count);
+                    foreach (var (index, constraints) in facts.Bounds) {
+                        writer.Write(index.ToString(CultureInfo.InvariantCulture)); WriteTypes(ref writer, constraints);
+                    }
+                    break;
+            }
+    }
+
+    static void WriteTypes(ref MessagePackWriter writer, IReadOnlyList<TypeNode> types)
+    {
+        writer.WriteArrayHeader(types.Count);
+        foreach (var type in types) TypeNodeMessagePack.Write(ref writer, type);
+    }
+
+    internal static void WriteIndices(ref MessagePackWriter writer, string name, IReadOnlyList<int> values)
+    {
+        writer.Write(name); writer.WriteArrayHeader(values.Count);
+        foreach (var value in values) writer.Write(value);
+    }
+
+    internal static void WriteFrame(ref MessagePackWriter writer, NullableRepresentationFrame frame)
+    {
+        writer.WriteMapHeader(5 + (frame.ElementIndices.Count > 0 ? 1 : 0) + (frame.NullableElementIndices.Count > 0 ? 1 : 0));
+        writer.Write("sourceArity"); writer.Write(frame.SourceArity);
+        WriteIndices(ref writer, "nullable", frame.NullableIndices);
+        WriteIndices(ref writer, "storage", frame.StorageIndices);
+        WriteIndices(ref writer, "nullableStorage", frame.NullableStorageIndices);
+        if (frame.ElementIndices.Count > 0) WriteIndices(ref writer, "element", frame.ElementIndices);
+        if (frame.NullableElementIndices.Count > 0) WriteIndices(ref writer, "nullableElement", frame.NullableElementIndices);
+        WriteIndices(ref writer, "order", frame.PhysicalOrder);
     }
 
     internal string FrozenText => ToJson();

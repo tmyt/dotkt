@@ -75,7 +75,7 @@ static partial class DeclarationRename
         var carrier = ordinary.Attrs.Value.Single();
         var bytes = ((BirOpaqueBytes)carrier.Args.Value[1]).Bytes.Value;
         Check(carrier.Attr.Value is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute" }
-            && Encoding.UTF8.GetString(bytes) == "{\"name\":\"source\"}",
+            && BirCarrier.DecodeMetadata(BirCarrier.MessagePackV1, bytes).ToJsonString() == "{\"name\":\"source\"}",
             "renaming must append the shared source-method carrier without inferring source identity from the new spelling");
         Check(call.Method.Value == "Physical" && propertyCall.Method.Value == "source" && aliasCall.Method.Value == "source"
             && interfaceCall.Method.Value == "Physical" && interfaceMethod.Name.Value == "Physical"

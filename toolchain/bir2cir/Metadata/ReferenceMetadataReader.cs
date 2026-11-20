@@ -1225,7 +1225,7 @@ static class ReferenceMetadataReader
                     throw new FormatException("expected (version, byte[]) constructor arguments");
                 if (carrierAttribute.NamedArguments.Count != 0)
                     throw new FormatException("named arguments are forbidden");
-                payload = BirCarrier.DecodeBody(version, ReadByteArrayArg(carrierAttribute.ConstructorArguments[1]))
+                payload = BirCarrier.DecodeMetadata(version, ReadByteArrayArg(carrierAttribute.ConstructorArguments[1]))
                     as JsonObject ?? throw new FormatException("payload must be an object");
             }
             catch (Exception ex)
@@ -1503,7 +1503,7 @@ static class ReferenceMetadataReader
         if (cad == null || cad.ConstructorArguments.Count != 2 ||
             cad.ConstructorArguments[0].Value is not string version)
             return null;
-        return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
+        return BirCarrier.DecodeMetadata(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
     }
 
     static BirTypeParameter[] SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,
@@ -2329,7 +2329,7 @@ static class ReferenceMetadataReader
                 throw new FormatException("expected (version, byte[]) constructor arguments");
             if (attr.NamedArguments.Count != 0)
                 throw new FormatException("named arguments are forbidden");
-            if (BirCarrier.DecodeBody(version, ReadByteArrayArg(attr.ConstructorArguments[1])) is not JsonObject payload ||
+            if (BirCarrier.DecodeMetadata(version, ReadByteArrayArg(attr.ConstructorArguments[1])) is not JsonObject payload ||
                 payload.Any(pair => pair.Key is not ("owner" or "protectedNested")) || payload["owner"] is not JsonValue ownerValue ||
                 !ownerValue.TryGetValue<string>(out var owner) || string.IsNullOrEmpty(owner))
                 throw new FormatException("expected a non-empty string 'owner'");

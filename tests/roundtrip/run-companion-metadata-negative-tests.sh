@@ -56,7 +56,8 @@ run_rejected bir2cir "$NON_NESTED" 'ordinary nested'
 
 BAD_NAME="$WORK/MalformedCompanionCarrier/bin/BadSemanticNameCarrier.dll"
 cp "$NON_NESTED" "$BAD_NAME"
-sed -i 's/"name":"Companion"/"name":"Bad.Name!"/g' "$BAD_NAME"
+# Replace the exact MessagePack fixstr key/value; preserve both encoded lengths.
+LC_ALL=C sed -i 's/\xa4name\xa9Companion/\xa4name\xa9Bad.Name!/g' "$BAD_NAME"
 run_rejected dll2klib "$BAD_NAME" 'semantic name segment'
 run_rejected bir2cir "$BAD_NAME" 'semantic owner/name'
 

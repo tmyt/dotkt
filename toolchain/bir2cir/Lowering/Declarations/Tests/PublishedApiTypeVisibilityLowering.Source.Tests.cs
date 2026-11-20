@@ -41,7 +41,7 @@ static partial class PublishedApiTypeVisibilityLowering
             var carrier = type.Attrs.Value[^1];
             Require(carrier.Attr.Value is TypeNode.Fqn { Name: "DotKt.Runtime.CompilerServices.KotlinTypeVisibilityAttribute" }
                 && carrier.ArgTypes.Value is [TypeNode.Fqn { Name: "System.String" }, TypeNode.Array { Elem: TypeNode.Fqn { Name: "System.Byte" } }]
-                && carrier.Args.Value is [BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.JsonV1 } }, BirOpaqueBytes bytes]
+                && carrier.Args.Value is [BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.MessagePackV1 } }, BirOpaqueBytes bytes]
                 && bytes.Bytes.Value.SequenceEqual(RoundtripMetadata.VisibilityContent("internal")),
                 "source visibility or its current carrier ABI was not preserved before promotion");
         }

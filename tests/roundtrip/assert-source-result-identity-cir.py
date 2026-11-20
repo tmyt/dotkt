@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Caller-frame results and source collection classifiers survive the ordinary-value carrier projection."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 from carrier_inspection import executable_payload, type_payloads
@@ -18,7 +18,7 @@ def nodes(value):
 
 def facts(declaration, name):
     return [decoded_types[id(attr)] if name == "KotlinType" else executable_payload(attr, sys.argv[5]) if name == "KotlinInline"
-            else json.loads(base64.b64decode(attr["args"][1]["bytes"])) for attr in declaration.get("attrs", [])
+            else metadata_record(attr["args"]) for attr in declaration.get("attrs", [])
             if attr.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 
 

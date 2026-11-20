@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Check suspend source constraints, carrier identity, and cold-entry frame ownership."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 from pathlib import Path
@@ -24,7 +24,7 @@ def payload(method, short_name):
                if a["attr"].get("name") == "DotKt.Runtime.CompilerServices." + short_name]
     assert len(matches) == 1, (method["name"], short_name, len(matches))
     return decoded_types[id(matches[0])] if short_name == "KotlinSuspendResultAttribute" else \
-        json.loads(base64.b64decode(matches[0]["args"][1]["bytes"]))
+        metadata_record(matches[0]["args"])
 
 
 if len(sys.argv) != 3:

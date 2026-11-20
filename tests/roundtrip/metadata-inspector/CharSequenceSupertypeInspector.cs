@@ -45,10 +45,11 @@ internal static class CharSequenceSupertypeInspector
                     .GetDeclaringType()).Name) == Carrier).ToArray();
             Require(carriers.Length == 1, typeName + ": expected one merged supertype carrier");
             var blob = md.GetBlobReader(carriers[0].Value);
-            Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "wrong carrier envelope");
+            Require(blob.ReadUInt16() == 1, "wrong carrier envelope");
+        var codec = blob.ReadSerializedString() ?? throw new InvalidDataException("missing metadata codec");
             var length = blob.ReadInt32();
             Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid carrier length");
-            using var document = JsonDocument.Parse(blob.ReadBytes(length));
+            using var document = JsonSerializer.SerializeToDocument(DotKt.Bir.BirCarrier.DecodeMetadata(codec, blob.ReadBytes(length)));
             Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected carrier arguments");
             var source = isBase ? document.RootElement.GetProperty("base")
                 : document.RootElement.GetProperty("interfaces").EnumerateArray().Single();
