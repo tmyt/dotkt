@@ -137,10 +137,11 @@ internal static class OverloadPriorityInspector
     static JsonDocument JsonPayload(MetadataReader metadata, CustomAttribute attribute)
     {
         var blob = metadata.GetBlobReader(attribute.Value);
-        Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "invalid identity carrier");
+        Require(blob.ReadUInt16() == 1, "invalid identity carrier");
+        var codec = blob.ReadSerializedString() ?? throw new InvalidDataException("missing metadata codec");
         var length = blob.ReadInt32();
         Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid identity payload length");
-        var document = JsonDocument.Parse(blob.ReadBytes(length));
+        var document = JsonSerializer.SerializeToDocument(DotKt.Bir.BirCarrier.DecodeMetadata(codec, blob.ReadBytes(length)));
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "invalid identity payload suffix");
         return document;
     }

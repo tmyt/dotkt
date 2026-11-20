@@ -203,7 +203,7 @@ private fun enumRuntimeArray(type: EnumRuntimeType, length: Int): EnumRuntimeArr
 
 private const val BASIC_ENUM = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute"
 private const val BASIC_ENUM_ORDINAL = "DotKt.Runtime.CompilerServices.KotlinBasicEnumOrdinalAttribute"
-private const val RICH_ENUM = "DotKt.Runtime.CompilerServices.KotlinRichEnumAttribute"
+private const val RICH_ENUM_API = "DotKt.Runtime.CompilerServices.KotlinEnumRuntimeApiAttribute"
 
 @PublishedApi
 internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
@@ -215,19 +215,19 @@ internal fun kotlinEnumCompareTo(receiver: Any, other: Any): Int {
 @PublishedApi
 internal fun kotlinEnumName(value: Any): String =
     if (value is KotlinEnumComparison)
-        value.enumRuntimeType().richEnumInstanceField("name").getValue(value) as String
+        value.enumRuntimeType().richEnumInstanceField(0).getValue(value) as String
     else value.toString()
 
 // Entry bodies are subclasses; the declaring enum's carrier owns the physical storage identity.
-private fun EnumRuntimeType.richEnumInstanceField(api: String): EnumRuntimeField {
+private fun EnumRuntimeType.richEnumInstanceField(api: Int): EnumRuntimeField {
     var declaringType = this
     while (true) {
         val attributes = declaringType.getCustomAttributesData()
         for (index in 0 until attributes.count) {
             val attribute = attributes[index]
-            if (!attribute.isCompilerCarrier(RICH_ENUM, declaringType.assembly) ||
+            if (!attribute.isCompilerCarrier(RICH_ENUM_API, declaringType.assembly) ||
                 !declaringType.assembly.isCompilerAssembly()) continue
-            val fieldName = richEnumApi(attribute, api)
+            val fieldName = attribute.constructorArguments[api].value as String
             for (field in declaringType.getFields(EnumRuntimeBindingFlags.DECLARED_INSTANCE_PUBLIC_NON_PUBLIC))
                 if (field.name == fieldName) return field
             error("Missing enum $api field")
@@ -240,7 +240,7 @@ private fun EnumRuntimeType.richEnumInstanceField(api: String): EnumRuntimeField
 internal fun kotlinEnumOrdinal(value: Any): Int {
     val type = value.enumRuntimeType()
     if (value is KotlinEnumComparison)
-        return type.richEnumInstanceField("ordinal").getValue(value) as Int
+        return type.richEnumInstanceField(1).getValue(value) as Int
     // .NET 7+ returns fields in metadata order, matching the FieldDef sequence used by dll2klib.
     val fields = type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)
     val explicit = type.hasExplicitOrder()
@@ -262,8 +262,8 @@ internal fun kotlinEnumValues(typeToken: Any): Any {
         val attributes = type.getCustomAttributesData()
         for (index in 0 until attributes.count) {
             val attribute = attributes[index]
-            if (!attribute.isCompilerCarrier(RICH_ENUM, type.assembly)) continue
-            val api = richEnumValuesApi(attribute)
+            if (!attribute.isCompilerCarrier(RICH_ENUM_API, type.assembly)) continue
+            val api = attribute.constructorArguments[2].value as String
             val method = type.enumValuesMethod(api)
             try { return method.invoke(null, emptyArray())!! }
             catch (failure: StarProjectionInvocationException) { throw (failure.innerException ?: failure) }
@@ -293,23 +293,18 @@ internal fun kotlinEnumValueOf(typeToken: Any, name: String): Any {
         val attributes = type.getCustomAttributesData()
         for (index in 0 until attributes.count) {
             val attribute = attributes[index]
-            if (attribute.isCompilerCarrier(RICH_ENUM, type.assembly)) {
-                val method = type.enumStaticMethod(richEnumApi(attribute, "valueOf"), true)
+            if (attribute.isCompilerCarrier(RICH_ENUM_API, type.assembly)) {
+                val method = type.enumStaticMethod(attribute.constructorArguments[3].value as String, true)
                 try { return method.invoke(null, arrayOf<Any?>(name))!! }
                 catch (failure: StarProjectionInvocationException) { throw (failure.innerException ?: failure) }
             }
             if (!attribute.isCompilerCarrier(BASIC_ENUM, type.assembly)) continue
-            val document = enumCarrierDocument(attribute)
-            try {
-                val entries = document.root.getProperty("entries")
-                for (entryIndex in 0 until entries.getArrayLength()) {
-                    val entry = entries.getItem(entryIndex)
-                    if (entry.getProperty("name").getString() == name) {
-                        val ordinal = entry.getProperty("ordinal").getInt32()
-                        return (kotlinEnumValues(typeToken) as EnumRuntimeArray).getValue(ordinal)!!
-                    }
-                }
-            } finally { document.dispose() }
+            // The compiler pairs each source entry with its exact literal FieldDef
+            // and stamps its declaration ordinal there, independently of its numeric value.
+            for (field in type.getFields(EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC_NON_PUBLIC)) {
+                if (field.isProjectedEntry(true) && field.name == name && field.declarationOrdinal(type.assembly) >= 0)
+                    return field.getValue(null)!!
+            }
             throw IllegalArgumentException("No enum constant ${type.fullName}.$name")
         }
         error("Missing enum declaration metadata")
@@ -341,65 +336,6 @@ private fun EnumRuntimeType.enumStaticMethod(api: String, valueOf: Boolean): Enu
         }
     }
     return selected!!
-}
-
-@kotlin.clr.ClrTypeAlias("System.Text.Encoding")
-private interface EnumCarrierEncoding {
-    @OptIn(ExperimentalUnsignedTypes::class)
-    @kotlin.clr.ClrIntrinsic("GetString")
-    fun getString(bytes: UByteArray): String
-}
-
-@kotlin.clr.ClrIntrinsic("System.Text.Encoding.get_UTF8")
-private fun enumCarrierEncoding(): EnumCarrierEncoding = error("CLR binding")
-
-@kotlin.clr.ClrTypeAlias("System.Text.Json.JsonDocumentOptions")
-private interface EnumCarrierJsonOptions
-
-@kotlin.clr.ClrTypeAlias("System.Text.Json.JsonDocument")
-private interface EnumCarrierJsonDocument {
-    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "RootElement")
-    val root: EnumCarrierJsonElement
-    @kotlin.clr.ClrIntrinsic("Dispose")
-    fun dispose()
-}
-
-@kotlin.clr.ClrTypeAlias("System.Text.Json.JsonElement")
-private interface EnumCarrierJsonElement {
-    @kotlin.clr.ClrIntrinsic("GetProperty")
-    fun getProperty(name: String): EnumCarrierJsonElement
-    @kotlin.clr.ClrIntrinsic("GetString")
-    fun getString(): String?
-    @kotlin.clr.ClrIntrinsic("GetArrayLength")
-    fun getArrayLength(): Int
-    @kotlin.clr.ClrIntrinsic("get_Item")
-    fun getItem(index: Int): EnumCarrierJsonElement
-    @kotlin.clr.ClrIntrinsic("GetInt32")
-    fun getInt32(): Int
-}
-
-@kotlin.clr.ClrIntrinsic("System.Text.Json.JsonDocument.Parse")
-private fun enumCarrierJson(json: String, options: EnumCarrierJsonOptions): EnumCarrierJsonDocument = error("CLR binding")
-
-@kotlin.clr.ClrIntrinsic("System.Activator.CreateInstance")
-private fun <T> enumCarrierDefault(): T = error("CLR binding")
-
-private fun richEnumValuesApi(attribute: EnumRuntimeAttribute): String = richEnumApi(attribute, "values")
-
-private fun richEnumApi(attribute: EnumRuntimeAttribute, api: String): String {
-    val document = enumCarrierDocument(attribute)
-    try { return document.root.getProperty(api).getString()!! }
-    finally { document.dispose() }
-}
-
-@OptIn(ExperimentalUnsignedTypes::class)
-private fun enumCarrierDocument(attribute: EnumRuntimeAttribute): EnumCarrierJsonDocument {
-    val arguments = attribute.constructorArguments
-    check(arguments[0].value == "bir-json/1")
-    @Suppress("UNCHECKED_CAST")
-    val content = arguments[1].value as EnumRuntimeList<EnumRuntimeAttributeArgument>
-    val bytes = UByteArray(content.count) { content[it].value as UByte }
-    return enumCarrierJson(enumCarrierEncoding().getString(bytes), enumCarrierDefault<EnumCarrierJsonOptions>())
 }
 
 private fun EnumRuntimeField.isProjectedEntry(explicit: Boolean): Boolean =

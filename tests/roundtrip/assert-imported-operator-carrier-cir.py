@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Keep selected delegated operators on their carrier without changing exact lexical super calls."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -16,7 +16,7 @@ def nodes(value):
 
 
 def payloads(method, name):
-    return [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+    return [metadata_record(attribute["args"])
             for attribute in method.get("attrs", [])
             if attribute.get("attr", {}).get("name")
             == "DotKt.Runtime.CompilerServices." + name + "Attribute"]

@@ -78,7 +78,7 @@ static partial class RoundtripMetadata
         ExpectNames(owner.Attrs.Value, ANullableCtx, "Probe.UserAttribute", AKSealed, AKInner, AKStaticCarrier, AKSupertypes);
         ExpectNames(companion.Attrs.Value, ANullableCtx, AKObject, AKCompanion);
         ExpectNames(contract.Attrs.Value, ANullableCtx, AKManagedReferenceContract, AKFunInterface, AKType);
-        ExpectNames(rich.Attrs.Value, ANullableCtx, AKRichEnum);
+        ExpectNames(rich.Attrs.Value, ANullableCtx, AKRichEnum, AKEnumRuntimeApi);
         ExpectNames(value.Attrs.Value, ANullableCtx, AKValue);
         ExpectNames(enumeration.Attrs.Value, AKBasicEnum);
         ExpectNames(entry.Attrs.Value, "Probe.UserAttribute", AKBasicEnumOrdinal);
@@ -124,7 +124,7 @@ static partial class RoundtripMetadata
         var file = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { representation, rich, empty, late, enumeration } };
         StampTypeHeaders(file, runtimeMode: true);
         ExpectNames(representation.Attrs.Value, "Probe.UserAttribute", AKType);
-        ExpectNames(rich.Attrs.Value, AKRichEnum);
+        ExpectNames(rich.Attrs.Value, AKRichEnum, AKEnumRuntimeApi);
         ExpectNames(late.Attrs.Value, AKValue);
         ExpectNames(enumeration.Attrs.Value, AKBasicEnum);
         ExpectNames(entry.Attrs.Value, "Probe.UserAttribute", AKBasicEnumOrdinal);
@@ -157,8 +157,8 @@ static partial class RoundtripMetadata
                 throw new InvalidOperationException("Typed representation header changed its binary TypeNode payload");
             return;
         }
-        if (attribute.Args.Value[0] is not BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.JsonV1 } }
-            || attribute.Args.Value[1] is not BirOpaqueBytes bytes || !bytes.Bytes.Value.SequenceEqual(Encoding.UTF8.GetBytes(expected)))
+        if (attribute.Args.Value[0] is not BirAttributeLiteral { Value.Value: BirLiteral.TextLiteral { Value: BirCarrier.MessagePackV1 } }
+            || attribute.Args.Value[1] is not BirOpaqueBytes bytes || !System.Text.Json.Nodes.JsonNode.DeepEquals(BirCarrier.DecodeMetadata(BirCarrier.MessagePackV1, bytes.Bytes.Value), System.Text.Json.Nodes.JsonNode.Parse(expected)))
             throw new InvalidOperationException("Typed type header changed a metadata carrier's payload bytes");
     }
 }

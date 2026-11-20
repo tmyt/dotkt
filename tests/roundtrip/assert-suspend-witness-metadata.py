@@ -1,5 +1,5 @@
 """Public suspend bridges retain the semantic/physical witness boundary."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -27,8 +27,8 @@ for method in declarations(document):
         if attribute["attr"].get("name") != "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute":
             continue
         arguments = attribute["args"]
-        assert arguments[0]["value"] == "bir-json/1"
-        identity = json.loads(base64.b64decode(arguments[1]["bytes"]))
+        assert arguments[0]["value"] == "bir-msgpack/1"
+        identity = metadata_record(arguments)
         if "|clr-physical-only|existential-slot:" in identity["id"]:
             assert set(identity) == {"id", "name"}, "Generated existential slots must not publish another source declaration"
             continue

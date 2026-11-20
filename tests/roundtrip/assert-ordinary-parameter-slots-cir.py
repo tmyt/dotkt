@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A source/native shared implementation forwards to its selected physical declaration, not itself."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -16,7 +16,7 @@ def nodes(value):
 
 
 def facts(method, name):
-    return [json.loads(base64.b64decode(attr["args"][1]["bytes"])) for attr in method.get("attrs", [])
+    return [metadata_record(attr["args"]) for attr in method.get("attrs", [])
             if attr.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 
 

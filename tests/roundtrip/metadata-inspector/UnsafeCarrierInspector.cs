@@ -191,8 +191,7 @@ static class UnsafeCarrierInspector
         var codec = blob.ReadSerializedString();
         var bytes = blob.ReadBytes(blob.ReadInt32());
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected metadata arguments");
-        if (decode == null) Require(codec == BirCarrier.JsonV1, "unexpected metadata codec");
-        using var document = decode == null ? JsonDocument.Parse(bytes) : decode(codec!, bytes);
+        using var document = decode == null ? JsonSerializer.SerializeToDocument(BirCarrier.DecodeMetadata(codec!, bytes)) : decode(codec!, bytes);
         return document.RootElement.Clone();
     }
 

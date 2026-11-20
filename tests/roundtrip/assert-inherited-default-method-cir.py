@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pin selected source-default identities and their exact inherited native MethodImpl obligations."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -16,7 +16,7 @@ def objects(node):
 
 
 def carriers(method, name):
-    return [json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+    return [metadata_record(attribute["args"])
             for attribute in method.get("attrs", [])
             if attribute.get("attr", {}).get("name") == "DotKt.Runtime.CompilerServices." + name + "Attribute"]
 

@@ -65,10 +65,10 @@ static partial class BirFileCodec
             var node = (BirGraphNode)Activator.CreateInstance(type, nonPublic: true);
             var buffer = new ArrayBufferWriter<byte>();
             var writer = new MessagePackWriter(buffer);
-            BirGraphMessagePack.WriteNode(ref writer, node, 0);
+            FileBirMessagePack.WriteNode(ref writer, node, 0);
             writer.Flush();
             var reader = new MessagePackReader(buffer.WrittenMemory);
-            var restored = BirGraphMessagePack.ReadNode(ref reader);
+            var restored = FileBirMessagePack.ReadNode(ref reader);
             if (!reader.End || restored.GetType() != type)
                 throw new InvalidOperationException("Missing BIR binary kind: " + node.Tag);
         }
@@ -94,7 +94,7 @@ static partial class BirFileCodec
             writer.Flush();
             var reader = new MessagePackReader(buffer.WrittenMemory);
             var failed = false;
-            try { BirGraphMessagePack.ReadNode(ref reader); }
+            try { FileBirMessagePack.ReadNode(ref reader); }
             catch (FormatException) { failed = true; }
             if (!failed) throw new InvalidOperationException("Malformed current BIR fields/kind were accepted");
         }
@@ -111,7 +111,7 @@ static partial class BirFileCodec
         wideWriter.Flush();
         var duplicateWideBinary = new MessagePackReader(wideBuffer.WrittenMemory);
         rejectedWide = false;
-        try { BirGraphMessagePack.ReadBirFunctionDeclaration(ref duplicateWideBinary); }
+        try { FileBirMessagePack.ReadBirFunctionDeclaration(ref duplicateWideBinary); }
         catch (FormatException) { rejectedWide = true; }
         if (!rejectedWide) throw new InvalidOperationException("Duplicate current wide binary declaration field was accepted");
         Console.WriteLine("[BIR MessagePack] self-test OK (all kinds, numeric bits/UTF16, presence, exact frames/IDs, opaque bytes, independent executable mutation)");

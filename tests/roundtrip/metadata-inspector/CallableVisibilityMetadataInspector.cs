@@ -253,10 +253,11 @@ internal static class CallableVisibilityMetadataInspector
     {
         var attribute = md.GetCustomAttributes(handle).Select(md.GetCustomAttribute).Single(attribute => IsCarrier(md, attribute, Carrier));
         var blob = md.GetBlobReader(attribute.Value);
-        Require(blob.ReadUInt16() == 1 && blob.ReadSerializedString() == "bir-json/1", "wrong visibility envelope");
+        Require(blob.ReadUInt16() == 1, "wrong visibility envelope");
+        var codec = blob.ReadSerializedString() ?? throw new InvalidDataException("missing metadata codec");
         var length = blob.ReadInt32();
         Require(length >= 0 && length <= blob.RemainingBytes - 2, "invalid visibility payload length");
-        using var document = JsonDocument.Parse(blob.ReadBytes(length));
+        using var document = JsonSerializer.SerializeToDocument(DotKt.Bir.BirCarrier.DecodeMetadata(codec, blob.ReadBytes(length)));
         Require(document.RootElement.GetProperty("visibility").GetString() == "internal", "source visibility changed");
         Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0, "unexpected visibility arguments");
     }

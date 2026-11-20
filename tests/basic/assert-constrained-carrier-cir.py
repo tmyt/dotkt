@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Verify source-bound metadata and direct physical forwarding independently."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -27,7 +27,7 @@ for name in ("render", "echo", "withCallback", "transitive", "update", "fail", "
     source = next(m for m in owner["methods"] if m["name"] == name)
     attribute = next(a for a in source["attrs"] if a["attr"]["name"] ==
                      "DotKt.Runtime.CompilerServices.KotlinTypeParameterBoundsAttribute")
-    payload = json.loads(base64.b64decode(attribute["args"][1]["bytes"]))
+    payload = metadata_record(attribute["args"])
     expected = {str(i): p["constraints"] for i, p in enumerate(original["typeParams"])
                 if isinstance(p, dict) and "constraints" in p}
     assert payload["bounds"] == expected, (name, payload, expected)

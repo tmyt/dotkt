@@ -138,8 +138,9 @@ static partial class RoundtripMetadata
         if (((BirLiteral.IntegerLiteral)((BirAttributeLiteral)method.Attrs.Value[6].Args.Value[0]).Value.Value).Value != 15)
             throw new InvalidOperationException("Typed callable metadata lost source function flags");
         var accessorBytes = ((BirOpaqueBytes)method.Attrs.Value[5].Args.Value[1]).Bytes.Value;
-        if (Encoding.UTF8.GetString(accessorBytes) != "{\"name\":\"value\",\"kind\":\"get\",\"association\":\"property\",\"sourceAssociation\":\"source\",\"event\":\"native-event\",\"inherited\":true}")
-            throw new InvalidOperationException("Typed accessor metadata changed selected field presence, values or carrier order");
+        if (!JsonNode.DeepEquals(BirCarrier.DecodeMetadata(BirCarrier.MessagePackV1, accessorBytes),
+                JsonNode.Parse("""{"name":"value","kind":"get","association":"property","sourceAssociation":"source","event":"native-event","inherited":true}""")))
+            throw new InvalidOperationException("Typed accessor metadata changed selected field presence or values");
         PreparationClockSelfTest(sourceType);
     }
 
@@ -240,6 +241,6 @@ static partial class RoundtripMetadata
             throw new InvalidOperationException("Callable type metadata did not use the exact owning MessagePack carrier");
     }
     static JsonNode AttributePayload(BirAttribute attribute)
-        => BirCarrier.DecodeBody(((BirLiteral.TextLiteral)((BirAttributeLiteral)attribute.Args.Value[0]).Value.Value).Value,
+        => BirCarrier.DecodeMetadata(((BirLiteral.TextLiteral)((BirAttributeLiteral)attribute.Args.Value[0]).Value.Value).Value,
             ((BirOpaqueBytes)attribute.Args.Value[1]).Bytes.Value);
 }

@@ -6,7 +6,7 @@ using DotKt.Cir;
 using MessagePack;
 namespace DotKt.Bir.Lowering;
 
-internal static class BirGraphMessagePack
+internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayout
 {
     internal static BirFileDeclaration Read(ref MessagePackReader reader) => ReadBirFileDeclaration(ref reader);
     internal static void Write(ref MessagePackWriter writer, BirFileDeclaration value) => WriteBirFileDeclaration(ref writer, value, 0);
@@ -171,7 +171,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "nullableRepresentationFrame":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "reflectedWitnessIndices":
                     Seen(ref seen, 1UL << 8);
@@ -278,7 +278,7 @@ internal static class BirGraphMessagePack
             if (value.NullableRepresentationFrame.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.NullableRepresentationFrame.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.NullableRepresentationFrame.Value.FrozenText, depth + 1);
             }
         }
         if (value.ReflectedWitnessIndices.IsPresent)
@@ -658,7 +658,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -700,7 +700,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -1103,7 +1103,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_physicalDeclarationSignature":
                     Seen(ref seen, 1UL << 7);
@@ -1222,7 +1222,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._physicalDeclarationSignature.IsPresent)
@@ -1317,7 +1317,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "kotlinTypeWitness":
                     Seen(ref seen, 1UL << 3);
@@ -1386,7 +1386,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.KotlinTypeWitness.IsPresent)
@@ -1471,7 +1471,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "kotlinTypeWitness":
                     Seen(ref seen, 1UL << 5);
@@ -1550,7 +1550,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.KotlinTypeWitness.IsPresent)
@@ -2463,7 +2463,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 1);
-                    field1 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field1 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -2497,7 +2497,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -2524,7 +2524,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -2568,7 +2568,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -2596,7 +2596,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "values":
                     Seen(ref seen, 1UL << 3);
@@ -2645,7 +2645,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.Values.IsPresent)
@@ -2686,7 +2686,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -2730,7 +2730,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -2850,7 +2850,7 @@ internal static class BirGraphMessagePack
             {
                 case "owner":
                     Seen(ref seen, 1UL << 0);
-                    field0 = reader.TryReadNil() ? OptionalField<SourceDeclarationType>.Null : OptionalField<SourceDeclarationType>.Of(SourceDeclarationType.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field0 = reader.TryReadNil() ? OptionalField<SourceDeclarationType>.Null : OptionalField<SourceDeclarationType>.Of(SourceDeclarationType.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "member":
                     Seen(ref seen, 1UL << 1);
@@ -2887,7 +2887,7 @@ internal static class BirGraphMessagePack
             if (value.Owner.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.Owner.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.Owner.Value.FrozenText, depth + 1);
             }
         }
         if (value.Member.IsPresent)
@@ -2965,7 +2965,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -3057,7 +3057,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -3094,7 +3094,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -3163,7 +3163,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -3433,7 +3433,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 15);
-                    field15 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field15 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "declarationId":
                     Seen(ref seen, 1UL << 16);
@@ -3493,7 +3493,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 30);
-                    field30 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field30 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_innerFactoryArguments":
                     Seen(ref seen, 1UL << 31);
@@ -3827,7 +3827,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.DeclarationId.IsPresent)
@@ -3977,7 +3977,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._innerFactoryArguments.IsPresent)
@@ -4382,7 +4382,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 20);
-                    field20 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field20 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "declarationId":
                     Seen(ref seen, 1UL << 21);
@@ -4434,7 +4434,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 33);
-                    field33 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field33 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_innerFactoryArguments":
                     Seen(ref seen, 1UL << 34);
@@ -4482,7 +4482,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 45);
-                    field45 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field45 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_capturedGenericArgument":
                     Seen(ref seen, 1UL << 46);
@@ -4821,7 +4821,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.DeclarationId.IsPresent)
@@ -4953,7 +4953,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._innerFactoryArguments.IsPresent)
@@ -5076,7 +5076,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value._capturedGenericArgument.IsPresent)
@@ -5256,7 +5256,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -5365,7 +5365,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -5461,7 +5461,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_nativeLocation":
                     Seen(ref seen, 1UL << 14);
@@ -5690,7 +5690,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._nativeLocation.IsPresent)
@@ -5877,7 +5877,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "sty":
                     Seen(ref seen, 1UL << 5);
@@ -5897,7 +5897,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_nativeLocation":
                     Seen(ref seen, 1UL << 10);
@@ -5986,7 +5986,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.Sty.IsPresent)
@@ -6036,7 +6036,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._nativeLocation.IsPresent)
@@ -6490,7 +6490,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "memberVisibility":
                     Seen(ref seen, 1UL << 5);
@@ -6579,7 +6579,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.MemberVisibility.IsPresent)
@@ -6676,7 +6676,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "sty":
                     Seen(ref seen, 1UL << 5);
@@ -6790,7 +6790,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.Sty.IsPresent)
@@ -7621,7 +7621,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -7783,7 +7783,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -7819,7 +7819,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -7881,7 +7881,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -8109,7 +8109,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "roundtripMetadataPending":
                     Seen(ref seen, 1UL << 10);
@@ -8117,7 +8117,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "collIdentity":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "functionSignatureType":
                     Seen(ref seen, 1UL << 12);
@@ -8125,11 +8125,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinType":
                     Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGeneric":
                     Seen(ref seen, 1UL << 14);
-                    field14 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field14 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nominalParameterSignatureIdentity":
                     Seen(ref seen, 1UL << 15);
@@ -8271,7 +8271,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.RoundtripMetadataPending.IsPresent)
@@ -8289,7 +8289,7 @@ internal static class BirGraphMessagePack
             if (value.CollIdentity.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CollIdentity.Value));
+                TLayout.WriteType(ref writer, value.CollIdentity.Value, depth + 1);
             }
         }
         if (value.FunctionSignatureType.IsPresent)
@@ -8307,7 +8307,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.KotlinType.Value));
+                TLayout.WriteType(ref writer, value.KotlinType.Value, depth + 1);
             }
         }
         if (value.NullableGeneric.IsPresent)
@@ -8316,7 +8316,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGeneric.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGeneric.Value));
+                TLayout.WriteType(ref writer, value.NullableGeneric.Value, depth + 1);
             }
         }
         if (value.NominalParameterSignatureIdentity.IsPresent)
@@ -8531,11 +8531,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinSupertypesPre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field8 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -8638,7 +8638,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.KotlinSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.KotlinSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.MethodTypeParameterBoundsPre.IsPresent)
@@ -8647,7 +8647,7 @@ internal static class BirGraphMessagePack
             if (value.MethodTypeParameterBoundsPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText, depth + 1);
             }
         }
     }
@@ -8902,7 +8902,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, (UInt128)1 << 20);
-                    field20 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field20 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "companionMemberKind":
                     Seen(ref seen, (UInt128)1 << 21);
@@ -8958,7 +8958,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, (UInt128)1 << 34);
-                    field34 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field34 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "existentialSourceMember":
                     Seen(ref seen, (UInt128)1 << 35);
@@ -8986,7 +8986,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "roundtripMethodBounds":
                     Seen(ref seen, (UInt128)1 << 41);
-                    field41 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field41 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "roundtripSuspend":
                     Seen(ref seen, (UInt128)1 << 42);
@@ -8998,7 +8998,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "collIdentityRet":
                     Seen(ref seen, (UInt128)1 << 44);
-                    field44 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field44 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "semanticReifiedIndices":
                     Seen(ref seen, (UInt128)1 << 45);
@@ -9010,7 +9010,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendResult":
                     Seen(ref seen, (UInt128)1 << 47);
-                    field47 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field47 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "suspendTaskResult":
                     Seen(ref seen, (UInt128)1 << 48);
@@ -9034,11 +9034,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "_ownerConstraintOverrideBounds":
                     Seen(ref seen, (UInt128)1 << 53);
-                    field53 = reader.TryReadNil() ? OptionalField<OwnerConstraintOverrideBounds>.Null : OptionalField<OwnerConstraintOverrideBounds>.Of(OwnerConstraintOverrideBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field53 = reader.TryReadNil() ? OptionalField<OwnerConstraintOverrideBounds>.Null : OptionalField<OwnerConstraintOverrideBounds>.Of(OwnerConstraintOverrideBounds.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_ownerConstraintDispatchBounds":
                     Seen(ref seen, (UInt128)1 << 54);
-                    field54 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field54 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_physicalDeclarationSignature":
                     Seen(ref seen, (UInt128)1 << 55);
@@ -9046,7 +9046,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retKotlinType":
                     Seen(ref seen, (UInt128)1 << 56);
-                    field56 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field56 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_preparedDelegateReturnArgument":
                     Seen(ref seen, (UInt128)1 << 57);
@@ -9062,11 +9062,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "nullableGenericRet":
                     Seen(ref seen, (UInt128)1 << 60);
-                    field60 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field60 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGenericSuspendRet":
                     Seen(ref seen, (UInt128)1 << 61);
-                    field61 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field61 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "declarationSourceName":
                     Seen(ref seen, (UInt128)1 << 62);
@@ -9098,11 +9098,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, (UInt128)1 << 69);
-                    field69 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field69 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "nullableRepresentationFrame":
                     Seen(ref seen, (UInt128)1 << 70);
-                    field70 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field70 = reader.TryReadNil() ? OptionalField<NullableRepresentationFrame>.Null : OptionalField<NullableRepresentationFrame>.Of(DotKt.Bir.NullableRepresentationFrame.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "kotlinPropertyAccessorCarrier":
                     Seen(ref seen, (UInt128)1 << 71);
@@ -9499,7 +9499,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.CompanionMemberKind.IsPresent)
@@ -9635,7 +9635,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.ExistentialSourceMember.IsPresent)
@@ -9698,7 +9698,7 @@ internal static class BirGraphMessagePack
             if (value.RoundtripMethodBounds.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.RoundtripMethodBounds.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.RoundtripMethodBounds.Value.FrozenText, depth + 1);
             }
         }
         if (value.RoundtripSuspend.IsPresent)
@@ -9725,7 +9725,7 @@ internal static class BirGraphMessagePack
             if (value.CollIdentityRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CollIdentityRet.Value));
+                TLayout.WriteType(ref writer, value.CollIdentityRet.Value, depth + 1);
             }
         }
         if (value.SemanticReifiedIndices.IsPresent)
@@ -9762,7 +9762,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendResult.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendResult.Value));
+                TLayout.WriteType(ref writer, value.SuspendResult.Value, depth + 1);
             }
         }
         if (value.SuspendTaskResult.IsPresent)
@@ -9821,7 +9821,7 @@ internal static class BirGraphMessagePack
             if (value._ownerConstraintOverrideBounds.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._ownerConstraintOverrideBounds.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._ownerConstraintOverrideBounds.Value.FrozenText, depth + 1);
             }
         }
         if (value._ownerConstraintDispatchBounds.IsPresent)
@@ -9830,7 +9830,7 @@ internal static class BirGraphMessagePack
             if (value._ownerConstraintDispatchBounds.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._ownerConstraintDispatchBounds.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._ownerConstraintDispatchBounds.Value.FrozenText, depth + 1);
             }
         }
         if (value._physicalDeclarationSignature.IsPresent)
@@ -9848,7 +9848,7 @@ internal static class BirGraphMessagePack
             if (value.RetKotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetKotlinType.Value));
+                TLayout.WriteType(ref writer, value.RetKotlinType.Value, depth + 1);
             }
         }
         if (value._preparedDelegateReturnArgument.IsPresent)
@@ -9884,7 +9884,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGenericRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGenericRet.Value));
+                TLayout.WriteType(ref writer, value.NullableGenericRet.Value, depth + 1);
             }
         }
         if (value.NullableGenericSuspendRet.IsPresent)
@@ -9893,7 +9893,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGenericSuspendRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGenericSuspendRet.Value));
+                TLayout.WriteType(ref writer, value.NullableGenericSuspendRet.Value, depth + 1);
             }
         }
         if (value.DeclarationSourceName.IsPresent)
@@ -9965,7 +9965,7 @@ internal static class BirGraphMessagePack
             if (value.MethodTypeParameterBoundsPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.NullableRepresentationFrame.IsPresent)
@@ -9974,7 +9974,7 @@ internal static class BirGraphMessagePack
             if (value.NullableRepresentationFrame.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.NullableRepresentationFrame.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.NullableRepresentationFrame.Value.FrozenText, depth + 1);
             }
         }
         if (value.KotlinPropertyAccessorCarrier.IsPresent)
@@ -10661,7 +10661,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 14);
-                    field14 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field14 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "companionMemberKind":
                     Seen(ref seen, 1UL << 15);
@@ -10701,7 +10701,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 24);
-                    field24 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field24 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "roundtripMetadataPending":
                     Seen(ref seen, 1UL << 25);
@@ -10709,7 +10709,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "collIdentity":
                     Seen(ref seen, 1UL << 26);
-                    field26 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field26 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_nativeLocation":
                     Seen(ref seen, 1UL << 27);
@@ -10721,11 +10721,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinType":
                     Seen(ref seen, 1UL << 29);
-                    field29 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field29 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGeneric":
                     Seen(ref seen, 1UL << 30);
-                    field30 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field30 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableFlags":
                     Seen(ref seen, 1UL << 31);
@@ -10923,7 +10923,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.CompanionMemberKind.IsPresent)
@@ -11013,7 +11013,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.RoundtripMetadataPending.IsPresent)
@@ -11031,7 +11031,7 @@ internal static class BirGraphMessagePack
             if (value.CollIdentity.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CollIdentity.Value));
+                TLayout.WriteType(ref writer, value.CollIdentity.Value, depth + 1);
             }
         }
         if (value._nativeLocation.IsPresent)
@@ -11058,7 +11058,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.KotlinType.Value));
+                TLayout.WriteType(ref writer, value.KotlinType.Value, depth + 1);
             }
         }
         if (value.NullableGeneric.IsPresent)
@@ -11067,7 +11067,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGeneric.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGeneric.Value));
+                TLayout.WriteType(ref writer, value.NullableGeneric.Value, depth + 1);
             }
         }
         if (value.NullableFlags.IsPresent)
@@ -11132,11 +11132,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field3 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "kotlinSupertypesPre":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_nativeLocation":
                     Seen(ref seen, 1UL << 5);
@@ -11199,7 +11199,7 @@ internal static class BirGraphMessagePack
             if (value.MethodTypeParameterBoundsPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.KotlinSupertypesPre.IsPresent)
@@ -11208,7 +11208,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.KotlinSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.KotlinSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value._nativeLocation.IsPresent)
@@ -11282,7 +11282,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "roundtripMetadataPending":
                     Seen(ref seen, 1UL << 7);
@@ -11290,15 +11290,15 @@ internal static class BirGraphMessagePack
                     break;
                 case "collIdentity":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field8 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "kotlinType":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGeneric":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "get":
                     Seen(ref seen, 1UL << 11);
@@ -11469,7 +11469,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.RoundtripMetadataPending.IsPresent)
@@ -11487,7 +11487,7 @@ internal static class BirGraphMessagePack
             if (value.CollIdentity.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CollIdentity.Value));
+                TLayout.WriteType(ref writer, value.CollIdentity.Value, depth + 1);
             }
         }
         if (value.KotlinType.IsPresent)
@@ -11496,7 +11496,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.KotlinType.Value));
+                TLayout.WriteType(ref writer, value.KotlinType.Value, depth + 1);
             }
         }
         if (value.NullableGeneric.IsPresent)
@@ -11505,7 +11505,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGeneric.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGeneric.Value));
+                TLayout.WriteType(ref writer, value.NullableGeneric.Value, depth + 1);
             }
         }
         if (value.Get.IsPresent)
@@ -11764,15 +11764,15 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinType":
                     Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field13 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "kotlinSupertypesPre":
                     Seen(ref seen, 1UL << 14);
-                    field14 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field14 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_ownerConstraintDispatchBounds":
                     Seen(ref seen, 1UL << 15);
-                    field15 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field15 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "staticCarrier":
                     Seen(ref seen, 1UL << 16);
@@ -11784,7 +11784,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "roundtripSupertypesPre":
                     Seen(ref seen, 1UL << 18);
-                    field18 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field18 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "roundtripTypeHeaderPending":
                     Seen(ref seen, 1UL << 19);
@@ -12066,7 +12066,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.KotlinType.Value));
+                TLayout.WriteType(ref writer, value.KotlinType.Value, depth + 1);
             }
         }
         if (value.KotlinSupertypesPre.IsPresent)
@@ -12075,7 +12075,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.KotlinSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.KotlinSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value._ownerConstraintDispatchBounds.IsPresent)
@@ -12084,7 +12084,7 @@ internal static class BirGraphMessagePack
             if (value._ownerConstraintDispatchBounds.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._ownerConstraintDispatchBounds.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._ownerConstraintDispatchBounds.Value.FrozenText, depth + 1);
             }
         }
         if (value.StaticCarrier.IsPresent)
@@ -12111,7 +12111,7 @@ internal static class BirGraphMessagePack
             if (value.RoundtripSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.RoundtripSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.RoundtripSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.RoundtripTypeHeaderPending.IsPresent)
@@ -12633,7 +12633,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinSupertypesPre":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field8 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "staticCarrier":
                     Seen(ref seen, 1UL << 9);
@@ -12870,7 +12870,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.KotlinSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.KotlinSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.StaticCarrier.IsPresent)
@@ -13329,11 +13329,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinSupertypesPre":
                     Seen(ref seen, 1UL << 29);
-                    field29 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field29 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_ownerConstraintDispatchBounds":
                     Seen(ref seen, 1UL << 30);
-                    field30 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field30 = reader.TryReadNil() ? OptionalField<OwnerConstraintDispatchBounds>.Null : OptionalField<OwnerConstraintDispatchBounds>.Of(OwnerConstraintDispatchBounds.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_syntheticFrameBound":
                     Seen(ref seen, 1UL << 31);
@@ -13349,7 +13349,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "roundtripSupertypesPre":
                     Seen(ref seen, 1UL << 34);
-                    field34 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field34 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "roundtripTypeHeaderPending":
                     Seen(ref seen, 1UL << 35);
@@ -13357,7 +13357,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "dotktKotlinMutableCollectionContract":
                     Seen(ref seen, 1UL << 36);
-                    field36 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field36 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "final":
                     Seen(ref seen, 1UL << 37);
@@ -13791,7 +13791,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.KotlinSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.KotlinSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value._ownerConstraintDispatchBounds.IsPresent)
@@ -13800,7 +13800,7 @@ internal static class BirGraphMessagePack
             if (value._ownerConstraintDispatchBounds.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._ownerConstraintDispatchBounds.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._ownerConstraintDispatchBounds.Value.FrozenText, depth + 1);
             }
         }
         if (value._syntheticFrameBound.IsPresent)
@@ -13836,7 +13836,7 @@ internal static class BirGraphMessagePack
             if (value.RoundtripSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.RoundtripSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.RoundtripSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.RoundtripTypeHeaderPending.IsPresent)
@@ -13854,7 +13854,7 @@ internal static class BirGraphMessagePack
             if (value.DotktKotlinMutableCollectionContract.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.DotktKotlinMutableCollectionContract.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.DotktKotlinMutableCollectionContract.Value.FrozenText, depth + 1);
             }
         }
         if (value.Final.IsPresent)
@@ -14250,11 +14250,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGenericRet":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "signatureOverrideDeclarations":
                     Seen(ref seen, 1UL << 8);
@@ -14352,7 +14352,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.NullableGenericRet.IsPresent)
@@ -14361,7 +14361,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGenericRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGenericRet.Value));
+                TLayout.WriteType(ref writer, value.NullableGenericRet.Value, depth + 1);
             }
         }
         if (value.SignatureOverrideDeclarations.IsPresent)
@@ -14418,11 +14418,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGenericRet":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "signatureOverrideDeclarations":
                     Seen(ref seen, 1UL << 7);
@@ -14510,7 +14510,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.NullableGenericRet.IsPresent)
@@ -14519,7 +14519,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGenericRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGenericRet.Value));
+                TLayout.WriteType(ref writer, value.NullableGenericRet.Value, depth + 1);
             }
         }
         if (value.SignatureOverrideDeclarations.IsPresent)
@@ -14603,19 +14603,19 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGenericRet":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "retKotlinType":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field13 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "signatureOverrideDeclarations":
                     Seen(ref seen, 1UL << 14);
@@ -14760,7 +14760,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.NullableGenericRet.IsPresent)
@@ -14769,7 +14769,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGenericRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGenericRet.Value));
+                TLayout.WriteType(ref writer, value.NullableGenericRet.Value, depth + 1);
             }
         }
         if (value.RetKotlinType.IsPresent)
@@ -14778,7 +14778,7 @@ internal static class BirGraphMessagePack
             if (value.RetKotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetKotlinType.Value));
+                TLayout.WriteType(ref writer, value.RetKotlinType.Value, depth + 1);
             }
         }
         if (value.MethodTypeParameterBoundsPre.IsPresent)
@@ -14787,7 +14787,7 @@ internal static class BirGraphMessagePack
             if (value.MethodTypeParameterBoundsPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.SignatureOverrideDeclarations.IsPresent)
@@ -15241,7 +15241,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -15295,7 +15295,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -15329,15 +15329,15 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "kotlinType":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGeneric":
                     Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableFlags":
                     Seen(ref seen, 1UL << 6);
@@ -15396,7 +15396,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.KotlinType.IsPresent)
@@ -15405,7 +15405,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.KotlinType.Value));
+                TLayout.WriteType(ref writer, value.KotlinType.Value, depth + 1);
             }
         }
         if (value.NullableGeneric.IsPresent)
@@ -15414,7 +15414,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGeneric.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGeneric.Value));
+                TLayout.WriteType(ref writer, value.NullableGeneric.Value, depth + 1);
             }
         }
         if (value.NullableFlags.IsPresent)
@@ -15486,7 +15486,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "retSuspendFnTypePre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_syntheticFrameBound":
                     Seen(ref seen, 1UL << 8);
@@ -15502,7 +15502,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "nullableGenericRet":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "retNullableFlags":
                     Seen(ref seen, 1UL << 12);
@@ -15510,11 +15510,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field13 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "kotlinSupertypesPre":
                     Seen(ref seen, 1UL << 14);
-                    field14 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field14 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -15633,7 +15633,7 @@ internal static class BirGraphMessagePack
             if (value.RetSuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.RetSuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.RetSuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._syntheticFrameBound.IsPresent)
@@ -15669,7 +15669,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGenericRet.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGenericRet.Value));
+                TLayout.WriteType(ref writer, value.NullableGenericRet.Value, depth + 1);
             }
         }
         if (value.RetNullableFlags.IsPresent)
@@ -15692,7 +15692,7 @@ internal static class BirGraphMessagePack
             if (value.MethodTypeParameterBoundsPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.KotlinSupertypesPre.IsPresent)
@@ -15701,7 +15701,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinSupertypesPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.KotlinSupertypesPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.KotlinSupertypesPre.Value.FrozenText, depth + 1);
             }
         }
     }
@@ -15929,7 +15929,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "declarationId":
                     Seen(ref seen, 1UL << 6);
@@ -16063,7 +16063,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.DeclarationId.IsPresent)
@@ -16517,11 +16517,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field8 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "ret":
                     Seen(ref seen, 1UL << 10);
@@ -16636,7 +16636,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.SuspendFnTypePre.IsPresent)
@@ -16645,7 +16645,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.Ret.IsPresent)
@@ -16706,7 +16706,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -16805,7 +16805,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -16844,7 +16844,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "outer":
                     Seen(ref seen, 1UL << 3);
@@ -16880,11 +16880,11 @@ internal static class BirGraphMessagePack
                     break;
                 case "kotlinType":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableGeneric":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableFlags":
                     Seen(ref seen, 1UL << 13);
@@ -16951,7 +16951,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.Outer.IsPresent)
@@ -17037,7 +17037,7 @@ internal static class BirGraphMessagePack
             if (value.KotlinType.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.KotlinType.Value));
+                TLayout.WriteType(ref writer, value.KotlinType.Value, depth + 1);
             }
         }
         if (value.NullableGeneric.IsPresent)
@@ -17046,7 +17046,7 @@ internal static class BirGraphMessagePack
             if (value.NullableGeneric.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.NullableGeneric.Value));
+                TLayout.WriteType(ref writer, value.NullableGeneric.Value, depth + 1);
             }
         }
         if (value.NullableFlags.IsPresent)
@@ -17129,7 +17129,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -17216,7 +17216,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -17793,7 +17793,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "declarationId":
                     Seen(ref seen, 1UL << 11);
@@ -17946,7 +17946,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.DeclarationId.IsPresent)
@@ -18055,7 +18055,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "companionReceiver":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field9 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "declarationId":
                     Seen(ref seen, 1UL << 10);
@@ -18279,7 +18279,7 @@ internal static class BirGraphMessagePack
             if (value.CompanionReceiver.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.CompanionReceiver.Value));
+                TLayout.WriteType(ref writer, value.CompanionReceiver.Value, depth + 1);
             }
         }
         if (value.DeclarationId.IsPresent)
@@ -18884,7 +18884,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -18928,7 +18928,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -19169,7 +19169,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -19253,7 +19253,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -19444,7 +19444,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 3);
-                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field3 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "underlying":
                     Seen(ref seen, 1UL << 4);
@@ -19508,7 +19508,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.Underlying.IsPresent)
@@ -19549,7 +19549,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 1);
-                    field1 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field1 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "values":
                     Seen(ref seen, 1UL << 2);
@@ -19588,7 +19588,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.Values.IsPresent)
@@ -19702,7 +19702,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 2);
-                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field2 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "kotlinClassifierRef":
                     Seen(ref seen, 1UL << 3);
@@ -19756,7 +19756,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.KotlinClassifierRef.IsPresent)
@@ -20357,7 +20357,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field6 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "sty":
                     Seen(ref seen, 1UL << 7);
@@ -20451,7 +20451,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.Sty.IsPresent)
@@ -20538,7 +20538,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableWitnessCount":
                     Seen(ref seen, 1UL << 12);
@@ -20727,7 +20727,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value.NullableWitnessCount.IsPresent)
@@ -21578,7 +21578,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field4 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -21657,7 +21657,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
     }
@@ -21958,7 +21958,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "suspendFnTypePre":
                     Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.Parse(IrMessagePack.ReadString(ref reader)));
+                    field5 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "_callEvalTemporary":
                     Seen(ref seen, 1UL << 6);
@@ -22042,7 +22042,7 @@ internal static class BirGraphMessagePack
             if (value.SuspendFnTypePre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, TypeNode.ToJson(value.SuspendFnTypePre.Value));
+                TLayout.WriteType(ref writer, value.SuspendFnTypePre.Value, depth + 1);
             }
         }
         if (value._callEvalTemporary.IsPresent)
@@ -23656,7 +23656,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 36);
-                    field36 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field36 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "resolvedMemberReturn":
                     Seen(ref seen, 1UL << 37);
@@ -24120,7 +24120,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value.ResolvedMemberReturn.IsPresent)
@@ -24488,7 +24488,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 16);
-                    field16 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field16 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "resolvedMemberReturn":
                     Seen(ref seen, 1UL << 17);
@@ -24702,7 +24702,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value.ResolvedMemberReturn.IsPresent)
@@ -25698,7 +25698,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 23);
-                    field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "resolvedMemberReturn":
                     Seen(ref seen, 1UL << 24);
@@ -25997,7 +25997,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value.ResolvedMemberReturn.IsPresent)
@@ -26133,7 +26133,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 19);
-                    field19 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field19 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "_resolvedMethodTypeParams":
                     Seen(ref seen, 1UL << 20);
@@ -26387,7 +26387,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value._resolvedMethodTypeParams.IsPresent)
@@ -26535,7 +26535,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 23);
-                    field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "resolvedMemberParams":
                     Seen(ref seen, 1UL << 24);
@@ -26814,7 +26814,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value.ResolvedMemberParams.IsPresent)
@@ -26971,7 +26971,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "_foreignDeclarationSignature":
                     Seen(ref seen, 1UL << 23);
-                    field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field23 = reader.TryReadNil() ? OptionalField<SourceTypeVector>.Null : OptionalField<SourceTypeVector>.Of(SourceTypeVector.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "resolvedMemberParams":
                     Seen(ref seen, 1UL << 24);
@@ -27250,7 +27250,7 @@ internal static class BirGraphMessagePack
             if (value._foreignDeclarationSignature.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value._foreignDeclarationSignature.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value._foreignDeclarationSignature.Value.FrozenText, depth + 1);
             }
         }
         if (value.ResolvedMemberParams.IsPresent)
@@ -28645,7 +28645,7 @@ internal static class BirGraphMessagePack
                     break;
                 case "methodTypeParameterBoundsPre":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(IrMessagePack.ReadString(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "dotktValueReturn":
                     Seen(ref seen, 1UL << 8);
@@ -28757,7 +28757,7 @@ internal static class BirGraphMessagePack
             if (value.MethodTypeParameterBoundsPre.IsNull) writer.WriteNil();
             else
             {
-                IrMessagePack.WriteString(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText);
+                TLayout.WriteRecord(ref writer, value.MethodTypeParameterBoundsPre.Value.FrozenText, depth + 1);
             }
         }
         if (value.DotktValueReturn.IsPresent)

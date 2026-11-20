@@ -42,6 +42,7 @@ static partial class RoundtripMetadata
     const string AKData         = Ns + "KotlinDataAttribute";
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
+    const string AKEnumRuntimeApi = Ns + "KotlinEnumRuntimeApiAttribute";
     const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
     internal const string RuntimeClassifierAttribute = Ns + "KotlinClassifierIdentityAttribute";
     const string AKBasicEnum    = Ns + "KotlinBasicEnumAttribute";
@@ -81,11 +82,11 @@ static partial class RoundtripMetadata
     // Physical accessibility may be wider than Kotlin declaration visibility for the cross-module inline ABI.
     // Preserve the declaration-owned fact at that representation boundary, before replacing CIR's `vis`.
     public static void PreserveTypeVisibility(JsonObject type) =>
-        Append(type, Marker(AKTypeVisibility, StringArg(BirCarrier.JsonV1),
+        Append(type, Marker(AKTypeVisibility, StringArg(BirCarrier.MessagePackV1),
             BytesArg(Convert.ToBase64String(VisibilityContent(type["vis"]!.GetValue<string>())))));
 
     public static void PreserveCallableVisibility(JsonObject declaration, string visibility) =>
-        Append(declaration, Marker(CallableVisibilityLowering.Carrier, StringArg(BirCarrier.JsonV1),
+        Append(declaration, Marker(CallableVisibilityLowering.Carrier, StringArg(BirCarrier.MessagePackV1),
             BytesArg(Convert.ToBase64String(VisibilityContent(visibility)))));
 
     static bool HasAttr(JsonObject declaration, string attributeName) =>
@@ -116,17 +117,11 @@ static partial class RoundtripMetadata
     // ATTRIBUTE-INSTANCE builders (a CIR `attrs` entry {attr, args:[…]} routed through ilemit's generic BuildCab).
     // ---------------------------------------------------------------------------------------------------------------
 
-    static JsonObject JsonCarrierAttr(string attr, JsonNode body)
-    {
-        byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, body.DeepClone());
-        return Marker(attr, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
-    }
-
     // DeclarationRename owns the source-to-physical decision and records the exact cross-module edge immediately on
     // that MethodDef. Keeping it in attrs lets every later structural pass copy it like other declaration metadata;
     // runtime builds remove it through the ordinary DotKt.Runtime.CompilerServices.* stripping rule.
     internal static void AddSourceMethodIdentity(JsonObject method, string sourceName, string sourceDeclaration = null)
-        => Append(method, Marker(AKSourceMethod, StringArg(BirCarrier.JsonV1),
+        => Append(method, Marker(AKSourceMethod, StringArg(BirCarrier.MessagePackV1),
             BytesArg(Convert.ToBase64String(SourceMethodIdentityContent(sourceName, sourceDeclaration)))));
 
     internal static void CopySourceMethodIdentity(JsonObject source, JsonObject target)
@@ -142,13 +137,13 @@ static partial class RoundtripMetadata
     // original one-.cctor initialization order; this narrow edge names that physical owner/slot while dll2klib reads
     // the CLR Literal/[KotlinLateinit] facts from the field instead of duplicating them in another payload.
     internal static void StampPropertyStorage(JsonObject getter, string owner, string fieldName) =>
-        Append(getter, Marker(AKPropertyStorage, StringArg(BirCarrier.JsonV1),
+        Append(getter, Marker(AKPropertyStorage, StringArg(BirCarrier.MessagePackV1),
             BytesArg(Convert.ToBase64String(PropertyStorageContent(owner, fieldName)))));
 
     // Lexically legal producer defaults can transport an initialization query into another assembly. Bind the
     // selected Kotlin getter to its private state accessor explicitly; the consumer never reconstructs storage.
     internal static void StampLateinitState(JsonObject getter, string owner, string method, bool isStatic) =>
-        Append(getter, Marker(AKLateinitState, StringArg(BirCarrier.JsonV1),
+        Append(getter, Marker(AKLateinitState, StringArg(BirCarrier.MessagePackV1),
             BytesArg(Convert.ToBase64String(LateinitStateContent(owner, method, isStatic)))));
 
     // A generic C# 14 extension implementation must carry the receiver block's CLR method parameters. Kotlin's
@@ -156,7 +151,7 @@ static partial class RoundtripMetadata
     // trusted edge points from the standard Roslyn-shaped wrapper to the non-generic-container core that dll2klib and
     // Kotlin call sites use. Names and receiver identity continue to come exclusively from the standard graph.
     internal static void StampExtensionCore(JsonObject wrapper, string coreName) =>
-        Append(wrapper, Marker(AKExtensionCore, StringArg(BirCarrier.JsonV1),
+        Append(wrapper, Marker(AKExtensionCore, StringArg(BirCarrier.MessagePackV1),
             BytesArg(Convert.ToBase64String(ExtensionCoreContent(coreName)))));
 
     static JsonObject Marker(string attr, params JsonObject[] args)
@@ -239,6 +234,7 @@ static partial class RoundtripMetadata
             AttrClass(AKData, Ctor()),
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
+            AttrClass(AKEnumRuntimeApi, Ctor(Param("System.String"), Param("System.String"), Param("System.String"), Param("System.String"))),
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
             AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // basic-enum ordered values
             AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))), // declaration ordinal on each Kotlin basic-enum literal
@@ -274,6 +270,7 @@ static partial class RoundtripMetadata
             AttrClass(AKData, Ctor()),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKEnumRuntimeApi, Ctor(Param("System.String"), Param("System.String"), Param("System.String"), Param("System.String"))),
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))) };

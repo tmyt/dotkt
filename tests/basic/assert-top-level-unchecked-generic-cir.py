@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exact selected top-level identities govern deferred unchecked generic results."""
-import base64
+from carrier_inspection import metadata_record
 import json
 import sys
 
@@ -119,8 +119,8 @@ carrier = carriers[0]
 relations = [attr for attr in carrier["attrs"]
              if attr["attr"]["name"] == "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute"]
 assert len(relations) == 1, carrier
-assert relations[0]["args"][0]["value"] == "bir-json/1", relations
-relation = json.loads(base64.b64decode(relations[0]["args"][1]["bytes"]))
+assert relations[0]["args"][0]["value"] == "bir-msgpack/1", relations
+relation = metadata_record(relations[0]["args"])
 assert relation["owner"] == source_owners[0]["name"], relation
 physical_static = [method for method in carrier["methods"] if method["name"] == static_call["method"]]
 assert len(physical_static) == 1 and physical_static[0]["static"], physical_static

@@ -4,6 +4,7 @@ using System.Buffers;
 using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using MessagePack;
 
 namespace DotKt.Bir;
@@ -15,26 +16,70 @@ public static partial class BirCarrier
     public delegate T MessagePackBodyReader<T>(ref MessagePackReader reader);
     public delegate void MessagePackBodyWriter<T>(ref MessagePackWriter writer, T value);
 
+    // Embedded declaration records use the same uncompressed logical transport as
+    // executable BIR; only the final attribute projection chooses compression.
+    public static byte[] EncodeMetadata<T>(T value, MessagePackBodyWriter<T> write) => Pack(value, write);
+
+    // Importers that consume a declaration as a property map need its logical
+    // fields, not an executable BIR decoder or a JSON text round trip.
+    public static JsonNode DecodeMetadata(string codec, byte[] content)
+    {
+        content = LogicalMessagePack(codec, content);
+        var reader = new MessagePackReader(content);
+        var value = ReadMetadataValue(ref reader, 0);
+        if (!reader.End || value is not JsonObject) throw new FormatException("Expected one metadata record");
+        return value;
+    }
+
+    internal static JsonNode? ReadMetadataValue(ref MessagePackReader reader, int depth)
+    {
+        if (depth > BirJson.MaxDepth) throw new FormatException("Metadata nesting exceeds the BIR limit");
+        switch (reader.NextMessagePackType)
+        {
+            case MessagePackType.Map:
+                var map = new JsonObject();
+                var fields = reader.ReadMapHeader();
+                for (var i = 0; i < fields; i++)
+                    map.Add(IrMessagePack.ReadString(ref reader), ReadMetadataValue(ref reader, depth + 1));
+                return map;
+            case MessagePackType.Array:
+                var array = new JsonArray();
+                var count = reader.ReadArrayHeader();
+                for (var i = 0; i < count; i++) array.Add(ReadMetadataValue(ref reader, depth + 1));
+                return array;
+            case MessagePackType.String:
+            case MessagePackType.Extension: return JsonValue.Create(IrMessagePack.ReadString(ref reader));
+            case MessagePackType.Integer: return JsonValue.Create(reader.ReadInt32());
+            case MessagePackType.Boolean: return JsonValue.Create(reader.ReadBoolean());
+            case MessagePackType.Nil: reader.ReadNil(); return null;
+            default: throw new FormatException("Unsupported declaration metadata field");
+        }
+    }
+
     public static byte[] EncodeBody<T>(string codec, T body, Action<Utf8JsonWriter, T> json,
         MessagePackBodyWriter<T> binary)
     {
         if (codec == JsonV1) return EncodeBody(codec, body, json);
         if (codec is not (MessagePackV1 or MessagePackDeflateV1))
             throw new NotSupportedException($"unknown carrier codec `{codec}`");
+        var content = Pack(body, binary);
+        return codec == MessagePackDeflateV1 ? Deflate(content) : content;
+    }
+
+    static byte[] Pack<T>(T body, MessagePackBodyWriter<T> binary)
+    {
         var output = new ArrayBufferWriter<byte>();
         var writer = new MessagePackWriter(output);
         binary(ref writer, body);
         writer.Flush();
-        var content = output.WrittenSpan.ToArray();
-        return codec == MessagePackDeflateV1 ? Deflate(content) : content;
+        return output.WrittenSpan.ToArray();
     }
 
     public static T DecodeBody<T>(string codec, byte[] content, JsonBodyReader<T> json,
         MessagePackBodyReader<T> binary)
     {
         if (codec == JsonV1) return DecodeBody(codec, content, json);
-        if (codec == MessagePackDeflateV1) content = Inflate(content);
-        else if (codec != MessagePackV1) throw new NotSupportedException($"unknown carrier codec `{codec}`");
+        content = LogicalMessagePack(codec, content);
         var reader = new MessagePackReader(content);
         var body = binary(ref reader);
         if (!reader.End) throw new FormatException();
@@ -53,6 +98,12 @@ public static partial class BirCarrier
         return saved >= 32 && saved * 10 >= content.Length
             ? (MessagePackDeflateV1, compressed) : (codec, content);
     }
+
+    public static byte[] LogicalMessagePack(string codec, byte[] content) => codec switch {
+        MessagePackV1 => content,
+        MessagePackDeflateV1 => Inflate(content),
+        _ => throw new NotSupportedException($"unknown carrier codec `{codec}`"),
+    };
 
     static byte[] Deflate(byte[] content)
     {
