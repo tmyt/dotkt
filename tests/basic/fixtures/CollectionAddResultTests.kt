@@ -63,6 +63,10 @@ private class ReadOnlyStringSet : PartialSet<String>() {
     override fun add(element: String): Nothing = throw UnsupportedOperationException(element)
     override fun addAll(elements: Collection<String>): Nothing = throw UnsupportedOperationException("all")
 }
+private abstract class BaseIntSlot { abstract fun read(): Int }
+private class ThrowingIntSlot : BaseIntSlot() {
+    override fun read(): Nothing = throw UnsupportedOperationException("read")
+}
 private class RejectingIndex<E>(items: List<E>) : List<E> by items {
     override fun indexOf(element: E): Nothing = throw UnsupportedOperationException("indexOf")
 }
@@ -80,6 +84,9 @@ class CollectionAddResultTests {
         try { inheritedSlots.add("one"); error("add returned") } catch (e: UnsupportedOperationException) { check(e.message == "one") }
         val throughInterface: MutableSet<String> = inheritedSlots
         try { throughInterface.addAll(listOf("two")); error("addAll returned") } catch (e: UnsupportedOperationException) { check(e.message == "all") }
+        // Collection syntax can lower to a collection helper; exercise direct base-slot dispatch too.
+        val direct: BaseIntSlot = ThrowingIntSlot()
+        try { direct.read(); error("read returned") } catch (e: UnsupportedOperationException) { check(e.message == "read") }
 
         val value = CollectionAddResultList(mutableListOf(1))
         check(value.add(2))
