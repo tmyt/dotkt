@@ -14,6 +14,14 @@ class ArraySourceSignatureTests {
 
     @TestAttribute
     fun importedStarArraysKeepRuntimeComponents() {
+        check(openInlineArray("s").edit { it + "!" } == "s!")
+        check(hasNumberArray<Int> { arrayOf(1L) } && !hasNumberArray<Int> { arrayOf("not a number") })
+        val wideAllocation: Any = arrayOf<Any?>("not a string array")
+        check(!hasExactArray<String> { wideAllocation } && hasExactArray<String> { arrayOf("s") })
+        check(readOpenElement<Int>(arrayOfNulls<Any>(1), wideAllocation) { true } == null)
+        val addressed = arrayOf("old")
+        replaceInlineElement(addressed) { "new" }
+        check(addressed[0] == "new")
         val values = arrayOf(29, 31)
         check(firstStarArray(values) == 29)
         val projected: Array<*> = relayStarArray(values)

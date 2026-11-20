@@ -104,6 +104,15 @@ internal fun BirEmitter.functionClassifierOperand(type: IrType): TypeNode.Fn? {
 // Kotlin's erased classifier application has no lexical type-variable slots,
 // including those captured by an inner/local class.
 internal fun BirEmitter.erasedTypeOperand(type: IrType): TypeNode? {
+    // Array checks retain the declaration-site component bound, not the type
+    // argument later substituted while copying an inline body.
+    if (type.classFqName?.asString() == "kotlin.Array") {
+        val argument = (type as? IrSimpleType)?.arguments?.singleOrNull() as? IrTypeProjection ?: return null
+        val component = erasedTypeOperand(argument.type) ?: return null
+        val variance = if (argument.variance == org.jetbrains.kotlin.types.Variance.IN_VARIANCE) "in" else "out"
+        val array = TypeNode.Array(TypeNode.Projection(variance, component))
+        return if (type.isMarkedNullable()) TypeNode.Nullable(array) else array
+    }
     val parameter = (type.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.owner ?: return null
     if (parameter.isReified) return null
     val erased = type.eraseTypeParameters()
