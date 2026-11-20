@@ -2330,6 +2330,11 @@ function variance therefore preserves the original function object's identity ac
 DLL boundaries. Metadata retains the source signature. Metadata-proven byref-like types cannot be boxed and retain
 their exact physical slots. A nominal CLR delegate crossing uses its own declared signature instead of this carrier.
 
+A Kotlin class may implement a function type directly or through an interface. At a function-typed
+boundary its delegate calls the selected `invoke` implementation. Converting the same instance
+again preserves identity, including when it is viewed as `Any`. Writing `instance::invoke`
+instead creates an ordinary bound reference, distinct from the instance.
+
 `System.Func`/`Action` stop at 16 value parameters, so 17..22 is the band that needs a DotKt type — and 22 is where
 it stops, because each arity is one more pre-baked type in the stdlib (see the refusal below). Those six pairs are
 emitted **unconditionally into both stdlib twins** (`DotKt.Private.Stdlib.dll` and `DotKt.Stdlib.dll`, with

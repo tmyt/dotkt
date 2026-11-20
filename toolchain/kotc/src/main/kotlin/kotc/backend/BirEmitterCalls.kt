@@ -1176,9 +1176,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 	// ordinary `callInstance` invoke on that delegate (the fall-through member-call path). bir2cir owns any splice.
 	// `(::x)()` (invoking a property-reference VALUE inline) needs NO special handling here: KProperty0/
 	// KProperty1's declared `() -> V`/`(T) -> V` supertype gives them a REAL fake-overridden `invoke` abstract
-	// member declared directly ON the interface itself (confirmed in the compiled BIR — sourceClassDefinition's own
-	// interfaces-collection drops the FunctionN supertype off ANY interface def, `bt is TypeNode.Fn -> null`,
-	// but the fake override still lands in the interface's OWN `methods`). So a call's resolved `declaringClass`
+	// member declared directly ON the interface itself, independently of its function supertype. So a call's resolved `declaringClass`
 	// for `invoke` on a KProperty0/1-typed receiver is KProperty0/1 itself, never Function0/1 — the ordinary
 	// member-call path below emits a plain `callInstance ownerType:kotlin.reflect.KProperty0/1[…] method:invoke`,
 	// which `propertyRef`'s lifted class implements directly (mirrors JVM's `PropertyReferenceImpl.invoke() =

@@ -399,6 +399,7 @@ sealed class Pipeline
         var valuePolicy = new ValueRepresentationSourcePolicy(captured, refs, referenceBuild);
         for (var index = 0; index < captured.Length; index++) captured[index] = valuePolicy.EraseBounds(captured[index]);
         captured = CallableVisibilityLowering.ApplyAll(captured, refs);
+        FunctionValueRepresentation.MaterializeNominalFunctions(captured, refs.IsByRefLikeFqn);
         captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
         captured = ClrEventImplBinding.PreserveSourceFacts(captured);
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);

@@ -405,14 +405,12 @@ private fun BirEmitter.sourceInterfaceSuperTypes(klass: IrClass): List<TypeNode>
 	.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
 	.mapNotNull { st ->
 		// A stdlib/projected interface may already have a CLR-bound semantic type node; a user generic interface keeps
-		// its Kotlin owner plus the actual constructed arguments. Function types are value representations, not an
-		// implemented interface edge authored by this declaration. The Kotlin iterator/iterable protocol is deliberately
-		// not special-cased: its real generic interface edge lets bir2cir's general reverse bridge synthesize
-		// GetEnumerator from iterator().
+		// its Kotlin owner plus the actual constructed arguments. An ordinary function supertype is
+		// likewise an authored Kotlin edge; whether it becomes a CLR interface is not a frontend decision.
 		val bt = birType(st)
 		val stClass = st.classifierOrNull?.owner as? IrClass
 		when {
-			bt is TypeNode.Fn -> null
+			bt is TypeNode.Fn -> bt.takeUnless { it.suspend }
 			stClass != null && isExternalNetType(stClass) -> bt
 			else -> stClass?.let { ownerSpec(it, st) }
 		}
