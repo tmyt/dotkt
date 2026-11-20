@@ -30,11 +30,23 @@ class InlineArraySource<T>(val values: Array<T?>) {
 fun <T> openInlineArray(value: T): InlineArraySource<T> =
     InlineArraySource(arrayOf<Any?>(value) as Array<T?>)
 
-@Suppress("UNCHECKED_CAST", "NOTHING_TO_INLINE")
-inline fun <T : Number> hasNumberArray(value: Any?): Boolean = value as? Array<T> != null
+@Suppress("UNCHECKED_CAST")
+inline fun <T : Number> hasNumberArray(value: () -> Any?): Boolean = value() as? Array<T> != null
 
 @Suppress("UNCHECKED_CAST")
-inline fun <reified T> hasExactArray(value: Any?): Boolean = value as? Array<T> != null
+inline fun <reified T> hasExactArray(value: () -> Any?): Boolean = value() as? Array<T> != null
+
+@Suppress("UNCHECKED_CAST")
+inline fun <T> readOpenElement(left: Any, right: Any, choose: () -> Boolean): Any? {
+    val values = if (choose()) left as Array<T> else right as Array<T>
+    return values[0]
+}
+
+fun <T> replaceElement(slot: kotlin.clr.ClrRef<T>, value: T) { slot.value = value }
+inline fun <T> replaceInlineElement(source: Array<T>, value: () -> T) {
+    val items = source
+    replaceElement(kotlin.clr.byref(items[0]), value())
+}
 annotation class ArraySourceNames(vararg val names: String)
 fun firstStarArray(values: Array<*>): Any? = values[0]
 @ArraySourceNames("star", "array")
