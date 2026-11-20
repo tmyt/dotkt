@@ -1,5 +1,10 @@
 package roundtrip.upstreamstdlib
 
+abstract class SequenceSource {
+    protected abstract val source: CharSequence?
+    fun first(): Char? = source?.get(0)
+}
+
 class BoundarySequence(private val text: String) : CharSequence {
     override val length: Int get() = text.length
     override fun get(index: Int): Char = text[index]

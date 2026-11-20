@@ -2,10 +2,16 @@ package roundtriptests.charsequenceboundaries
 
 import NUnit.Framework.TestAttribute
 import roundtrip.upstreamstdlib.BoundarySequence
+import roundtrip.upstreamstdlib.SequenceSource
 import roundtrip.upstreamstdlib.inlineSequenceIndex
 import roundtrip.upstreamstdlib.sequenceIndexInLibrary
 import roundtrip.upstreamstdlib.sequenceObjectInLibrary
 import roundtrip.upstreamstdlib.sequenceElvisInLibrary
+
+private class StringSource(private val text: String?) : SequenceSource() {
+    var reads = 0
+    override val source: String? get() { reads++; return text }
+}
 
 class CharSequenceBoundaryTests {
     @TestAttribute
@@ -24,6 +30,10 @@ class CharSequenceBoundaryTests {
 
     @TestAttribute
     fun importedConditionalBodiesRetainCustomIdentityAndNullSemantics() {
+        val present = StringSource("abc")
+        val absent = StringSource(null)
+        check(present.first() == 'a' && present.reads == 1)
+        check(absent.first() == null && absent.reads == 1)
         val custom = BoundarySequence("abc")
         check(sequenceObjectInLibrary(true, custom).toString() == "raw")
         check(sequenceObjectInLibrary(false, custom) === custom)

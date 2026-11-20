@@ -40,6 +40,9 @@ static partial class StringCharSequenceBridge
         return _fired ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
     }
 
+    internal static IReadOnlyList<BirClassDefinition> EmitPendingAdapter(BirFileDeclaration file) =>
+        _fired && !_adapterEmitted ? EmitSourceAdapter(file) : Array.Empty<BirClassDefinition>();
+
     static IReadOnlyList<BirClassDefinition> EmitSourceAdapter(BirFileDeclaration file)
     {
         if (_adapterEmitted) return Array.Empty<BirClassDefinition>();
@@ -417,11 +420,12 @@ static partial class StringCharSequenceBridge
 
     internal static bool CanAdaptStringReturn(TypeNode source, TypeNode target) =>
         IsScalarCharSequence(target)
-        && (IsStringTokT(source) || source is TypeNode.Nullable optional && IsStringTokT(optional.Of)
-            && target is TypeNode.Nullable or TypeNode.Oblivious);
+        && IsStringTokT(source switch {
+            TypeNode.Nullable optional => optional.Of, TypeNode.Oblivious platform => platform.Of, _ => source,
+        });
 
     internal static IBirExpression AdaptStringReturn(IBirExpression value, TypeNode source) =>
-        source is TypeNode.Nullable ? SourceWrapAdapterNullable(value, source) : SourceWrapAdapter(value);
+        source is TypeNode.Nullable or TypeNode.Oblivious ? SourceWrapAdapterNullable(value, source) : SourceWrapAdapter(value);
 
     static IBirExpression SourceWrapAdapterNullable(IBirExpression value, TypeNode source)
     {

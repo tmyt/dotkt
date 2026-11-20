@@ -902,6 +902,8 @@ sealed class Pipeline
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
             valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
                 if (method != null) suspendTransitions.PublishMethods(file, owner, new[] { method });
+                if (method != null && !referenceBuild && StringCharSequenceBridge.EmitPendingAdapter(file) is { Count: > 0 } appended)
+                    suspendTransitions.PublishTypes(file, appended);
                 if (descriptor != null) currentDeclarations.GetSource(descriptor);
                 if (descriptor is BirMethodImpl slot) selectedSlotOwners.Add(slot);
             });
