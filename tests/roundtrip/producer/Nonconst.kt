@@ -101,8 +101,10 @@ fun uf(a: UInt, b: Int = 1): String = "u$a/$b"
 fun uf(a: Marker, b: Int = 2): String = "m${a.s}/$b"
 // Two SAME-ARITY ctors both carrying a non-constant default: the splice key carries the declared parameter vector, so
 // the omitting consumer resolves the right overload instead of whichever the metadata scan enumerated last.
-class Pair2(val n: Int, val label: String = n.toString() + "!") {
+open class Pair2(val n: Int, val label: String = n.toString() + "!") {
     constructor(s: String, upper: String = s.uppercase()) : this(upper.length)
+    constructor(xs: System.Collections.Generic.List<Int>, count: Int = xs.Count + 1) : this(count)
+    constructor(xs: System.Collections.Generic.List<String>, count: Int = xs.Count + 2) : this(count)
 }
 
 // #235 SINGLE EVALUATION: each of these has a carrier that reads a value of the CALL — the extension receiver, an
