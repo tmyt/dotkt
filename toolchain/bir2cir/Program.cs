@@ -368,6 +368,12 @@ sealed class Pipeline
         {
             var path = Path.GetFullPath(input);
             var source = DefaultBirCarrier.FreezeSourceDefaults(BirFileCodec.Read(path));
+            // Only authored classifiers enter the dependency KLIB. Capture this before
+            // lowering adds internal CLR implementation types with the same accessibility.
+            foreach (var type in source.Types.OrEmpty())
+                if (type.Vis.OrDefault() == "internal" && !type.Generated.OrDefault()
+                    && PublishedApiTypeVisibilityLowering.ResolveVisibility(type) == "internal")
+                    RoundtripMetadata.PreserveTypeVisibility(type);
             var suspend = SuspendShapeAnalyzer.Analyze(source);
             inputsWithSources.Add((path, source, suspend));
         }
