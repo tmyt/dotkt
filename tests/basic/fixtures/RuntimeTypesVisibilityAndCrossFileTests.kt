@@ -110,6 +110,7 @@ class RuntimeTypesDerived : RuntimeTypesBase() {
     override fun twice(x: Int) = super.twice(x) + 1
     override val tag: String get() = "derived[" + super.tag + "]"
     override fun describe() = "Derived<" + super.describe() + ">"
+    internal inline fun deferredBase(crossinline f: (String) -> String): () -> String = { f(super.greet()) }
 }
 
 // An immediate super class can inherit the concrete implementation while also stating an interface carrying the
@@ -283,6 +284,9 @@ class RuntimeTypesGenericProtectedSuperDerived<A, B> : RuntimeTypesGenericProtec
     context(context: RuntimeTypesSuperContext)
     fun <U : RuntimeTypesGenericMarker<B>> liftedSuper(value: B, marker: U): () -> String =
         { super.combine(super.echo(value), marker) }
+    context(context: RuntimeTypesSuperContext)
+    internal inline fun <U : RuntimeTypesGenericMarker<B>> renderBase(value: B, marker: U, f: (String) -> String): String =
+        f(super.combine(super.echo(value), marker))
 }
 
 // ---- il-vis : visibility modifiers -> CLR access flags ------------------------------------------------------------
@@ -344,6 +348,7 @@ class RuntimeTypeAndSuperDispatchTests {
         assertEquals("property-derived>property-base", RuntimeTypesSuperPropertyDerived().inheritedProperty)
         assertEquals("unbound", RuntimeTypesSlotImpl<Int, Double>(0.0).exercise(RuntimeTypesSlotImpl("initial")))
         val b: RuntimeTypesBase = RuntimeTypesDerived()
+        assertEquals("base", RuntimeTypesDerived().deferredBase { it }())
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11
         val protected = RuntimeTypesProtectedSuperDerived()
@@ -353,6 +358,9 @@ class RuntimeTypeAndSuperDispatchTests {
             assertEquals("base:value:marker",
                 RuntimeTypesGenericProtectedSuperDerived<Int, String>()
                     .liftedSuper("value", RuntimeTypesStringMarker())())
+            assertEquals("base:value:marker",
+                RuntimeTypesGenericProtectedSuperDerived<Int, String>()
+                    .renderBase("value", RuntimeTypesStringMarker()) { it })
         }
     }
 

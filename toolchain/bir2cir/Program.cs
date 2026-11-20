@@ -391,6 +391,7 @@ sealed class Pipeline
         }
         var captured = DeclarationSignatureIdentity.Capture(TakeSources());
         for (var index = 0; index < captured.Length; index++) captured[index] = SourceOwnerClosure.Apply(captured[index]);
+        UnsafeAccessorLowering.PrepareInlineSuper(captured, refs);
         var declarationParameters = new ReflectedDeclarationParameters(captured);
         captured = ComparableRepresentationLowering.Apply(captured, referenceBuild);
         // Keep the selected declaration's Kotlin spelling and signature before
