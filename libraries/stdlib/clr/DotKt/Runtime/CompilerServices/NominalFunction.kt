@@ -12,8 +12,9 @@ private class FunctionViewTable<K : Any, V : Any> {
     @kotlin.clr.ClrIntrinsic("GetOrCreateValue") fun cell(key: K): V = error("CLR binding")
 }
 
+private class PublishedFunctionView(val delegate: FunctionDelegate)
 private class FunctionViews public constructor() {
-    var byArity: MutableMap<Int, Any>? = null
+    var byArity: MutableMap<Int, PublishedFunctionView>? = null
 }
 private val functionViews = FunctionViewTable<KotlinFunctionSource, FunctionViews>()
 
@@ -28,13 +29,36 @@ internal fun kotlinFunctionView(value: Any?, arity: Int): Any? {
     val cell = functionViews.cell(value)
     enterFunctionViews(cell)
     try {
-        val views = cell.byArity ?: mutableMapOf<Int, Any>().also { cell.byArity = it }
+        val views = cell.byArity ?: mutableMapOf<Int, PublishedFunctionView>().also { cell.byArity = it }
         val cached = views[arity]
-        if (cached != null) return cached
+        if (cached != null) return cached.delegate
         val view = value.dotktCreateFunctionView(arity) ?: return value
-        views[arity] = view
+        views[arity] = PublishedFunctionView(view)
         return view
     } finally { exitFunctionViews(cell) }
+}
+
+// A generic value slot can close over the original nominal class or over
+// its callable delegate. Keep the original unless the exact slot admits a view.
+@PublishedApi
+internal fun kotlinFunctionSlot(value: Any?, slot: StarProjectionType): Any? {
+    if (value !is KotlinFunctionSource) return value
+    return nominalSlot(value, slot)
+}
+
+private class DelegateArity public constructor() { var arity: Int = -1 }
+private val delegateArities = FunctionViewTable<StarProjectionType, DelegateArity>()
+
+private fun nominalSlot(value: KotlinFunctionSource, slot: StarProjectionType): Any? {
+    if (slot.isAssignableFrom(value.starProjectionRuntimeType())) return value
+    if (!(FunctionDelegate::class as StarProjectionType).isAssignableFrom(slot)) return value
+    val entry = delegateArities.cell(slot)
+    val arity = if (entry.arity >= 0) entry.arity else {
+        val invoke = slot.functionInvoke("Invoke") ?: return value
+        invoke.getParameters().size.also { entry.arity = it }
+    }
+    val view = kotlinFunctionView(value, arity) ?: return value
+    return if (slot.isAssignableFrom(view.starProjectionRuntimeType())) view else value
 }
 
 @kotlin.clr.ClrTypeAlias("System.Delegate")
@@ -52,7 +76,7 @@ internal fun kotlinFunctionObject(value: Any?): Any? {
     enterFunctionViews(cell)
     try {
         val views = cell.byArity ?: return value
-        for (view in views.values) if (view === value) return target
+        for (view in views.values) if (view.delegate === value) return target
         return value
     } finally { exitFunctionViews(cell) }
 }

@@ -45,6 +45,18 @@ class FunctionVarianceTests {
         val function: (Int) -> Int = direct
         check(retainFunctionValue(function)(21) == 42)
         check((retainFunctionValue(function) as Any) === direct)
+        val fromBox = boxedValue(function).value
+        val fromList = singletonValue(function).single()
+        val fromSet = singletonSetValue(function).single()
+        check(boxedStar(boxedValue(function)) === direct)
+        val erasedSet: Set<Any> = singletonSetValue(function)
+        check(erasedSet.contains(direct))
+        check(fromBox(21) == 42 && (fromBox as Any) === direct)
+        check(fromList(21) == 42 && (fromList as Any) === direct)
+        check(fromSet(21) == 42 && (fromSet as Any) === direct)
+        val native = NativeListStorage(ArrayList<(Int) -> Int>())
+        native.put(boxedValue(function))
+        check(native.values[0](21) == 42 && (native.values[0] as Any) === direct)
         val lambda: (Int) -> Int = { it + 1 }
         check(retainFunctionValue(lambda) === lambda)
         check(retainFunctionValue<((Int) -> Int)?>(null) == null)

@@ -23,6 +23,12 @@ companion val CompanionFunctions.increment: (Int) -> Int get() = { it + 1 }
 companion val CompanionFunctions.answer: Int get() = 42
 fun contextual(): context(Context) (Int) -> String? = { count -> if (count > 0) contextOf<Context>().text else null }
 class Box<T>(val value: T)
+fun <T> boxedValue(value: T): Box<T> = Box(value)
+fun <T> singletonValue(value: T): List<T> = listOf(value)
+fun <T> singletonSetValue(value: T): Set<T> = hashSetOf(value)
+class NativeListStorage<T>(val values: ArrayList<T>) {
+    fun put(box: Box<T>) { values.add(box.value) }
+}
 interface FunctionSink<T>
 class IntFunctionSink : FunctionSink<(Int) -> Int>
 class FunctionBound<F : (Int) -> Int>(val callback: F) {
