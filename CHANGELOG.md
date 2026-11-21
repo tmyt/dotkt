@@ -5,6 +5,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.31 (2026-11-22)
+
+- Fix a 0.9.30 lowering crash in the generic iterator used by Compose's bundled immutable collections. Kotlin override bindings no longer enter the CLR constraint checker as executable type applications (#1815).
+- Check generic constraint witnesses against the selected CLR declaration and its actual argument layout, including types materialized late in lowering (#1817).
+
 ## 0.9.30 (2026-11-21)
 
 - Fix a 0.9.29 compiler regression when a property setter from another assembly takes a generic inner class that writes to an array. This restores the affected `kotlinx.coroutines` build without source changes.
