@@ -539,7 +539,7 @@ static class TypedPhysicalValueCoercion
         BirLambdaParameter parameter => parameter.Type.OrDefault(), _ => null,
     };
 
-    static BirGraphValue Rewrite(BirGraphValue node, Scope scope, Index index, bool resultUsed = true)
+    static BirGraphValue Rewrite(BirGraphValue node, Scope scope, Index index, bool resultUsed = true, bool location = false)
     {
         if (node == null) return null;
         // Deferred declarations never inherit the caller's locals or return slot.
@@ -559,6 +559,7 @@ static class TypedPhysicalValueCoercion
             return closure;
         }
         RewriteChildren(node, scope, index, resultUsed);
+        if (location && node is BirArrayGet) return node;
         // Staging a native invocation must not turn its ref result into a
         // temporary value. Take the original invocation's address *after*
         // the publication preamble, in the same evaluation scope.
@@ -573,17 +574,28 @@ static class TypedPhysicalValueCoercion
 
         var allocated = node switch { BirNewArray literal => literal.Elem.OrDefault(), BirNewArrayInit init => init.Elem.OrDefault(),
             BirNewArraySized sized => sized.Elem.OrDefault(), _ => null };
-        if (!index.ReferenceBuild && allocated is TypeNode.Fqn { Args.Length: > 0 } component &&
+        static TypeNode ComponentLeaf(TypeNode type)
+        {
+            while (type is TypeNode.Array a) type = a.Elem;
+            return type;
+        }
+        if (!index.ReferenceBuild && ComponentLeaf(allocated) is TypeNode.Fqn { Args.Length: > 0 } component &&
             (index.LocalCarriers?.ContainsKey(component.Name) == true ||
              index.References?.TryExistentialPhysicalOwner(component.Name, out _) == true))
-            return SelectNativeArray(node, new TypeNode.Array(component), scope, index);
+            return SelectNativeArray(node, new TypeNode.Array(allocated), scope, index);
         var array = node switch { BirArrayGet value => value.Array.OrDefault(), BirArraySet value => value.Array.OrDefault(),
             BirArrayLength value => value.Array.OrDefault(), BirForArray value => value.Array.OrDefault(), _ => null };
         if (index.References != null && array != null)
         {
             var element = node switch { BirArrayGet read => read.Elem.OrDefault(), BirArraySet write => write.Elem.OrDefault(),
                 BirForArray loop => loop.Elem.OrDefault(), _ => null };
-            if (element is TypeNode.Fqn application && index.IsExistentialOwner(application))
+            // An unchecked widening to a reference array preserves the vector,
+            // not its statically declared component. An unsealed base/interface
+            // slot may therefore read or write a projected vector as well.
+            var leaf = ComponentLeaf(element);
+            if (leaf is TypeNode.Tv || leaf is TypeNode.Fqn application &&
+                (index.IsExistentialOwner(application) || !index.IsValue(application) &&
+                    index.References.PhysicalTypeForProof(application.Name, application.Args?.Length ?? 0)?.IsSealed != true))
             {
                 IBirExpression ReadAt(IBirExpression vector, IBirExpression position) =>
                     TypedGenericArrayStorageLowering.Read(vector, position, element, !index.LocalArrayRuntime);
@@ -687,11 +699,16 @@ static class TypedPhysicalValueCoercion
         IBirExpression[] args, TypeNode[] signature, Scope scope, Index index)
     {
         bool Publishes(TypeNode type) => ProjectedArrayOperand(type) || call.SourceClrBoundary && MayHoldArray(type, index);
-        if (args is not { Length: > 0 } || signature == null || args.Length != signature.Length || !signature.Any(t => Publishes(t) ||
-                SignatureValueTypes.Of(t) is TypeNode.ByRef pointer && Publishes(pointer.Of)))
+        BirArrayGet Indexed(int i) => (args[i] is BirByRefOf a ? a.Inner.OrDefault() : args[i]) as BirArrayGet;
+        bool ReferenceElement(TypeNode type) => type is not TypeNode.Fqn f || !index.IsValue(f);
+        if (args is not { Length: > 0 } || signature == null || args.Length != signature.Length ||
+            !signature.Where((t, i) => Publishes(t) || SignatureValueTypes.Of(t) is TypeNode.ByRef pointer &&
+                (Publishes(pointer.Of) || Indexed(i) != null && ReferenceElement(pointer.Of))).Any())
             return null;
         var statements = new List<IBirStatement>();
         var exports = new List<IBirExpression>();
+        var vectors = new List<IBirExpression>();
+        var indices = new List<IBirExpression>();
         var dynamicValue = false;
         BirLocal Retain(IBirExpression value, TypeNode type)
         {
@@ -713,6 +730,15 @@ static class TypedPhysicalValueCoercion
         {
             if (SignatureValueTypes.Of(signature[i]) is TypeNode.ByRef pointer)
             {
+                if (Indexed(i) is { } location && ReferenceElement(pointer.Of))
+                {
+                    var vector = Retain(location.Array.Value, new TypeNode.Array(pointer.Of));
+                    var offset = Retain(location.Index.Value, NativeIndex);
+                    location.Array = vector;
+                    location.Index = offset;
+                    vectors.Add((BirLocal)vector.DeepClone());
+                    indices.Add((BirLocal)offset.DeepClone());
+                }
                 var address = Address(args[i], pointer);
                 args[i] = address;
                 if (Publishes(pointer.Of) && index.References?.IsOutputOnlyArgument(member, i) != true)
@@ -732,10 +758,14 @@ static class TypedPhysicalValueCoercion
                 }
             }
         }
-        if (exports.Count != 0)
+        if (exports.Count != 0 || vectors.Count != 0)
         {
             var batch = new TypeNode.Array(Object);
-            var publish = exports.Count == 1 && !dynamicValue ? ArrayRuntimeCall("exposeProjectedArray", NativeVector, [NativeVector], index, exports[0])
+            var publish = vectors.Count != 0 ? ArrayRuntimeCall("exposeProjectedArguments", Void, [batch, batch, new TypeNode.Array(NativeIndex)], index,
+                    new BirNewArray { Elem = Object, Elems = exports.ToArray() },
+                    new BirNewArray { Elem = Object, Elems = vectors.ToArray() },
+                    new BirNewArray { Elem = NativeIndex, Elems = indices.ToArray() })
+                : exports.Count == 1 && !dynamicValue ? ArrayRuntimeCall("exposeProjectedArray", NativeVector, [NativeVector], index, exports[0])
                 : exports.Count == 1 ? ArrayRuntimeCall("exposeProjectedValue", Void, [Object], index, exports[0])
                 : ArrayRuntimeCall("exposeProjectedArrays", Void, [batch], index, new BirNewArray { Elem = Object, Elems = exports.ToArray() });
             statements.Add(new BirExpressionStatement { Expr = publish });
@@ -750,6 +780,9 @@ static class TypedPhysicalValueCoercion
         {
             case BirExpressionStatement statement:
                 if (statement.Expr.HasValue) statement.Expr = Expr(statement.Expr.Value, false); return;
+            case BirByRefOf address when address.Inner.OrDefault() is BirArrayGet element:
+                address.Inner = Field(Expression(Rewrite(element, scope, index, location: true)));
+                return;
             case BirReturn exit:
                 if (exit.Value.HasValue) exit.Value = Expr(exit.Value.Value, !IsVoid(scope.Return)); return;
             case BirReturnExpression exit:
@@ -796,7 +829,23 @@ static class TypedPhysicalValueCoercion
                 RewriteStatements(loop.Body.OrEmpty(), LoopScope(loop.Var.OrDefault(), loop.Elem.OrDefault(), scope), index);
                 if (loop.Fallback.HasValue) Rewrite(loop.Fallback.Value, scope, index); return;
             default:
-                node.VisitChildSlots(slot => slot.Replace(Rewrite(slot.Value, scope, index)));
+                // A CLR ref operand names a location, not the Kotlin value
+                // read from it. Consult the selected signature before walking
+                // an indexed argument (its receiver and index still evaluate).
+                var supplied = Arguments(node);
+                var signature = supplied?.Any(a => a is BirArrayGet) == true ? ParameterTypes(node) : null;
+                node.VisitChildSlots(slot => {
+                    var child = slot.Value;
+                    var pos = signature != null && child is BirArrayGet read ? Array.FindIndex(supplied, a => ReferenceEquals(a, read)) : -1;
+                    var pointer = pos >= 0 && pos < signature.Length ? SignatureValueTypes.Of(signature[pos]) as TypeNode.ByRef : null;
+                    var rewritten = Rewrite(child, scope, index, location: pointer != null);
+                    if (pointer != null && rewritten is BirArrayGet indexed && indexed.Elem.OrDefault() != pointer.Of)
+                    {
+                        indexed.Array = Field(Cast(Graph(indexed.Array.Value), new TypeNode.Array(pointer.Of)));
+                        indexed.Elem = pointer.Of;
+                    }
+                    slot.Replace(rewritten);
+                });
                 return;
         }
     }

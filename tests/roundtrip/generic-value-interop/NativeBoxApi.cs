@@ -35,9 +35,12 @@ public static class NativeBoxApi
     public static bool FirstMissing(ref Box<string, string>[] values) => values[0] is null;
     public static void ResetBoxes(out Box<string, string>[] values) => values = [new("reset")];
     public static int CountBoth(Box<string, string>[] first, Box<string, string>[] second) => first.Length + second.Length;
+    public static bool ContainsSlot(ref Box<string, string> slot, Box<string, string>[] values) =>
+        System.Array.IndexOf(values, slot) >= 0;
     public static Box<string, string>[] ArrayField;
     public static Box<string, string>[] ArrayProperty { get; set; }
     public static object ReadFirst(NativeBoxArraySource source) => source.Read()[0];
+    public static object ReadFirstRow(Box<string, string>[][] matrix) => matrix[0][0];
     public static bool IsNativeBoxMatrix(object value) => value is Box<string, string>[][];
     public static NativeBoxContainer<Box<string, string>> EchoContainer(NativeBoxContainer<Box<string, string>> value) => value;
     public static NativeBoxContainer<Box<string, string>> InvokeContainer(NativeBoxContainerFactory factory) => factory();

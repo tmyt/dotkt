@@ -173,6 +173,15 @@ static partial class FBoundStarProjectionErasure
                         || nativeBase && IsExactNativeArrayWitness(type, state.Projection),
                     preserveArrayShape: nativeBase);
             }
+            // The component on an allocation is a physical witness at every
+            // array depth. A later carrier pass must not turn a concrete row
+            // back into the Kotlin element view used for reads and writes.
+            if (field == "elem" && node is BirNewArray or BirNewArrayInit or BirNewArraySized && type is TypeNode.Array)
+            {
+                TypeNode Row(TypeNode t) => t is TypeNode.Array a ? new TypeNode.Array(Row(a.Elem), a.Rank, a.SzArray)
+                    : state.Projection.Rewrite(t, bound, preserveConstructedHead: true, preserveArrayShape: true);
+                return Row(type);
+            }
             if (field == "constraints" && scope.ParameterOwner != null
                 && state.Demand.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
             return state.Projection.Rewrite(type, bound, preserveConstructedHead:

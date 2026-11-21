@@ -33,7 +33,7 @@ static partial class FBoundStarProjectionErasure
 
     static BirGraphValue BindProjectedArrayReadSource(BirGraphValue node, SourceRewriteState state)
     {
-        if (node is not BirArrayGet read || state.ProjectedRead(read)) return node;
+        if (node is not BirArrayGet read || read.SourceClrBoundary || state.ProjectedRead(read)) return node;
         TypeNode semantic, physical;
         if (state.ArrayProjection(read.Array.OrDefault() as BirGraphValue) is { } flowed
             && SourceCarrierExpressionType(read.Array.OrDefault() as BirGraphValue) is TypeNode.Array flowArray)

@@ -145,6 +145,29 @@ class InvariantValueStorageTests {
 
     @TestAttribute
     @Suppress("UNCHECKED_CAST")
+    fun exportingAnElementAddressDoesNotExportItsSiblings() {
+        val first = Box("first")
+        val slots = arrayOf(first, first)
+        val other = arrayOf(first)
+        val wrong = Box(42)
+        val erased = wrong as Box<String>
+        other[0] = erased
+        check(try { NativeBoxApi.ContainsSlot(byref(slots[0]), other); false } catch (_: ClassCastException) { true })
+        slots[0] = erased // A rejected call did not publish the earlier operand.
+        check(try { NativeBoxApi.ReplaceAliased(byref(slots[0]), byref(slots[0])); false } catch (_: ClassCastException) { true })
+        check((slots[0] as Any) === wrong)
+        slots[0] = first
+        slots[1] = erased
+        check(NativeBoxApi.ReplaceAliased(byref(slots[0]), byref(slots[0])))
+        check(slots[0].value == "second" && (slots[1] as Any) === wrong)
+        check(try { slots[0] = erased; false } catch (_: ClassCastException) { true })
+        slots[1] = first
+        slots[1] = erased
+        check((slots[1] as Any) === wrong)
+    }
+
+    @TestAttribute
+    @Suppress("UNCHECKED_CAST")
     fun nativeLocationsRetainExactAliasingAndCheckIncompatibleWrites() {
         val items = arrayOf(forwardedNativeBox())
         val alias = items
@@ -157,6 +180,11 @@ class InvariantValueStorageTests {
         roundtrip.genericvalueinterop.replaceFirstElement(retained, erased)
         check((roundtrip.genericvalueinterop.firstArrayElement(retained) as Any) === number)
         check((roundtrip.genericvalueinterop.firstIteratedElement(retained) as Any) === number)
+        val widened = retained as Array<Any?>
+        check(widened[0] === number)
+        widened[0] = forwardedNativeBox()
+        widened[0] = number
+        check((roundtrip.genericvalueinterop.firstArrayElement(retained) as Any) === number)
         val copy = retained.copyOf()
         check(copy !== retained && (copy[0] as Any) === number)
         check(try { NativeBoxApi.EchoBoxes(retained); false } catch (_: ClassCastException) { true })
@@ -187,6 +215,17 @@ class InvariantValueStorageTests {
         check(try { NativeBoxApi.FirstMissing(byref(locationArray)); false } catch (_: ClassCastException) { true })
         NativeBoxApi.ResetBoxes(byref(locationArray))
         check(locationArray[0].value == "reset" && (oldArray[0] as Any) === number)
+        val matrix = arrayOf(oldArray)
+        check(try { NativeBoxApi.ReadFirstRow(matrix); false } catch (_: ClassCastException) { true })
+        oldArray[0] = repaired
+        check(NativeBoxApi.ReadFirstRow(matrix) === repaired)
+        check(try { oldArray[0] = erased; false } catch (_: ClassCastException) { true })
+        check(try { matrix[0] = unexposed; false } catch (_: ClassCastException) { true })
+        check(matrix[0] === oldArray)
+        unexposed[0] = repaired
+        matrix[0] = unexposed
+        check(matrix[0] === unexposed && NativeBoxApi.ReadFirstRow(matrix) === repaired)
+        check(try { unexposed[0] = erased; false } catch (_: ClassCastException) { true })
         fun nested(cross: Boolean): Any {
             val items = arrayOf(forwardedNativeBox())
             val outer = arrayOf(items)

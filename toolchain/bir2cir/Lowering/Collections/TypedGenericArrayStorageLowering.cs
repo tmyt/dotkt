@@ -64,6 +64,7 @@ static class TypedGenericArrayStorageLowering
     internal static BirGraphValue LowerOperation(BirGraphValue node, ReferenceMetadataIndex refs,
         BirTemporaryNames names, TypeNode receiverType = null, bool external = false)
     {
+        if (node is BirArrayGet { SourceClrBoundary: true }) return node;
         var receiver = node switch {
             BirArrayGet value => value.Array.OrDefault(),
             BirArraySet value => value.Array.OrDefault(),

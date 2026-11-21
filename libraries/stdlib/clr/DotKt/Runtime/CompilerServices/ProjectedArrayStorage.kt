@@ -21,6 +21,7 @@ private class ProjectedArrayTable<K : Any, V : Any> {
 private class ProjectedArrayState(val element: StarProjectionType) {
     var overrides: MutableMap<Int, Any>? = null
     var exported = false
+    var addressed: MutableSet<Int>? = null
 }
 private val projectedArrays = ProjectedArrayTable<ProjectedArrayVector, ProjectedArrayState>()
 
@@ -66,23 +67,36 @@ internal fun writeProjectedArray(array: ProjectedArrayVector, index: Int, value:
         val element = array.starProjectionRuntimeType().getElementType()!!
         if (if (value == null) !starProjectionTypeAcceptsNull(element) else !element.acceptsArrayValue(value))
             throw ArrayComponentMismatch()
+        if (element.isArray && value is ProjectedArrayVector) {
+            if (index < 0 || index >= array.length) throw IndexOutOfBoundsException()
+            exposeProjectedArray(value)
+        }
         array.write(value, index)
         return
     }
-    enterArrayState(state)
+    // A row store can publish another vector while its parent is locked.
+    // Use the same lock order as a multi-vector publication.
+    val rowStore = state.element.isArray && value is ProjectedArrayVector
+    if (rowStore) enterArrayState(projectedArrayBatchGate)
     try {
-        if (index < 0 || index >= array.length) throw IndexOutOfBoundsException()
-        if (value == null || state.element.isAssignableFrom(value.starProjectionRuntimeType())) {
-            array.write(value, index)
-            state.overrides?.remove(index)
-        } else {
-            if (state.exported) throw ClassCastException("Incompatible element in an exported CLR array")
-            val slots = state.overrides ?: mutableMapOf<Int, Any>().also { state.overrides = it }
-            slots[index] = value
-            // Do not keep the displaced element alive through the native vector.
-            array.write(null, index)
-        }
-    } finally { exitArrayState(state) }
+        enterArrayState(state)
+        try {
+            if (index < 0 || index >= array.length) throw IndexOutOfBoundsException()
+            if (value == null || state.element.isAssignableFrom(value.starProjectionRuntimeType())) {
+                if (rowStore && (state.exported || state.addressed?.contains(index) == true))
+                    exposeProjectedArray(value as ProjectedArrayVector)
+                array.write(value, index)
+                state.overrides?.remove(index)
+            } else {
+                if (state.exported || state.addressed?.contains(index) == true)
+                    throw ClassCastException("Incompatible element in an exported CLR array location")
+                val slots = state.overrides ?: mutableMapOf<Int, Any>().also { state.overrides = it }
+                slots[index] = value
+                // Do not keep the displaced element alive through the native vector.
+                array.write(null, index)
+            }
+        } finally { exitArrayState(state) }
+    } finally { if (rowStore) exitArrayState(projectedArrayBatchGate) }
 }
 
 // Called after checking the actual native destination type. Only a successful
@@ -91,6 +105,10 @@ internal fun writeProjectedArray(array: ProjectedArrayVector, index: Int, value:
 @PublishedApi
 internal fun exposeProjectedArray(array: ProjectedArrayVector?): ProjectedArrayVector? {
     if (array == null) return null
+    if (array.hasArrayRows()) {
+        exposeProjectedArrays(arrayOf<Any?>(array))
+        return array
+    }
     val state = stateOf(array) ?: return array
     enterArrayState(state)
     try {
@@ -102,6 +120,11 @@ internal fun exposeProjectedArray(array: ProjectedArrayVector?): ProjectedArrayV
 
 private val projectedArrayBatchGate = Any()
 
+private fun ProjectedArrayVector.hasArrayRows(): Boolean {
+    val type = starProjectionRuntimeType()
+    return type.isSzArray && type.getElementType()?.isArray == true
+}
+
 @PublishedApi
 internal fun exposeProjectedValue(value: Any?) {
     if (value is ProjectedArrayVector) exposeProjectedArray(value)
@@ -112,25 +135,74 @@ internal fun exposeProjectedValue(value: Any?) {
 // state; serializing that acquisition also handles reversed and aliased inputs.
 @PublishedApi
 internal fun exposeProjectedArrays(arrays: Array<Any?>) {
-    val states = arrayOfNulls<ProjectedArrayState>(arrays.size)
-    enterArrayState(projectedArrayBatchGate)
+    publishProjectedArrays(arrays, null, null)
+}
+
+@PublishedApi
+internal fun exposeProjectedArguments(arrays: Array<Any?>, indexedArrays: Array<Any?>, indices: IntArray) {
+    publishProjectedArrays(arrays, indexedArrays, indices)
+}
+
+private fun publishProjectedArrays(arrays: Array<Any?>, indexedArrays: Array<Any?>?, indices: IntArray?) {
+    val states = mutableListOf<ProjectedArrayState>()
+    val pending = mutableListOf<ProjectedArrayVector>()
+    val seen = mutableSetOf<ProjectedArrayVector>()
+    val whole = mutableListOf<ProjectedArrayState>()
+    for (operand in arrays) if (operand is ProjectedArrayVector) pending.add(operand)
     var acquired = 0
+    enterArrayState(projectedArrayBatchGate)
     try {
-        while (acquired < arrays.size) {
-            val array = arrays[acquired] as? ProjectedArrayVector
-            val state = if (array == null) null else stateOf(array)
-            states[acquired] = state
-            if (state != null) enterArrayState(state)
-            acquired++
+        if (indexedArrays != null && indices != null) {
+            var i = 0
+            while (i < indexedArrays.size) {
+                val state = stateOf(indexedArrays[i] as ProjectedArrayVector)
+                if (state != null) {
+                    states.add(state)
+                    enterArrayState(state)
+                    acquired++
+                    if (state.overrides?.containsKey(indices[i]) == true)
+                        throw ClassCastException("CLR managed reference requires a representable array element")
+                }
+                i++
+            }
         }
-        for (state in states) if (state?.overrides?.isNotEmpty() == true)
-            throw ClassCastException("Incompatible elements in a CLR array")
-        for (state in states) if (state != null) state.exported = true
+        var next = 0
+        while (next < pending.size) {
+            val array = pending[next++]
+            if (!seen.add(array)) continue
+            val state = stateOf(array)
+            if (state != null) {
+                states.add(state)
+                enterArrayState(state)
+                acquired++
+                if (state.overrides?.isNotEmpty() == true)
+                    throw ClassCastException("Incompatible elements in a CLR array")
+                whole.add(state)
+            }
+            // A CLR jagged array exposes each row by identity, even when
+            // Kotlin never passed that row as a separate call operand.
+            if (array.hasArrayRows()) {
+                var i = 0
+                while (i < array.length) {
+                    val row = array.read(i++)
+                    if (row is ProjectedArrayVector) pending.add(row)
+                }
+            }
+        }
+        for (state in whole) state.exported = true
+        if (indexedArrays != null && indices != null) {
+            var i = 0
+            while (i < indexedArrays.size) {
+                val state = stateOf(indexedArrays[i] as ProjectedArrayVector)
+                if (state != null && !state.exported) {
+                    val addressed = state.addressed ?: mutableSetOf<Int>().also { state.addressed = it }
+                    addressed.add(indices[i])
+                }
+                i++
+            }
+        }
     } finally {
-        while (acquired > 0) {
-            val state = states[--acquired]
-            if (state != null) exitArrayState(state)
-        }
+        while (acquired > 0) exitArrayState(states[--acquired])
         exitArrayState(projectedArrayBatchGate)
     }
 }
