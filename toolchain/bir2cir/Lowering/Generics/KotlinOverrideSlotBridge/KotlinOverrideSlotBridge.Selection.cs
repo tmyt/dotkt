@@ -312,14 +312,18 @@ static partial class KotlinOverrideSlotBridge
                         || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeOwner) continue;
                     physicalSelectedSpec = spec;
                 }
-                // A class has one base chain. Bind its property only at the reached
-                // declarer: the edge already carries the exact CLR storage arguments.
+                // When we reach the selected declarer, its hierarchy edge owns the
+                // constructed CLR frame. The override marker only selected its identity.
                 else if (phase == Phase.PhysicalBridges && accessorKind != null
-                    && refs.HasDotKtOwner(selectedSpec.Name) && !refs.IsInterfaceType(physicalSelectedSpec))
+                    && refs.HasDotKtOwner(selectedSpec.Name)
+                    && SupertypeGraph.SameDeclaration(spec, physicalSelectedSpec, refs.PhysicalTypeNames))
                 {
-                    if (supIsInterface || !SupertypeGraph.SameDeclaration(spec, physicalSelectedSpec, refs.PhysicalTypeNames)) continue;
                     physicalSelectedSpec = spec;
                 }
+                // A class has one base chain. Bind its property only at the reached declarer.
+                else if (phase == Phase.PhysicalBridges && accessorKind != null
+                    && refs.HasDotKtOwner(selectedSpec.Name) && !refs.IsInterfaceType(physicalSelectedSpec))
+                    continue;
                 // Kotlin-owned applications close V? as object, while the implementing scalar getter keeps
                 // Nullable<V>. Close the owner and slot together in that same argument frame.
                 else if (accessorKind != null && representations?.OwnsValueSlots(selectedSpec.Name) == true)
