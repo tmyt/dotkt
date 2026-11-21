@@ -103,10 +103,10 @@ static partial class FBoundStarProjectionErasure
                 ? NullableRepresentationViews.TypeFacts(source.Source)?.NullableFrame : null;
 
         internal TypeNode Rewrite(TypeNode type, bool boundDeclaration = false,
-            bool preserveConstructedHead = false, bool preserveArrayShape = false)
+            bool preserveConstructedHead = false, bool preserveArrayShape = false, bool sourceOverrideOwner = false)
         {
             RequireSourceClock();
-            return RewriteType(type, this, boundDeclaration, preserveConstructedHead, preserveArrayShape);
+            return RewriteType(type, this, boundDeclaration, preserveConstructedHead, preserveArrayShape, sourceOverrideOwner);
         }
 
         internal TypeNode ProjectOrdinaryParameter(TypeNode type)

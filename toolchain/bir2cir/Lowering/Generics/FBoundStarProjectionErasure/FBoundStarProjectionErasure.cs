@@ -712,7 +712,7 @@ static partial class FBoundStarProjectionErasure
 
 
     static TypeNode RewriteType(TypeNode type, CarrierProjectionContext context, bool boundDeclaration = false,
-        bool preserveConstructedHead = false, bool preserveArrayShape = false)
+        bool preserveConstructedHead = false, bool preserveArrayShape = false, bool sourceOverrideOwner = false)
     {
         var owners = context.Owners;
         var refs = context.References;
@@ -743,7 +743,9 @@ static partial class FBoundStarProjectionErasure
                         || ordinary && !(StripSourceNullability(argument) is TypeNode.Fqn variant
                             && context.ProjectionCanChangeConstruction(variant)));
             }).ToArray();
-            if (nativeOwner || boundDeclaration) return physical;
+            // A declaration-side override marker can carry rewritten nested types, but
+            // its own application still identifies the source owner, not a CLR slot.
+            if (nativeOwner || boundDeclaration || sourceOverrideOwner) return physical;
             // A bound such as B : A needs A's chosen CLR argument, even when B
             // comes first in the declaration. Start recursive edges at the ordinary projection.
             bool[] visited = null;

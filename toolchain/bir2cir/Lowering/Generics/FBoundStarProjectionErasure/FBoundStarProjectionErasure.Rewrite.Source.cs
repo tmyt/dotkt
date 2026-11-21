@@ -192,8 +192,13 @@ static partial class FBoundStarProjectionErasure
                 || (ArrayComponentTypeSlot(facts, field) || NativeLocationTypeSlot(facts, field)) && PreservesNativeWitnessHead(type, state.Projection)
                 || ExactLexicalTypeSlot(facts, field) && !(facts.ExactOuter && sharedOuter && field != "ownerType")
                 || facts.TypeDefinition && field is "base" or "interfaces"
-                || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape);
-        }, (field, _, child) => {
+                || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape,
+                sourceOverrideOwner: node is BirOverride);
+        }, (field, role, child) => {
+            // A use-site override edge selects a source declaration, not an
+            // application of its physical frame. The expression's owner is
+            // rewritten separately above.
+            if (role == BirGenericFrameRole.OverrideDeclaration && node is IBirExpression) return;
             if (!typesOnly && earlyOperand && field == "e") return;
             var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases);
             var next = childScope with { Bound = scope.Bound || BoundTypeSlot(facts, field),
