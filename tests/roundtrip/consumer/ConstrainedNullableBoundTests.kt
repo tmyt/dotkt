@@ -11,6 +11,7 @@ import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
+import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
 import roundtrip.constrainedbound.ResultSource.Mark
 import roundtrip.constrainedbound.localRelatedItem
@@ -62,6 +63,8 @@ class ConstrainedNullableBoundTests {
     fun separateClassAndInterfaceBoundsAcceptHeterogeneousProjectedValues() {
         val number = ClientItem(42L)
         val text = ClientItem("text")
+        val concrete = object : AbstractMarkedSlot<ClientItem<String>>(text) {}
+        check(concrete.value === text)
         val slot = MarkedItemSlot<ClientItem<*>>()
         slot.item = number
         check(slot.item === number)

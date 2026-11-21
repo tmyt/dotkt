@@ -94,7 +94,9 @@ static partial class FBoundStarProjectionErasure
                 && candidate.SemanticOwner == owner.Name && candidate.Inner))
             {
                 var ordinal = 0;
-                foreach (var constructor in context.Definition(inner).Ctors.OrEmpty())
+                var innerDeclaration = context.Definition(inner);
+                if (innerDeclaration is BirClassDefinition abstractInner && abstractInner.Abstract.OrDefault()) continue;
+                foreach (var constructor in innerDeclaration.Ctors.OrEmpty())
                 {
                     var factory = InnerConstructorFactorySource(owner, inner, constructor, ordinal++, context);
                     var key = SourceMethodKey(factory.Slot);

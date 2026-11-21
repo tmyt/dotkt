@@ -37,6 +37,7 @@ class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 class MarkedItemSlot<A> where A : PendingItems.Item, A : ResultSource.Mark {
     var item: A? = null
 }
+abstract class AbstractMarkedSlot<A>(val value: A) where A : PendingItems.Item, A : ResultSource.Mark
 class MarkedItemOwner<X>(val outerValue: X) {
     private class Secret(val n: Int)
     inner class Slot<A>(var item: A) where A : PendingItems.Item, A : ResultSource.Mark {

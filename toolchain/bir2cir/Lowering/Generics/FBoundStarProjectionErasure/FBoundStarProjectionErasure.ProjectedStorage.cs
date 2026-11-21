@@ -13,7 +13,7 @@ static partial class FBoundStarProjectionErasure
     static void RegisterProjectedStorage(Owner owner, IBirTypeDeclaration definition, BirInterfaceDefinition carrier,
         CarrierRealizationContext context)
     {
-        if (definition is not BirClassDefinition || definition.Kind.OrDefault() != "class"
+        if (definition is not BirClassDefinition concrete || concrete.Abstract.OrDefault() || definition.Kind.OrDefault() != "class"
             || context.Projection.StorageFrame(owner.Name) is not { } frame) return;
         var constructors = definition.Ctors.OrEmpty().Where(c => c.DeclarationId.HasValue).ToArray();
         if (constructors.Length == 0) return;
