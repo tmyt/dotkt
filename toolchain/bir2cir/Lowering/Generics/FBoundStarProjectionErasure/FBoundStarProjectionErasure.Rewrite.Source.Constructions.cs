@@ -132,8 +132,7 @@ static partial class FBoundStarProjectionErasure
             || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return BindOuter();
         var signature = construction.MemberSignature.Value;
         if (construction.ConstructorDeclarationId.OrDefault() is string id &&
-            state.Projection.StorageFrame(owner.Name) is { } layout &&
-            state.Projection.ProjectedConstructorArguments(owner, layout) is { } physicalArguments)
+            state.Projection.ProjectedConstructorArguments(owner) is { } physicalArguments)
         {
             var innerFactoryId = ProjectedInnerFactoryId(id);
             if (state.Declarations.ProjectedInnerFactories.TryGetValue(innerFactoryId, out var innerFactory) ||

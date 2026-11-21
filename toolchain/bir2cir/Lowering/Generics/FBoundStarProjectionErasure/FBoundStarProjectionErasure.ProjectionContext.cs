@@ -152,8 +152,12 @@ static partial class FBoundStarProjectionErasure
             return native?.IsInterface == true ? "interface" : native?.IsClass == true ? "class" : null;
         }
 
-        internal ProjectedClassStorageFrame StorageFrame(string owner)
+        internal ProjectedClassStorageFrame StorageFrame(string owner) => StorageFrame(owner, out _, out _);
+
+        ProjectedClassStorageFrame StorageFrame(string owner, out TypeNode.Fqn baseType,
+            out (int Index, TypeNode.Fqn Bound)[] fixedSlots)
         {
+            baseType = null; fixedSlots = [];
             if (ConstraintParameters(owner) is not { Length: > 0 } parameters) return null;
             Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var declaration);
             var frame = ProjectedClassStorageFrame.Plan(parameters, (index, bound) => {
@@ -184,12 +188,24 @@ static partial class FBoundStarProjectionErasure
                             if (SupertypeGraph.SubstOwnerTvs(constraint, args) is TypeNode.Fqn bound)
                                 required.Add((actual.I, bound));
             });
-            return required.Count == 0 ? frame : frame.Retaining(slot => required.Any(r => r.Index == slot.OwnerIndex
-                && slot.Bound is TypeNode.Fqn face && (r.Bound == face ||
-                    SupertypeGraph.Reaches(face, r.Bound, Preparation.SourceSupertypes, References))));
+            bool Required(ProjectedClassStorageFrame.InterfaceSlot slot, (int Index, TypeNode.Fqn Bound) r) =>
+                r.Index == slot.OwnerIndex && slot.Bound is TypeNode.Fqn face && (r.Bound == face ||
+                    SupertypeGraph.Reaches(face, r.Bound, Preparation.SourceSupertypes, References));
+            baseType = parent;
+            fixedSlots = required.Where(r => frame.Interfaces.Any(s => Required(s, r))).Distinct().ToArray();
+            return fixedSlots.Length == 0 ? frame : frame.ForBase(s => required.Where(r => Required(s, r))
+                .Select(r => (TypeNode)r.Bound).Distinct().ToArray());
         }
 
-        internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner, ProjectedClassStorageFrame layout)
+        internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner)
+        {
+            var layout = StorageFrame(owner.Name, out var baseType, out var fixedSlots);
+            return layout == null && fixedSlots.Length == 0 ? null :
+                ProjectedConstructorArguments(owner, layout, baseType, fixedSlots);
+        }
+
+        internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner, ProjectedClassStorageFrame layout,
+            TypeNode.Fqn baseType = null, (int Index, TypeNode.Fqn Bound)[] fixedSlots = null)
         {
             var primary = ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args;
             var visited = new bool[primary.Length];
@@ -202,10 +218,20 @@ static partial class FBoundStarProjectionErasure
                     visited[i] = true;
                     if (ClassStorageWitness(owner, i, arg, Close, allowIntersection: true) is { } proof)
                     {
+                        if (proof.Interfaces.Length != 0 && fixedSlots?.Any(r => r.Index == i) == true)
+                        {
+                            var nativeBounds = fixedSlots.Where(r => r.Index == i).Select(r =>
+                                (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(r.Bound, BoundArguments(r.Bound, "type", i, owner.Args, Close))).ToArray();
+                            bool Fits(TypeNode.Fqn candidate) => nativeBounds.All(b =>
+                                SupertypeGraph.Reaches(candidate, b, Preparation.SourceSupertypes, References));
+                            if (!Fits(proof.Class)) proof = ClassStorageWitness(owner, i, arg, Close, true, Fits)
+                                ?? throw new NotSupportedException($"cannot construct '{owner.Name}': the CLR base '{baseType.Name}' "
+                                    + "requires a single type argument that satisfies both its class and interface constraints");
+                        }
                         primary[i] = proof.Class;
                         foreach (var bound in proof.Interfaces) required.Add((i, bound));
                     }
-                    else if (layout.Interfaces.Any(slot => slot.OwnerIndex == i))
+                    else if (layout?.Interfaces.Any(slot => slot.OwnerIndex == i) == true)
                         unproven = true;
                 }
                 return primary[i];
@@ -213,13 +239,13 @@ static partial class FBoundStarProjectionErasure
             for (var i = 0; i < primary.Length; i++) Close(i);
             // Substitute sibling arguments only after all primary slots have
             // been closed: an interface may refer to a later slot.
-            if (unproven || required.Count == 0 || required.Any(r => !layout.Interfaces.Any(s =>
+            if (layout == null || unproven || required.Count == 0 || required.Any(r => !layout.Interfaces.Any(s =>
                 s.OwnerIndex == r.OwnerIndex && SupertypeGraph.SubstOwnerTvs(s.Bound, primary) == r.Bound))) return null;
             return layout.Close(primary);
         }
 
         internal StorageWitness ClassStorageWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application,
-            Func<int, TypeNode> closeArgument, bool allowIntersection)
+            Func<int, TypeNode> closeArgument, bool allowIntersection, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
         {
             var parameters = ConstraintParameters(owner.Name);
             var frame = Owners.TryGetValue(owner.Name, out var definition) ? OwnerFrame(definition)
@@ -228,7 +254,7 @@ static partial class FBoundStarProjectionErasure
             closeArgument ??= i => (closed ??= ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args)[i];
             return SharedClassWitness(parameters, frame, "type", index, application,
                 bound => SupertypeGraph.SubstOwnerTvs(bound, BoundArguments(bound, "type", index, owner.Args, closeArgument)),
-                applicationArguments: owner.Args, allowIntersection: allowIntersection);
+                applicationArguments: owner.Args, allowIntersection: allowIntersection, acceptsPrimary: acceptsPrimary);
         }
 
         static TypeNode[] BoundArguments(TypeNode bound, string scope, int index, TypeNode[] arguments,
@@ -259,7 +285,7 @@ static partial class FBoundStarProjectionErasure
         StorageWitness SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
             int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute,
             Func<int, TypeNode, TypeNode> physicalBound = null, TypeNode[] applicationArguments = null,
-            bool allowIntersection = false)
+            bool allowIntersection = false, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
         {
             if (parameters == null || index >= parameters.Length) return null;
             var linked = new HashSet<int> { index };
@@ -309,7 +335,7 @@ static partial class FBoundStarProjectionErasure
             StorageWitness split = null;
             foreach (var (ancestor, isInterface) in supers.Reverse())
             {
-                if (isInterface || ContainsExistentialProjection(ancestor)) continue;
+                if (isInterface || ContainsExistentialProjection(ancestor) || acceptsPrimary?.Invoke(ancestor) == false) continue;
                 var nominal = SupertypeGraph.ReachableFromClass(ancestor, Preparation.SourceSupertypes, References)
                     .Select(edge => Identity(edge.spec)).ToHashSet();
                 var missing = bounds.Where(bound => !IsObjectish(bound) && !nominal.Contains(Identity(bound))).ToArray();

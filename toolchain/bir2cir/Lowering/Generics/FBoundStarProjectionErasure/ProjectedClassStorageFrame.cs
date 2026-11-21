@@ -7,7 +7,7 @@ using DotKt.Cir;
 // method variables in members never need to be renumbered.
 sealed class ProjectedClassStorageFrame
 {
-    internal sealed record InterfaceSlot(int OwnerIndex, int BoundIndex, TypeNode Bound);
+    internal sealed record InterfaceSlot(int OwnerIndex, int BoundIndex, TypeNode Bound, TypeNode[] PrimaryBounds = null);
     internal readonly InterfaceSlot[] Interfaces;
     readonly BirTypeParameter[] original;
 
@@ -32,10 +32,11 @@ sealed class ProjectedClassStorageFrame
 
     internal BirTypeParameter[] Declare() => Declare(original, Interfaces);
 
-    internal ProjectedClassStorageFrame Retaining(Func<InterfaceSlot, bool> requiredOnPrimary)
+    internal ProjectedClassStorageFrame ForBase(Func<InterfaceSlot, TypeNode[]> requiredOnPrimary)
     {
-        var split = Interfaces.Where(s => !requiredOnPrimary(s)).ToArray();
-        return split.Length == 0 ? null : split.Length == Interfaces.Length ? this : new(original, split);
+        var split = Interfaces.Select(s => s with { PrimaryBounds = requiredOnPrimary(s) })
+            .Where(s => !s.PrimaryBounds.Contains(s.Bound)).ToArray();
+        return split.Length == 0 ? null : new(original, split);
     }
 
     internal static BirTypeParameter[] Declare(BirTypeParameter[] original, IReadOnlyList<InterfaceSlot> slots)
@@ -51,7 +52,8 @@ sealed class ProjectedClassStorageFrame
         {
             var indexes = group.Select(slot => slot.BoundIndex).ToHashSet();
             var primary = parameters[group.Key];
-            primary.Constraints = primary.Constraints.Value.Where((_, i) => !indexes.Contains(i)).ToArray();
+            primary.Constraints = primary.Constraints.Value.Where((_, i) => !indexes.Contains(i))
+                .Concat(group.SelectMany(slot => slot.PrimaryBounds ?? [])).Distinct().ToArray();
         }
         return parameters.ToArray();
     }
