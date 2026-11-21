@@ -724,9 +724,7 @@ static partial class FBoundStarProjectionErasure
             // owns its storage projection, even when its physical head is a native generic definition.
             var nativeArguments = nativeOwner && context.Values?.IsBindingAlias(application.Name) != true
                 && localClrAliases?.ContainsKey(application.Name) != true;
-            var frame = nativeOwner ? null : owners.TryGetValue(application.Name, out var declaration)
-                ? context.OwnerFrame(declaration)
-                : refs?.NullableTypeFrames.GetValueOrDefault(application.Name);
+            var frame = nativeOwner ? null : context.ClassApplicationLayout(application.Name);
             // A retained generic head carries native witnesses as well as value
             // companions. Its recorded physical frame applies equally to a new,
             // its value slot, and an exact lexical declaration owner.

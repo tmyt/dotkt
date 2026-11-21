@@ -212,11 +212,57 @@ static partial class FBoundStarProjectionErasure
             aliasBindings.CompleteSourceCustody(aliasCustody);
             aliasCustody.Release();
             aliasLedger.Release();
+
+            LateClassWitnessFrameSelfTest(references);
         }
         finally
         {
             OwnerConstrainedMethodLowering.Reset(references);
         }
         Console.WriteLine("[current physical carrier projection] self-test OK (two clocks, exact births, current-first frames, source facts and native proof continuation)");
+    }
+
+    static void LateClassWitnessFrameSelfTest(ReferenceMetadataIndex references)
+    {
+        var root = new TypeNode.Fqn("WitnessRoot");
+        var leaf = new TypeNode.Fqn("WitnessLeaf", [new TypeNode.Star()]);
+        var text = new TypeNode.Fqn("kotlin.String");
+        static BirClassDefinition Class(string name, params BirTypeParameter[] parameters) =>
+            new() { Name = name, Kind = "class", TypeParams = parameters };
+        static BirTypeParameter Parameter(TypeNode bound = null) =>
+            new() { Name = "T", Constraints = bound == null ? Array.Empty<TypeNode>() : new[] { bound } };
+        var leafClass = Class(leaf.Name, new BirTypeParameter { Name = "T", Variance = "out" });
+        leafClass.Base = root;
+        var earlyWidened = Class("Widened", Parameter());
+        var earlyConstrained = Class("Constrained", Parameter());
+        var file = new BirFileDeclaration { FileClass = "LateClassWitness",
+            Types = new IBirTypeDeclaration[] { Class(root.Name), leafClass, earlyWidened, earlyConstrained } };
+        var context = SourceSynthesisTestContext(file, references);
+        context.Owners[leaf.Name].Needed = true;
+
+        var layout = new NullableRepresentationFrame(1, [0]);
+        var widened = Class("Widened", Parameter(root), Parameter());
+        widened.KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(layout);
+        var constrained = Class("Constrained", Parameter(root));
+        var lateOnly = Class("LateOnly", Parameter(root));
+        lateOnly.Generated = true;
+        foreach (var actual in new[] { widened, constrained, lateOnly })
+            context.Bindings.GetSource(actual);
+        file.Types = new IBirTypeDeclaration[] { file.Types.Value[0], leafClass,
+            widened, earlyWidened, constrained, earlyConstrained, lateOnly };
+        var current = CurrentPhysicalTypeView.Capture(new[] { file }, context.Bindings);
+        var projection = CarrierProjectionContext.ForCurrentSource(context, current);
+
+        // A String actual never reaches witness selection; use a carrier candidate.
+        Check("Widened", new TypeNode.Fqn("Widened", [leaf, text]), [root, text]);
+        Check("Constrained", new TypeNode.Fqn("Constrained", [leaf]), [root]);
+        Check("LateOnly", new TypeNode.Fqn("LateOnly", [leaf]), [root]);
+
+        void Check(string label, TypeNode.Fqn application, TypeNode[] expected)
+        {
+            if (projection.Rewrite(application, preserveConstructedHead: true) != new TypeNode.Fqn(application.Name, expected))
+                throw new InvalidOperationException("Current physical carrier projection: wrong class witness for " + label);
+        }
+        CompleteRealization(context);
     }
 }

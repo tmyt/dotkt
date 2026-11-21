@@ -70,7 +70,7 @@ static partial class FBoundStarProjectionErasure
             CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases = null) => new(
                 realization.Preparation, new Dictionary<string, Owner>(StringComparer.Ordinal),
                 realization.References, realization.Values, realization.NativeProofs, null,
-                CurrentSourceDeclarations(realization, current, aliases));
+                CurrentSourceDeclarations(realization, current, aliases), current);
 
         static Func<string, ProjectionDeclaration> CurrentSourceDeclarations(CarrierRealizationContext realization,
             CurrentPhysicalTypeView current, AliasDeclarationTransitions aliases)
@@ -96,11 +96,21 @@ static partial class FBoundStarProjectionErasure
 
         ProjectionDeclaration LocalDeclaration(string name) => declaration(name);
 
-        internal NullableRepresentationFrame OwnerFrame(Owner owner) => currentPhysical != null
-            ? currentPhysical.Definitions.TryGetValue(owner.Name, out var actual)
-                ? NullableRepresentationViews.TypeFacts((BirGraphValue)actual)?.NullableFrame : null
-            : owner.DefinitionBinding is { } source
-                ? NullableRepresentationViews.TypeFacts(source.Source)?.NullableFrame : null;
+        // A late physical application must not consult a superseded source
+        // occurrence, even if that occurrence has the same name and arity.
+        IBirTypeDeclaration SelectLocalPhysicalClass(string name) => currentPhysical != null
+            ? currentPhysical.Definitions.GetValueOrDefault(name)
+            : Preparation.Bindings.SourceDefinitions.GetValueOrDefault(name)?.Source as IBirTypeDeclaration;
+
+        static NullableRepresentationFrame ClassLayout(IBirTypeDeclaration type) =>
+            NullableRepresentationViews.TypeFacts((BirGraphValue)type)?.NullableFrame;
+
+        internal NullableRepresentationFrame OwnerFrame(Owner owner) =>
+            ClassApplicationLayout(owner.Name);
+
+        internal NullableRepresentationFrame ClassApplicationLayout(string name) =>
+            SelectLocalPhysicalClass(name) is { } local ? ClassLayout(local)
+                : References.NullableTypeFrames.GetValueOrDefault(name);
 
         internal TypeNode Rewrite(TypeNode type, bool boundDeclaration = false,
             bool preserveConstructedHead = false, bool preserveArrayShape = false, bool sourceOverrideOwner = false)
@@ -182,10 +192,9 @@ static partial class FBoundStarProjectionErasure
 
         internal PhysicalWitnessApplication SelectPhysicalClassApplication(TypeNode.Fqn application)
         {
-            if (Preparation.Bindings.SourceDefinitions.TryGetValue(application.Name, out var local))
+            if (SelectLocalPhysicalClass(application.Name) is { } local)
                 return new(WitnessBinder.Owner, application, null, null,
-                    NullableRepresentationViews.TypeFacts(local.Source)?.NullableFrame,
-                    TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray(), application.Args ?? []);
+                    ClassLayout(local), TypeParameterFrame.Declarations(local).ToArray(), application.Args ?? []);
             return new(WitnessBinder.Owner, application, null, null,
                 References.NullableTypeFrames.GetValueOrDefault(application.Name),
                 ReferencedConstraintParameters(application.Name), application.Args ?? []);
