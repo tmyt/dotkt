@@ -5,7 +5,7 @@
     "allowPrerelease": false
   },
   "msbuild-sdks": {
-    "DotKt.Sdk": "0.9.28",
-    "DotKt.Sdk.Mpp": "0.9.28"
+    "DotKt.Sdk": "0.9.29",
+    "DotKt.Sdk.Mpp": "0.9.29"
   }
 }

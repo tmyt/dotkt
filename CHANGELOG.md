@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.29 (2026-11-21)
+
+All five NuGet packages move to `0.9.29`. The Kotlin compiler and common standard library remain at **2.4.21**.
+
+### Changes
+
 - A Kotlin collection whose `iterator()` returns `Nothing` now loads on the CLR. Both enumerable interfaces propagate the original override's exception.
 - Reference and runtime DLLs now use MessagePack for all embedded BIR metadata. Release builds also compress declaration metadata when doing so saves space.
 - A local type no longer hides a referenced interface of a different generic arity when emitting interface implementations.
