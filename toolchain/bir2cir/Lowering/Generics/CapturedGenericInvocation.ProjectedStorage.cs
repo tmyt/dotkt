@@ -13,6 +13,20 @@ static partial class CapturedGenericInvocation
     {
         if (!Invocation.Admits(call)) return call;
         var site = new Invocation(call);
+        BirCallStatic access = null;
+        if (call is BirCallStatic wrapper && wrapper.NativeAccessorTarget is { } accessed)
+        {
+            access = wrapper;
+            var m = (BirMemberReference)accessed.Member.DeepClone();
+            if (m.DeclaringType.Value is TypeNode.Fqn { Args.Length: > 0 } declared &&
+                site.Owner is TypeNode.Fqn { Args: { } applied }) m.DeclaringType = declared with { Args = applied };
+            var args = wrapper.Args.Value[1..];
+            site = new Invocation(accessed.Static
+                ? new BirCallStatic { Owner = m.DeclaringType, Method = m.Name, TypeArgs = wrapper.TypeArgs,
+                    Args = args, MemberRef = m, Ret = wrapper.Ret }
+                : new BirCallInstance { OwnerType = m.DeclaringType, Method = m.Name, TypeArgs = wrapper.TypeArgs,
+                    Args = args, Recv = OptionalField<IBirExpression>.Of(wrapper.Args.Value[0]), MemberRef = m, Ret = wrapper.Ret });
+        }
         var (member, arguments, values, receiver) = (site.Member, site.TypeArguments.OrDefault(),
             site.Arguments.OrDefault(), site.Receiver);
         if (member?.DeclaringType.OrDefault() is not TypeNode.Fqn owner || arguments == null || values == null) return call;
@@ -53,7 +67,7 @@ static partial class CapturedGenericInvocation
             || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType);
         var unit = selected.ReturnType.FullName == "System.Void";
         LexicalTarget lexicalTarget = null;
-        if (site.Super || typed && !selected.IsPublic)
+        if (access == null && (site.Super || typed && !selected.IsPublic))
         {
             // Neither reflection's virtual Invoke nor a sibling adapter may
             // issue a nonvirtual base call. Protected access likewise belongs
@@ -74,7 +88,7 @@ static partial class CapturedGenericInvocation
             lexicalTarget = new(new TypeNode.Fqn(lexical.Name.Value, Enumerable.Range(0, ownerFrame.Length)
                 .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, method);
         }
-        if (typed) return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated, lexicalTarget);
+        if (typed || access != null) return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated, lexicalTarget, access);
 
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the

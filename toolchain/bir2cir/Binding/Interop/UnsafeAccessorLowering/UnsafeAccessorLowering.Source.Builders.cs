@@ -48,7 +48,8 @@ static partial class UnsafeAccessorLowering
     static SourceAccessor EnsureSourceAccessor(SourceHost caller, SourceAccessContext context, string key,
         string targetName, int kind, TypeNode.Fqn owner, BirTypeParameter[] ownerParameters,
         BirTypeParameter[] methodParameters, TypeNode result, TypeNode[] signature, bool includeTarget,
-        string targetDeclarationId = null, TypeNode nullableReturn = null, bool ownershipKnown = false)
+        string targetDeclarationId = null, TypeNode nullableReturn = null, bool ownershipKnown = false,
+        bool shareGenericEntry = false)
     {
         if (context.Accessors.TryGetValue(key, out var existing)) return existing;
         var ownerCount = ownerParameters?.Length ?? 0;
@@ -73,7 +74,8 @@ static partial class UnsafeAccessorLowering
         if (methodFrame != null) accessor.TypeParams = CopySourceParameters(methodFrame);
         var declarationSignature = parameters.Select(p => CopySourceType(p.Type.Value)).ToArray();
         SourceAccessor definition;
-        var separateMethodHost = methodFrame is { Length: > 0 } && caller.Type != null && TypeParameterFrame.Count(caller.Type) != 0;
+        var separateMethodHost = methodFrame is { Length: > 0 } &&
+            (shareGenericEntry || caller.Type != null && TypeParameterFrame.Count(caller.Type) != 0);
         if (ownerCount == 0 && !separateMethodHost)
         {
             StampSourceNullableOwnership(accessor, nullableReturn, ownershipKnown);

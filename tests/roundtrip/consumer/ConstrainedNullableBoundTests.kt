@@ -30,6 +30,8 @@ import roundtrip.constrainedbound.ScopedBoundOwner
 import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 import GenericValueInterop.IProjectedMark
+import GenericValueInterop.IMarkedRecord
+import GenericValueInterop.IMarkedRecordTag
 import GenericValueInterop.IRichProjectedMark
 import GenericValueInterop.MarkedStreamReceiver
 import GenericValueInterop.NativeStreamBase
@@ -73,6 +75,16 @@ class ConstrainedNullableBoundTests {
     }
     private open class MarkedStream<T> : MemoryStream(), IProjectedMark
     private class LongStream : MarkedStream<Long>()
+    private class NativeRecord<A>(var item: A) : IMarkedRecord<A> where A : MemoryStream, A : IProjectedMark {
+        override fun Read(): A = item
+        override fun Write(item: A) { this.item = item }
+    }
+    private class NativeTag<A> : IMarkedRecordTag<A> where A : MemoryStream, A : IProjectedMark
+    private class IndependentNativeTag<A,B> : IMarkedRecordTag<A>
+        where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark
+    private class TagFactory<A> where A : MemoryStream, A : IProjectedMark {
+        fun tag() = NativeTag<A>()
+    }
     private class PartialStream<X,Y> : SharedNativeStream<X>()
     private class RichStream<T> : MemoryStream(), IRichProjectedMark
     private class LinkedSlot<A, B : A> where A : MemoryStream, A : IProjectedMark { var value: B? = null }
@@ -99,6 +111,8 @@ class ConstrainedNullableBoundTests {
             var n = 0
             check(super.SourceRef<A>(value, byref(n)) == 42 && n == 42)
             check(Inherited<A>(value, byref(n)) == 43 && n == 43)
+            val other = StreamSlot<MarkedStream<Long>, MarkedStream<Long>>(MarkedStream<Long>())
+            check(other.Receiver<A>(value, byref(n)) === other && n == 44)
             return super.Source<A>(value)
         }
         fun keep(value: A): A = MarkedStreamReceiver().Keep<A>(value)
@@ -152,6 +166,13 @@ class ConstrainedNullableBoundTests {
         check(exact.item === number)
         val first = MarkedStream<Long>()
         val second = MarkedStream<String>()
+        val record = NativeRecord<MarkedStream<*>>(first)
+        check(NativeBoxApi.ReplaceRecord<MarkedStream<*>>(record, second) === second && record.item === second)
+        check(NativeBoxApi.HasRecordTag<MarkedStream<*>>(NativeTag<MarkedStream<*>>()))
+        check(NativeBoxApi.HasRecordTag<MarkedStream<*>>(TagFactory<MarkedStream<*>>().tag()))
+        check(NativeBoxApi.HasRecordTag<MarkedStream<Long>>(NativeTag<MarkedStream<Long>>()))
+        check(NativeBoxApi.HasRecordTag<PartialStream<String,*>>(NativeTag<PartialStream<String,*>>()))
+        check(NativeBoxApi.HasRecordTag<MarkedStream<Long>>(IndependentNativeTag<MarkedStream<Long>,MarkedStream<*>>()))
         val streams = StreamSlot<MarkedStream<*>, MarkedStream<*>>(first)
         check(streams.source(first) == "base")
         check(streams.item === first && streams.keep(first) === first)

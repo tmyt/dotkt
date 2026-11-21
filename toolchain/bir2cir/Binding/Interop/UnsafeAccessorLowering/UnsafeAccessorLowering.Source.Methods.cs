@@ -110,11 +110,27 @@ static partial class UnsafeAccessorLowering
         var definition = EnsureSourceAccessor(caller, context, key, targetName, edge.Static ? 2 : 1, owner,
             SourceOwnerParameters(targetHost, edge.OwnerParameters, owner, context.References),
             referenced?.TypeParams ?? SourceMethodParameters(target, edge.MethodParameters), declaredReturn, signature, true,
-            id, referenced?.NullableGenericReturn ?? target?.NullableGenericRet.OrDefault(), target != null || referenced != null);
+            id, referenced?.NullableGenericReturn ?? target?.NullableGenericRet.OrDefault(), target != null || referenced != null,
+            shareGenericEntry: targetHost == null && id == null);
         var arguments = new IBirExpression[edge.Arguments.Length + 1];
         arguments[0] = edge.Static ? new BirDefaultValue { Type = CopySourceType(owner) } : edge.Receiver;
         Array.Copy(edge.Arguments, 0, arguments, 1, edge.Arguments.Length);
         var replacement = SourceAccessorCall(caller, definition, owner, arguments, result);
+        // The accessor changes how we reach the method, not which MethodDef
+        // supplies its generic constraints at a projected call site.
+        var native = node switch {
+            BirCallInstance i => i.MemberRef.OrDefault(), BirCallStatic s => s.MemberRef.OrDefault(),
+            BirConstrainedCall c => c.MemberRef.OrDefault(), _ => null,
+        };
+        if (arity != 0 && targetHost == null && id == null)
+        {
+            if (native == null && context.References != null && edge.MemberSignature is { } selectedSignature &&
+                context.References.TryResolveStaticMemberSignature(owner.Name, targetName, arity, edge.Static, selectedSignature,
+                    owner.Args, out _, out var selected, out var declaring))
+                native = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, context.References,
+                    selected, "method", declaring, owner.Args));
+            if (native != null) replacement.NativeAccessorTarget = (native, edge.Static);
+        }
         if (edge.TypeArgs.HasValue) replacement.TypeArgs = CopySourceTypes(edge.TypeArgs.Value);
         replacement.Sty = CopySourceType(result);
         return replacement;

@@ -7,7 +7,8 @@ using DotKt.Cir;
 // method variables in members never need to be renumbered.
 sealed class ProjectedClassStorageFrame
 {
-    internal sealed record InterfaceSlot(int OwnerIndex, int BoundIndex, TypeNode Bound, TypeNode[] PrimaryBounds = null);
+    internal sealed record InterfaceSlot(int OwnerIndex, int BoundIndex, TypeNode Bound, TypeNode[] PrimaryBounds = null,
+        bool NativeArgument = false);
     internal readonly InterfaceSlot[] Interfaces;
     readonly BirTypeParameter[] original;
 
@@ -32,6 +33,9 @@ sealed class ProjectedClassStorageFrame
 
     internal BirTypeParameter[] Declare() => Declare(original, Interfaces);
 
+    internal ProjectedClassStorageFrame WithNativeArguments(HashSet<int> indices) =>
+        new(original, Interfaces.Select(s => s with { NativeArgument = indices.Contains(s.OwnerIndex) }).ToArray());
+
     internal ProjectedClassStorageFrame ForBase(Func<InterfaceSlot, TypeNode[]> requiredOnPrimary)
     {
         var split = Interfaces.Select(s => s with { PrimaryBounds = requiredOnPrimary(s) })
@@ -45,8 +49,12 @@ sealed class ProjectedClassStorageFrame
         foreach (var slot in slots)
         {
             var bound = original[slot.OwnerIndex].Constraints.Value[slot.BoundIndex];
+            // One native argument must prove all of its interface constraints at
+            // once. Keep its selected facet first for calls forwarding this slot.
+            var bounds = new[] { bound }.Concat(slots.Where(s => slot.NativeArgument && s.OwnerIndex == slot.OwnerIndex)
+                .Select(s => original[s.OwnerIndex].Constraints.Value[s.BoundIndex])).Distinct();
             parameters.Add(new BirTypeParameter { Name = "$interface$" + parameters.Count,
-                Constraints = new[] { BirGraphValue.CopyType(bound) } });
+                Constraints = bounds.Select(BirGraphValue.CopyType).ToArray() });
         }
         foreach (var group in slots.GroupBy(slot => slot.OwnerIndex))
         {
@@ -58,6 +66,6 @@ sealed class ProjectedClassStorageFrame
         return parameters.ToArray();
     }
 
-    internal TypeNode[] Close(TypeNode[] primaryArguments) =>
-        primaryArguments.Concat(Interfaces.Select(slot => SupertypeGraph.SubstOwnerTvs(slot.Bound, primaryArguments))).ToArray();
+    internal TypeNode[] Close(TypeNode[] primaryArguments, Func<InterfaceSlot, TypeNode, TypeNode> proof) =>
+        primaryArguments.Concat(Interfaces.Select(slot => proof(slot, SupertypeGraph.SubstOwnerTvs(slot.Bound, primaryArguments)))).ToArray();
 }

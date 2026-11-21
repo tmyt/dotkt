@@ -298,7 +298,7 @@ sealed class ProjectedCallableEntries
             throw new InvalidOperationException($"Selected projected constructor factory '{factory.Id}' has no matching physical frame");
         var arguments = actual.Concat(factory.ProofOwners.Select((source, i) => {
             var required = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(
-                formals[actual.Length + i].Constraints.Value.Single(), [], actual);
+                formals[actual.Length + i].Constraints.Value[0], [], actual);
             return Proof(actual[source], required, owner, method) ?? actual[source];
         })).ToArray();
         var target = ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, null);

@@ -13,6 +13,8 @@ public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMar
     public T FromNative(T item) => item;
 }
 public interface IMarkedTag<T> { }
+public interface IMarkedRecord<T> where T : IProjectedMark { T Read(); void Write(T item); }
+public interface IMarkedRecordTag<T> where T : IProjectedMark { }
 public sealed class TwoMarkedTags : IMarkedTag<int>, IMarkedTag<string> { }
 public sealed class ForeignFirstSelector : roundtrip.constrainedbound.MarkedSelector
 {
@@ -26,6 +28,8 @@ public class MarkedStreamReceiver
     public virtual string Source<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => "base";
     public virtual int SourceRef<T>(T item, ref int n) where T : System.IO.MemoryStream, IProjectedMark => n = 42;
     protected int Inherited<T>(T item, ref int n) where T : System.IO.MemoryStream, IProjectedMark => ++n;
+    protected MarkedStreamReceiver Receiver<T>(T item, ref int n) where T : System.IO.MemoryStream, IProjectedMark
+    { ++n; return this; }
     public T Keep<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => item;
     public T WriteAliased<T>(T item, ref int first, ref int second) where T : System.IO.MemoryStream, IProjectedMark
     {
@@ -62,6 +66,12 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T ReplaceRecord<T>(IMarkedRecord<T> record, T item) where T : IProjectedMark
+    {
+        record.Write(item);
+        return record.Read();
+    }
+    public static bool HasRecordTag<T>(object record) where T : IProjectedMark => record is IMarkedRecordTag<T>;
     public static string InterfaceWitness<T>() where T : IProjectedMark => typeof(T).Name;
     public static string JointInterfaceWitness<T>() where T : ILeftMark, IRightMark => typeof(T).Name;
     public static T LastMarked<T>(T first, T second) where T : IProjectedMark => second;

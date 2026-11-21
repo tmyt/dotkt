@@ -108,6 +108,7 @@ static partial class FBoundStarProjectionErasure
                 return type;
             }
             storage.Interfaces = storage.Interfaces.OrEmpty().Select(ProjectInterface).DistinctBy(SupertypeGraph.TypeKey).ToArray();
+            ProjectNativeInterfaceStorage(storage, plan, references);
             storage.Attrs = storage.Attrs.OrEmpty().Where(a =>
                 a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.RuntimeClassifierAttribute }).ToArray();
             storage.Methods = storage.Methods.OrEmpty().Where(m => !m.Static.OrDefault()).ToArray();
@@ -162,7 +163,7 @@ static partial class FBoundStarProjectionErasure
                                 return (TypeNode)new TypeNode.Tv("type", fullFrame.Length - plan.Slots.Length + slot);
                             }
                         }
-                        return bound;
+                        return required.NativeArgument ? arguments[required.OwnerIndex] : bound;
                     }).ToArray();
                     if (forwarded) creation.Type = new TypeNode.Fqn(destination.Implementation, arguments.Concat(witnesses).ToArray());
                 }

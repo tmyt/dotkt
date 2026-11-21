@@ -13,7 +13,7 @@ static partial class CapturedGenericInvocation
     // operands: those keep their original storage across the entire call.
     static BirGraphValue ProjectAddressCall(Invocation site, MethodInfo selected, TypeNode.Fqn owner,
         (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
-        LexicalTarget lexical)
+        LexicalTarget lexical, BirCallStatic access)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
@@ -99,6 +99,17 @@ static partial class CapturedGenericInvocation
                 CalleeRet = nativeResult, Ret = forwardResult };
         var actualArgs = forwarded.Skip(site.Instance ? 1 : 0).ToArray();
         var concreteArgs = Frame(ownerParameters.Length, authored.Length);
+        if (access != null)
+        {
+            // The selected native MethodDef closes the adapter. From within
+            // that closed frame, call the original accessibility wrapper with
+            // the actual receiver, not the object enclosing the Kotlin call.
+            var host = (TypeNode.Fqn)(access.OwnerType.OrDefault() ?? access.Owner.Value);
+            forward = new BirCallStatic { Owner = host with { Args = adapterOwner.Args },
+                Method = access.Method, Sig = access.Sig, CalleeRet = nativeResult, Ret = forwardResult };
+            actualArgs = site.Instance ? forwarded.ToArray() :
+                new IBirExpression[] { new BirDefaultValue { Type = adapterOwner } }.Concat(actualArgs).ToArray();
+        }
         switch (forward)
         {
             case BirGenericStatic s: s.TypeArgs = concreteArgs; s.Args = actualArgs; break;

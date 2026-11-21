@@ -413,6 +413,8 @@ def outputs(root, definitions):
             model += ["    internal override string? SelectedGenericCallable { get; set; }"]
         if name == "BirNew":
             model += ["    internal (string Id, int[] ProofOwners)? ReferencedProjectedFactory { get; set; }"]
+        if name == "BirCallStatic":
+            model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
             model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",

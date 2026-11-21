@@ -5386,6 +5386,7 @@ internal sealed record BirOverride : BirGraphValue
 internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     internal override string? SelectedGenericCallable { get; set; }
+    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }
     public override string Tag => "callStatic";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<TypeNode> Owner { get; set; }
