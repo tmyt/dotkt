@@ -115,13 +115,15 @@ static partial class FBoundStarProjectionErasure
             return FBoundStarProjectionErasure.ProjectOrdinaryParameter(type, this);
         }
 
-        internal TypeNode ClassConstrainedArgument(TypeNode.Fqn owner, int index, TypeNode source, TypeNode projected,
-            Func<int, TypeNode> closeArgument)
+        internal TypeNode.Fqn ClassWitnessCandidate(TypeNode original, TypeNode projected) =>
+            StripSourceNullability(original) is TypeNode.Fqn { Args.Length: > 0 } application
+                && TryExistentialCarrier(application.Name, out var carrier)
+                && StripSourceNullability(projected) is TypeNode.Fqn p
+                && (p.Name == carrier || ContainsExistentialProjection(application)) ? application : null;
+
+        internal TypeNode ClassConstrainedArgument(PhysicalWitnessApplication owner, int index, TypeNode.Fqn application,
+            TypeNode projected, Func<int, TypeNode> closeArgument)
         {
-            if (StripSourceNullability(source) is not TypeNode.Fqn { Args.Length: > 0 } application
-                || !TryExistentialCarrier(application.Name, out var carrier)
-                || StripSourceNullability(projected) is not TypeNode.Fqn p
-                || p.Name != carrier && !ContainsExistentialProjection(application)) return projected;
             var exact = !ContainsExistentialProjection(application);
             var proof = ClassStorageWitness(owner, index, application, closeArgument, allowIntersection: exact);
             if (proof == null) return projected;
@@ -130,9 +132,69 @@ static partial class FBoundStarProjectionErasure
             return proof.Interfaces.Length == 0 ? proof.Class : Rewrite(application, preserveConstructedHead: true);
         }
 
-        internal TypeNode.Fqn SharedClassWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application,
-            Func<int, TypeNode> closeArgument = null)
-            => ClassStorageWitness(owner, index, application, closeArgument, allowIntersection: false)?.Class;
+        internal TypeNode.Fqn SharedClassWitness(PhysicalWitnessApplication owner, int index, TypeNode.Fqn application)
+            => ClassStorageWitness(owner, index, application, null, allowIntersection: false)?.Class;
+
+        internal enum WitnessBinder { Owner, Method }
+
+        // Only selected, materialized applications enter the witness solver.
+        // The owner of a method and its own type arguments are distinct binders.
+        internal readonly struct PhysicalWitnessApplication
+        {
+            internal readonly TypeNode.Fqn Owner;
+            internal readonly BirFunctionDeclaration LocalMethod;
+            internal readonly NullableRepresentationFrame Layout;
+            internal readonly BirTypeParameter[] Parameters;
+            internal readonly TypeNode[] Arguments;
+            readonly WitnessBinder binder;
+
+            internal PhysicalWitnessApplication(WitnessBinder binder, TypeNode.Fqn owner, string identity,
+                BirFunctionDeclaration localMethod, NullableRepresentationFrame layout,
+                BirTypeParameter[] parameters, TypeNode[] arguments)
+            {
+                if ((parameters != null && parameters.Length != arguments.Length)
+                    || (layout != null && layout.PhysicalArity != arguments.Length))
+                    throw new InvalidOperationException($"Physical constraint frame disagrees with the selected application '{identity ?? owner?.Name}'");
+                this.binder = binder;
+                Owner = owner;
+                LocalMethod = localMethod;
+                Layout = layout;
+                Parameters = parameters;
+                Arguments = arguments;
+            }
+
+            internal string Scope => binder == WitnessBinder.Owner ? "type" : "method";
+
+            internal TypeNode CloseBound(TypeNode bound, int index, Func<int, TypeNode> closeArgument)
+            {
+                var scope = Scope;
+                var original = Arguments;
+                TypeNode[] closed = null;
+                BirGraphNameFields.VisitTypeNodes(bound, part => {
+                    if (part is TypeNode.Tv tv && tv.Scope == scope && tv.I != index)
+                        (closed ??= (TypeNode[])original.Clone())[tv.I] = closeArgument(tv.I);
+                });
+                var arguments = closed ?? original;
+                return binder == WitnessBinder.Owner ? SupertypeGraph.SubstOwnerTvs(bound, arguments)
+                    : SubstituteDeclarationTypeArguments(bound, Owner?.Args ?? [], arguments);
+            }
+        }
+
+        internal PhysicalWitnessApplication SelectPhysicalClassApplication(TypeNode.Fqn application)
+        {
+            var frame = Owners.TryGetValue(application.Name, out var definition) ? OwnerFrame(definition)
+                : References.NullableTypeFrames.GetValueOrDefault(application.Name);
+            return new(WitnessBinder.Owner, application, null, null, frame, ConstraintParameters(application.Name), application.Args ?? []);
+        }
+
+        internal PhysicalWitnessApplication SelectPhysicalMethodApplication(BirFunctionDeclaration local, string identity,
+            NullableRepresentationFrame frame, TypeNode.Fqn owner, TypeNode[] arguments)
+        {
+            var parameters = local?.TypeParams.OrDefault();
+            if (local == null && identity != null && !referencedMethodWitnessParameters.TryGetValue(identity, out parameters))
+                referencedMethodWitnessParameters[identity] = parameters = References.PhysicalMethodTypeParametersInPhysicalFrame(identity);
+            return new(WitnessBinder.Method, owner, identity, local, frame, parameters, arguments);
+        }
 
         internal sealed record StorageWitness(TypeNode.Fqn Class, (int OwnerIndex, TypeNode.Fqn Bound)[] Required)
         {
@@ -217,34 +279,35 @@ static partial class FBoundStarProjectionErasure
                 .Select(r => (TypeNode)r.Bound).Distinct().ToArray());
         }
 
-        internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner)
+        internal TypeNode[] ProjectedConstructorArguments(PhysicalWitnessApplication application)
         {
-            var layout = StorageFrame(owner.Name, out var fixedSlots);
+            var layout = StorageFrame(application.Owner.Name, out var fixedSlots);
             return layout == null && fixedSlots.Length == 0 ? null :
-                ProjectedConstructorArguments(owner, layout, fixedSlots);
+                ProjectedConstructorArguments(application, layout, fixedSlots);
         }
 
-        internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner, ProjectedClassStorageFrame layout,
+        internal TypeNode[] ProjectedConstructorArguments(PhysicalWitnessApplication application, ProjectedClassStorageFrame layout,
             FixedSupertypeConstraint[] fixedSlots = null)
         {
+            var owner = application.Owner;
             var primary = ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args;
             var visited = new bool[primary.Length];
             var required = new List<(int OwnerIndex, TypeNode.Fqn Bound)>();
             var unproven = false;
             TypeNode Close(int i)
             {
-                if (!visited[i] && StripSourceNullability(owner.Args[i]) is TypeNode.Fqn arg && ContainsExistentialProjection(arg))
+                if (!visited[i] && StripSourceNullability(application.Arguments[i]) is TypeNode.Fqn arg && ContainsExistentialProjection(arg))
                 {
                     visited[i] = true;
-                    if (ClassStorageWitness(owner, i, arg, Close, allowIntersection: true) is { } proof)
+                    if (ClassStorageWitness(application, i, arg, Close, allowIntersection: true) is { } proof)
                     {
                         if (proof.Interfaces.Length != 0 && fixedSlots?.Any(r => r.Index == i) == true)
                         {
                             var nativeBounds = fixedSlots.Where(r => r.Index == i).Select(r =>
-                                (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(r.Bound, BoundArguments(r.Bound, "type", i, owner.Args, Close))).ToArray();
+                                (TypeNode.Fqn)application.CloseBound(r.Bound, i, Close)).ToArray();
                             bool Fits(TypeNode.Fqn candidate) => nativeBounds.All(b =>
                                 SupertypeGraph.Reaches(candidate, b, Preparation.SourceSupertypes, References));
-                            if (!Fits(proof.Class)) proof = ClassStorageWitness(owner, i, arg, Close, true, Fits)
+                            if (!Fits(proof.Class)) proof = ClassStorageWitness(application, i, arg, Close, true, Fits)
                                 ?? throw new NotSupportedException($"cannot construct '{owner.Name}': CLR supertype '{string.Join(", ", fixedSlots.Where(r => r.Index == i).Select(r => r.Owner).Distinct())}' "
                                     + "requires a single type argument that satisfies both its class and interface constraints");
                         }
@@ -261,7 +324,7 @@ static partial class FBoundStarProjectionErasure
             // been closed: an interface may refer to a later slot.
             TypeNode NativeArgument(int index)
             {
-                var a = owner.Args[index];
+                var a = application.Arguments[index];
                 return Rewrite(a, preserveConstructedHead: PreservesNativeWitnessHead(a, this) || IsExactNativeArrayWitness(a, this));
             }
             // Forwarding A through another Kotlin constructor must not forget a
@@ -281,57 +344,38 @@ static partial class FBoundStarProjectionErasure
                 s.OwnerIndex == r.OwnerIndex && SupertypeGraph.SubstOwnerTvs(s.Bound, primary) == r.Bound))) return null;
             var arguments = layout.Close(primary, FacetArgument);
             if (required.Count == 0 && !layout.Interfaces.Select((slot, i) => (slot, witness: arguments[primary.Length + i]))
-                .Any(row => ContainsExistentialProjection(owner.Args[row.slot.OwnerIndex]) &&
+                .Any(row => ContainsExistentialProjection(application.Arguments[row.slot.OwnerIndex]) &&
                     row.witness == NativeArgument(row.slot.OwnerIndex) && row.witness != primary[row.slot.OwnerIndex])) return null;
             return arguments;
         }
 
-        internal StorageWitness ClassStorageWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application,
+        internal StorageWitness ClassStorageWitness(PhysicalWitnessApplication owner, int index, TypeNode.Fqn application,
             Func<int, TypeNode> closeArgument, bool allowIntersection, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
         {
-            var parameters = ConstraintParameters(owner.Name);
-            var frame = Owners.TryGetValue(owner.Name, out var definition) ? OwnerFrame(definition)
-                : References.NullableTypeFrames.GetValueOrDefault(owner.Name);
             TypeNode[] closed = null;
-            closeArgument ??= i => (closed ??= ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args)[i];
-            return SharedClassWitness(parameters, frame, "type", index, application,
-                bound => SupertypeGraph.SubstOwnerTvs(bound, BoundArguments(bound, "type", index, owner.Args, closeArgument)),
-                applicationArguments: owner.Args, allowIntersection: allowIntersection, acceptsPrimary: acceptsPrimary);
+            closeArgument ??= i => (closed ??= ((TypeNode.Fqn)Rewrite(owner.Owner, preserveConstructedHead: true)).Args)[i];
+            return SharedClassWitness(owner, index, application, closeArgument,
+                allowIntersection: allowIntersection, acceptsPrimary: acceptsPrimary);
         }
 
-        static TypeNode[] BoundArguments(TypeNode bound, string scope, int index, TypeNode[] arguments,
+        internal TypeNode MethodClassWitness(PhysicalWitnessApplication method, int index, TypeNode.Fqn application, TypeNode projected,
             Func<int, TypeNode> closeArgument)
         {
-            TypeNode[] physical = null;
-            BirGraphNameFields.VisitTypeNodes(bound, part => {
-                if (part is TypeNode.Tv tv && tv.Scope == scope && tv.I != index)
-                    (physical ??= (TypeNode[])arguments.Clone())[tv.I] = closeArgument(tv.I);
-            });
-            return physical ?? arguments;
+            return SharedClassWitness(method, index, application, closeArgument, method.LocalMethod == null ? null
+                : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(method.LocalMethod, i, bound)))?.Class ?? projected;
         }
 
-        internal TypeNode MethodClassWitness(BirFunctionDeclaration local, string identity, NullableRepresentationFrame frame,
-            TypeNode.Fqn owner, TypeNode[] arguments, int index, TypeNode.Fqn application, TypeNode projected,
-            Func<int, TypeNode> closeArgument)
-        {
-            var parameters = local?.TypeParams.OrDefault();
-            if (local == null && identity != null && !referencedMethodWitnessParameters.TryGetValue(identity, out parameters))
-                referencedMethodWitnessParameters[identity] = parameters = References.PhysicalMethodTypeParametersInPhysicalFrame(identity);
-            TypeNode CloseBound(TypeNode bound) => SubstituteDeclarationTypeArguments(bound, owner?.Args ?? [],
-                BoundArguments(bound, "method", index, arguments, closeArgument));
-            return SharedClassWitness(parameters, frame, "method", index, application, CloseBound,
-                local == null ? null : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(local, i, bound)),
-                arguments)?.Class ?? projected;
-        }
-
-        StorageWitness SharedClassWitness(BirTypeParameter[] parameters, NullableRepresentationFrame frame, string scope,
-            int index, TypeNode.Fqn application, Func<TypeNode, TypeNode> substitute,
-            Func<int, TypeNode, TypeNode> physicalBound = null, TypeNode[] applicationArguments = null,
+        StorageWitness SharedClassWitness(PhysicalWitnessApplication frameApplication, int index, TypeNode.Fqn application,
+            Func<int, TypeNode> closeArgument, Func<int, TypeNode, TypeNode> physicalBound = null,
             bool allowIntersection = false, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
         {
-            if (parameters == null || index >= parameters.Length) return null;
+            var parameters = frameApplication.Parameters;
+            if (parameters == null) return null;
+            var frame = frameApplication.Layout;
+            var scope = frameApplication.Scope;
+            var applicationArguments = frameApplication.Arguments;
             var linked = new HashSet<int> { index };
-            if (frame != null && frame.PhysicalArity == parameters.Length)
+            if (frame != null)
             {
                 var slot = frame.PhysicalSlot(index);
                 if (slot.Representation is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable
@@ -347,23 +391,20 @@ static partial class FBoundStarProjectionErasure
             }
             // A physical slot (including a synthesized slot without a source frame)
             // may constrain another slot closed over the very same projected type.
-            if (applicationArguments != null)
-            {
-                bool changed;
-                do {
-                    changed = false;
-                    for (int i = 0; i < parameters.Length; i++)
-                        foreach (var edge in parameters[i].Constraints.OrEmpty().OfType<TypeNode.Tv>())
-                            if (edge.Scope == scope && applicationArguments[i] == applicationArguments[edge.I]
-                                && (linked.Contains(i) || linked.Contains(edge.I)))
-                            { changed |= linked.Add(i); changed |= linked.Add(edge.I); }
-                } while (changed);
-            }
+            bool changed;
+            do {
+                changed = false;
+                for (int i = 0; i < parameters.Length; i++)
+                    foreach (var edge in parameters[i].Constraints.OrEmpty().OfType<TypeNode.Tv>())
+                        if (edge.Scope == scope && applicationArguments[i] == applicationArguments[edge.I]
+                            && (linked.Contains(i) || linked.Contains(edge.I)))
+                        { changed |= linked.Add(i); changed |= linked.Add(edge.I); }
+            } while (changed);
             if (linked.Any(i => parameters[i].SpecialConstraints.OrEmpty().Any(special => special != "class"))) return null;
             var declared = linked.SelectMany(i => parameters[i].Constraints.OrEmpty().Select(bound =>
                     (Index: i, Bound: physicalBound?.Invoke(i, bound) ?? bound)))
                 .Where(r => r.Bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
-                .Select(r => (r.Index, Bound: StripSourceNullability(substitute(r.Bound)))).Distinct().ToArray();
+                .Select(r => (r.Index, Bound: StripSourceNullability(frameApplication.CloseBound(r.Bound, index, closeArgument)))).Distinct().ToArray();
             var bounds = declared.Select(r => r.Bound).Distinct().ToArray();
             if (bounds.Length == 0) return null;
             TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)

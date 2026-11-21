@@ -749,13 +749,17 @@ static partial class FBoundStarProjectionErasure
             // A bound such as B : A needs A's chosen CLR argument, even when B
             // comes first in the declaration. Start recursive edges at the ordinary projection.
             bool[] visited = null;
+            CarrierProjectionContext.PhysicalWitnessApplication? witnessFrame = null;
             TypeNode Close(int i)
             {
                 if (visited?[i] == true || StripSourceNullability(application.Args[i]) is not TypeNode.Fqn { Args.Length: > 0 })
                     return physical[i];
                 visited ??= new bool[physical.Length];
                 visited[i] = true;
-                return physical[i] = context.ClassConstrainedArgument(application, i, application.Args[i], physical[i], Close);
+                if (context.ClassWitnessCandidate(application.Args[i], physical[i]) is not { } candidate)
+                    return physical[i];
+                witnessFrame ??= context.SelectPhysicalClassApplication(application);
+                return physical[i] = context.ClassConstrainedArgument(witnessFrame.Value, i, candidate, physical[i], Close);
             }
             for (int i = 0; i < physical.Length; ++i) Close(i);
             return physical;
