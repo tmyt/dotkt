@@ -176,7 +176,7 @@ static partial class FBoundStarProjectionErasure
             // The component on an allocation is a physical witness at every
             // array depth. A later carrier pass must not turn a concrete row
             // back into the Kotlin element view used for reads and writes.
-            if (field == "elem" && node is BirNewArray or BirNewArrayInit or BirNewArraySized && type is TypeNode.Array)
+            if (field == "elem" && node is BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat && type is TypeNode.Array)
             {
                 TypeNode Row(TypeNode t) => t is TypeNode.Array a ? new TypeNode.Array(Row(a.Elem), a.Rank, a.SzArray)
                     : state.Projection.Rewrite(t, bound, preserveConstructedHead: true, preserveArrayShape: true);
@@ -217,7 +217,21 @@ static partial class FBoundStarProjectionErasure
                 type => type is TypeNode.Fqn named && (state.Definition(named.Name) is { } definition
                     ? definition.Kind.OrDefault() == "interface" : state.References.IsInterfaceType(named)), names, state.ComponentPredicate);
         node = TypedGenericArrayStorageLowering.LowerOperation(node, state.References, names);
-        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized
+        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat &&
+            SourceArrayElement(node) is TypeNode.Tv variable &&
+            (variable.Scope == "method" ? childScope.MethodFrame : childScope.OwnerFrame)?.Frame is { } frame &&
+            variable.I < frame.PhysicalArity && frame.PhysicalSlot(variable.I) is { } componentSlot &&
+            componentSlot.Representation is NullableRepresentationFrame.Role.Element or NullableRepresentationFrame.Role.NullableElement)
+        {
+            // An open factory must allocate for the caller's actual component,
+            // but read/write values with the Kotlin element representation.
+            // Keep both as owning graph operands across inline/closure lowering.
+            var ordinary = new TypeNode.Tv(variable.Scope, frame.SourcePosition(componentSlot.SourceIndex));
+            node = new BirValueBlock { FreshArrayWitness = true, Type = new TypeNode.Array(variable),
+                Stmts = new IBirStatement[] { new BirExpressionStatement { Expr = new BirClassReference { Type = ordinary } } },
+                Result = OptionalField<IBirExpression>.Of((IBirExpression)node) };
+        }
+        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat
             && state.ArrayProjection(node) is TypeNode.Fqn { Args.Length: > 0 } component
             && !ContainsExistentialProjection(component) && state.Projection.TryExistentialCarrier(component.Name, out var elementCarrier))
         {

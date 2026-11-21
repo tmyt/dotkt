@@ -18,6 +18,11 @@ public class NativeVectorBase(Derived<string>[] values) { public int Count => va
 public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactory();
 public interface NativeBoxCreator { Box<string, string> Create(); }
 public interface NativeBoxArraySource { Box<string, string>[] Read(); }
+public interface NativeValueSource<T> { T Read(); }
+public struct NativeRowComparer : System.IComparable<Box<string, string>[]>
+{
+    public int CompareTo(Box<string, string>[] values) => values.Length;
+}
 public delegate Box<string, string> NativeBoxFactory();
 public delegate object NativeBoxConsumer(Box<string, string> value);
 
@@ -38,9 +43,12 @@ public static class NativeBoxApi
     public static bool ContainsSlot(ref Box<string, string> slot, Box<string, string>[] values) =>
         System.Array.IndexOf(values, slot) >= 0;
     public static Box<string, string>[] ArrayField;
+    public static ref Box<string, string>[] ArrayLocation() => ref ArrayField;
     public static Box<string, string>[] ArrayProperty { get; set; }
     public static object ReadFirst(NativeBoxArraySource source) => source.Read()[0];
     public static object ReadFirstRow(Box<string, string>[][] matrix) => matrix[0][0];
+    public static object ReadArrayRows(System.Array[] rows) => rows[0].GetValue(0);
+    public static object ReadGenericSource(NativeValueSource<System.Array> source) => source.Read().GetValue(0);
     public static bool IsNativeBoxMatrix(object value) => value is Box<string, string>[][];
     public static NativeBoxContainer<Box<string, string>> EchoContainer(NativeBoxContainer<Box<string, string>> value) => value;
     public static NativeBoxContainer<Box<string, string>> InvokeContainer(NativeBoxContainerFactory factory) => factory();

@@ -37,5 +37,8 @@ private fun Any.arrClrGetType(): Any = TODO("clr binding should be implemented")
 @kotlin.clr.ClrIntrinsic("System.Array.CreateInstanceFromArrayType")    // (Type arrayType, int length) -> Array; receiver(arrayType) -> arg0
 private fun Any.arrClrCreateArrayLike(length: Int): Any = TODO("clr binding should be implemented")
 
-internal actual fun <T> arrayOfNulls(reference: Array<T>, size: Int): Array<T> =
-    (reference as Any).arrClrGetType().arrClrCreateArrayLike(size) as Array<T>
+internal actual fun <T> arrayOfNulls(reference: Array<T>, size: Int): Array<T> {
+    val result = (reference as Any).arrClrGetType().arrClrCreateArrayLike(size) as Array<T>
+    DotKt.Runtime.CompilerServices.prepareKotlinArrayCopy(result)
+    return result
+}

@@ -18,6 +18,9 @@ private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String
 }
 private class DelegatedVector : GenericValueInterop.NativeVectorBase(arrayOf(roundtrip.genericvalueinterop.Derived<String>()))
 private class LocalStoredBox<T>(val value: T)
+private class NativeRowSource<T>(val value: T) : GenericValueInterop.NativeValueSource<T> {
+    override fun Read(): T = value
+}
 private fun readMixed(vararg values: LocalStoredBox<String>): String = values[0].value + values[1].value
 private interface LocalStoredCallback<T> { fun apply(value: T, transform: (T) -> Any): String }
 private class LocalStoredIntCallback : LocalStoredCallback<Int> {
@@ -30,6 +33,26 @@ private class ForwardedNativeBoxCreator : NativeBoxCreator {
 }
 
 class InvariantValueStorageTests {
+    @TestAttribute
+    @Suppress("UNCHECKED_CAST")
+    fun reifiedRowsRetainTheirNativeComponentAndPublishOnlyAtClrBoundaries() {
+        val original = Box("first")
+        val row = roundtrip.genericvalueinterop.reifiedVector(original)
+        val other = Box(42)
+        row[0] = other as Box<String>
+        val matrix = arrayOf(arrayOf<Any?>(null))
+        fun widenRow(r: Array<Box<String>>): Array<Any?> = r as Array<Any?>
+        matrix[0] = widenRow(row)
+        check(matrix[0][0] === other)
+        val nativeRows = arrayOf(row as System.Array)
+        check(try { NativeBoxApi.ReadArrayRows(nativeRows); false } catch (_: ClassCastException) { true })
+        val source = NativeRowSource(row as System.Array)
+        check(try { NativeBoxApi.ReadGenericSource(source); false } catch (_: ClassCastException) { true })
+        check(try { GenericValueInterop.NativeRowComparer().compareTo(row); false } catch (_: ClassCastException) { true })
+        row[0] = original
+        check(NativeBoxApi.EchoBoxes(row) === row && NativeBoxApi.ReadArrayRows(nativeRows) === original)
+    }
+
     @TestAttribute
     fun constructorsAndFieldsRetainUncheckedIdentityAcrossDlls() {
         val value = storedView<Int>()
@@ -180,16 +203,31 @@ class InvariantValueStorageTests {
         roundtrip.genericvalueinterop.replaceFirstElement(retained, erased)
         check((roundtrip.genericvalueinterop.firstArrayElement(retained) as Any) === number)
         check((roundtrip.genericvalueinterop.firstIteratedElement(retained) as Any) === number)
-        val widened = retained as Array<Any?>
+        fun widen(values: Array<Box<String>>): Array<Any?> = values as Array<Any?>
+        val widened = widen(retained)
+        check(widened[0] === number)
+        check(try { widened[0] = "unrelated"; false } catch (_: System.ArrayTypeMismatchException) { true })
         check(widened[0] === number)
         widened[0] = forwardedNativeBox()
         widened[0] = number
         check((roundtrip.genericvalueinterop.firstArrayElement(retained) as Any) === number)
         val copy = retained.copyOf()
         check(copy !== retained && (copy[0] as Any) === number)
+        val packed = arrayOf(*retained, forwardedNativeBox().also { retained[0] = it })
+        check((packed[0] as Any) === number) // spread was evaluated before the following mutation
+        retained[0] = erased
+        packed[0] = packed[1]
+        check(NativeBoxApi.EchoBoxes(packed) === packed)
+        val grown = roundtrip.arrayconversion.LibraryArrayCollection(listOf<Any?>(number, number)).into(arrayOf(forwardedNativeBox()))
+        check(grown.size == 2 && (grown[1] as Any) === number)
         check(try { NativeBoxApi.EchoBoxes(retained); false } catch (_: ClassCastException) { true })
         check(try { NativeBoxApi.ArrayField = retained; false } catch (_: ClassCastException) { true })
         check(try { NativeBoxApi.ArrayProperty = retained; false } catch (_: ClassCastException) { true })
+        check(try { (retained as System.Array).GetValue(0); false } catch (_: ClassCastException) { true })
+        check(try { NativeBoxContainer<Any>(retained); false } catch (_: ClassCastException) { true })
+        check(try { roundtrip.parameterslots.takeRef(byref(retained[0]), forwardedNativeBox()); false } catch (_: ClassCastException) { true })
+        var arrayLocation by byref(NativeBoxApi.ArrayLocation())
+        check(try { arrayLocation = retained; false } catch (_: ClassCastException) { true })
         val source = object : GenericValueInterop.NativeBoxArraySource {
             override fun Read(): Array<Box<String>> = retained
         }
@@ -215,6 +253,9 @@ class InvariantValueStorageTests {
         check(try { NativeBoxApi.FirstMissing(byref(locationArray)); false } catch (_: ClassCastException) { true })
         NativeBoxApi.ResetBoxes(byref(locationArray))
         check(locationArray[0].value == "reset" && (oldArray[0] as Any) === number)
+        val foreignCopy = locationArray.copyOf()
+        foreignCopy[0] = erased
+        check((foreignCopy[0] as Any) === number && locationArray[0].value == "reset")
         val matrix = arrayOf(oldArray)
         check(try { NativeBoxApi.ReadFirstRow(matrix); false } catch (_: ClassCastException) { true })
         oldArray[0] = repaired

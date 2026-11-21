@@ -11,7 +11,7 @@
 package kotlin.collections
 
 import DotKt.Runtime.CompilerServices.copyProjectedArrayRange
-import DotKt.Runtime.CompilerServices.inheritProjectedArrayStorage
+import DotKt.Runtime.CompilerServices.prepareKotlinArrayCopy
 
 @kotlin.internal.InlineOnly
 public actual inline fun <T> Array<out T>.elementAt(index: Int): T {
@@ -727,7 +727,7 @@ internal fun <T> Array<T>.copyOfUninitializedElements(fromIndex: Int, toIndex: I
         throw IllegalArgumentException("$fromIndex > $toIndex")
     }
     val result = (this as Any).nativeGetType().nativeCreateArrayLike(newSize) as Array<T>
-    inheritProjectedArrayStorage(this, result)
+    prepareKotlinArrayCopy(result)
     this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
     return result
 }
@@ -746,7 +746,7 @@ internal fun <E> Array<E>.copyOfNulls(fromIndex: Int, toIndex: Int): Array<E?> {
     val element = (this as Any).dotktRuntimeType().getElementType()
     val nullableElement = if (element.isValueType()) dotktTypeNamed("System.Object") else element
     val result: Array<E?> = dotktNewArrayOfType(nullableElement, newSize)
-    inheritProjectedArrayStorage(this, result)
+    prepareKotlinArrayCopy(result)
     this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
     return result
 }

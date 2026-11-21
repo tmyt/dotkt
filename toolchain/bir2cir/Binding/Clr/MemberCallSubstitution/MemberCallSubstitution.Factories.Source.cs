@@ -58,7 +58,8 @@ static partial class MemberCallSubstitution
         var signature = CtorArgTypes(declared, arguments.Length);
         var actual = arguments.Select(FactoryClone).ToArray();
         if (viaAlias) CoerceCharSequenceCtorArgs(actual, signature);
-        var lowered = new BirNewClr { Type = FactoryType(target), ArgTypes = signature, Args = actual };
+        var lowered = new BirNewClr { Type = FactoryType(target), ArgTypes = signature, Args = actual,
+            SourceClrBoundary = !viaAlias && refs.ResolveForeignProjectionType(owner.Name, owner.Args) != null };
         if (viaAlias && refs.IsKotlinHashStorageOwner(owner.Name)) KotlinHashStorageLowering.RequestComparer(lowered);
         // Only a projected CLR declaration keeps the authored native signature.
         if (!viaAlias && node.MemberSignature.HasValue)
@@ -261,7 +262,13 @@ static partial class MemberCallSubstitution
         if (root is IBirExecutablePayload) return;
         var nested = context.Extend(root);
         root.VisitChildren(child => BindSpreadOperands(child, nested, isValue));
-        if (root is BirSpreadConcat spread) NormalizeSpreadParts(spread, spread.Elem.OrDefault(), nested, isValue);
+        if (root is BirSpreadConcat spread)
+        {
+            var element = spread.Elem.OrDefault();
+            if (element is TypeNode.Fqn f && (isValue(f) || f.Name is "System.String" or "kotlin.String" or "string"))
+                NormalizeSpreadParts(spread, element, nested, isValue);
+            else spread.LogicalSpreadOperands = true;
+        }
     }
 
     static void NormalizeSpreadParts(BirSpreadConcat spread, TypeNode target, CollectionHelperBinding.CollectionSourceContext context,
