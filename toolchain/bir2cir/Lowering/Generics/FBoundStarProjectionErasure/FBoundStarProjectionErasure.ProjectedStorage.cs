@@ -10,6 +10,13 @@ static partial class FBoundStarProjectionErasure
     static string StorageFactoryId(string constructorId) =>
         DeclarationIdentityBinding.PhysicalOnlyId(constructorId, DeclarationIdentityBinding.ProjectedConstructorRole);
 
+    // The physical entry lives on a sibling carrier, so a source-private
+    // constructor needs assembly access, not a new public construction path.
+    // CallableVisibilityLowering has already promoted @PublishedApi entries.
+    static string FactoryVisibility(BirConstructor constructor) => constructor.Vis.OrDefault("public") switch {
+        "private" => "internal", "protected" => "protectedInternal", var visibility => visibility,
+    };
+
     static void RegisterProjectedStorage(Owner owner, IBirTypeDeclaration definition, BirInterfaceDefinition carrier,
         CarrierRealizationContext context)
     {
@@ -36,7 +43,7 @@ static partial class FBoundStarProjectionErasure
             foreach (var parameter in parameters) parameter.RewriteTypeFieldsInPlace(InMethod);
             var factory = new BirFunctionDeclaration {
                 Name = name, DeclarationSourceName = name, DeclarationId = factoryId,
-                Static = true, Virtual = false, Override = false, Abstract = false, Vis = "public", Generated = true,
+                Static = true, Virtual = false, Override = false, Abstract = false, Vis = FactoryVisibility(constructor), Generated = true,
                 TypeParams = generic, Params = parameters, Ret = new TypeNode.Fqn(owner.ErasedName),
                 // The implementation's constructor frame exists only after physical lowering.
                 Body = Array.Empty<IBirStatement>(),

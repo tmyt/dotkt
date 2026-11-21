@@ -24,7 +24,7 @@ static partial class FBoundStarProjectionErasure
         }).ToArray();
         var id = ProjectedInnerFactoryId(ctor.DeclarationId.Value);
         var slot = new BirFunctionDeclaration {
-            Name = ordinary.Slot.Name.Value + "$projected", Static = false, Abstract = true, Virtual = true, Vis = "public",
+            Name = ordinary.Slot.Name.Value + "$projected", Static = false, Abstract = true, Virtual = true, Vis = FactoryVisibility(ctor),
             DeclarationId = id, DeclarationSourceName = ordinary.Slot.Name.Value + "$projected",
             Generated = true, TypeParams = frame, Params = parameters, Ret = new TypeNode.Fqn(inner.ErasedName),
             Body = Array.Empty<IBirStatement>(), Attrs = Array.Empty<BirAttribute>(),
