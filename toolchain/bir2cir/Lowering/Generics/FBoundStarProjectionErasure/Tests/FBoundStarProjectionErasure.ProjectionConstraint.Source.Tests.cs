@@ -93,8 +93,9 @@ static partial class FBoundStarProjectionErasure
 
         var component = new TypeNode.Fqn("Bound", new TypeNode[] { new TypeNode.Fqn("kotlin.String") });
         foreach (var element in new TypeNode[] { component, new TypeNode.Nullable(component) })
-            Need(projection.Rewrite(new TypeNode.Array(element)) == new TypeNode.Array(element),
-                "closed invariant array lost its exact allocation component");
+            Need(projection.Rewrite(new TypeNode.Array(element), boundDeclaration: true) == new TypeNode.Array(element)
+                && projection.Rewrite(new TypeNode.Array(element)) == new TypeNode.Array(View("Bound")),
+                "native array descriptors stay exact; Kotlin array storage accepts erased values");
         var unresolved = new TypeNode.Fqn("Unresolved.Container", new TypeNode[] { inner });
         var explicitUnresolved = unresolved with { Args = new TypeNode[] {
             new TypeNode.Fqn("Unresolved.Other", new TypeNode[] { new TypeNode.Fqn("System.String") }) } };

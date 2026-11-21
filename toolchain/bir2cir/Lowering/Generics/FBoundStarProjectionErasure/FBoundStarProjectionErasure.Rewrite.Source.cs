@@ -12,6 +12,7 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlySet<int> ExistentialTypes { get; init; }
         internal IReadOnlySet<int> ExistentialMethods { get; init; }
         internal TypeNode.Fqn ThisType { get; init; }
+        internal TypeNode.Fqn BaseType { get; init; }
         internal GenericArrayStorageLowering.SourceTypeOperationFrame OwnerFrame { get; init; }
         internal GenericArrayStorageLowering.SourceTypeOperationFrame MethodFrame { get; init; }
         internal bool Bound { get; init; }
@@ -64,6 +65,7 @@ static partial class FBoundStarProjectionErasure
             if (!typesOnly) ProjectDependentTypeConstraintsSource(type, state.Projection);
             var facts = NullableRepresentationViews.TypeFacts(node);
             return scope with { TypeParameters = parameters, MethodParameters = null,
+                BaseType = type.Base.OrDefault() as TypeNode.Fqn,
                 ExistentialTypes = SourceExistentialParameters(parameters, "type"), ExistentialMethods = null,
                 ThisType = type.Name.HasValue ? new TypeNode.Fqn(type.Name.Value,
                     Enumerable.Range(0, type.TypeParams.OrEmpty().Length).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray()) : scope.ThisType,
@@ -163,8 +165,23 @@ static partial class FBoundStarProjectionErasure
                     preserveConstructedHead: field == "argTypes" && index < arguments.Length && SourceExactOuter((BirGraphValue)arguments[index])
                         || IsSourceInnerOuterSlot(node, index, state), preserveArrayShape: shape);
             if (field == "delegationSig" && node is BirConstructor constructor)
+            {
+                var nativeBase = !constructor.ThisArgs.HasValue && constructor.BaseArgs.HasValue
+                    && scope.BaseType != null && IsNativeArrayOwner(scope.BaseType, state.References, state.LocalClrAliases);
                 return state.Projection.Rewrite(type, bound,
-                    preserveConstructedHead: constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index);
+                    preserveConstructedHead: constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index
+                        || nativeBase && IsExactNativeArrayWitness(type, state.Projection),
+                    preserveArrayShape: nativeBase);
+            }
+            // The component on an allocation is a physical witness at every
+            // array depth. A later carrier pass must not turn a concrete row
+            // back into the Kotlin element view used for reads and writes.
+            if (field == "elem" && node is BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat && type is TypeNode.Array)
+            {
+                TypeNode Row(TypeNode t) => t is TypeNode.Array a ? new TypeNode.Array(Row(a.Elem), a.Rank, a.SzArray)
+                    : state.Projection.Rewrite(t, bound, preserveConstructedHead: true, preserveArrayShape: true);
+                return Row(type);
+            }
             if (field == "constraints" && scope.ParameterOwner != null
                 && state.Demand.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
             return state.Projection.Rewrite(type, bound, preserveConstructedHead:
@@ -200,6 +217,31 @@ static partial class FBoundStarProjectionErasure
                 type => type is TypeNode.Fqn named && (state.Definition(named.Name) is { } definition
                     ? definition.Kind.OrDefault() == "interface" : state.References.IsInterfaceType(named)), names, state.ComponentPredicate);
         node = TypedGenericArrayStorageLowering.LowerOperation(node, state.References, names);
+        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat &&
+            SourceArrayElement(node) is TypeNode.Tv variable &&
+            (variable.Scope == "method" ? childScope.MethodFrame : childScope.OwnerFrame)?.Frame is { } frame &&
+            variable.I < frame.PhysicalArity && frame.PhysicalSlot(variable.I) is { } componentSlot &&
+            componentSlot.Representation is NullableRepresentationFrame.Role.Element or NullableRepresentationFrame.Role.NullableElement)
+        {
+            // An open factory must allocate for the caller's actual component,
+            // but read/write values with the Kotlin element representation.
+            // Keep both as owning graph operands across inline/closure lowering.
+            var ordinary = new TypeNode.Tv(variable.Scope, frame.SourcePosition(componentSlot.SourceIndex));
+            node = new BirValueBlock { FreshArrayWitness = true, Type = new TypeNode.Array(variable),
+                Stmts = new IBirStatement[] { new BirExpressionStatement { Expr = new BirClassReference { Type = ordinary } } },
+                Result = OptionalField<IBirExpression>.Of((IBirExpression)node) };
+        }
+        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat
+            && state.ArrayProjection(node) is TypeNode.Fqn { Args.Length: > 0 } component
+            && !ContainsExistentialProjection(component) && state.Projection.TryExistentialCarrier(component.Name, out var elementCarrier))
+        {
+            // Preserve the allocation's component, not a future caller's requested
+            // type. Its Kotlin value view stays carrier[] even across assemblies.
+            SetSourceArrayElement(node, state.Projection.Rewrite(component, preserveConstructedHead: true, preserveArrayShape: true));
+            node = new BirValueBlock { Type = new TypeNode.Array(new TypeNode.Fqn(elementCarrier)),
+                Stmts = Array.Empty<IBirStatement>(), Result = OptionalField<IBirExpression>.Of((IBirExpression)node) };
+            state.ArrayProjection(node, component);
+        }
         node = BindProjectedFieldStorageSource(node, state);
         node = BindInheritedStarMemberSource(node, state);
         if (node is BirCallInstance call && call.OwnerType.OrDefault() is TypeNode.Fqn erased
@@ -234,7 +276,8 @@ static partial class FBoundStarProjectionErasure
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
         var projected = state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
             preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
-                && (PreservesNativeWitnessHead(argument, state.Projection) || factory
+                && (PreservesNativeWitnessHead(argument, state.Projection)
+                    || preserveArray && IsExactNativeArrayWitness(argument, state.Projection) || factory
                     || state.Demand.NativeProofs.ExactMethodArgument(source, sourceId, index)
                     || StripSourceNullability(argument) is TypeNode.Fqn alias && state.Projection.RequiresOpaqueVariantAlias(alias)
                         && !ContainsExistentialProjection(alias) && !state.Projection.ProjectionCanChangeConstruction(alias)));

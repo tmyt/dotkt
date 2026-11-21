@@ -38,6 +38,18 @@ tv = {"t": "tv", "scope": "method", "i": 0}
 assert call["typeArgs"] == [tv]
 assert call["memberRef"]["parameterTypes"][:2] == [{"t": "byRef", "of": tv}] * 2
 addresses = call["args"][:2]
+# A retained managed pointer is still the original field, unlike a value spill.
+def field_location(arg):
+    if arg["k"] == "field":
+        return arg
+    assert arg["k"] == "local", arg
+    block, = (node for node in nodes(replace["body"])
+              if node.get("k") == "valueBlock" and node.get("result") is call)
+    binding, = (s for s in block["stmts"] if s.get("k") == "var" and s["name"] == arg["name"])
+    assert binding["type"] == {"t": "byRef", "of": tv} and binding["init"]["k"] == "byrefOf", binding
+    return binding["init"]["inner"]
+
+addresses = [field_location(arg) for arg in addresses]
 assert addresses[0] == addresses[1], "both refs must address the same original field, not distinct spills"
 address = addresses[0]
 assert address["k"] == "field" and address["name"] == field["name"]

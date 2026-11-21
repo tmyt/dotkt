@@ -45,7 +45,8 @@ static partial class ClrMemberResolution
             // A function-bounded source TV is a generic value, so the declared
             // function view is crossed explicitly before natural delegate storage.
             var captured = new BirCast { Type = function, E = conversion.E };
-            return Adapt(captured, slot, BoxedDelegateAdapterPlan(function, signature), alwaysArguments: true);
+            return Adapt(captured, slot, BoxedDelegateAdapterPlan(function, signature) with {
+                PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(signature.Ret, refs) }, alwaysArguments: true);
         }
 
         var construction = Construction(value);
@@ -54,7 +55,13 @@ static partial class ClrMemberResolution
         construction.Clear();
         if (target == null || construction.Natural is not TypeNode.Fn natural) return value;
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(natural);
-        if (naturalDelegate == null || SameDelegate(naturalDelegate, target)) return value;
+        if (naturalDelegate == null) return value;
+        if (value.SourceClrBoundary && PhysicalFunctionShape(refs, target, includeNominal: true) is { } callback
+            && TypedPhysicalValueCoercion.MayHoldArray(callback.Ret, refs)
+            && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, refs))
+            return Adapt((IBirExpression)value, target,
+                BoxedDelegateAdapterPlan(natural, callback) with { PublishReturn = true }, alwaysArguments: true);
+        if (SameDelegate(naturalDelegate, target)) return value;
         if (ClrDeclarationMatching.IsVoidNode(natural.Ret) && SlotInvokeReturn(refs, target) is TypeNode result && !ClrDeclarationMatching.IsVoidNode(result))
             return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(refs, localCarriers, natural, target, result), alwaysArguments: false);
         if (PhysicalFunctionShape(refs, target, includeNominal: true) is TypeNode.Fn signatureType

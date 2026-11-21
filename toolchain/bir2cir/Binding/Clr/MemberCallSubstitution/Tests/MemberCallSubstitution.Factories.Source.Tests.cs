@@ -114,16 +114,16 @@ static partial class MemberCallSubstitution
             var forwarded = Factory("array", new IBirExpression[] { new BirLocal { Name = "integers" } }, new TypeNode[] { integer });
             forwarded.Sty = new TypeNode.Array(any);
             var spread = (BirSpreadConcat)TryFactorySubst(forwarded, refs, context);
-            Require(spread.Elem.Value == any && spread.Parts.Value.Single().E.Value is BirGenericStatic adapter
-                && adapter.TypeArgs.Value.Single() == any && adapter.ResolvedMemberParams.Value.Single() == new TypeNode.Fqn("System.Collections.IEnumerable"),
-                "widened array spread lost its fresh-copy/non-generic boxed enumeration adapter");
+            BindSpreadOperands(spread, context, _isValue);
+            Require(spread.Elem.Value == any && spread.LogicalSpreadOperands && spread.Parts.Value.Single().E.Value is BirLocal,
+                "widened array spread discarded its original vector before logical element access");
             var mixed = new BirSpreadConcat { Elem = any, Parts = new[] {
                 new BirSpreadPart { E = Number(1) },
                 new BirSpreadPart { Spread = true, E = new BirLocal { Name = "integers" } },
             } };
-            TransformSpread(mixed, context);
-            Require(mixed.Parts.Value[0].E.Value is BirCast { Type.Value: TypeNode.Fqn { Name: "object" } }
-                && mixed.Parts.Value[1].E.Value is BirGenericStatic, "mixed spread omitted scalar boxing or array element adaptation");
+            BindSpreadOperands(TransformSpread(mixed), context, _isValue);
+            Require(mixed.LogicalSpreadOperands && mixed.Parts.Value[0].E.Value is BirConstant
+                && mixed.Parts.Value[1].E.Value is BirLocal, "mixed spread adapted its operands before their ordered evaluation");
             Require(CompilerMetadataIntrinsicValue("dotkt.equalityStorage.Set", refs) is BirNewArray {
                 Elem.Value: TypeNode.Fqn { Name: "System.Type" } } && CompilerMetadataIntrinsicValue("ordinary", refs) == null,
                 "compiler metadata intrinsic did not use the authoritative declaration table");

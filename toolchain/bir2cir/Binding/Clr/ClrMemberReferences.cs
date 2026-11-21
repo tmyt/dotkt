@@ -85,6 +85,8 @@ static class ClrMemberReferences
             ParameterTypes: RefParamsOf(references, localTypes, shipped));
         ValidateDeclaringArity(references, member, node.DeclaringType);
         node.Validate();
+        if (node.ParameterTypes.Any(t => SignatureValueTypes.Of(t) is TypeNode.ByRef))
+            references.RecordOutputOnlyArguments(node, shipped);
         return node;
     }
 

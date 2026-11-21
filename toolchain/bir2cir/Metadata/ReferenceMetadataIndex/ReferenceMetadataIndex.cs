@@ -14,6 +14,20 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 {
 
     readonly List<ReferenceAssembly> _assemblies;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<MemberRefNode, int[]> _outputOnlyArguments = new();
+    // Use the already-selected MethodDef, not another overload lookup at the
+    // call site. Direction belongs to the open declaration, not its type args.
+    static MemberRefNode OpenParameterIdentity(MemberRefNode reference) => reference with {
+        DeclaringType = new TypeNode.Fqn(((TypeNode.Fqn)reference.DeclaringType).Name) };
+    internal void RecordOutputOnlyArguments(MemberRefNode reference, MethodBase method)
+    {
+        var slots = method.GetParameters().Where(p => p.ParameterType.IsByRef && p.IsOut && !p.IsIn)
+            .Select(p => p.Position).ToArray();
+        if (slots.Length != 0) _outputOnlyArguments.TryAdd(OpenParameterIdentity(reference), slots);
+    }
+    internal bool IsOutputOnlyArgument(BirMemberReference reference, int slot) => reference != null &&
+        _outputOnlyArguments.TryGetValue(OpenParameterIdentity(TypedCirProjection.ProjectMemberReference(reference)), out var positions)
+        && Array.IndexOf(positions, slot) >= 0;
     readonly ManagedReferenceCatalog _compileRefs;
     internal string CompileStdlibName => _compileRefs.CompileStdlibName;
 

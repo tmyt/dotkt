@@ -37,6 +37,7 @@ private class ArrNullableFactory<T>(val create: () -> Array<T?>)
 
 private interface ArrBoundedNode
 private class ArrBoundedItem : ArrBoundedNode
+private class ArrGenericBounded<T>(val item: T) : ArrBoundedNode
 private interface ArrOtherBound
 private class ArrIntersectionItem : ArrBoundedNode, ArrOtherBound
 private open class ArrGenericNode<U>
@@ -189,6 +190,11 @@ class ArrayTests {
         check(arrRejectMatrix<String>())
         check(arrReifiedSafeCast<String>(arrayOf("ok")) != null)
         check(arrReifiedSafeCast<String>(arrayOf(1)) == null)
+        @Suppress("UNCHECKED_CAST")
+        fun <T : ArrBoundedNode> accepts(input: Any): Boolean = input as? Array<T> != null
+        // Both vectors use a Kotlin classifier face. Only the first declaration implements the bound.
+        check(accepts<ArrBoundedItem>(arrayOf(ArrGenericBounded(1))))
+        check(!accepts<ArrBoundedItem>(arrayOf(ArrGenericNode<Int>())))
     }
 
     @TestAttribute

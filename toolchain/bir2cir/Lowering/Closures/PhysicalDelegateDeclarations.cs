@@ -51,7 +51,7 @@ sealed class PhysicalDelegateDeclarations
             Params = Enumerable.Range(0, plan.Arity).Select(i => new BirParameter {
                 Name = "p" + i, Type = plan.Parameters?[i] ?? new TypeNode.Tv("type", i),
             }).ToArray(),
-            Ret = plan.Return, Body = body, BodyTerminates = true,
+            Ret = plan.Return, Body = body, BodyTerminates = true, SourceClrBoundary = plan.PublishReturn,
         };
         var declaration = new BirClassDefinition {
             Name = name, Kind = "class", Generated = true,

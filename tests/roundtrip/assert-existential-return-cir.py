@@ -4,6 +4,7 @@
 import json
 import sys
 from carrier_inspection import type_payloads
+from projected_array_inspection import storage_accesses
 
 
 def objects(node):
@@ -341,13 +342,8 @@ def assert_referenced_variant_array(stem, carrier_name, minimum_ops):
         raise SystemExit(
             f"referenced {stem} signatures did not use one physical carrier: {calls!r}"
         )
-    array_ops = [
-        node
-        for node in objects(body)
-        if node.get("k") in ("arrayGet", "arraySet")
-        and node.get("elem", {}).get("name") == carrier_name
-    ]
-    if len(array_ops) < minimum_ops:
+    array_ops = [op for op, vector, _ in storage_accesses(roundtrip_tests[0], objects) if vector == carrier]
+    if len(array_ops) < minimum_ops or set(array_ops) != {"readProjectedArray", "writeProjectedArray"}:
         raise SystemExit(
             f"referenced {stem} reads/writes did not retain the carrier: {array_ops!r}"
         )

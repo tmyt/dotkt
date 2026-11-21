@@ -35,7 +35,7 @@ sealed partial class TypedCirProjection(IReadOnlySet<string> emitted, BirTypeLow
         return (IScalarValue)AttributeProjection.Literal(literal, scalarType);
     }
 
-    static MemberRefNode ProjectMemberReference(BirMemberReference value)
+    internal static MemberRefNode ProjectMemberReference(BirMemberReference value)
     {
         var member = new MemberRefNode(Require(value.Kind), Require(value.Assembly), Require(value.DeclaringType),
             Require(value.Name), Require(value.GenericArity), Require(value.ReturnType),

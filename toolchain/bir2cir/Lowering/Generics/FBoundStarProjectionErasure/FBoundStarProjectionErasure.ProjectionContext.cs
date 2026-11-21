@@ -264,6 +264,10 @@ static partial class FBoundStarProjectionErasure
         && context.RequiresKotlinValueCarrier(component)
         && !context.ProjectionCanChangeConstruction(component);
 
+    static bool IsExactNativeArrayWitness(TypeNode type, CarrierProjectionContext context) =>
+        StripSourceNullability(type) is TypeNode.Array array &&
+        (PreservesNativeWitnessHead(array.Elem, context) || IsExactNativeArrayWitness(array.Elem, context));
+
     static TypeNode ProjectOrdinaryParameter(TypeNode type, CarrierProjectionContext context) => type switch {
         TypeNode.Nullable nullable => new TypeNode.Nullable(ProjectOrdinaryParameter(nullable.Of, context)),
         TypeNode.Oblivious oblivious => new TypeNode.Oblivious(ProjectOrdinaryParameter(oblivious.Of, context)),
@@ -279,7 +283,8 @@ static partial class FBoundStarProjectionErasure
     {
         semanticElement = StripSourceNullability(element) as TypeNode.Fqn;
         physicalElement = null;
-        if (semanticElement?.Args is not { Length: > 0 } || !context.ProjectionCanChangeConstruction(semanticElement)
+        if (semanticElement?.Args is not { Length: > 0 }
+            || !(context.RequiresKotlinValueCarrier(semanticElement) || context.ProjectionCanChangeConstruction(semanticElement))
             || !context.TryExistentialCarrier(semanticElement.Name, out var carrier)) return false;
         physicalElement = new TypeNode.Fqn(carrier);
         return true;

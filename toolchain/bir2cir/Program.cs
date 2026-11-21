@@ -825,6 +825,9 @@ sealed class Pipeline
                 genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
             });
 
+        if (!referenceBuild)
+            foreach (var source in captured)
+                MemberCallSubstitution.BindSpreadOperands(source, new CollectionHelperBinding.CollectionSourceContext(), isValueFqn);
         var localExistentialOwners = carrierRealization.Owners.Values.Where(owner => owner.Needed)
             .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal);
         ExistentialCaptureAlignment.ApplyAll(captured, localExistentialOwners, refs, isValueFqn, genericRepresentations,

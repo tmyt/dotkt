@@ -143,6 +143,10 @@ static partial class NullableRepresentationDemand
                 }
                 foreach (var method in owner.Methods)
                 {
+                    if (method.View.Function is { } factory && factory.Attrs.OrEmpty().Any(attribute =>
+                            attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrArrayFactory" })
+                        && method.View.Return is TypeNode.Array resultArray)
+                        Visit(resultArray.Elem, true, method.Signature, types, policy, element: true);
                     if (method.View.OwnsValueSlots(policy))
                     {
                         void DemandValue(TypeNode value) { if (value is TypeNode.Tv { Scope: "method" } variable) method.Signature.Add(variable, RepresentationRole.Storage); }
@@ -231,15 +235,22 @@ static partial class NullableRepresentationDemand
             foreach (var slot in frame.Companions) RequireRepresentation(arguments[slot.SourceIndex], slot.Representation, result);
         }
         var snapshot = NullableRepresentationViews.ReturnFacts(node);
+        if (UnstampedOpenElement(node) is { } inferred)
+            Visit(inferred, true, result, types, policy, element: true);
         node.RewriteRepresentationInPlace((ownership, role, type) => {
             if (NullableRepresentationViews.Frozen(ownership) || role is BirRepresentationRole.Declaration
                 or BirRepresentationRole.DeclaredMemberType or BirRepresentationRole.TypeParameterDeclarations or BirRepresentationRole.Foreign
                 || role == BirRepresentationRole.Return && snapshot.DeclarationReturn) return type;
             var nativeRead = role is BirRepresentationRole.Return or BirRepresentationRole.ResultStamp
                 && node is BirFieldGet or BirStaticFieldGet or BirLateinitGet && policy?.IsNativeField(node) == true;
+            var arrayComponent = IsOpenArrayComponent(node, role, type);
+            if (ReifiedArrayTarget(node, role, type, component => {
+                Visit(component, true, result, types, policy, element: true);
+                return component;
+            }) != null) return type;
             Visit(type, role == BirRepresentationRole.TypeArguments || nativeRead
                 || role == BirRepresentationRole.Element && NullableGenericErasure.IsArgumentElementKind((node as BirGraphNode)?.Tag),
-                result, types, policy);
+                result, types, policy, element: arrayComponent);
             return type;
         }, (ownership, role, child) => {
             if (!NullableRepresentationViews.Frozen(ownership) && ownership != BirGenericFrameRole.OverrideDeclaration
@@ -247,5 +258,39 @@ static partial class NullableRepresentationDemand
                     or BirRepresentationRole.Declaration or BirRepresentationRole.TypeParameterDeclarations))
                 Scan(child, result, types, methods, locals, policy);
         });
+    }
+
+    internal static bool IsOpenArrayComponent(BirGraphValue node, BirRepresentationRole role, TypeNode type) =>
+        role == BirRepresentationRole.Element
+        && node is BirNewArray or BirNewArraySized or BirNewArrayInit or BirArraySet or BirSpreadConcat
+        && (type is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv });
+
+    // A reified Array<T> operation checks the component that array allocation
+    // would select, not the CLR type argument used to call an ordinary method.
+    // Unchecked non-reified casts still use their representative Kotlin bound.
+    internal static TypeNode ReifiedArrayTarget(BirGraphValue node, BirRepresentationRole role, TypeNode type,
+        Func<TypeNode, TypeNode> component)
+    {
+        if (role != BirRepresentationRole.ValueType || !(node switch {
+            BirIsInstance => true, BirCast cast => cast.ReifiedTypeOperand.OrDefault(),
+            BirInstanceOrNull test => test.ReifiedTypeOperand.OrDefault(), _ => false,
+        })) return null;
+        TypeNode ArrayTarget(TypeNode target) => target switch {
+            TypeNode.Array a when KotlinTypeWitness.Variable(a.Elem) != null => a with { Elem = component(a.Elem) },
+            TypeNode.Array a when ArrayTarget(a.Elem) is { } inner => a with { Elem = inner },
+            TypeNode.Nullable n when ArrayTarget(n.Of) is { } inner => n with { Of = inner },
+            TypeNode.Oblivious o when ArrayTarget(o.Of) is { } inner => o with { Of = inner },
+            _ => null,
+        };
+        return ArrayTarget(type);
+    }
+
+    internal static TypeNode UnstampedOpenElement(BirGraphValue node)
+    {
+        var receiver = node is BirArraySet set && !set.Elem.HasValue ? set.Array.OrDefault() : null;
+        if (receiver == null) return null;
+        var element = ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface(receiver,
+            System.Collections.Immutable.ImmutableDictionary<string, TypeNode>.Empty));
+        return IsOpenArrayComponent(node, BirRepresentationRole.Element, element) ? element : null;
     }
 }
