@@ -135,7 +135,8 @@ static partial class KotlinOverrideSlotBridge
         var claims = new Dictionary<(OverrideMethod Body, string Shape), List<OverrideMethod>>();
         var ordinal = 0;
         var enumeration = context.ReferenceBuild ? null : ReverseEnumeratorBridgeSynthesis.ReserveSlots(
-            definition, defs, refs, context.Index.Declarations, context.BottomIterators);
+            definition, defs, refs, context.Index.Declarations, context.BottomIterators,
+            (source, physical) => context.CarrierConstruction(source, physical) != null);
         bool CanPassAsObject(TypeNode type, OverrideMethod method)
         {
             type = SignatureValueTypes.Of(context.Physical(type));

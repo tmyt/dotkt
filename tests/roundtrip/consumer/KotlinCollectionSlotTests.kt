@@ -21,6 +21,7 @@ import roundtrip.collslots.ReplacingResultList
 import roundtrip.collslots.makeReplacingResultList
 import roundtrip.collslots.ExternalAddProvider
 import roundtrip.collslots.ExternalDefaultAdd
+import roundtrip.collslots.ProjectedIterable
 
 private class CrossModuleInheritedAddResult<T>(values: MutableList<T>) : ReplacingResultList<T>(values)
 
@@ -64,6 +65,9 @@ class CrossModuleFeedNumbers : Feed<Int> {
 class CrossModuleInheritedIterator(items: List<String>) : ExternalIteratorProvider<String>(items), Feed<String>
 class CrossModuleDefaultIterator : ExternalDefaultIterator, Iterable<Int>
 private class CrossModuleBottomIterator : roundtrip.collslots.ExternalBottomIterator(), Iterable<Int>
+private class CrossModuleProjectedBottomIterator : ProjectedIterable {
+    override fun iterator(): Nothing = throw UnsupportedOperationException("projected iterator")
+}
 class CrossModuleDefaultCollection : ExternalDefaultCollection {
     private val backing = listOf(1)
     override val size: Int get() = backing.size
@@ -73,6 +77,17 @@ class CrossModuleDefaultCollection : ExternalDefaultCollection {
 }
 
 class KotlinCollectionSlotTests {
+    @TestAttribute
+    fun bottomIteratorImplementsTheReachedProjectedEnumerable() {
+        val rows: Any = CrossModuleProjectedBottomIterator()
+        try {
+            (rows as System.Collections.IEnumerable).GetEnumerator()
+            error("iterator returned")
+        } catch (ex: UnsupportedOperationException) {
+            check(ex.message == "projected iterator")
+        }
+    }
+
     @TestAttribute
     fun crossModuleAddKeepsTheAuthoredBooleanWithoutGrowingTheCollection() {
         val value = ReplacingResultList(mutableListOf(1))
