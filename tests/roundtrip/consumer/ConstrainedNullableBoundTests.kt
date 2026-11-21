@@ -209,8 +209,8 @@ class ConstrainedNullableBoundTests {
         val joint = JointOuter<ClientItem<*>>(number)
         val child = joint.Inner<ClientItem<*>>(text)
         check(child.owner() === joint && child.outerValue() === number && child.item === text)
-        val concrete = JointOuter(text)
-        check(concrete.Inner<ClientItem<*>>(number).outerValue() === text)
+        val concreteOuter = JointOuter(text)
+        check(concreteOuter.Inner<ClientItem<*>>(number).outerValue() === text)
         check(streams.keepAliased(second) === second)
     }
 
