@@ -74,7 +74,7 @@ static partial class FBoundStarProjectionErasure
             Name = name, Constraints = new TypeNode[] { rootBound, ifaceBound },
         }).ToArray();
         var reorderedFrame = new NullableRepresentationFrame(2, [], [1, 0]);
-        var reordered = new BirClassDefinition { Name = "Reordered", Kind = "class",
+        var reordered = new BirClassDefinition { Name = "Reordered", Kind = "class", Generated = true,
             TypeParams = new[] { new BirTypeParameter { Name = "B", Constraints = new[] { rootBound } }, new BirTypeParameter { Name = "A" } },
             KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(reorderedFrame) };
         var root = new BirFileDeclaration { FileClass = "ProjectionConstraints", Types = new IBirTypeDeclaration[] {
@@ -90,16 +90,25 @@ static partial class FBoundStarProjectionErasure
         var independent = new TypeNode.Fqn("kotlin.String");
         var reorderedApplication = projection.SelectPhysicalClassApplication(
             new TypeNode.Fqn("Reordered", reorderedFrame.Close([independent, hiddenLeaf], t => t, t => t)));
-        Need(reorderedApplication.Layout.SourcePosition(1) == 0
+        var physicalPair = new TypeNode.Fqn("Pair", [new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1)]);
+        Need(!context.Owners.ContainsKey("Reordered") && reorderedApplication.Layout?.SourcePosition(1) == 0
+            && reorderedApplication.CloseBound(physicalPair, 0, _ => independent) ==
+                new TypeNode.Fqn("Pair", [hiddenLeaf, independent])
             && projection.ClassStorageWitness(reorderedApplication, 0, hiddenLeaf, null, false)?.Class == rootBound
             && projection.ClassStorageWitness(reorderedApplication, 1, hiddenLeaf, null, false) == null,
             "same-arity physical applications must not be re-ordered by source index");
 
-        var method = new BirFunctionDeclaration { TypeParams = new[] { new BirTypeParameter(), new BirTypeParameter() } };
+        var method = new BirFunctionDeclaration {
+            TypeParams = new[] { new BirTypeParameter(), new BirTypeParameter(), new BirTypeParameter() },
+        };
         var methodApplication = projection.SelectPhysicalMethodApplication(method, "method", null,
-            new TypeNode.Fqn("Owner", [rootBound]), [independent, hiddenLeaf]);
-        var bothBinders = new TypeNode.Fqn("Pair", [new TypeNode.Tv("type", 0), new TypeNode.Tv("method", 0)]);
-        Need(methodApplication.CloseBound(bothBinders, 1, _ => ifaceBound) == new TypeNode.Fqn("Pair", [rootBound, ifaceBound]),
+            new TypeNode.Fqn("Owner", [rootBound, independent]), [independent, rootBound, hiddenLeaf]);
+        var bothBinders = new TypeNode.Fqn("BothBinders",
+            [new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1), new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 2)]);
+        var closedSlots = new List<int>();
+        var closedBound = methodApplication.CloseBound(bothBinders, 2, index => { closedSlots.Add(index); return ifaceBound; });
+        Need(closedBound == new TypeNode.Fqn("BothBinders", [rootBound, independent, ifaceBound, hiddenLeaf])
+            && closedSlots.SequenceEqual([0]),
             "owner slot zero and method slot zero have separate substitution environments");
 
         CarrierProjectionContext.StorageWitness Witness(string leafName, bool split) {

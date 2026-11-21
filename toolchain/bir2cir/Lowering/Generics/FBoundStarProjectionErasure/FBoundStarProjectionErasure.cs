@@ -741,10 +741,11 @@ static partial class FBoundStarProjectionErasure
                     preserveArrayShape: nativeOwner || ordinary,
                     preserveConstructedHead: exact && !ContainsExistentialProjection(argument)
                         || ordinary && !(StripSourceNullability(argument) is TypeNode.Fqn variant
-                            && context.ProjectionCanChangeConstruction(variant)));
+                            && context.ProjectionCanChangeConstruction(variant)),
+                    sourceOverrideOwner: sourceOverrideOwner);
             }).ToArray();
-            // A declaration-side override marker can carry rewritten nested types, but
-            // its own application still identifies the source owner, not a CLR slot.
+            // An override binding can contain rewritten nested types, but none of
+            // its applications are independent CLR constraint obligations.
             if (nativeOwner || boundDeclaration || sourceOverrideOwner) return physical;
             // A bound such as B : A needs A's chosen CLR argument, even when B
             // comes first in the declaration. Start recursive edges at the ordinary projection.
@@ -825,16 +826,16 @@ static partial class FBoundStarProjectionErasure
                     if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
                         return ReplaceProjectionCore(p.Of, f, new TypeNode.Fqn(referenced));
                 }
-                return RewriteType(p.Of, context, boundDeclaration);
+                return RewriteType(p.Of, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner);
             }
             case TypeNode.Fqn { Args: { } args } f:
                 return new TypeNode.Fqn(f.Name, Arguments(f));
             case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(
                 n.Of, context, boundDeclaration,
-                preserveConstructedHead: preserveConstructedHead, preserveArrayShape: preserveArrayShape));
+                preserveConstructedHead: preserveConstructedHead, preserveArrayShape: preserveArrayShape, sourceOverrideOwner: sourceOverrideOwner));
             case TypeNode.Oblivious o: return new TypeNode.Oblivious(RewriteType(
                 o.Of, context, boundDeclaration,
-                preserveConstructedHead: preserveConstructedHead, preserveArrayShape: preserveArrayShape));
+                preserveConstructedHead: preserveConstructedHead, preserveArrayShape: preserveArrayShape, sourceOverrideOwner: sourceOverrideOwner));
             case TypeNode.Array a:
                 if (!boundDeclaration && !preserveArrayShape && GenericArrayStorageLowering.NeedsStorage(a))
                     return new TypeNode.Fqn("System.Array");
@@ -845,21 +846,21 @@ static partial class FBoundStarProjectionErasure
                     a.Elem, context, boundDeclaration,
                     preserveConstructedHead: PreservesNativeWitnessHead(a.Elem, context)
                         || preserveConstructedHead && IsExactNativeArrayWitness(a.Elem, context),
-                    preserveArrayShape: preserveArrayShape), a.Rank, a.SzArray);
+                    preserveArrayShape: preserveArrayShape, sourceOverrideOwner: sourceOverrideOwner), a.Rank, a.SzArray);
             case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
                 b.Of, context, boundDeclaration,
-                preserveConstructedHead: PreservesNativeWitnessHead(b.Of, context), preserveArrayShape: true));
+                preserveConstructedHead: PreservesNativeWitnessHead(b.Of, context), preserveArrayShape: true, sourceOverrideOwner: sourceOverrideOwner));
             case TypeNode.Mod m: return new TypeNode.Mod(m.Req,
-                RewriteType(m.M, context, boundDeclaration),
-                RewriteType(m.Of, context, boundDeclaration));
+                RewriteType(m.M, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner),
+                RewriteType(m.Of, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner));
             case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, RewriteType(
-                    fn.Ret, context, boundDeclaration),
+                    fn.Ret, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner),
                 fn.Params.Select(p => RewriteType(
-                    p, context, boundDeclaration)).ToArray(),
+                    p, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner)).ToArray(),
                 fn.Recv == null ? null : RewriteType(
-                    fn.Recv, context, boundDeclaration), fn.Clr,
+                    fn.Recv, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner), fn.Clr,
                 fn.Ctx?.Select(argument => RewriteType(
-                    argument, context, boundDeclaration)).ToArray());
+                    argument, context, boundDeclaration, sourceOverrideOwner: sourceOverrideOwner)).ToArray());
             default: return type;
         }
     }

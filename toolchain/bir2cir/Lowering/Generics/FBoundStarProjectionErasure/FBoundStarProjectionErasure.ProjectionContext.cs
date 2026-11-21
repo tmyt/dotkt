@@ -182,9 +182,13 @@ static partial class FBoundStarProjectionErasure
 
         internal PhysicalWitnessApplication SelectPhysicalClassApplication(TypeNode.Fqn application)
         {
-            var frame = Owners.TryGetValue(application.Name, out var definition) ? OwnerFrame(definition)
-                : References.NullableTypeFrames.GetValueOrDefault(application.Name);
-            return new(WitnessBinder.Owner, application, null, null, frame, ConstraintParameters(application.Name), application.Args ?? []);
+            if (Preparation.Bindings.SourceDefinitions.TryGetValue(application.Name, out var local))
+                return new(WitnessBinder.Owner, application, null, null,
+                    NullableRepresentationViews.TypeFacts(local.Source)?.NullableFrame,
+                    TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray(), application.Args ?? []);
+            return new(WitnessBinder.Owner, application, null, null,
+                References.NullableTypeFrames.GetValueOrDefault(application.Name),
+                ReferencedConstraintParameters(application.Name), application.Args ?? []);
         }
 
         internal PhysicalWitnessApplication SelectPhysicalMethodApplication(BirFunctionDeclaration local, string identity,
@@ -205,6 +209,11 @@ static partial class FBoundStarProjectionErasure
         {
             if (Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var local))
                 return TypeParameterFrame.Declarations((IBirTypeDeclaration)local.Source).ToArray();
+            return ReferencedConstraintParameters(owner);
+        }
+
+        BirTypeParameter[] ReferencedConstraintParameters(string owner)
+        {
             if (!referencedWitnessParameters.TryGetValue(owner, out var parameters))
                 referencedWitnessParameters[owner] = parameters = References.PhysicalOwnerTypeParametersInPhysicalFrame(owner);
             return parameters;
