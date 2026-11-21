@@ -128,9 +128,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   Kotlin array and vararg elements may use the same erased view. An unchecked `G<Int> as G<String>` can be
   stored, read back, and passed through a vararg without replacing the original object. This does not make
   an erased array a native `G<string>[]`: an imported CLR signature requiring that vector checks the actual
-  backing array. A compatible array crosses unchanged; an incompatible array fails the cast, with no copy or
-  write-back. A literal supplying an exact native vector can allocate it directly when its elements fit.
-  A CLR-created vector continues to enforce its own component type on writes.
+  backing array and its current elements. A compatible array crosses unchanged, with no copy or write-back.
+  A rejected export leaves all Kotlin aliases usable: replacing the incompatible element can make a later
+  export succeed. Once CLR code can retain the vector, subsequent Kotlin writes must fit its actual component
+  type. A CLR-created vector enforces that rule from the start. An output-only `out` argument replaces the
+  location without publishing its previous value.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
 - **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to

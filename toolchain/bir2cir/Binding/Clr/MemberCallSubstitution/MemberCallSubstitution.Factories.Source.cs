@@ -201,6 +201,18 @@ static partial class MemberCallSubstitution
             var role = arrayFrame.NullableElementIndices.Contains(0) ? NullableRepresentationFrame.Role.NullableElement
                 : arrayFrame.ElementIndices.Contains(0) ? NullableRepresentationFrame.Role.Element : (NullableRepresentationFrame.Role?)null;
             if (role.HasValue) componentWitness = typeArguments[arrayFrame.Variable(new TypeNode.Tv("method", 0), role.Value).I];
+            // An element slot describes how Kotlin can read/write a value. A
+            // constructed reference component also has an ordinary CLR witness
+            // for the allocation itself. Carry both to carrier projection.
+            var ordinary = UnwrapNullableOblivious(typeArguments[arrayFrame.SourcePosition(0)]);
+            TypeNode Allocation(TypeNode element) => element switch {
+                TypeNode.Nullable n => new TypeNode.Nullable(Allocation(n.Of)),
+                TypeNode.Oblivious o => new TypeNode.Oblivious(Allocation(o.Of)),
+                TypeNode.Fqn { Args.Length: > 0 } view when ordinary is TypeNode.Fqn { Args.Length: > 0 } actual
+                    && view.Name == actual.Name && view.Args.Any(arg => arg is TypeNode.Star) => actual,
+                _ => element,
+            };
+            componentWitness = Allocation(componentWitness);
         }
         if (arrayKind == "sized")
         {

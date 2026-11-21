@@ -30,6 +30,14 @@ static partial class NetInteropBinding
                 BirNewSuspendLambda lambda => LowerSuspend(lambda, references),
                 _ => node,
             };
+            if (!ReferenceEquals(result, node) && result is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance
+                or BirPropertySet or BirConstrainedCall)
+                result.SourceClrBoundary = true;
+            if (!ReferenceEquals(result, node) && result is BirExpressionStatement { Expr.HasValue: true } statement && statement.Expr.Value is BirPropertySet setter)
+                setter.SourceClrBoundary = true;
+            if (node is BirFunctionDeclaration method && method.Overrides.OrEmpty().Any(o =>
+                o.Owner.OrDefault() is TypeNode.Fqn owner && references.ResolveForeignProjectionType(owner.Name, owner.Args) != null))
+                method.SourceClrBoundary = true;
             // Classification is consumed even when a genuine Kotlin carrier
             // keeps its ordinary shape. No payload is entered to clear it.
             switch (node)

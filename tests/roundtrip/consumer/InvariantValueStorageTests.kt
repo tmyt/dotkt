@@ -152,6 +152,41 @@ class InvariantValueStorageTests {
         val number = Box(42)
         val erased = number as Box<String>
         check(mutateBeforeNativeBoundary(false) { it[0] = erased } === number)
+        check(mutateBeforeNativeBoundary(true) { } is Box<*>)
+        val retained = roundtrip.genericvalueinterop.boxVector(forwardedNativeBox())
+        roundtrip.genericvalueinterop.replaceFirstElement(retained, erased)
+        check((roundtrip.genericvalueinterop.firstArrayElement(retained) as Any) === number)
+        check((roundtrip.genericvalueinterop.firstIteratedElement(retained) as Any) === number)
+        val copy = retained.copyOf()
+        check(copy !== retained && (copy[0] as Any) === number)
+        check(try { NativeBoxApi.EchoBoxes(retained); false } catch (_: ClassCastException) { true })
+        check(try { NativeBoxApi.ArrayField = retained; false } catch (_: ClassCastException) { true })
+        check(try { NativeBoxApi.ArrayProperty = retained; false } catch (_: ClassCastException) { true })
+        val source = object : GenericValueInterop.NativeBoxArraySource {
+            override fun Read(): Array<Box<String>> = retained
+        }
+        check(try { NativeBoxApi.ReadFirst(source); false } catch (_: ClassCastException) { true })
+        check(try { NativeBoxApi.IsNativeBoxMatrix(retained); false } catch (_: ClassCastException) { true })
+        val repaired = Box("repair")
+        retained[0] = repaired
+        val lease = NativeBoxApi.RetainBoxes(retained)
+        check(lease.ArrayIdentity === retained && lease.First === repaired)
+        val fromNative = Box("native")
+        lease.First = fromNative
+        check(retained[0] === fromNative)
+        check(try { retained[0] = erased; false } catch (_: ClassCastException) { true })
+        check(lease.First === fromNative)
+        check((copy[0] as Any) === number)
+        var locationArray = arrayOf(forwardedNativeBox())
+        val oldArray = locationArray
+        oldArray[0] = erased
+        val unexposed = arrayOf(forwardedNativeBox())
+        check(try { NativeBoxApi.CountBoth(unexposed, oldArray); false } catch (_: ClassCastException) { true })
+        unexposed[0] = erased
+        check((unexposed[0] as Any) === number)
+        check(try { NativeBoxApi.FirstMissing(byref(locationArray)); false } catch (_: ClassCastException) { true })
+        NativeBoxApi.ResetBoxes(byref(locationArray))
+        check(locationArray[0].value == "reset" && (oldArray[0] as Any) === number)
         fun nested(cross: Boolean): Any {
             val items = arrayOf(forwardedNativeBox())
             val outer = arrayOf(items)

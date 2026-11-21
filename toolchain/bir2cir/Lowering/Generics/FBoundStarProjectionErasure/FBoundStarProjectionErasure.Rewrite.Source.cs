@@ -208,6 +208,17 @@ static partial class FBoundStarProjectionErasure
                 type => type is TypeNode.Fqn named && (state.Definition(named.Name) is { } definition
                     ? definition.Kind.OrDefault() == "interface" : state.References.IsInterfaceType(named)), names, state.ComponentPredicate);
         node = TypedGenericArrayStorageLowering.LowerOperation(node, state.References, names);
+        if (node is BirNewArray or BirNewArrayInit or BirNewArraySized
+            && state.ArrayProjection(node) is TypeNode.Fqn { Args.Length: > 0 } component
+            && !ContainsExistentialProjection(component) && state.Projection.TryExistentialCarrier(component.Name, out var elementCarrier))
+        {
+            // Preserve the allocation's component, not a future caller's requested
+            // type. Its Kotlin value view stays carrier[] even across assemblies.
+            SetSourceArrayElement(node, state.Projection.Rewrite(component, preserveConstructedHead: true, preserveArrayShape: true));
+            node = new BirValueBlock { Type = new TypeNode.Array(new TypeNode.Fqn(elementCarrier)),
+                Stmts = Array.Empty<IBirStatement>(), Result = OptionalField<IBirExpression>.Of((IBirExpression)node) };
+            state.ArrayProjection(node, component);
+        }
         node = BindProjectedFieldStorageSource(node, state);
         node = BindInheritedStarMemberSource(node, state);
         if (node is BirCallInstance call && call.OwnerType.OrDefault() is TypeNode.Fqn erased

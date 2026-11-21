@@ -13,6 +13,10 @@ namespace DotKt.Bir.Lowering;
 // while passes establish/remove facts; no missing declaration fact is inferred.
 internal abstract record BirGraphValue
 {
+    // Occurrence-local selection made by native interop binding. Record clones
+    // keep it until final value coercion; it is not source or wire metadata.
+    // Compiler-authored runtime operations are not source CLR publication sites.
+    internal bool SourceClrBoundary { get; set; }
     public virtual TypeNode? ResultTypeStamp => null;
     public virtual TypeNode? FunctionTypeStamp => null;
     public virtual TypeNode? CallBindingTypeHint => null;
