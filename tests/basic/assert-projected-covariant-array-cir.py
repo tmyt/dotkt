@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
 from carrier_inspection import type_payloads
+from projected_array_inspection import storage_accesses
 
 
 def objects(node):
@@ -76,10 +77,10 @@ if writable_parameter.get("params", [{}])[0].get("type") != array(producer_carri
     raise SystemExit(
         f"writable projected parameter did not expose Producer$star[]: {writable_parameter.get('params')!r}"
     )
-parameter_writes = [
-    node for node in objects(writable_parameter.get("body", [])) if node.get("k") == "arraySet"
-]
-if len(parameter_writes) != 2 or any(node.get("elem") != producer_carrier for node in parameter_writes):
+parameter_writes = [(vector, receiver) for op, vector, receiver in storage_accesses(writable_parameter, objects)
+                    if op == "writeProjectedArray"]
+if len(parameter_writes) != 2 or any(vector != array(producer_carrier) or receiver.get("name") != "values"
+                                     for vector, receiver in parameter_writes):
     raise SystemExit(f"writable projected parameter stores were not Producer$star: {parameter_writes!r}")
 
 writable_storage = method("mutableProjectedProducerStorage")
@@ -88,12 +89,9 @@ sized_allocations = [
 ]
 if len(sized_allocations) != 3 or any(node.get("elem") != producer_carrier for node in sized_allocations):
     raise SystemExit(f"sized projected arrays did not allocate Producer$star[]: {sized_allocations!r}")
-writable_ops = [
-    node
-    for node in objects(writable_storage.get("body", []))
-    if node.get("k") in ("arrayGet", "arraySet", "forArray")
-]
-if not writable_ops or any(node.get("elem") != producer_carrier for node in writable_ops):
+writable_ops = list(storage_accesses(writable_storage, objects))
+if {op for op, _, _ in writable_ops} != {"readProjectedArray", "writeProjectedArray"} or any(
+        vector != array(producer_carrier) for _, vector, _ in writable_ops):
     raise SystemExit(f"projected array storage operations did not use Producer$star: {writable_ops!r}")
 generic_reads = [
     node
@@ -125,7 +123,11 @@ contravariant_ops = [
     for node in objects(contravariant_storage.get("body", []))
     if node.get("k") in ("newArraySized", "arrayGet", "arraySet")
 ]
-if not contravariant_ops or any(node.get("elem") != consumer_carrier for node in contravariant_ops):
+logical_ops = list(storage_accesses(contravariant_storage, objects))
+if (not contravariant_ops or any(node.get("elem") != consumer_carrier for node in contravariant_ops)
+        or [op for op, _, _ in logical_ops].count("readProjectedArray") != 2
+        or [op for op, _, _ in logical_ops].count("writeProjectedArray") != 2
+        or any(vector != array(consumer_carrier) for _, vector, _ in logical_ops)):
     raise SystemExit(f"contravariant array storage operations did not use Consumer$star: {contravariant_ops!r}")
 
 unsafe = method("unsafeVarianceProducerArray")

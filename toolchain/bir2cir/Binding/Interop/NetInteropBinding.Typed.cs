@@ -30,6 +30,14 @@ static partial class NetInteropBinding
                 BirNewSuspendLambda lambda => LowerSuspend(lambda, references),
                 _ => node,
             };
+            if (!ReferenceEquals(result, node) && result is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance
+                or BirPropertySet or BirConstrainedCall)
+                result.SourceClrBoundary = true;
+            if (!ReferenceEquals(result, node) && result is BirExpressionStatement { Expr.HasValue: true } statement && statement.Expr.Value is BirPropertySet setter)
+                setter.SourceClrBoundary = true;
+            if (node is BirFunctionDeclaration method && method.Overrides.OrEmpty().Any(o =>
+                o.Owner.OrDefault() is TypeNode.Fqn owner && references.ResolveForeignProjectionType(owner.Name, owner.Args) != null))
+                method.SourceClrBoundary = true;
             // Classification is consumed even when a genuine Kotlin carrier
             // keeps its ordinary shape. No payload is entered to clear it.
             switch (node)
@@ -103,6 +111,11 @@ static partial class NetInteropBinding
         => !isStatic && call.Signature.HasValue ? OptionalField<SourceTypeVector>.Of(SourceTypeVector.Create(call.Signature.Value)) : default;
     static BirGraphValue LowerCall(SourceCall call, ReferenceMetadataIndex refs)
     {
+        if (call.Arguments.OrDefault() is { } operands && call.Signature.OrDefault() is { } signatureBeforeBinding &&
+            operands.Length == signatureBeforeBinding.Length)
+            for (int i = 0; i < operands.Length; i++)
+                if (operands[i] is BirArrayGet indexed && SignatureValueTypes.Of(signatureBeforeBinding[i]) is TypeNode.ByRef)
+                    indexed.SourceClrBoundary = true;
         if (call.ExternalMember.HasValue)
         {
             if (!call.Static) return LowerSelectedExternalMember(call, refs);

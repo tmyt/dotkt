@@ -19,6 +19,12 @@ static partial class ClrMemberResolution
         // Share the construction owner's physical slot selection, including its
         // configured aliases, reference universe and last-writer-wins contract.
         if (DelegateFqnOfSlot(slotType, refs, localTypes) is not TypeNode.Fqn slot) return previous.IsPresent;
+        // Only a nominal delegate is a native callback contract. The CLR
+        // Func used to store an ordinary Kotlin function is not publication.
+        var sourceSlot = slotType;
+        while (sourceSlot is TypeNode.Nullable or TypeNode.Oblivious)
+            sourceSlot = sourceSlot is TypeNode.Nullable n ? n.Of : ((TypeNode.Oblivious)sourceSlot).Of;
+        construction.SourceClrBoundary = sourceSlot is TypeNode.Fqn;
         switch (construction)
         {
             case BirNewDelegate value: value.DotktDelegateSlot = slot; break;

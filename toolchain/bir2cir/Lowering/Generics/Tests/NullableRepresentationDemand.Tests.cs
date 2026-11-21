@@ -185,8 +185,9 @@ static partial class NullableRepresentationDemand
             "constructor implementation demand contributes to the owned TypeDef frame without becoming a source signature fact");
         Check(Find(usesBodyOwner).Frame.NullableIndices.SequenceEqual(new[] { 0 }),
             "body-only owner arguments propagate through constructed type applications");
-        Check(Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, arrayBody)).Body.Method.SetEquals(new[] { 0 }),
-            "array element is a reified argument position even without a container type");
+        Check(Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, arrayBody)).Body
+            .For("method", NullableRepresentationFrame.Role.NullableElement).SetEquals(new[] { 0 }),
+            "array allocation demands its nullable element witness even without a container type");
         Check(Find(file).Methods.Single(method => ReferenceEquals(method.Declaration, refBody)).Body.Method.Count == 0,
             "managed reference referent is a direct scalar slot");
         Check(file.StructurallyEquals(original), "analysis must preserve all source facts");
@@ -210,7 +211,8 @@ static partial class NullableRepresentationDemand
         Check(freeDemands.Single(m => ReferenceEquals(m.Declaration, freeCaller)).Frame.PhysicalArity == 2,
             "static body-only call demand reaches a fixed point");
         var fixedDemand = freeDemands.Single(m => ReferenceEquals(m.Declaration, fixedCaller));
-        Check(fixedDemand.Frame.PhysicalArity == 1 && fixedDemand.Body.Method.SetEquals(new[] { 0 }),
+        Check(fixedDemand.Frame.PhysicalArity == 1
+            && fixedDemand.Body.For("method", NullableRepresentationFrame.Role.NullableElement).SetEquals(new[] { 0 }),
             "static body-only propagation must not grow an instance dispatch slot");
         freeCaller.Static = false;
         var instanceDemand = Collect(new[] { freeFile }).Single().Methods

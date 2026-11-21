@@ -734,7 +734,7 @@ static partial class FBoundStarProjectionErasure
             {
                 var ordinary = frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
-                var exact = nativeArguments && PreservesNativeWitnessHead(argument, context)
+                var exact = nativeArguments && (PreservesNativeWitnessHead(argument, context) || IsExactNativeArrayWitness(argument, context))
                     || context.NativeProofs?.ExactTypeArgument(application.Name, index) == true;
                 // A variant Kotlin value keeps its carrier even as a nested ordinary witness.
                 return RewriteType(argument, context, boundDeclaration,
@@ -832,12 +832,13 @@ static partial class FBoundStarProjectionErasure
             case TypeNode.Array a:
                 if (!boundDeclaration && !preserveArrayShape && GenericArrayStorageLowering.NeedsStorage(a))
                     return new TypeNode.Fqn("System.Array");
-                if (!boundDeclaration && TryWritableVariantArrayElement(
+                if (!boundDeclaration && !(preserveArrayShape && preserveConstructedHead) && TryWritableVariantArrayElement(
                         a.Elem, context, out _, out var writableElement))
                     return new TypeNode.Array(writableElement, a.Rank, a.SzArray);
                 return new TypeNode.Array(RewriteType(
                     a.Elem, context, boundDeclaration,
-                    preserveConstructedHead: PreservesNativeWitnessHead(a.Elem, context),
+                    preserveConstructedHead: PreservesNativeWitnessHead(a.Elem, context)
+                        || preserveConstructedHead && IsExactNativeArrayWitness(a.Elem, context),
                     preserveArrayShape: preserveArrayShape), a.Rank, a.SzArray);
             case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
                 b.Of, context, boundDeclaration,

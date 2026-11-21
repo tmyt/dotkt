@@ -15,18 +15,9 @@ static class TypedGenericArrayStorageLowering
         ? (IBirExpression)local.Rewrite(value => value) : expression;
     static BirLocal Local(string name, TypeNode type) => new() { Name = name, Sty = type };
     static BirConstant Int(int value) => new() { Type = Type("System.Int32"), Value = new BirLiteral.IntegerLiteral(value) };
-    static BirConstant Null() => new() { Type = Type("System.Object"), Value = new BirLiteral.NullLiteral() };
     static BirVariable Var(string name, TypeNode type, IBirExpression value) => new() {
         Name = name, Type = type, Init = OptionalField<IBirExpression>.Of(value),
     };
-    static BirBinaryOperation EqualNull(IBirExpression value) => new() {
-        Op = "===", Lhs = OptionalField<IBirExpression>.Of(value), Rhs = Null(),
-    };
-    static BirUnaryOperation Not(IBirExpression value) => new() { Op = "!", E = OptionalField<IBirExpression>.Of(value) };
-    static BirIf If(IBirExpression condition, params IBirStatement[] body) => new() {
-        Branches = new[] { new BirBranch { Cond = OptionalField<IBirExpression>.Of(condition), Body = body } },
-    };
-
     static IBirExpression RuntimeCall(ReferenceMetadataIndex refs, string owner, string method,
         IBirExpression receiver, string result, string[] parameters, params IBirExpression[] arguments)
     {
@@ -50,14 +41,66 @@ static class TypedGenericArrayStorageLowering
         string result, string[] parameters, params IBirExpression[] arguments) =>
         RuntimeCall(refs, "System.Array", method, receiver, result, parameters, arguments);
 
-    static BirCast Read(ReferenceMetadataIndex refs, IBirExpression receiver, IBirExpression index, TypeNode result) => new() {
-        Type = result, Sty = result,
-        E = OptionalField<IBirExpression>.Of(Call(refs, "GetValue", receiver, "object", new[] { "System.Int32" }, index)),
+    internal const string RuntimeOwner = "DotKt.Runtime.CompilerServices.ProjectedArrayStorageKt";
+    internal static BirCallStatic Runtime(string method, TypeNode result, TypeNode[] signature, bool external, params IBirExpression[] operands)
+    {
+        var owner = Type(RuntimeOwner);
+        var call = new BirCallStatic { Owner = owner, Method = method, Sig = signature, Ret = result, Args = operands };
+        if (external) call.MemberRef = new BirMemberReference { Assembly = "DotKt.Stdlib", Kind = "method",
+            DeclaringType = owner, Name = method, GenericArity = 0, CallingConvention = "static",
+            ParameterTypes = signature, ReturnType = result };
+        return call;
+    }
+
+    internal static BirCast Read(IBirExpression receiver, IBirExpression index, TypeNode result, bool external) => new() {
+        Type = result, Sty = result, E = Runtime("readProjectedArray", Type("System.Object"),
+            [Type("System.Array"), Type("System.Int32")], external, receiver, index),
     };
 
-    internal static BirGraphValue LowerOperation(BirGraphValue node, ReferenceMetadataIndex refs,
-        BirTemporaryNames names, TypeNode receiverType = null)
+    internal static BirCallStatic Store(BirArraySet store, bool external) =>
+        Runtime("writeProjectedArray", Type("void"), [Type("System.Array"), Type("System.Int32"), Type("System.Object")],
+            external, store.Array.Value, store.Index.Value, new BirCast { Type = Type("System.Object"), E = store.Value });
+
+    // A vector whose *actual* component is an ordinary non-generic class
+    // stores its values directly. A covariantly viewed Derived<T>[] may
+    // need logical storage, even when the static Base is locally declared.
+    // Evaluate all Kotlin operands before inspecting the runtime vector.
+    internal static BirValueBlock PlainClassAccess(IBirExpression receiver, IBirExpression offset,
+        IBirExpression value, TypeNode component, BirTemporaryNames names, bool external)
     {
+        var vector = new TypeNode.Array(component);
+        var array = Var(names.Next("$plainArray$"), Type("System.Array"), receiver);
+        var position = Var(names.Next("$plainIndex$"), Type("System.Int32"), offset);
+        var statements = new List<IBirStatement> { array, position };
+        BirLocal ReadVar(BirVariable v) => Local(v.Name.Value, v.Type.Value);
+        BirCast ExactVector() => new() { Type = vector, E = ReadVar(array) };
+        IBirExpression direct, projected;
+        if (value == null)
+        {
+            direct = new BirArrayGet { Array = ExactVector(), Index = ReadVar(position), Elem = component };
+            projected = Read(ReadVar(array), ReadVar(position), component, external);
+        }
+        else
+        {
+            var item = Var(names.Next("$plainValue$"), Type("System.Object"), value);
+            statements.Add(item);
+            direct = new BirArraySet { Array = ExactVector(), Index = ReadVar(position), Elem = component,
+                Value = new BirCast { Type = component, E = ReadVar(item) } };
+            projected = Runtime("writeProjectedArray", Type("void"),
+                [Type("System.Array"), Type("System.Int32"), Type("System.Object")],
+                external, ReadVar(array), ReadVar(position), ReadVar(item));
+        }
+        var result = value == null ? component : Type("void");
+        return new BirValueBlock { Type = result, Stmts = statements.ToArray(), Result = new BirConditional {
+            Type = result, Cond = new BirBinaryOperation { Op = "==", Lhs = new BirRuntimeClass { E = ReadVar(array) },
+                Rhs = new BirClassReference { Type = vector } }, Then = OptionalField<IBirExpression>.Of(direct),
+            Else = OptionalField<IBirExpression>.Of(projected) } };
+    }
+
+    internal static BirGraphValue LowerOperation(BirGraphValue node, ReferenceMetadataIndex refs,
+        BirTemporaryNames names, TypeNode receiverType = null, bool external = false)
+    {
+        if (node is BirArrayGet { SourceClrBoundary: true }) return node;
         var receiver = node switch {
             BirArrayGet value => value.Array.OrDefault(),
             BirArraySet value => value.Array.OrDefault(),
@@ -77,56 +120,16 @@ static class TypedGenericArrayStorageLowering
         if (receiverType is TypeNode.Nullable nullable) receiverType = nullable.Of;
         if (receiverType is not TypeNode.Fqn { Name: "System.Array" }) return node;
         return node switch {
-            BirArrayGet value => Read(refs, receiver, value.Index.Value, value.Elem.Value),
-            BirArraySet value => Store(value, receiver, refs, names),
+            BirArrayGet value => Read(receiver, value.Index.Value, value.Elem.Value, external),
+            BirArraySet value => Store(value, external),
             BirArrayLength => (BirGraphValue)Call(refs, "get_Length", receiver, "System.Int32", Array.Empty<string>()),
-            BirForArray value => Loop(value, receiver, refs, names),
+            BirForArray value => Loop(value, receiver, refs, names, (a, i) => Read(a, i, value.Elem.Value, external)),
             _ => node,
         };
     }
 
-    static BirValueBlock Store(BirArraySet store, IBirExpression receiver, ReferenceMetadataIndex refs, BirTemporaryNames names)
-    {
-        var arrayName = names.Next("$arrayStorage$");
-        var indexName = names.Next("$arrayIndex$");
-        var valueName = names.Next("$arrayValue$");
-        var componentName = names.Next("$arrayComponent$");
-        var arrayType = Type("System.Array");
-        var intType = Type("System.Int32");
-        var objectType = Type("System.Object");
-        var typeType = Type("System.Type");
-        var exceptionOwner = refs.ResolveRefType("System.ArrayTypeMismatchException");
-        var exceptionConstructor = exceptionOwner.GetConstructor(System.Type.EmptyTypes);
-        BirThrow Failure() => new() { Value = new BirNewClr {
-            Type = Type("System.ArrayTypeMismatchException"), Args = Array.Empty<IBirExpression>(),
-            MemberRef = BirMemberReference.FromPhysical(
-                ClrMemberResolution.MemberRefOf(null, refs, exceptionConstructor, "ctor", exceptionOwner, null)),
-        } };
-        var component = Local(componentName, typeType);
-        var value = Local(valueName, objectType);
-        var typeCheck = If(Not(EqualNull(UseOperand(value))),
-            If(Not(RuntimeCall(refs, "System.Type", "IsInstanceOfType", component, "System.Boolean",
-                new[] { "System.Object" }, value)), Failure()));
-        var nullCheck = If(EqualNull(UseOperand(value)),
-            If(RuntimeCall(refs, "System.Type", "get_IsValueType", component, "System.Boolean", Array.Empty<string>()),
-                If(EqualNull(RuntimeCall(refs, "System.Nullable", "GetUnderlyingType", null, "System.Type",
-                    new[] { "System.Type" }, component)), Failure())));
-        return new BirValueBlock {
-            Type = Type("void"), Stmts = new IBirStatement[] {
-                Var(arrayName, arrayType, UseOperand(receiver)),
-                Var(indexName, intType, UseOperand(store.Index.Value)),
-                Var(valueName, objectType, UseOperand(store.Value.Value)),
-                Var(componentName, typeType, RuntimeCall(refs, "System.Type", "GetElementType",
-                    RuntimeCall(refs, "System.Object", "GetType", Local(arrayName, arrayType),
-                        "System.Type", Array.Empty<string>()), "System.Type", Array.Empty<string>())),
-                typeCheck, nullCheck,
-            },
-            Result = OptionalField<IBirExpression>.Of(Call(refs, "SetValue", Local(arrayName, arrayType), "void",
-                new[] { "System.Object", "System.Int32" }, value, Local(indexName, intType))),
-        };
-    }
-
-    static BirBlock Loop(BirForArray loop, IBirExpression receiver, ReferenceMetadataIndex refs, BirTemporaryNames names)
+    internal static BirBlock Loop(BirForArray loop, IBirExpression receiver, ReferenceMetadataIndex refs, BirTemporaryNames names,
+        Func<IBirExpression, IBirExpression, IBirExpression> readElement)
     {
         var arrayName = names.Next("$arrayStorage$");
         var indexName = names.Next("$arrayIndex$");
@@ -135,7 +138,7 @@ static class TypedGenericArrayStorageLowering
         var intType = Type("System.Int32");
         var body = new IBirStatement[] {
             Var(loop.Var.Value, loop.Elem.Value,
-                Read(refs, Local(arrayName, arrayType), Local(indexName, intType), loop.Elem.Value)),
+                readElement(Local(arrayName, arrayType), Local(indexName, intType))),
         }.Concat(loop.Body.OrEmpty()).ToArray();
         return new BirBlock { Body = new IBirStatement[] {
             Var(arrayName, arrayType, UseOperand(receiver)),
@@ -182,65 +185,16 @@ static class TypedGenericArrayStorageLowering
                 "exact native signature/result/dispatch changed: " + method);
             return call;
         }
-        static BirBranch Branch(IBirStatement statement) => statement is BirIf { Branches.Value: [var branch] }
-            ? branch : throw new InvalidOperationException("Expected single array-check branch");
-        static IBirExpression Negated(IBirExpression expression) => expression is BirUnaryOperation { Op.Value: "!", E.HasValue: true } negation
-            ? negation.E.Value : throw new InvalidOperationException("Expected negated array check");
-        static bool NullTest(IBirExpression expression, string name) => expression is BirBinaryOperation {
-            Op.Value: "===", Lhs.Value: BirLocal { Name.Value: var actual },
-            Rhs.Value: BirConstant { Value.Value: BirLiteral.NullLiteral } } && actual == name;
-        static void Failure(IBirStatement statement)
-        {
-            Require(statement is BirThrow { Value.Value: BirNewClr {
-                Type.Value: TypeNode.Fqn { Name: "System.ArrayTypeMismatchException" }, Args.Value: [],
-                MemberRef.Value: { Kind.Value: "ctor", DeclaringType.Value: TypeNode.Fqn { Name: "System.ArrayTypeMismatchException" },
-                    ParameterTypes.Value: [] } } }, "array mismatch lost its exact exception constructor");
-        }
         var get = (BirArrayGet)source[0];
         var read = (BirCast)LowerOperation(get, refs, new BirTemporaryNames(get));
-        Require(read.Type.Value == element && read.Sty.Value == element, "read lost the authored element cast");
-        var readCall = Instance(read.E.Value, "System.Array", "GetValue", "object", "call", "System.Int32");
-        Require(readCall.Recv.Value is BirLocal { Name.Value: "array" }
-            && ReferenceEquals(readCall.Args.Value[0], get.Index.Value), "read lost receiver/index transport");
-
+        Require(read.Type.Value == element && read.Sty.Value == element && read.E.Value is BirCallStatic
+            { Method.Value: "readProjectedArray", Args.Value: [var vector, var position] }
+            && ReferenceEquals(vector, get.Array.Value) && ReferenceEquals(position, get.Index.Value), "lost read operands or element cast");
         var store = (BirArraySet)source[1];
-        var stored = (BirValueBlock)LowerOperation(store, refs, new BirTemporaryNames(store));
-        var spills = stored.Stmts.Value;
-        Require(stored.Type.Value == Type("void") && spills.Length == 6, "store lost ordered spill/check block");
-        var arraySpill = (BirVariable)spills[0]; var indexSpill = (BirVariable)spills[1];
-        var valueSpill = (BirVariable)spills[2]; var componentSpill = (BirVariable)spills[3];
-        Require(arraySpill.Type.Value == array && indexSpill.Type.Value == integer && valueSpill.Type.Value == Type("System.Object")
-            && componentSpill.Type.Value == Type("System.Type")
-            && new[] { arraySpill.Init.Value, indexSpill.Init.Value, valueSpill.Init.Value }
-                .Cast<BirLocal>().Select(local => local.Name.Value).SequenceEqual(new[] { "receiverEffect", "indexEffect", "valueEffect" }),
-            "store receiver/index/value evaluation order or slot types changed");
-        var componentCall = Instance(componentSpill.Init.Value, "System.Type", "GetElementType", "System.Type", "callvirt");
-        var runtimeType = Instance(componentCall.Recv.Value, "System.Object", "GetType", "System.Type", "call");
-        Require(runtimeType.Recv.Value is BirLocal { Name.Value: var allocated } && allocated == arraySpill.Name.Value,
-            "component lookup does not use the single captured allocation");
-        var nonnull = Branch(spills[4]);
-        Require(NullTest(Negated(nonnull.Cond.Value), valueSpill.Name.Value), "nonnull store guard changed");
-        var mismatch = Branch(nonnull.Body.Value.Single());
-        var typeCheck = Instance(Negated(mismatch.Cond.Value), "System.Type", "IsInstanceOfType", "System.Boolean", "callvirt", "System.Object");
-        Require(((BirLocal)typeCheck.Recv.Value).Name.Value == componentSpill.Name.Value
-            && ((BirLocal)typeCheck.Args.Value.Single()).Name.Value == valueSpill.Name.Value, "component guard checked another allocation/value");
-        Failure(mismatch.Body.Value.Single());
-        var nullValue = Branch(spills[5]);
-        Require(NullTest(nullValue.Cond.Value, valueSpill.Name.Value), "null store guard changed");
-        var valueType = Branch(nullValue.Body.Value.Single());
-        var isValueType = Instance(valueType.Cond.Value, "System.Type", "get_IsValueType", "System.Boolean", "call");
-        Require(((BirLocal)isValueType.Recv.Value).Name.Value == componentSpill.Name.Value, "value-array guard lost its component");
-        var nonnullable = Branch(valueType.Body.Value.Single());
-        Require(nonnullable.Cond.Value is BirBinaryOperation { Op.Value: "===", Rhs.Value: BirConstant { Value.Value: BirLiteral.NullLiteral },
-            Lhs.Value: BirNativeStatic { Type.Value: TypeNode.Fqn { Name: "System.Nullable" }, Method.Value: "GetUnderlyingType",
-                Dispatch.Value: "call", Args.Value: [BirLocal { Name.Value: var nullableComponent }],
-                MemberRef.Value: { Name.Value: "GetUnderlyingType", ParameterTypes.Value: [TypeNode.Fqn { Name: "System.Type" }] } } }
-                && nullableComponent == componentSpill.Name.Value, "null rejection lost its nullable value-type exception");
-        Failure(nonnullable.Body.Value.Single());
-        var writeCall = Instance(stored.Result.Value, "System.Array", "SetValue", "void", "call", "System.Object", "System.Int32");
-        Require(((BirLocal)writeCall.Recv.Value).Name.Value == arraySpill.Name.Value
-            && writeCall.Args.Value.Cast<BirLocal>().Select(local => local.Name.Value)
-                .SequenceEqual(new[] { valueSpill.Name.Value, indexSpill.Name.Value }), "SetValue argument order changed");
+        var write = (BirCallStatic)LowerOperation(store, refs, new BirTemporaryNames(store));
+        Require(write.Method.Value == "writeProjectedArray" && write.Args.Value is [var target, var offset, BirCast boxed]
+            && ReferenceEquals(target, store.Array.Value) && ReferenceEquals(offset, store.Index.Value)
+            && ReferenceEquals(boxed.E.Value, store.Value.Value), "lost ordered store operands");
 
         var length = (BirArrayLength)source[2];
         var lengthCall = Instance((IBirExpression)LowerOperation(length, refs, new BirTemporaryNames(length)),
@@ -260,10 +214,9 @@ static class TypedGenericArrayStorageLowering
             && counted.Body.Value[0] is BirVariable { Name.Value: "element", Type.Value: var itemType,
                 Init.Value: BirCast { Type.Value: var castType } } && itemType == element && castType == element
             && ReferenceEquals(counted.Body.Value[1], loop.Body.Value.Single()), "loop lost label, element binding or original body ownership");
-        var loopRead = Instance(((BirCast)((BirVariable)counted.Body.Value[0]).Init.Value).E.Value,
-            "System.Array", "GetValue", "object", "call", "System.Int32");
-        Require(((BirLocal)loopRead.Recv.Value).Name.Value == ((BirVariable)loweredLoop.Body.Value[0]).Name.Value
-            && ((BirLocal)loopRead.Args.Value.Single()).Name.Value == counted.Var.Value,
+        var loopRead = (BirCallStatic)((BirCast)((BirVariable)counted.Body.Value[0]).Init.Value).E.Value;
+        Require(loopRead.Method.Value == "readProjectedArray" && loopRead.Args.Value is [BirLocal vectorRead, BirLocal indexRead]
+            && vectorRead.Name.Value == ((BirVariable)loweredLoop.Body.Value[0]).Name.Value && indexRead.Name.Value == counted.Var.Value,
             "loop element read lost its captured array/index");
         var labelled = new BirForArray { Array = Local("array", array), Var = "element", Elem = element,
             Label = "outer", Body = Array.Empty<IBirStatement>() };

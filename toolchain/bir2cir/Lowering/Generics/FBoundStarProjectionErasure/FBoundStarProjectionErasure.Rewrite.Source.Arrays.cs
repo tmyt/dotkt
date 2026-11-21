@@ -33,7 +33,7 @@ static partial class FBoundStarProjectionErasure
 
     static BirGraphValue BindProjectedArrayReadSource(BirGraphValue node, SourceRewriteState state)
     {
-        if (node is not BirArrayGet read || state.ProjectedRead(read)) return node;
+        if (node is not BirArrayGet read || read.SourceClrBoundary || state.ProjectedRead(read)) return node;
         TypeNode semantic, physical;
         if (state.ArrayProjection(read.Array.OrDefault() as BirGraphValue) is { } flowed
             && SourceCarrierExpressionType(read.Array.OrDefault() as BirGraphValue) is TypeNode.Array flowArray)
@@ -184,12 +184,8 @@ static partial class FBoundStarProjectionErasure
 
     static void RewriteSourceSpread(BirSpreadConcat spread, TypeNode.Fqn semantic, TypeNode physical, SourceRewriteState state)
     {
-        void Rewrite(BirGraphValue node)
-        {
-            if (node is IBirExecutablePayload) return;
-            node.RewriteOwnFieldsInPlace((_, _, type) => ReplaceEquivalentType(type, semantic, physical), (_, _, slot) => Rewrite(slot.Value));
-        }
-        Rewrite(spread);
+        // Projection selects the destination vector. Its operands retain their
+        // own constructor, receiver and call signatures during the normal walk.
         spread.Elem = BirGraphValue.CopyType(physical);
         state.ArrayProjection(spread, semantic);
     }

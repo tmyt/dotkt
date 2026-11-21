@@ -63,6 +63,16 @@ internal fun runtimeKClass(type: StarProjectionType): StarProjectionType {
     return classifierIdentity(type).classifier
 }
 
+// A Kotlin generic declaration can use its non-generic classifier as array
+// storage. Bounds describe that declaration, not the CLR interfaces of its
+// storage face. Preserve closed native types and their exact arguments.
+@PublishedApi
+internal fun arrayBoundComponent(type: StarProjectionType): StarProjectionType {
+    if (type.isGenericType) return type
+    val identity = classifierIdentity(type)
+    return if (identity.classifier == type) identity.declaration else type
+}
+
 @kotlin.clr.ClrTypeAlias("System.Array")
 private interface ReflectionArrayStorage
 

@@ -42,16 +42,10 @@ static partial class GenericArrayStorageLowering
             && ReferenceEquals(((BirFor)loweredOuter.Body.Value[2]).Body.Value[1], loweredInner)
             && ((BirVariable)loweredInner.Body.Value[0]).Name.Value == "$arrayStorage$1",
             "post-order loop allocations collided or changed actual body ownership");
-        var loweredStore = (BirValueBlock)TypedGenericArrayStorageLowering.LowerOperation(store, refs, names);
+        var loweredStore = (BirCallStatic)TypedGenericArrayStorageLowering.LowerOperation(store, refs, names);
         ((BirExpressionStatement)method.Body.Value[1]).Expr = loweredStore;
-        var statements = loweredStore.Stmts.Value;
-        Expect(((BirVariable)statements[0]).Name.Value == "$arrayStorage$3"
-            && ((BirVariable)statements[1]).Name.Value == "$arrayIndex$3"
-            && ((BirVariable)statements[2]).Name.Value == "$arrayValue$1"
-            && ((BirVariable)statements[3]).Name.Value == "$arrayComponent$1", "store names collided");
-        Expect(statements.Take(3).Cast<BirVariable>().Select(node => ((BirLocal)node.Init.Value).Name.Value)
-            .SequenceEqual(new[] { "receiverEffect", "indexEffect", "valueEffect" }),
-            "store receiver/index/value evaluation order changed");
+        Expect(loweredStore.Args.Value is [BirLocal { Name.Value: "receiverEffect" }, BirLocal { Name.Value: "indexEffect" },
+            BirCast { E.Value: BirLocal { Name.Value: "valueEffect" } }], "store receiver/index/value evaluation order changed");
         var loweredCast = (BirValueBlock)LowerTypeOperation(cast, cast.Type.Value, null, null, refs,
             type => type, _ => false, names, (_, _) => null);
         ((BirExpressionStatement)method.Body.Value[2]).Expr = loweredCast;
@@ -60,13 +54,13 @@ static partial class GenericArrayStorageLowering
             "cast names collided with later declarations");
 
         // Destination reservations do not rely on attachment or Parent links.
-        var detached = LoopNode("$arrayStorage$4");
+        var detached = LoopNode("$arrayStorage$3");
         names.Reserve(detached);
         var loweredDetached = (BirBlock)TypedGenericArrayStorageLowering.LowerOperation(detached, refs, names);
-        Expect(((BirVariable)loweredDetached.Body.Value[0]).Name.Value == "$arrayStorage$5",
+        Expect(((BirVariable)loweredDetached.Body.Value[0]).Name.Value == "$arrayStorage$4",
             "detached rewrite lost destination names");
         method.Body.Value[0] = new BirBlock { Body = Array.Empty<IBirStatement>() };
-        Expect(names.Next("$arrayStorage$") == "$arrayStorage$6", "removed/generated reservations were reused");
+        Expect(names.Next("$arrayStorage$") == "$arrayStorage$5", "removed/generated reservations were reused");
         var secondFile = new BirTemporaryNames(new BirFileDeclaration());
         Expect(secondFile.Next("$arrayStorage$") == "$arrayStorage$0", "allocator leaked across files");
         var lazyFile = new BirFileDeclaration();

@@ -81,6 +81,11 @@ for name, target in (("nativeConstrainedPlain", "Plain"), ("nativeConstrainedEch
     call = calls[0]
     assert call["k"] in ("clrInstance", "clrGenericInstance"), call
     receiver = call["recv"]
+    if receiver["k"] == "local":
+        block, = (node for node in nodes(method) if node.get("k") == "valueBlock" and node.get("result") is call)
+        binding, = (s for s in block["stmts"] if s.get("k") == "var" and s["name"] == receiver["name"])
+        assert binding["type"] == call["memberRef"]["declaringType"], binding
+        receiver = binding["init"]
     assert receiver["k"] == "cast" and receiver["type"] == call["memberRef"]["declaringType"], call
     assert receiver["e"] == {"k": "local", "name": "slot"}, call
     assert "resolvedMemberParams" not in call, call

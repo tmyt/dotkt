@@ -58,7 +58,8 @@ static partial class MemberCallSubstitution
         var signature = CtorArgTypes(declared, arguments.Length);
         var actual = arguments.Select(FactoryClone).ToArray();
         if (viaAlias) CoerceCharSequenceCtorArgs(actual, signature);
-        var lowered = new BirNewClr { Type = FactoryType(target), ArgTypes = signature, Args = actual };
+        var lowered = new BirNewClr { Type = FactoryType(target), ArgTypes = signature, Args = actual,
+            SourceClrBoundary = !viaAlias && refs.ResolveForeignProjectionType(owner.Name, owner.Args) != null };
         if (viaAlias && refs.IsKotlinHashStorageOwner(owner.Name)) KotlinHashStorageLowering.RequestComparer(lowered);
         // Only a projected CLR declaration keeps the authored native signature.
         if (!viaAlias && node.MemberSignature.HasValue)
@@ -194,16 +195,36 @@ static partial class MemberCallSubstitution
             return ListLiteral(node, element, elements);
         }
         if (arrayKind == null) return null;
+        var arrayFrame = local != null ? local.Frame : refs.NullableMethodFrame(declarationId);
+        TypeNode componentWitness = null;
+        if (arrayFrame != null && typeArguments != null && arrayFrame.SourceArity == 1)
+        {
+            var role = arrayFrame.NullableElementIndices.Contains(0) ? NullableRepresentationFrame.Role.NullableElement
+                : arrayFrame.ElementIndices.Contains(0) ? NullableRepresentationFrame.Role.Element : (NullableRepresentationFrame.Role?)null;
+            if (role.HasValue) componentWitness = typeArguments[arrayFrame.Variable(new TypeNode.Tv("method", 0), role.Value).I];
+            // An element slot describes how Kotlin can read/write a value. A
+            // constructed reference component also has an ordinary CLR witness
+            // for the allocation itself. Carry both to carrier projection.
+            var ordinary = UnwrapNullableOblivious(typeArguments[arrayFrame.SourcePosition(0)]);
+            TypeNode Allocation(TypeNode element) => element switch {
+                TypeNode.Nullable n => new TypeNode.Nullable(Allocation(n.Of)),
+                TypeNode.Oblivious o => new TypeNode.Oblivious(Allocation(o.Of)),
+                TypeNode.Fqn { Args.Length: > 0 } view when ordinary is TypeNode.Fqn { Args.Length: > 0 } actual
+                    && view.Name == actual.Name && view.Args.Any(arg => arg is TypeNode.Star) => actual,
+                _ => element,
+            };
+            componentWitness = Allocation(componentWitness);
+        }
         if (arrayKind == "sized")
         {
-            var element = ArrayConstructionLowering.ArrayElementOf(node.Ret.OrDefault());
+            var element = componentWitness ?? ArrayConstructionLowering.ArrayElementOf(node.Ret.OrDefault());
             return element == null || arguments.Length < 1 ? null : new BirNewArraySized {
                 Elem = CanonicalArrayElem(element), Size = FactoryExpression(FactoryClone(arguments[0])),
             };
         }
         var wrapper = arguments.Length == 1 ? arguments[0] as BirNewArray : null;
         var resultElement = ArrayConstructionLowering.ArrayElementOf(node.Sty.OrDefault());
-        var arrayElement = resultElement ?? (typeArguments is { Length: > 0 } ? typeArguments[0] : null)
+        var arrayElement = componentWitness ?? resultElement ?? (typeArguments is { Length: > 0 } ? typeArguments[0] : null)
             ?? wrapper?.Elem.OrDefault() ?? (elementHint == null ? null : new TypeNode.Fqn(elementHint));
         if (arrayElement == null) return null;
         var canonical = CanonicalArrayElem(arrayElement);
@@ -213,7 +234,6 @@ static partial class MemberCallSubstitution
                 : new BirSpreadConcat { Parts = new[] { new BirSpreadPart { Spread = true,
                     E = FactoryExpression(FactoryClone(arguments[0])) } } };
             spread.Elem = FactoryType(canonical);
-            NormalizeSpreadParts(spread, canonical, context);
             return spread;
         }
         return new BirNewArray { Elem = FactoryType(canonical), Elems = (wrapper?.Elems.OrEmpty() ?? Array.Empty<IBirExpression>()).Select(FactoryClone).ToArray() };
@@ -227,15 +247,32 @@ static partial class MemberCallSubstitution
         return null;
     }
 
-    internal static BirSpreadConcat TransformSpread(BirSpreadConcat spread, CollectionHelperBinding.CollectionSourceContext context)
+    internal static BirSpreadConcat TransformSpread(BirSpreadConcat spread)
     {
         var element = CanonicalArrayElem(spread.Elem.OrDefault());
         spread.Elem = element == null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(element);
-        NormalizeSpreadParts(spread, element, context);
         return spread;
     }
 
-    static void NormalizeSpreadParts(BirSpreadConcat spread, TypeNode target, CollectionHelperBinding.CollectionSourceContext context)
+    // A spread enumerates into the selected destination vector. Establish its
+    // adapters only after carrier projection; the operand keeps its own ABI.
+    internal static void BindSpreadOperands(BirGraphValue root, CollectionHelperBinding.CollectionSourceContext context,
+        ValueTypeOracle isValue)
+    {
+        if (root is IBirExecutablePayload) return;
+        var nested = context.Extend(root);
+        root.VisitChildren(child => BindSpreadOperands(child, nested, isValue));
+        if (root is BirSpreadConcat spread)
+        {
+            var element = spread.Elem.OrDefault();
+            if (element is TypeNode.Fqn f && (isValue(f) || f.Name is "System.String" or "kotlin.String" or "string"))
+                NormalizeSpreadParts(spread, element, nested, isValue);
+            else spread.LogicalSpreadOperands = true;
+        }
+    }
+
+    static void NormalizeSpreadParts(BirSpreadConcat spread, TypeNode target, CollectionHelperBinding.CollectionSourceContext context,
+        ValueTypeOracle isValue)
     {
         foreach (var part in spread.Parts.OrEmpty())
         {
@@ -250,7 +287,7 @@ static partial class MemberCallSubstitution
             }
             else
             {
-                var physicalSource = source == null ? null : NullableGenericErasure.EraseNullableTv(source, _isValue);
+                var physicalSource = source == null ? null : NullableGenericErasure.EraseNullableTv(source, isValue);
                 if (physicalSource != null && physicalSource.Equals(target)) continue;
                 part.E = new BirCast { Type = FactoryType(target), E = FactoryExpression(FactoryClone(operand)) };
             }

@@ -10,6 +10,9 @@
 
 package kotlin.collections
 
+import DotKt.Runtime.CompilerServices.copyProjectedArrayRange
+import DotKt.Runtime.CompilerServices.prepareKotlinArrayCopy
+
 @kotlin.internal.InlineOnly
 public actual inline fun <T> Array<out T>.elementAt(index: Int): T {
     return elementAtOrElse(index) { throw IndexOutOfBoundsException("index: $index, size: $size}") }
@@ -692,6 +695,7 @@ private fun <T> Array<out T>.nativeArrayCopy(sourceIndex: Int, dest: Array<T>, d
 
 private fun <T> Array<out T>.copyArrayRange(destination: Array<T>, sourceIndex: Int, destinationIndex: Int, length: Int) {
     if (length == 0) return
+    if (copyProjectedArrayRange(this, sourceIndex, destination, destinationIndex, length)) return
     val sourceType = (this as Any).dotktRuntimeType()
     val destinationType = (destination as Any).dotktRuntimeType()
     var bulkCopy = destinationType.isAssignableFrom(sourceType)
@@ -723,6 +727,7 @@ internal fun <T> Array<T>.copyOfUninitializedElements(fromIndex: Int, toIndex: I
         throw IllegalArgumentException("$fromIndex > $toIndex")
     }
     val result = (this as Any).nativeGetType().nativeCreateArrayLike(newSize) as Array<T>
+    prepareKotlinArrayCopy(result)
     this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
     return result
 }
@@ -741,6 +746,7 @@ internal fun <E> Array<E>.copyOfNulls(fromIndex: Int, toIndex: Int): Array<E?> {
     val element = (this as Any).dotktRuntimeType().getElementType()
     val nullableElement = if (element.isValueType()) dotktTypeNamed("System.Object") else element
     val result: Array<E?> = dotktNewArrayOfType(nullableElement, newSize)
+    prepareKotlinArrayCopy(result)
     this.copyInto(result, 0, fromIndex, toIndex.coerceAtMost(size))
     return result
 }

@@ -13,6 +13,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Reading a nullable class-bounded type parameter from a native generic call or indexer now produces verifiable IL.
 - An inherited interface default that takes a Kotlin function keeps its own implementation when a base class has a method with the same CLR signature.
 
+- Kotlin array factories, collection-to-array conversion and varargs preserve unchecked views of Kotlin generic elements without copying them at CLR boundaries.
+
 - An inherited property such as `message` on a Kotlin exception from another DLL now resolves its getter and preserves virtual dispatch.
 - A star-projected Kotlin subclass can be passed to a class-bounded generic method without a CLR constraint exception.
 - Generic classes can store star-projected Kotlin subclasses with dependent or intersecting class and interface bounds without losing object identity.
