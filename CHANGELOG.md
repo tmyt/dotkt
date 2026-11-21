@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.30 (2026-11-21)
+
+- Fix a 0.9.29 compiler regression when a property setter from another assembly takes a generic inner class that writes to an array. This restores the affected `kotlinx.coroutines` build without source changes.
+
 ## 0.9.29 (2026-11-21)
 
 All five NuGet packages move to `0.9.29`. The Kotlin compiler and common standard library remain at **2.4.21**.
