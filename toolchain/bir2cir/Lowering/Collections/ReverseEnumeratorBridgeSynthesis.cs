@@ -98,10 +98,9 @@ static partial class ReverseEnumeratorBridgeSynthesis
 
     internal static SlotReservation ReserveSlots(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, BottomSlot> bottom = null,
-        Func<TypeNode, TypeNode, bool> isProjectedElement = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, BottomSlot> bottom = null)
     {
-        if (Plan(def, defs, refs, declarations, isProjectedElement: isProjectedElement) is not { } plan) return null;
+        if (Plan(def, defs, refs, declarations) is not { } plan) return null;
         if (bottom != null && NodeType.IsNothing(plan.Iterator.SemanticReturn))
             bottom[def.Name] = new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId, plan.Element);
         return new SlotReservation(plan.Element);
@@ -111,8 +110,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
 
     static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IReadOnlyDictionary<string, BottomSlot> reserved = null,
-        Func<TypeNode, TypeNode, bool> isProjectedElement = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IReadOnlyDictionary<string, BottomSlot> reserved = null)
     {
         if (def.Kind != "class") return null;
         if (reserved != null && reserved.TryGetValue(def.Name, out var slot))
@@ -141,32 +139,20 @@ static partial class ReverseEnumeratorBridgeSynthesis
             if (reserved != null) return null;
             // Bottom has no element argument. Select the actual Kotlin iterable
             // obligation, not an unrelated, co-implemented native enumerable.
-            var edges = SupertypeGraph.Reachable(def, defs, refs).Where(edge => edge.isInterface).Select(edge => edge.spec).ToArray();
-            var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
-            TypeNode PhysicalElement(TypeNode element) => BirTypeLowering.LowerPhysicalType(element,
-                refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
-            var reachableIterable = edges.FirstOrDefault(face => Bare(face.Name) == "kotlin.collections.Iterable" && face.Args is { Length: 1 });
-            if (reachableIterable != null) return (iterator, PhysicalElement(reachableIterable.Args[0]));
-            if (declarations.TryGetValue(iterator.Owner.Name, out var source))
+            var edges = SupertypeGraph.Reachable(def, defs, refs).Where(edge => edge.isInterface).Select(edge => edge.spec);
+            var semantic = edges.FirstOrDefault(face => Bare(face.Name) == "kotlin.collections.Iterable" && face.Args is { Length: 1 });
+            if (semantic == null && declarations.TryGetValue(iterator.Owner.Name, out var source))
             {
                 var method = source.Methods.OrEmpty().Single(m =>
                     (iterator.DeclarationId != null ? m.DeclarationId.OrDefault() == iterator.DeclarationId : m.Name.OrDefault() == iterator.Name)
                     && m.Params.OrEmpty().Length == 0 && m.TypeParams.OrEmpty().Length == 0);
-                var semantic = method.Overrides.OrEmpty().Select(edge => edge.Owner.OrDefault()).OfType<TypeNode.Fqn>()
+                semantic = method.Overrides.OrEmpty().Select(edge => edge.Owner.OrDefault()).OfType<TypeNode.Fqn>()
                     .FirstOrDefault(face => Bare(face.Name) is "kotlin.collections.Iterable" or IEnumerableT && face.Args is { Length: 1 });
-                if (semantic == null) return null;
-                var sourceElement = SupertypeGraph.SubstOwnerTvs(semantic.Args[0], iterator.Owner.Args ?? []);
-                // The source marker selects the obligation, but the referenced hierarchy
-                // supplies the actual CLR construction. It may carry an erased Kotlin element.
-                var elements = edges.Where(face => Bare(face.Name) == IEnumerableT && face.Args is { Length: 1 })
-                    .Select(face => PhysicalElement(face.Args[0])).Distinct().ToArray();
-                var projected = Bare(semantic.Name) == "kotlin.collections.Iterable"
-                    ? elements.FirstOrDefault(element => isProjectedElement?.Invoke(sourceElement, element) == true) : null;
-                var exact = PhysicalElement(sourceElement);
-                if ((projected ?? elements.FirstOrDefault(element => SupertypeGraph.TypeKey(element) == SupertypeGraph.TypeKey(exact))) is { } selected)
-                    return (iterator, selected);
+                if (semantic != null) semantic = SupertypeGraph.SubstOwnerTvs(semantic, iterator.Owner.Args ?? []) as TypeNode.Fqn;
             }
-            return null;
+            if (semantic == null) return null;
+            return (iterator, BirTypeLowering.LowerPhysicalType(semantic.Args[0], refs.Aliases, refs.IsValueType,
+                refs.PhysicalTypeNames, typeArg: true, localTypeNames: defs.Keys.ToHashSet(StringComparer.Ordinal)));
         }
         if (Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
         return (iterator, element);

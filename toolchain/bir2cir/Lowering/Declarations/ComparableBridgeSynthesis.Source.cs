@@ -32,9 +32,9 @@ static partial class ComparableBridgeSynthesis
         => name == "CompareTo" && parameters is { Count:1 }
             && parameters[0] is TypeNode.Fqn { Args:null, Name:"object" or "kotlin.Any" };
 
-    static bool IsComparableOverride(BirOverride edge)
-        => edge.Owner.OrDefault() is TypeNode.Fqn { Name:"kotlin.Comparable" or "System.IComparable", Args.Length:1 }
-            && edge.Member.OrDefault() is "compareTo" or "CompareTo" && edge.Kind.OrDefault() == "method";
+    static bool IsComparableOverride(TypeNode owner, string member, string kind, TypeNode argument)
+        => owner is TypeNode.Fqn { Name:"kotlin.Comparable" or "System.IComparable", Args.Length:1 } face
+            && face.Args[0].Equals(argument) && member is "compareTo" or "CompareTo" && kind == "method";
 
     internal static void ApplyAll(IReadOnlyList<BirFileDeclaration> roots, Func<TypeNode,TypeNode> physical,
         Action<BirFileDeclaration,IBirTypeDeclaration,BirFunctionDeclaration> onMaterialized)
@@ -53,16 +53,13 @@ static partial class ComparableBridgeSynthesis
                     method.Params.OrDefault()?.Select(parameter => parameter.Type.OrDefault()).ToArray()))) continue;
             var name = declaration.Name.OrDefault();
             if (string.IsNullOrEmpty(name)) continue;
-            // The source edge identifies Comparable; compare the selected CLR face to the method's
-            // actual parameter, not to the source type argument recorded on that edge.
-            TypeNode Physical(TypeNode type) => physical?.Invoke(type) ?? type;
-            var physicalArgument = Physical(selfArgument);
+            // Only the frontend's Comparable override relation selects the target. A same-name unrelated
+            // overload can return Nothing and would give an otherwise returning bridge a false terminator.
             var targets = methods.Where(method => method.Name.OrDefault() is "CompareTo" or "compareTo"
                 && method.Params.HasValue && method.Params.Value.Length == 1
-                && method.Params.Value[0].Type.HasValue
-                && Physical(method.Params.Value[0].Type.Value).Equals(physicalArgument)
-                && method.Overrides.OrEmpty().Any(IsComparableOverride)).ToArray();
-            if (targets.Length != 1) continue;
+                && method.Overrides.OrEmpty().Any(edge => IsComparableOverride(edge.Owner.OrDefault(),
+                    edge.Member.OrDefault(), edge.Kind.OrDefault(), selfArgument))).ToArray();
+            if (targets.Length != 1 || !targets[0].Params.Value[0].Type.HasValue) continue;
             var target = targets[0];
             var targetParameter = target.Params.Value[0].Type.Value;
             var call = new BirCallInstance {

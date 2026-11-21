@@ -7,9 +7,6 @@
 // which tests for the interface at run time and reaches the override declared here.
 package roundtrip.collslots
 
-class ProjectedIterableElement<out T>(val value: T)
-interface ProjectedIterable : Iterable<ProjectedIterableElement<Int>>
-
 open class ReplacingResultList<T>(private val storage: MutableList<T>) : MutableList<T> by storage {
     var addCalls = 0
     override fun add(element: T): Boolean {
