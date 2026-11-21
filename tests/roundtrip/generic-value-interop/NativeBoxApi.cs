@@ -19,9 +19,9 @@ public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactor
 public interface NativeBoxCreator { Box<string, string> Create(); }
 public interface NativeBoxArraySource { Box<string, string>[] Read(); }
 public interface NativeValueSource<T> { T Read(); }
-public struct NativeRowComparer : System.IComparable<Box<string, string>[]>
+public struct NativeRowComparer(int score) : System.IComparable<Box<string, string>[]>
 {
-    public int CompareTo(Box<string, string>[] values) => values.Length;
+    public int CompareTo(Box<string, string>[] values) => values[0] is null ? 0 : score;
 }
 public delegate Box<string, string> NativeBoxFactory();
 public delegate object NativeBoxConsumer(Box<string, string> value);

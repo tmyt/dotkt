@@ -48,7 +48,7 @@ class InvariantValueStorageTests {
         check(try { NativeBoxApi.ReadArrayRows(nativeRows); false } catch (_: ClassCastException) { true })
         val source = NativeRowSource(row as System.Array)
         check(try { NativeBoxApi.ReadGenericSource(source); false } catch (_: ClassCastException) { true })
-        check(try { GenericValueInterop.NativeRowComparer().compareTo(row); false } catch (_: ClassCastException) { true })
+        check(try { GenericValueInterop.NativeRowComparer(1).compareTo(row); false } catch (_: ClassCastException) { true })
         row[0] = original
         check(NativeBoxApi.EchoBoxes(row) === row && NativeBoxApi.ReadArrayRows(nativeRows) === original)
     }

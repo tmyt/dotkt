@@ -784,8 +784,14 @@ static class TypedPhysicalValueCoercion
             if (receiverType == null) return null;
             // Lexical this is already stable, including the managed this of
             // a struct. Keep its exact owner frame on the original call.
-            IBirExpression saved = receiver is BirThis ? receiver : receiverType is TypeNode.Fqn named && index.IsValue(named) ||
-                receiverType is TypeNode.Tv && call is BirConstrainedCall
+            // A method result is a Kotlin value receiver, even if the selected
+            // CLR member returns by ref. Snapshot it before evaluating later
+            // operands; only a receiver designating storage keeps its address.
+            bool location = receiver is BirLocal or BirByRefLoad or BirArrayGet or BirStackGet or BirStaticFieldGet ||
+                receiver is BirFieldGet field && field.Member.OrDefault() != "accessor" ||
+                receiver is BirPropertyGet property && property.Member.OrDefault() == "field";
+            IBirExpression saved = receiver is BirThis ? receiver : location &&
+                (receiverType is TypeNode.Fqn named && index.IsValue(named) || receiverType is TypeNode.Tv && call is BirConstrainedCall)
                 ? new BirByRefLoad { Local = Address(receiver, new TypeNode.ByRef(receiverType)).Name, Elem = receiverType }
                 : Retain(receiver, receiverType);
             SetReceiver(call, saved);
