@@ -18,6 +18,8 @@ private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String
 }
 private class DelegatedVector : GenericValueInterop.NativeVectorBase(arrayOf(roundtrip.genericvalueinterop.Derived<String>()))
 private class LocalStoredBox<T>(val value: T)
+private open class PlainArrayBase
+private class ProjectedArrayChild<T>(val value: T) : PlainArrayBase()
 private class NativeRowSource<T>(val value: T) : GenericValueInterop.NativeValueSource<T> {
     override fun Read(): T = value
 }
@@ -35,6 +37,24 @@ private class ForwardedNativeBoxCreator : NativeBoxCreator {
 class InvariantValueStorageTests {
     @TestAttribute
     @Suppress("UNCHECKED_CAST")
+    fun ordinaryArrayAccessUsesTheActualComponentOfACovariantAlias() {
+        val other = ProjectedArrayChild(42)
+        fun replaceAndRead(values: Array<PlainArrayBase>) {
+            values[0] = other
+            check(values[0] === other)
+            for (value in values) check(value === other)
+        }
+        replaceAndRead(arrayOf(PlainArrayBase()))
+        val typed = arrayOf(ProjectedArrayChild("first"))
+        val widened = typed as Array<PlainArrayBase>
+        replaceAndRead(widened)
+        check((typed[0] as Any) === other)
+        check(try { widened[0] = PlainArrayBase(); false } catch (_: System.ArrayTypeMismatchException) { true })
+        check(widened[0] === other)
+    }
+
+    @TestAttribute
+    @Suppress("UNCHECKED_CAST")
     fun reifiedRowsRetainTheirNativeComponentAndPublishOnlyAtClrBoundaries() {
         val original = Box("first")
         val row = roundtrip.genericvalueinterop.reifiedVector(original)
@@ -48,9 +68,14 @@ class InvariantValueStorageTests {
         check(try { NativeBoxApi.ReadArrayRows(nativeRows); false } catch (_: ClassCastException) { true })
         val source = NativeRowSource(row as System.Array)
         check(try { NativeBoxApi.ReadGenericSource(source); false } catch (_: ClassCastException) { true })
+        val kotlinSupplier = { row }
+        val nativeSupplier = GenericValueInterop.NativeRowFactory { row }
+        check((kotlinSupplier()[0] as Any) === other)
+        check(try { NativeBoxApi.ReadFactoryRow(nativeSupplier); false } catch (_: ClassCastException) { true })
         check(try { GenericValueInterop.NativeRowComparer(1).compareTo(row); false } catch (_: ClassCastException) { true })
         row[0] = original
         check(NativeBoxApi.EchoBoxes(row) === row && NativeBoxApi.ReadArrayRows(nativeRows) === original)
+        check(NativeBoxApi.ReadFactoryRow(nativeSupplier) === original)
     }
 
     @TestAttribute

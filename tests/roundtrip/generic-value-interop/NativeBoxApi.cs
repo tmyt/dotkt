@@ -18,6 +18,7 @@ public class NativeVectorBase(Derived<string>[] values) { public int Count => va
 public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactory();
 public interface NativeBoxCreator { Box<string, string> Create(); }
 public interface NativeBoxArraySource { Box<string, string>[] Read(); }
+public delegate Box<string, string>[] NativeRowFactory();
 public interface NativeValueSource<T> { T Read(); }
 public struct NativeRowComparer(int score) : System.IComparable<Box<string, string>[]>
 {
@@ -46,6 +47,7 @@ public static class NativeBoxApi
     public static ref Box<string, string>[] ArrayLocation() => ref ArrayField;
     public static Box<string, string>[] ArrayProperty { get; set; }
     public static object ReadFirst(NativeBoxArraySource source) => source.Read()[0];
+    public static object ReadFactoryRow(NativeRowFactory source) => source()[0];
     public static object ReadFirstRow(Box<string, string>[][] matrix) => matrix[0][0];
     public static object ReadArrayRows(System.Array[] rows) => rows[0].GetValue(0);
     public static object ReadGenericSource(NativeValueSource<System.Array> source) => source.Read().GetValue(0);

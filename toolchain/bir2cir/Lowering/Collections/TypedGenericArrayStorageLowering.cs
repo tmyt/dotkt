@@ -61,6 +61,42 @@ static class TypedGenericArrayStorageLowering
         Runtime("writeProjectedArray", Type("void"), [Type("System.Array"), Type("System.Int32"), Type("System.Object")],
             external, store.Array.Value, store.Index.Value, new BirCast { Type = Type("System.Object"), E = store.Value });
 
+    // A vector whose *actual* component is an ordinary non-generic class
+    // stores its values directly. A covariantly viewed Derived<T>[] may
+    // need logical storage, even when the static Base is locally declared.
+    // Evaluate all Kotlin operands before inspecting the runtime vector.
+    internal static BirValueBlock PlainClassAccess(IBirExpression receiver, IBirExpression offset,
+        IBirExpression value, TypeNode component, BirTemporaryNames names, bool external)
+    {
+        var vector = new TypeNode.Array(component);
+        var array = Var(names.Next("$plainArray$"), Type("System.Array"), receiver);
+        var position = Var(names.Next("$plainIndex$"), Type("System.Int32"), offset);
+        var statements = new List<IBirStatement> { array, position };
+        BirLocal ReadVar(BirVariable v) => Local(v.Name.Value, v.Type.Value);
+        BirCast ExactVector() => new() { Type = vector, E = ReadVar(array) };
+        IBirExpression direct, projected;
+        if (value == null)
+        {
+            direct = new BirArrayGet { Array = ExactVector(), Index = ReadVar(position), Elem = component };
+            projected = Read(ReadVar(array), ReadVar(position), component, external);
+        }
+        else
+        {
+            var item = Var(names.Next("$plainValue$"), Type("System.Object"), value);
+            statements.Add(item);
+            direct = new BirArraySet { Array = ExactVector(), Index = ReadVar(position), Elem = component,
+                Value = new BirCast { Type = component, E = ReadVar(item) } };
+            projected = Runtime("writeProjectedArray", Type("void"),
+                [Type("System.Array"), Type("System.Int32"), Type("System.Object")],
+                external, ReadVar(array), ReadVar(position), ReadVar(item));
+        }
+        var result = value == null ? component : Type("void");
+        return new BirValueBlock { Type = result, Stmts = statements.ToArray(), Result = new BirConditional {
+            Type = result, Cond = new BirBinaryOperation { Op = "==", Lhs = new BirRuntimeClass { E = ReadVar(array) },
+                Rhs = new BirClassReference { Type = vector } }, Then = OptionalField<IBirExpression>.Of(direct),
+            Else = OptionalField<IBirExpression>.Of(projected) } };
+    }
+
     internal static BirGraphValue LowerOperation(BirGraphValue node, ReferenceMetadataIndex refs,
         BirTemporaryNames names, TypeNode receiverType = null, bool external = false)
     {

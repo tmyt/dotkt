@@ -138,6 +138,8 @@ static class TypedPhysicalValueCoercion
             && fields.TryGetValue(Key(owner, name), out var type) ? type : null;
         internal bool ExactReferenceOwner(TypeNode.Fqn owner) => IsReferenceOwner(owner)
             || nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
+        internal bool PlainLocalClass(TypeNode component) => component is TypeNode.Fqn { Args: null } owner
+            && nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
         internal bool HasDeclaredCarrier(TypeNode.Fqn target, TypeNode.Fqn source) =>
             declaredCarriers.Contains((target.Name, source.Name)) || ReferencedCarrier?.Invoke(target, source) == true
             || declaredCarriers.Any(edge => edge.Class == target.Name
@@ -648,12 +650,17 @@ static class TypedPhysicalValueCoercion
                 (index.IsExistentialOwner(application) || !index.IsValue(application) &&
                     index.References.PhysicalTypeForProof(application.Name, application.Args?.Length ?? 0)?.IsSealed != true))
             {
-                IBirExpression ReadAt(IBirExpression vector, IBirExpression position) =>
-                    TypedGenericArrayStorageLowering.Read(vector, position, element, !index.LocalArrayRuntime);
+                var plain = index.PlainLocalClass(element);
+                IBirExpression ReadAt(IBirExpression vector, IBirExpression position) => plain
+                    ? TypedGenericArrayStorageLowering.PlainClassAccess(vector, position, null, element, index.ArrayNames, !index.LocalArrayRuntime)
+                    : TypedGenericArrayStorageLowering.Read(vector, position, element, !index.LocalArrayRuntime);
                 switch (node)
                 {
                     case BirArrayGet read: return Graph(ReadAt(array, read.Index.Value));
-                    case BirArraySet write: return TypedGenericArrayStorageLowering.Store(write, !index.LocalArrayRuntime);
+                    case BirArraySet write: return plain
+                        ? TypedGenericArrayStorageLowering.PlainClassAccess(array, write.Index.Value, write.Value.Value,
+                            element, index.ArrayNames, !index.LocalArrayRuntime)
+                        : TypedGenericArrayStorageLowering.Store(write, !index.LocalArrayRuntime);
                     case BirForArray loop: return TypedGenericArrayStorageLowering.Loop(loop, array, index.References, index.ArrayNames, ReadAt);
                 }
             }
@@ -747,9 +754,10 @@ static class TypedPhysicalValueCoercion
     static bool ProjectedArrayOperand(TypeNode type) =>
         type != null && SignatureValueTypes.Of(type) is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } };
 
-    static bool MayHoldArray(TypeNode type, Index index) => type is TypeNode.Array or TypeNode.Tv ||
+    static bool MayHoldArray(TypeNode type, Index index) => MayHoldArray(type, index.References);
+    internal static bool MayHoldArray(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Array or TypeNode.Tv ||
         type is TypeNode.Fqn f && (f.Name is "object" or "System.Object" or "System.Array" ||
-            index.References?.IsInterfaceType(f) == true);
+            refs?.IsInterfaceType(f) == true);
 
     static IBirStatement[] StageNativeArrayOperands(BirGraphValue call, BirMemberReference member,
         IBirExpression[] args, TypeNode[] signature, Scope scope, Index index, bool foreign, bool locationsOnly = false)
