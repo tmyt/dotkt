@@ -57,12 +57,53 @@ static partial class FBoundStarProjectionErasure
                 .Concat(operations.Select(operation => (IBirStatement)Evaluate((IBirExpression)operation))).ToArray() };
         var fixture = new BirClassDefinition { Name = "ProjectionFixture", Kind = "class", Generated = true, Methods = new[] { use } };
         var late = Generic("LatePhysical"); late.Generated = true;
+        var rootBound = new TypeNode.Fqn("ClassBound");
+        var ifaceBound = new TypeNode.Fqn("InterfaceBound");
+        var leaf = Generic("DirectLeaf"); leaf.Base = rootBound; leaf.Interfaces = new TypeNode[] { ifaceBound };
+        var commonBase = new BirClassDefinition { Name = "Both", Kind = "class", Base = rootBound, Interfaces = new TypeNode[] { ifaceBound } };
+        var commonLeaf = Generic("CommonLeaf"); commonLeaf.Base = new TypeNode.Fqn("Both");
+        var nonMember = Generic("Unmarked"); nonMember.Base = rootBound;
+        var intersection = Generic("Intersection");
+        intersection.TypeParams.Value[0].Constraints = new TypeNode[] { rootBound, ifaceBound };
+        var interfaceOnly = Generic("FBounded");
+        interfaceOnly.TypeParams.Value[0].Constraints = new TypeNode[] {
+            new TypeNode.Fqn("Bound", [new TypeNode.Tv("type", 0)]), ifaceBound,
+        };
+        var twoIntersections = Generic("TwoIntersections");
+        twoIntersections.TypeParams = new[] { "X", "Y" }.Select(name => new BirTypeParameter {
+            Name = name, Constraints = new TypeNode[] { rootBound, ifaceBound },
+        }).ToArray();
         var root = new BirFileDeclaration { FileClass = "ProjectionConstraints", Types = new IBirTypeDeclaration[] {
             Generic("Owner"), innerOwner, Generic("Bound"), constructionOwner, Generic("Variant", "out"), alias, fixture, late,
+            new BirClassDefinition { Name = rootBound.Name, Kind = "class" },
+            new BirInterfaceDefinition { Name = ifaceBound.Name, Kind = "interface" },
+            leaf, commonBase, commonLeaf, nonMember, intersection, twoIntersections, interfaceOnly,
         } };
         var context = SourceSynthesisTestContext(root, refs);
         foreach (var owner in context.Owners.Values) owner.Needed = true;
         var projection = context.Projection;
+        CarrierProjectionContext.StorageWitness Witness(string leafName, bool split) {
+            var app = new TypeNode.Fqn(leafName, [new TypeNode.Star()]);
+            return projection.ClassStorageWitness(new TypeNode.Fqn("Intersection", [app]), 0, app, null, split);
+        }
+        Need(Witness("DirectLeaf", false) == null
+            && Witness("DirectLeaf", true) is { Class: var cls, Interfaces: [var iface] } && cls == rootBound && iface == ifaceBound
+            && Witness("CommonLeaf", true) is { Class.Name: "Both", Interfaces.Length: 0 }
+            && Witness("Unmarked", true) == null, "projected storage needs real, independently proven class and interface bounds");
+        var layout = projection.StorageFrame("Intersection");
+        Need(projection.StorageFrame("FBounded") == null,
+            "a source class bound already projected to a CLR interface does not require separate storage");
+        TypeNode.Fqn Applied(string name) => new("Intersection", [new TypeNode.Fqn(name, [new TypeNode.Star()])]);
+        var implementationParameters = layout.Declare();
+        Need(implementationParameters.Length == 2 && implementationParameters[0].Constraints.Value.SequenceEqual([rootBound])
+            && implementationParameters[1].Constraints.Value.SequenceEqual([ifaceBound])
+            && intersection.TypeParams.Value[0].Constraints.Value.Length == 2
+            && projection.ProjectedConstructorArguments(Applied("DirectLeaf"), layout).SequenceEqual([rootBound, ifaceBound])
+            && projection.ProjectedConstructorArguments(Applied("CommonLeaf"), layout) == null,
+            "the private implementation requires a separate frame without changing the exact owner");
+        var partlyProven = new TypeNode.Fqn("TwoIntersections", [Applied("DirectLeaf").Args[0], Applied("Unmarked").Args[0]]);
+        Need(projection.ProjectedConstructorArguments(partlyProven, projection.StorageFrame(partlyProven.Name)) == null,
+            "one proven intersection cannot authorize splitting another parameter with a missing interface");
         TypeNode View(string name) => new TypeNode.Fqn(context.Owners[name].ErasedName);
         FunctionRewriteTests.Check("F-bound rewrite", type => projection.Rewrite(type));
         var function = new TypeNode.Fn(false, variable, new TypeNode[] { variable }, null, "System.Func");

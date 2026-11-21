@@ -15,7 +15,8 @@ static partial class FBoundStarProjectionErasure
         var signature = construction.MemberSignature.HasValue ? construction.MemberSignature.Value : construction.ArgTypes.OrDefault();
         if (signature is not { Length: > 0 } || signature[0] is not TypeNode.Fqn selectedOuter) return node;
         var suppliedOuter = SourceCarrierExpressionType(arguments[0] as BirGraphValue);
-        var exact = arguments[0] is BirThis or BirNew || SourceExactOuter((BirGraphValue)arguments[0]);
+        var exact = arguments[0] is BirThis or BirNew || SourceExactOuter((BirGraphValue)arguments[0])
+            && !state.SharedOuters.Contains(selectedOuter.Name);
         var variant = !exact && state.Projection.RequiresKotlinValueCarrier(selectedOuter);
         if (!variant && (suppliedOuter == null || !ContainsExistential(suppliedOuter, existentialTypes, existentialMethods))) return node;
         var innerDefinition = state.Definition(innerType.Name);
@@ -122,12 +123,69 @@ static partial class FBoundStarProjectionErasure
             .OrderBy(row => row.position).Select(row => BirGraphValue.CopyType(arguments[captured + row.index])).ToArray();
     }
 
-    static BirGraphValue LowerProjectedConstructionSource(BirGraphValue node, SourceRewriteState state)
+    static BirGraphValue LowerProjectedConstructionSource(BirGraphValue node, SourceRewriteState state,
+        IReadOnlySet<int> existentialTypes = null, IReadOnlySet<int> existentialMethods = null)
     {
+        BirGraphValue BindOuter() =>
+            BindStarInnerConstructionSource(node, existentialTypes, existentialMethods, state);
         if (node is not BirNew construction || construction.Type.OrDefault() is not TypeNode.Fqn { Args: { Length: > 0 } } owner
-            || !owner.Args.Any(ContainsExistentialProjection) || !construction.MemberSignature.HasValue
-            || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return node;
+            || !construction.MemberSignature.HasValue
+            || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return BindOuter();
+        if (!owner.Args.Any(ContainsExistentialProjection))
+        {
+            // Binding clears the source ctor ID before physical method/class clones
+            // exist. Keep its producer-selected factory for calls forwarding a TV.
+            if (owner.Args.Any(a => a is TypeNode.Tv) && construction.ConstructorDeclarationId.OrDefault() is string ctor &&
+                state.References.TryDeclarationIdentity(StorageFactoryId(ctor), out _, out _, out _, out _) &&
+                state.Projection.StorageFrame(owner.Name) is { } layout)
+                construction.ReferencedProjectedFactory = (StorageFactoryId(ctor), layout.Interfaces.Select(s => s.OwnerIndex).ToArray());
+            return BindOuter();
+        }
         var signature = construction.MemberSignature.Value;
+        if (construction.ConstructorDeclarationId.OrDefault() is string id &&
+            state.Projection.ProjectedConstructorArguments(owner) is { } physicalArguments)
+        {
+            var innerFactoryId = ProjectedInnerFactoryId(id);
+            if (state.Declarations.ProjectedInnerFactories.TryGetValue(innerFactoryId, out var innerFactory) ||
+                state.References.TryPhysicalInstanceFactory(innerFactoryId, out innerFactory))
+            {
+                var captured = state.Owners.TryGetValue(owner.Name, out var inner) ? inner.OuterCount
+                    : state.References.TryInnerSemanticOwner(owner.Name, out var outerName)
+                        ? state.References.PhysicalOwnerTypeParametersInPhysicalFrame(outerName).Length
+                        : throw new InvalidOperationException("Projected inner factory has no enclosing declaration");
+                var methodArgsOnly = InnerMethodFrame(owner.Args.Length, captured, state.Projection.StorageFrame(owner.Name).Interfaces)
+                    .Select(i => physicalArguments[i]).ToArray();
+                var virtualCall = new BirCallInstance {
+                    OwnerType = new TypeNode.Fqn(innerFactory.Owner), Method = innerFactory.Name, DeclarationId = innerFactoryId,
+                    Virtual = true, Sig = innerFactory.Parameters.Select(BirGraphValue.CopyType).ToArray(),
+                    Recv = OptionalField<IBirExpression>.Of(construction.Args.Value[0]), Args = construction.Args.Value[1..],
+                    TypeArgs = methodArgsOnly, Ret = innerFactory.Result,
+                };
+                state.MethodWitnesses.Add(virtualCall, methodArgsOnly.Select((type, index) => (type, index)).ToDictionary(row => row.index, row => row.type));
+                return virtualCall;
+            }
+            var factoryId = StorageFactoryId(id);
+            if (!state.Declarations.ProjectedConstructors.TryGetValue(factoryId, out var factory))
+            {
+                if (!state.References.TryDeclarationIdentity(factoryId, out var name, out var carrier, out _, out _))
+                    throw new InvalidOperationException($"Projected constructor '{id}' has no physical factory");
+                factory = (carrier, name);
+            }
+            var methodArgs = Enumerable.Range(0, physicalArguments.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+            var call = new BirCallStatic {
+                Owner = new TypeNode.Fqn(factory.Owner), Method = factory.Name, DeclarationId = factoryId,
+                Sig = signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, methodArgs)).ToArray(),
+                Args = construction.Args, TypeArgs = physicalArguments, Ret = new TypeNode.Fqn(factory.Owner),
+            };
+            state.MethodWitnesses.Add(call, physicalArguments.Select((type, index) => (type, index))
+                .ToDictionary(row => row.index, row => row.type));
+            return call;
+        }
+        // A split frame belongs to the inner constructor itself. Do not
+        // replace that construction first with an outer factory whose method
+        // parameters require the original, unprovable joint constraint.
+        var throughOuter = BindOuter();
+        if (!ReferenceEquals(throughOuter, node)) return throughOuter;
         if (signature.Any(type => type == null) || !ConstructionHasHiddenWitnessSource(owner, state, signature)) return node;
         var result = state.Projection.Rewrite(owner);
         if (result is TypeNode.Fqn projected && projected.Name == owner.Name) return node;

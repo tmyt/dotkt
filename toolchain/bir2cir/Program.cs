@@ -1315,6 +1315,8 @@ sealed class Pipeline
         // declarations and caller frames rather than rebuilding their authority.
         foreach (var root in physicalDocuments)
             externalGenericConstraintValidation.ApplyResolvedMembers(root);
+        FBoundStarProjectionErasure.MaterializeProjectedStorage(physicalDocuments, module.Preparation.Carriers,
+            emittedLocalTypes, refs, _options.RefBuild);
         // Only declarations marked at the original metadata phase own a header
         // obligation. Later synthesized types do not acquire source metadata;
         // pending source facts are opaque to the intervening physical binders.

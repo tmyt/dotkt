@@ -99,6 +99,8 @@ static partial class DeclarationSignatureIdentity
                     && PhysicalSlots.TryGetValue(sourceId, out var selectedPhysicalSlots))
                     foreach (var slot in selectedPhysicalSlots)
                         BindSlot(file, owner, method, slot.Descriptor, slot.IsInterface, DescriptorKey(slot.Descriptor));
+                if (method.TypeParams.OrEmpty().Length > 0 && method.SignatureOverrideDeclarations.HasValue)
+                    method.SelectedGenericOverrides = method.SignatureOverrideDeclarations.Value;
                 method.SignatureOverrideDeclarations = default;
             }
     }

@@ -186,7 +186,7 @@ static partial class RoundtripMetadata
             method.KotlinPropertyAccessorCarrier = default;
         }
         var mods = method.Mods.OrDefault();
-        var flags = (mods?.Infix.OrDefault() == true ? 1 : 0) | (mods?.Operator.OrDefault() == true ? 2 : 0)
+        var flags = method.FacadeModalityFlags | (mods?.Infix.OrDefault() == true ? 1 : 0) | (mods?.Operator.OrDefault() == true ? 2 : 0)
             | (method.RoundtripSuspend.OrDefault() || method.SuspendBridge.OrDefault() ? 4 : 0);
         if (attributes.OrEmpty().Any(attribute => (attribute.Attr.OrDefault() as TypeNode.Fqn)?.Name == SourceLowPriority))
         {

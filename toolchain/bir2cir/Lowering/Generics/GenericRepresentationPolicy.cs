@@ -119,6 +119,12 @@ sealed partial class GenericRepresentationPolicy
             : _references?.IsClassType(named) == true;
     }
 
+    // A joint class/interface constraint has distinct nominal and storage
+    // witnesses. Its storage proof is part of the declared generic frame,
+    // including when an open caller merely passes that frame on.
+    internal bool HasJointStorageBounds(TypeNode[] bounds) => bounds.Any(IsNominalStorageBound)
+        && bounds.OfType<TypeNode.Fqn>().Any(b => !IsNominalStorageBound(b) && CanReferenceStorageProof(b));
+
     internal void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds)
     {
         var physical = new List<TypeNode>();

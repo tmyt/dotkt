@@ -94,7 +94,9 @@ static partial class FBoundStarProjectionErasure
                 && candidate.SemanticOwner == owner.Name && candidate.Inner))
             {
                 var ordinal = 0;
-                foreach (var constructor in context.Definition(inner).Ctors.OrEmpty())
+                var innerDeclaration = context.Definition(inner);
+                if (innerDeclaration is BirClassDefinition abstractInner && abstractInner.Abstract.OrDefault()) continue;
+                foreach (var constructor in innerDeclaration.Ctors.OrEmpty())
                 {
                     var factory = InnerConstructorFactorySource(owner, inner, constructor, ordinal++, context);
                     var key = SourceMethodKey(factory.Slot);
@@ -109,6 +111,7 @@ static partial class FBoundStarProjectionErasure
                     else methods.Add(factory.Slot);
                     factory.SlotBinding = factory.ReferenceContract?.SlotBinding;
                     context.Declarations.Add(owner, factory);
+                    RegisterProjectedInnerFactory(owner, inner, constructor, factory, context, methods, seen);
                     context.AttachMethod(definition, factory.Bridge);
                     factory.BridgeBinding = context.Bindings.GetCapturedSource(factory.Bridge);
                 }
@@ -127,6 +130,7 @@ static partial class FBoundStarProjectionErasure
         BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, owner.Name, false);
         definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
         erased.Attrs = new[] { ClassifierIdentity() };
+        RegisterProjectedStorage(owner, definition, erased, context);
         if (PublishedApiTypeVisibilityLowering.ResolveVisibility(definition) is { } visibility) erased.Vis = visibility;
         context.AttachType(root, erased);
         foreach (var slot in methods)

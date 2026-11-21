@@ -48,7 +48,8 @@ static partial class UnsafeAccessorLowering
     static SourceAccessor EnsureSourceAccessor(SourceHost caller, SourceAccessContext context, string key,
         string targetName, int kind, TypeNode.Fqn owner, BirTypeParameter[] ownerParameters,
         BirTypeParameter[] methodParameters, TypeNode result, TypeNode[] signature, bool includeTarget,
-        string targetDeclarationId = null, TypeNode nullableReturn = null, bool ownershipKnown = false)
+        string targetDeclarationId = null, TypeNode nullableReturn = null, bool ownershipKnown = false,
+        bool shareGenericEntry = false)
     {
         if (context.Accessors.TryGetValue(key, out var existing)) return existing;
         var ownerCount = ownerParameters?.Length ?? 0;
@@ -63,6 +64,8 @@ static partial class UnsafeAccessorLowering
         var identity = DeclarationIdentityBinding.PhysicalOnlyId(caller.Name, "unsafe-accessor:" + accessorName);
         var accessor = SourceAccessorDeclaration(accessorName, result, parameters.ToArray(), kind, targetName);
         accessor.DeclarationId = identity;
+        if (kind is 1 or 2 && methodFrame is { Length: > 0 } && targetDeclarationId != null)
+            accessor.ProjectedAccessBinding = (identity, targetDeclarationId);
         if (targetDeclarationId != null)
         {
             if (kind == 0) accessor.UnsafeSignatureTargetDeclarationId = targetDeclarationId;
@@ -71,7 +74,9 @@ static partial class UnsafeAccessorLowering
         if (methodFrame != null) accessor.TypeParams = CopySourceParameters(methodFrame);
         var declarationSignature = parameters.Select(p => CopySourceType(p.Type.Value)).ToArray();
         SourceAccessor definition;
-        if (ownerCount == 0)
+        var separateMethodHost = methodFrame is { Length: > 0 } &&
+            (shareGenericEntry || caller.Type != null && TypeParameterFrame.Count(caller.Type) != 0);
+        if (ownerCount == 0 && !separateMethodHost)
         {
             StampSourceNullableOwnership(accessor, nullableReturn, ownershipKnown);
             caller.Append(accessor, context.Transitions);
@@ -82,7 +87,7 @@ static partial class UnsafeAccessorLowering
             // TYPE variables stay on a physical holder, never on the accessor
             // method: UnsafeAccessor matches the exact target declaration frame.
             var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
-            var holderFrame = CopySourceParameters(ownerParameters, "__owner");
+            var holderFrame = CopySourceParameters(ownerParameters, "__owner") ?? [];
             var entryName = accessorName + "$invoke";
             var wrapperIdentity = DeclarationIdentityBinding.PhysicalOnlyId(caller.Name, "unsafe-wrapper:" + accessorName);
             var holderSelf = (TypeNode.Fqn)OpenSourceOwner(new TypeNode.Fqn(holderName), ownerCount);
@@ -100,6 +105,7 @@ static partial class UnsafeAccessorLowering
                 Body = SourceReturningBody(call, result), Attrs = Array.Empty<BirAttribute>(),
             };
             if (targetDeclarationId != null) wrapper.UnsafeSignatureTargetDeclarationId = targetDeclarationId;
+            if (accessor.ProjectedAccessBinding != null) wrapper.ProjectedAccessBinding = (wrapperIdentity, targetDeclarationId);
             if (methodFrame != null) wrapper.TypeParams = CopySourceParameters(methodFrame);
             StampSourceNullableOwnership(wrapper, nullableReturn, ownershipKnown);
             var holder = new BirClassDefinition {

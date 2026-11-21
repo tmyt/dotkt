@@ -43,7 +43,9 @@ static partial class DeclarationIdentityBinding
                 method.NullableRepresentationFrame = default;
                 method.MethodTypeParameterBoundsPre = default;
                 method.DeclarationSemanticSignature = default;
-                if (!id.Contains(ExistentialSlotMarker, StringComparison.Ordinal))
+                if (!id.Contains(ExistentialSlotMarker, StringComparison.Ordinal)
+                    && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedConstructorRole, StringComparison.Ordinal)
+                    && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedInnerConstructorRole, StringComparison.Ordinal))
                 {
                     // Report the actual attached occurrence, with its original
                     // ID still present. This is consumption, not retirement.
@@ -101,6 +103,8 @@ static partial class DeclarationIdentityBinding
                 method.UnsafeTargetDeclarationId = default;
             }
             if (node.DeclarationIdentityFact.OrDefault() is not string id || !physicalById.ContainsKey(id)) return;
+            if (node is (BirCallStatic or BirCallInstance or BirConstrainedCall or BirNewDelegate or BirNewBoundDelegate) && node.ApplicationTypeArguments.OrEmpty().Length != 0)
+                node.SelectedGenericCallable = id;
             switch (node)
             {
                 case BirCallStatic call:
@@ -169,7 +173,7 @@ static partial class DeclarationIdentityBinding
         }
     }
 
-    static void RewriteUnsafeAccessorTarget(BirFunctionDeclaration method, string physicalName)
+    internal static void RewriteUnsafeAccessorTarget(BirFunctionDeclaration method, string physicalName)
     {
         if (!method.Attrs.HasValue)
             throw new InvalidOperationException("bir2cir: declaration-bound UnsafeAccessor has no attribute list");

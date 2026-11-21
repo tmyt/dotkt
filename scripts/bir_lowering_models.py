@@ -408,6 +408,20 @@ def outputs(root, definitions):
         if info.get("executablePayload"): bases += ["IBirExecutablePayload"]
         if key in {"birClassDefinition", "birInterfaceDefinition", "birEnumDefinition"}: bases += ["IBirTypeDeclaration"]
         model += [f"internal sealed record {name} : " + ", ".join(bases), "{"]
+        # Live binding facts consumed after physical placement. They are not wire-format BIR fields.
+        if name in {"BirCallStatic", "BirCallInstance", "BirConstrainedCall", "BirNewDelegate", "BirNewBoundDelegate"}:
+            model += ["    internal override string? SelectedGenericCallable { get; set; }"]
+        if name == "BirNew":
+            model += ["    internal (string Id, int[] ProofOwners)? ReferencedProjectedFactory { get; set; }"]
+        if name == "BirCallStatic":
+            model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
+        if name == "BirFunctionDeclaration":
+            model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
+                      "    internal bool HasNativeOverrideSlot { get; set; }",
+                      "    internal bool SourceCallableVirtual { get; set; }",
+                      "    internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }",
+                      "    internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }",
+                      "    internal int FacadeModalityFlags { get; set; }"]
         if node:
             tag = shape["properties"]["k"]["const"]
             model += [f'    public override string Tag => {json.dumps(tag)};']

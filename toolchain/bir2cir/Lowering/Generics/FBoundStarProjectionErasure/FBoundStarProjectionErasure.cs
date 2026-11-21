@@ -730,21 +730,33 @@ static partial class FBoundStarProjectionErasure
             // A retained generic head carries native witnesses as well as value
             // companions. Its recorded physical frame applies equally to a new,
             // its value slot, and an exact lexical declaration owner.
-            return application.Args.Select((argument, index) =>
+            var physical = application.Args.Select((argument, index) =>
             {
                 var ordinary = frame != null && frame.PhysicalSlot(index).Representation
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
                 var exact = nativeArguments && (PreservesNativeWitnessHead(argument, context) || IsExactNativeArrayWitness(argument, context))
                     || context.NativeProofs?.ExactTypeArgument(application.Name, index) == true;
                 // A variant Kotlin value keeps its carrier even as a nested ordinary witness.
-                var projected = RewriteType(argument, context, boundDeclaration,
+                return RewriteType(argument, context, boundDeclaration,
                     preserveArrayShape: nativeOwner || ordinary,
                     preserveConstructedHead: exact && !ContainsExistentialProjection(argument)
                         || ordinary && !(StripSourceNullability(argument) is TypeNode.Fqn variant
                             && context.ProjectionCanChangeConstruction(variant)));
-                return nativeOwner || boundDeclaration ? projected
-                    : context.ClassConstrainedArgument(application, index, argument, projected);
             }).ToArray();
+            if (nativeOwner || boundDeclaration) return physical;
+            // A bound such as B : A needs A's chosen CLR argument, even when B
+            // comes first in the declaration. Start recursive edges at the ordinary projection.
+            bool[] visited = null;
+            TypeNode Close(int i)
+            {
+                if (visited?[i] == true || StripSourceNullability(application.Args[i]) is not TypeNode.Fqn { Args.Length: > 0 })
+                    return physical[i];
+                visited ??= new bool[physical.Length];
+                visited[i] = true;
+                return physical[i] = context.ClassConstrainedArgument(application, i, application.Args[i], physical[i], Close);
+            }
+            for (int i = 0; i < physical.Length; ++i) Close(i);
+            return physical;
         }
         switch (type)
         {

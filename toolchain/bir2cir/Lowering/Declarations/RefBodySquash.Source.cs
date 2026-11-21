@@ -34,7 +34,7 @@ static partial class RefBodySquash
             foreach (var statement in body) retireDiscardedSubtree((BirGraphValue)statement);
         }
     }
-    static IBirStatement[] SourceThrowStubBody() => new IBirStatement[] {
+    internal static IBirStatement[] SourceThrowStubBody() => new IBirStatement[] {
         new BirThrow { Value = new BirNewClr { Type = new TypeNode.Fqn("System.NotImplementedException"),
             ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() } },
     };

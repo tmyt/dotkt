@@ -3,6 +3,43 @@ using roundtrip.invariantstorage;
 
 namespace GenericValueInterop;
 
+public interface ILeftMark { }
+public interface IRightMark { }
+public interface IProjectedMark : ILeftMark, IRightMark { }
+public interface IRichProjectedMark : IProjectedMark { }
+public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMark
+{
+    public T FromNative(T item) => item;
+}
+public interface IMarkedTag<T> { }
+public interface IMarkedRecord<T> where T : IProjectedMark { T Read(); void Write(T item); }
+public interface IMarkedRecordTag<T> where T : IProjectedMark { }
+public sealed class TwoMarkedTags : IMarkedTag<int>, IMarkedTag<string> { }
+public sealed class ForeignFirstSelector : roundtrip.constrainedbound.MarkedSelector
+{
+    public override object selectMarkedProjected<A, Storage, Proof>(object left, object right) => left;
+    public static object FromExact(roundtrip.constrainedbound.MarkedSelector selector,
+        roundtrip.constrainedbound.ConcreteMarkedItem first, roundtrip.constrainedbound.ConcreteMarkedItem last) =>
+        selector.selectMarked<roundtrip.constrainedbound.ConcreteMarkedItem, roundtrip.constrainedbound.ConcreteMarkedItem>(first, last);
+}
+public class MarkedStreamReceiver
+{
+    public virtual string Source<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => "base";
+    public virtual int SourceRef<T>(T item, ref int n) where T : System.IO.MemoryStream, IProjectedMark => n = 42;
+    protected int Inherited<T>(T item, ref int n) where T : System.IO.MemoryStream, IProjectedMark => ++n;
+    protected MarkedStreamReceiver Receiver<T>(T item, ref int n) where T : System.IO.MemoryStream, IProjectedMark
+    { ++n; return this; }
+    public T Keep<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => item;
+    public T WriteAliased<T>(T item, ref int first, ref int second) where T : System.IO.MemoryStream, IProjectedMark
+    {
+        first = 8;
+        if (second != 8) throw new System.InvalidOperationException("Expected the same managed location");
+        second = 42;
+        return item;
+    }
+}
+
 public interface NativeBoxReceiver
 {
     object Accept(Box<string, string> value);
@@ -29,6 +66,21 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T ReplaceRecord<T>(IMarkedRecord<T> record, T item) where T : IProjectedMark
+    {
+        record.Write(item);
+        return record.Read();
+    }
+    public static bool HasRecordTag<T>(object record) where T : IProjectedMark => record is IMarkedRecordTag<T>;
+    public static string InterfaceWitness<T>() where T : IProjectedMark => typeof(T).Name;
+    public static string JointInterfaceWitness<T>() where T : ILeftMark, IRightMark => typeof(T).Name;
+    public static T LastMarked<T>(T first, T second) where T : IProjectedMark => second;
+    public static B SecondMarkedStream<A, B>(A first, B second)
+        where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => second;
+    public static string FirstMarkedType<A, B>(A first, B second, IMarkedTag<int> tag)
+        where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => typeof(A).Name;
+    public static B DependentMarkedStream<A, B>(A first, B second)
+        where A : System.IO.MemoryStream, IProjectedMark where B : A => second;
     static Box<string, string> live = new("initial");
     public static void ResetLive() => live = new("initial");
     public static ref Box<string, string> Live() => ref live;

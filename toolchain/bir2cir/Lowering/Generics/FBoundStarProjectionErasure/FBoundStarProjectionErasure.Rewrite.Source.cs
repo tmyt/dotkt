@@ -128,8 +128,7 @@ static partial class FBoundStarProjectionErasure
         var childScope = SourceChildScope(node, scope, state, typesOnly);
         if (!typesOnly)
         {
-            node = BindStarInnerConstructionSource(node, scope.ExistentialTypes, scope.ExistentialMethods, state);
-            node = LowerProjectedConstructionSource(node, state);
+            node = LowerProjectedConstructionSource(node, state, scope.ExistentialTypes, scope.ExistentialMethods);
             node = BindStarFieldThroughCanonicalGetterSource(node, state);
             node = BindProjectedFieldStorageSource(node, state);
             BindProjectedConstraintMemberSource(node, scope.TypeParameters, scope.MethodParameters, state);
@@ -156,20 +155,24 @@ static partial class FBoundStarProjectionErasure
                 return type;
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
-            var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases);
+            var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases, state.SharedOuters);
             var bound = scope.Bound || BoundTypeSlot(facts, field);
             var shape = scope.ArrayShape || NativeArrayTypeSlot(facts, field);
+            // An inner still captures its actual enclosing instance. Where
+            // that declaration has two implementations, store the common
+            // Kotlin carrier rather than asserting one exact CLR TypeDef.
+            var sharedOuter = type is TypeNode.Fqn o && state.SharedOuters.Contains(o.Name);
             if (field == "typeArgs") return RewriteSourceMethodArgument(node, type, index, state, bound, shape);
             if (field is "argTypes" or "memberSignature" && SourceArguments(node) is { } arguments)
                 return state.Projection.Rewrite(type, bound,
-                    preserveConstructedHead: field == "argTypes" && index < arguments.Length && SourceExactOuter((BirGraphValue)arguments[index])
-                        || IsSourceInnerOuterSlot(node, index, state), preserveArrayShape: shape);
+                    preserveConstructedHead: !sharedOuter && (field == "argTypes" && index < arguments.Length && SourceExactOuter((BirGraphValue)arguments[index])
+                        || IsSourceInnerOuterSlot(node, index, state)), preserveArrayShape: shape);
             if (field == "delegationSig" && node is BirConstructor constructor)
             {
                 var nativeBase = !constructor.ThisArgs.HasValue && constructor.BaseArgs.HasValue
                     && scope.BaseType != null && IsNativeArrayOwner(scope.BaseType, state.References, state.LocalClrAliases);
                 return state.Projection.Rewrite(type, bound,
-                    preserveConstructedHead: constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index
+                    preserveConstructedHead: !sharedOuter && constructor.DelegationOuterSlot.HasValue && constructor.DelegationOuterSlot.Value == index
                         || nativeBase && IsExactNativeArrayWitness(type, state.Projection),
                     preserveArrayShape: nativeBase);
             }
@@ -187,7 +190,8 @@ static partial class FBoundStarProjectionErasure
             return state.Projection.Rewrite(type, bound, preserveConstructedHead:
                 ConstructionHeadSlot(facts, field)
                 || (ArrayComponentTypeSlot(facts, field) || NativeLocationTypeSlot(facts, field)) && PreservesNativeWitnessHead(type, state.Projection)
-                || ExactLexicalTypeSlot(facts, field) || facts.TypeDefinition && field is "base" or "interfaces"
+                || ExactLexicalTypeSlot(facts, field) && !(facts.ExactOuter && sharedOuter && field != "ownerType")
+                || facts.TypeDefinition && field is "base" or "interfaces"
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape);
         }, (field, _, child) => {
             if (!typesOnly && earlyOperand && field == "e") return;

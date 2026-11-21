@@ -47,6 +47,7 @@ static partial class NullableBodyDispatch
                 SuspendRet = source.SuspendRet, SuspendResult = source.SuspendResult,
             };
             prepare(helper, frame);
+            helper.LocalBodyEntry = (helper.DeclarationId.Value, frame);
             methods.Add(helper);
             chain.Add((helper, frame));
         }

@@ -28,8 +28,51 @@ class ResultSource {
     class ResultItem<T>(val result: T) : Tagged<String>()
 }
 
+class ConcreteMarkedItem : ResultSource.Tagged<String>()
+
 class ItemSlot<A : PendingItems.Item> {
     var item: A? = null
+}
+
+class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
+
+interface MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark { fun accept(value: A): A }
+fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.Item, A : ResultSource.Mark =
+    if (first) left else right
+interface MarkedChoice {
+    fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
+}
+open class MarkedSelector : MarkedChoice {
+    open fun <A> later(x: A): () -> () -> A where A : PendingItems.Item, A : ResultSource.Mark = { { x } }
+    open fun <A> identity(): (A) -> A where A : PendingItems.Item, A : ResultSource.Mark = { it }
+    override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark =
+        pickMarked(left, right, false)
+}
+fun <A> absentMarked(): A? where A : PendingItems.Item, A : ResultSource.Mark = null
+class MarkedItemSlot<A> : MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark {
+    var item: A? = null
+    override fun accept(value: A): A = value
+    fun duplicate(): MarkedItemSlot<A> {
+        val copy = MarkedItemSlot<A>()
+        copy.item = item
+        return copy
+    }
+    fun <B> deferred(label: B): () -> () -> Pair<B, A?> = { { label to item } }
+}
+abstract class AbstractMarkedSlot<A>(val value: A) where A : PendingItems.Item, A : ResultSource.Mark
+class JointOuter<A>(private val value: A) where A : PendingItems.Item, A : ResultSource.Mark {
+    private fun captured() = value
+    inner class Inner<B>(val item: B) where B : PendingItems.Item, B : ResultSource.Mark {
+        fun owner() = this@JointOuter
+        fun outerValue() = captured()
+    }
+}
+class MarkedItemOwner<X>(val outerValue: X) {
+    private class Secret(val n: Int)
+    inner class Slot<A>(var item: A) where A : PendingItems.Item, A : ResultSource.Mark {
+        fun ownerValue(): X = outerValue
+        fun number(): Int = Secret(42).n
+    }
 }
 
 fun <A : PendingItems.Item?> keepItem(value: A?): A? = value
@@ -39,6 +82,12 @@ fun checkLocalMethodBounds(value: ResultSource.ResultItem<*>) {
     check(dependent<ResultSource.Tagged<*>, ResultSource.ResultItem<*>>(value, value) === value)
     check(nullableOperand(value, null) === value)
     check(boxed<ResultSource.ResultItem<*>>() == null)
+}
+
+fun localRelatedItem(value: ResultSource.ResultItem<*>): Boolean {
+    val slot = RelatedItemSlot<ResultSource.ResultItem<*>, ResultSource.ResultItem<*>>()
+    slot.item = value
+    return slot.item === value
 }
 private fun <A> marked(value: A): A where A : PendingItems.Item, A : ResultSource.Mark = value
 private fun <A : PendingItems.Item, B : A> dependent(first: A, second: B): A = second

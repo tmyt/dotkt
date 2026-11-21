@@ -138,6 +138,16 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   from the start. An output-only `out` argument replacing an array variable does not publish its previous vector.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
+- When a Kotlin virtual method needs separate CLR type parameters to represent a class bound and an
+  interface bound, both Kotlin and C# dispatch through **one** virtual method. Ordinary C# calls still use
+  the source-named entry with both original constraints; this non-overridable entry forwards to the virtual
+  implementation. A C# subclass overrides the projected implementation, not the forwarding entry.
+  Kotlin callers and subclasses keep the original source signature. Imported C# virtual slots are unchanged.
+- A CLR base class or an implemented CLR interface needs **one actual CLR type** for each of its
+  generic parameters. If that parameter requires both a class and an interface, a star-projected
+  Kotlin argument is accepted when a common CLR type satisfies both. Otherwise constructing the
+  Kotlin class is a compile-time error. An interface-only requirement can use the Kotlin value's
+  interface representation instead. A star on one argument does not erase an unrelated argument.
 - **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to
   an imported CLR `ref G<String>` parameter gives that declaration one exact location for the whole body, shared
   by repeated aliases. Explicit `@ClrField` storage and live CLR ref-return delegates likewise retain their native

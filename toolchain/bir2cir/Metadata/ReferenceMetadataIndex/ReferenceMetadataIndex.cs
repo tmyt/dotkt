@@ -195,6 +195,15 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    internal bool TryPhysicalInstanceFactory(string id, out (string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Result) factory)
+    {
+        factory = default;
+        if (!_declarationById.TryGetValue(id, out var binding) || binding.IsStatic || binding.ParamTypeNodes == null
+            || binding.ReturnTypeNode == null) return false;
+        factory = (binding.DeclarationPhysicalOwner ?? binding.Owner, binding.Name, binding.MethodArity, binding.ParamTypeNodes, binding.ReturnTypeNode);
+        return true;
+    }
+
     readonly Dictionary<(string Owner, string Member), TypeNode> _collectionSlotReturns = new();
 
     internal TypeNode CollectionSlotReturn(string owner, string member)
@@ -2236,7 +2245,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return PhysicalProofOwner(type);
     }
 
-    MethodBase PhysicalMethodForParameterFacts(string declarationIdentity)
+    internal MethodBase SelectedPhysicalMethod(string declarationIdentity)
     {
         if (declarationIdentity == null || !_declarationById.TryGetValue(declarationIdentity, out var declaration))
             return null;

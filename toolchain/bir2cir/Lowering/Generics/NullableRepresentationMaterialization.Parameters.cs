@@ -51,7 +51,7 @@ static partial class NullableRepresentationMaterialization
                 return found;
             }
             bool SourceScalar(TypeNode type) => type is TypeNode.Tv scalar && scalar.Scope == scope && scalar.I == sourceIndex;
-            var published = !bodyOnlyStorage && PublishedSlots(declaration).Any(Mentions);
+            var published = !bodyOnlyStorage && (policy.HasJointStorageBounds(projected) || PublishedSlots(declaration).Any(Mentions));
             if (!bodyOnlyStorage && declaration is BirFunctionDeclaration method)
                 published |= method.Ret.OrDefault() is { } result && Contains(result) || SourceScalar(method.RetKotlinType.OrDefault())
                     || method.Params.OrEmpty().Any(parameter => SourceScalar(parameter.KotlinType.OrDefault()));
