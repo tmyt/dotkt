@@ -1233,7 +1233,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// Do not classify by the fake accessor's parameter kinds: its setter value may occupy the synthetic
 			// dispatch slot. Every non-null expression is a real static accessor argument in source order.
 			val accessorArgs = call.arguments.filterNotNull()
-			val argTypes = accessorArgs.map { birType(it.type) }
+			val signature = overloadSignature(propertyAccessorDeclaration)
 			val args = accessorArgs.map { expr(it) }
 			val propKind = if (isSetter) "set" else "get"
 			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(call), call.endOffset,
@@ -1253,7 +1253,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				else BirStaticFieldGet(fieldOwner, fieldName)
 			}
 			return BirCallStatic(ownerType = selectedOwner, method = staticProperty.name.asString(), prop = propKind,
-				sig = overloadSignature(propertyAccessorDeclaration), argTypes = argTypes, ret = ret, args = args)
+				sig = signature, argTypes = signature, ret = ret, args = args)
 		}
 	}
 
@@ -1640,14 +1640,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// positional part carries a restored `context(...)` parameter and, for a setter, the trailing `value`.
 			extensionReceiver(call)?.let { pExt ->
 				val accArgIrs = listOf(pExt) + regularArgs(call)
-				val accArgTypes = accArgIrs.map { birType(it.type) }
+				val signature = overloadSignature(callee)
 				val accArgs = accArgIrs.map { expr(it) }
 				return if (callee === prop.setter)
 					BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = "set",
-						sig = overloadSignature(callee), argTypes = accArgTypes, ret = TypeNode.Fqn("kotlin.Unit"),
+						sig = signature, argTypes = signature, ret = TypeNode.Fqn("kotlin.Unit"),
 						recv = receiver!!, args = accArgs, superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 				else BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = "get",
-					sig = overloadSignature(callee), argTypes = accArgTypes, ret = birType(callee.returnType),
+					sig = signature, argTypes = signature, ret = birType(callee.returnType),
 					recv = receiver!!, args = accArgs, superCall = true.takeIf { call.superQualifierSymbol != null }, companionCall = companionCall)
 			}
 			// Reading a projected event uses its native identity even when it also fills an ordinary getter slot. bir2cir
@@ -1660,16 +1660,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			// A non-static property-accessor callInstance carries `virtual` too (moot once bir2cir reshapes it to
 			// clrPropGet/clrPropSet; consistent with the other .NET-interop callInstance nodes — #139).
 			val plainAccArgIrs = regularArgs(call)
-			val plainAccArgTypes = plainAccArgIrs.map { birType(it.type) }
 			val plainAccArgs = plainAccArgIrs.map { expr(it) }
 			val propKind = if (callee === prop.setter) "set" else "get"
 			val signature = overloadSignature(callee)
 			val resultType = if (callee === prop.setter) null else birType(callee.returnType)
 			return if (isStatic)
 				BirCallStatic(ownerType = memberType, method = pn, prop = propKind, sig = signature,
-					argTypes = plainAccArgTypes, ret = resultType, args = plainAccArgs, companionCall = companionCall)
+					argTypes = signature, ret = resultType, args = plainAccArgs, companionCall = companionCall)
 			else BirCallInstance(virtual = clrCallVirtual, ownerType = memberType, method = pn, prop = propKind,
-				sig = signature, argTypes = plainAccArgTypes, ret = resultType, recv = receiver!!, args = plainAccArgs,
+				sig = signature, argTypes = signature, ret = resultType, recv = receiver!!, args = plainAccArgs,
 				// The projected receiver can inherit a Kotlin accessor. Its fake override, not the
 				// resolved accessor above, owns the path to the selected declaration.
 				overrides = call.symbol.owner.takeIf { it.isFakeOverride }?.let { overrideDeclarations(it) },
