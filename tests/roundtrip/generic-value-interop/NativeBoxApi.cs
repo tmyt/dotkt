@@ -31,6 +31,8 @@ public static class NativeBoxApi
 {
     public static B SecondMarkedStream<A, B>(A first, B second)
         where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => second;
+    public static B DependentMarkedStream<A, B>(A first, B second)
+        where A : System.IO.MemoryStream, IProjectedMark where B : A => second;
     static Box<string, string> live = new("initial");
     public static void ResetLive() => live = new("initial");
     public static ref Box<string, string> Live() => ref live;

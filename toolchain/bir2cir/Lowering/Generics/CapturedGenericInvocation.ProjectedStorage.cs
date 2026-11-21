@@ -23,8 +23,21 @@ static partial class CapturedGenericInvocation
         var resolved = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, selected, "method", declaringOwner, owner.Args));
         if (!member.StructurallyEquals(resolved)) throw new InvalidOperationException("Projected generic call lost its selected MethodDef");
         var generic = selected.GetGenericArguments();
-        var missing = candidates.Where(row => generic[row.index].GetGenericParameterConstraints().Any(t => t.IsInterface))
-            .Select(row => row.index).ToArray();
+        var lost = candidates.Where(row => generic[row.index].GetGenericParameterConstraints().Any(t => t.IsInterface))
+            .Select(row => row.index).ToHashSet();
+        bool UsesLostSlot(System.Type type) =>
+            type.IsGenericParameter ? type.DeclaringMethod != null && lost.Contains(type.GenericParameterPosition)
+            : type.HasElementType ? UsesLostSlot(type.GetElementType())
+            : type.IsGenericType && type.GetGenericArguments().Any(UsesLostSlot);
+        // A dependent Y : X must be closed against the recovered X, not its
+        // former class bound. An unaffected, explicitly concrete Y stays exact.
+        int previous;
+        do {
+            previous = lost.Count;
+            foreach (var (_, index) in candidates)
+                if (generic[index].GetGenericParameterConstraints().Any(UsesLostSlot)) lost.Add(index);
+        } while (previous != lost.Count);
+        var missing = lost.Order().ToArray();
         if (missing.Length == 0) return call;
         var formal = selected.GetParameters();
         if ((receiver != null && selected.DeclaringType.IsValueType)

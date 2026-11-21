@@ -44,7 +44,8 @@ static partial class DeclarationIdentityBinding
                 method.MethodTypeParameterBoundsPre = default;
                 method.DeclarationSemanticSignature = default;
                 if (!id.Contains(ExistentialSlotMarker, StringComparison.Ordinal)
-                    && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedConstructorRole, StringComparison.Ordinal))
+                    && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedConstructorRole, StringComparison.Ordinal)
+                    && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedInnerConstructorRole, StringComparison.Ordinal))
                 {
                     // Report the actual attached occurrence, with its original
                     // ID still present. This is consumption, not retirement.

@@ -126,8 +126,7 @@ static partial class FBoundStarProjectionErasure
         var childScope = SourceChildScope(node, scope, state, typesOnly);
         if (!typesOnly)
         {
-            node = BindStarInnerConstructionSource(node, scope.ExistentialTypes, scope.ExistentialMethods, state);
-            node = LowerProjectedConstructionSource(node, state);
+            node = LowerProjectedConstructionSource(node, state, scope.ExistentialTypes, scope.ExistentialMethods);
             node = BindStarFieldThroughCanonicalGetterSource(node, state);
             node = BindProjectedFieldStorageSource(node, state);
             BindProjectedConstraintMemberSource(node, scope.TypeParameters, scope.MethodParameters, state);

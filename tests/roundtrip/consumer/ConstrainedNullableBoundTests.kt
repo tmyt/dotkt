@@ -11,6 +11,7 @@ import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
+import roundtrip.constrainedbound.MarkedItemOwner
 import roundtrip.constrainedbound.ResultSource.Mark
 import roundtrip.constrainedbound.localRelatedItem
 import roundtrip.constrainedbound.localItemResult
@@ -54,6 +55,7 @@ class ConstrainedNullableBoundTests {
             return result
         }
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
+        fun dependent(value: A): A = NativeBoxApi.DependentMarkedStream<A, A>(value, value)
     }
 
     @TestAttribute
@@ -77,6 +79,11 @@ class ConstrainedNullableBoundTests {
         streams.item = second
         check(streams.item === second && streams.keep(second) === second)
         check(streams.second(first, second) === second)
+        check(streams.dependent(second) === second)
+        val outer: MarkedItemOwner<*> = MarkedItemOwner("outer")
+        val inner = outer.Slot<ClientItem<*>>(number)
+        inner.item = text
+        check(inner.item === text && inner.ownerValue() == "outer" && inner.number() == 42)
         check(streams.keepAliased(second) === second)
     }
 

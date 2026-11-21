@@ -109,6 +109,7 @@ static partial class FBoundStarProjectionErasure
                     else methods.Add(factory.Slot);
                     factory.SlotBinding = factory.ReferenceContract?.SlotBinding;
                     context.Declarations.Add(owner, factory);
+                    RegisterProjectedInnerFactory(owner, inner, constructor, factory, context, methods, seen);
                     context.AttachMethod(definition, factory.Bridge);
                     factory.BridgeBinding = context.Bindings.GetCapturedSource(factory.Bridge);
                 }

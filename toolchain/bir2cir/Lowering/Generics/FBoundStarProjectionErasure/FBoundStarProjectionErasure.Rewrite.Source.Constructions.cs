@@ -122,16 +122,33 @@ static partial class FBoundStarProjectionErasure
             .OrderBy(row => row.position).Select(row => BirGraphValue.CopyType(arguments[captured + row.index])).ToArray();
     }
 
-    static BirGraphValue LowerProjectedConstructionSource(BirGraphValue node, SourceRewriteState state)
+    static BirGraphValue LowerProjectedConstructionSource(BirGraphValue node, SourceRewriteState state,
+        IReadOnlySet<int> existentialTypes = null, IReadOnlySet<int> existentialMethods = null)
     {
+        BirGraphValue BindOuter() =>
+            BindStarInnerConstructionSource(node, existentialTypes, existentialMethods, state);
         if (node is not BirNew construction || construction.Type.OrDefault() is not TypeNode.Fqn { Args: { Length: > 0 } } owner
             || !owner.Args.Any(ContainsExistentialProjection) || !construction.MemberSignature.HasValue
-            || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return node;
+            || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return BindOuter();
         var signature = construction.MemberSignature.Value;
         if (construction.ConstructorDeclarationId.OrDefault() is string id &&
             state.Projection.StorageFrame(owner.Name) is { } layout &&
             state.Projection.ProjectedConstructorArguments(owner, layout) is { } physicalArguments)
         {
+            var innerFactoryId = ProjectedInnerFactoryId(id);
+            if (state.Declarations.ProjectedInnerFactories.TryGetValue(innerFactoryId, out var innerFactory) ||
+                state.References.TryPhysicalInstanceFactory(innerFactoryId, out innerFactory))
+            {
+                var methodArgsOnly = physicalArguments[^innerFactory.Arity..];
+                var virtualCall = new BirCallInstance {
+                    OwnerType = new TypeNode.Fqn(innerFactory.Owner), Method = innerFactory.Name, DeclarationId = innerFactoryId,
+                    Virtual = true, Sig = innerFactory.Parameters.Select(BirGraphValue.CopyType).ToArray(),
+                    Recv = OptionalField<IBirExpression>.Of(construction.Args.Value[0]), Args = construction.Args.Value[1..],
+                    TypeArgs = methodArgsOnly, Ret = innerFactory.Result,
+                };
+                state.MethodWitnesses.Add(virtualCall, methodArgsOnly.Select((type, index) => (type, index)).ToDictionary(row => row.index, row => row.type));
+                return virtualCall;
+            }
             var factoryId = StorageFactoryId(id);
             if (!state.Declarations.ProjectedConstructors.TryGetValue(factoryId, out var factory))
             {
@@ -149,6 +166,11 @@ static partial class FBoundStarProjectionErasure
                 .ToDictionary(row => row.index, row => row.type));
             return call;
         }
+        // A split frame belongs to the inner constructor itself. Do not
+        // replace that construction first with an outer factory whose method
+        // parameters require the original, unprovable joint constraint.
+        var throughOuter = BindOuter();
+        if (!ReferenceEquals(throughOuter, node)) return throughOuter;
         if (signature.Any(type => type == null) || !ConstructionHasHiddenWitnessSource(owner, state, signature)) return node;
         var result = state.Projection.Rewrite(owner);
         if (result is TypeNode.Fqn projected && projected.Name == owner.Name) return node;

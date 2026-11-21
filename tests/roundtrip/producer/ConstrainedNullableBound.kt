@@ -37,6 +37,13 @@ class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 class MarkedItemSlot<A> where A : PendingItems.Item, A : ResultSource.Mark {
     var item: A? = null
 }
+class MarkedItemOwner<X>(val outerValue: X) {
+    private class Secret(val n: Int)
+    inner class Slot<A>(var item: A) where A : PendingItems.Item, A : ResultSource.Mark {
+        fun ownerValue(): X = outerValue
+        fun number(): Int = Secret(42).n
+    }
+}
 
 fun <A : PendingItems.Item?> keepItem(value: A?): A? = value
 

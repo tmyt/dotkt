@@ -4,7 +4,7 @@ using DotKt.Cir;
 
 static partial class FBoundStarProjectionErasure
 {
-    internal sealed record ProjectedStorageOwner(string Exact, string Carrier, string Implementation,
+    internal sealed record ProjectedStorageOwner(string Exact, string Carrier, string Implementation, string Outer, string OuterCarrier,
         ProjectedClassStorageFrame.InterfaceSlot[] Slots, IReadOnlyDictionary<string, string> Constructors);
 
     static string StorageFactoryId(string constructorId) =>
@@ -43,8 +43,10 @@ static partial class FBoundStarProjectionErasure
             };
             carrier.Methods = carrier.Methods.OrEmpty().Append(factory).ToArray();
         }
+        var outer = owner.Inner && owner.SemanticOwner != null && context.Owners.TryGetValue(owner.SemanticOwner, out var enclosing)
+            && enclosing.Needed ? enclosing : null;
         context.ProjectedStorage.Add(new(owner.Name, owner.ErasedName,
-            context.Demand.AllocateReferenceContractName(owner.Name + "$projected"), frame.Interfaces, ids));
+            context.Demand.AllocateReferenceContractName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids));
     }
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
@@ -62,16 +64,20 @@ static partial class FBoundStarProjectionErasure
             storage.Name = plan.Implementation;
             storage.Generated = true;
             storage.Vis = "internal";
-            storage.NestedIn = default;
             storage.SemanticOwner = default;
             storage.RoundtripTypeHeaderPending = default;
             storage.RoundtripSupertypesPre = default;
-            storage.TypeParams = ProjectedClassStorageFrame.Declare(exact.TypeParams.Value, plan.Slots);
+            // The plan uses CLR slot indices. Placement has since separated
+            // an inner class's enclosing prefix from its own type parameters.
+            var fullFrame = ProjectedClassStorageFrame.Declare(TypeParameterFrame.Declarations(exact).ToArray(), plan.Slots);
+            var prefix = exact.CapturedTypeParams.OrEmpty().Length;
+            if (prefix != 0) storage.CapturedTypeParams = fullFrame[..prefix];
+            storage.TypeParams = fullFrame[prefix..];
             storage.Attrs = storage.Attrs.OrEmpty().Where(a =>
                 a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.RuntimeClassifierAttribute }).ToArray();
             storage.Methods = storage.Methods.OrEmpty().Where(m => !m.Static.OrDefault()).ToArray();
             storage.Fields = storage.Fields.OrEmpty().Where(f => !f.Static.OrDefault()).ToArray();
-            var count = storage.TypeParams.Value.Length;
+            var count = fullFrame.Length;
             TypeNode.Fqn Instance(string scope) => new(plan.Implementation,
                 Enumerable.Range(0, count).Select(i => (TypeNode)new TypeNode.Tv(scope, i)).ToArray());
             foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
@@ -115,6 +121,9 @@ static partial class FBoundStarProjectionErasure
                 constructor.Vis = "internal";
                 var factory = carrier.Methods.Value.Single(m =>
                     m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == factoryId);
+                if (plan.Outer != null)
+                    MaterializeProjectedInnerFactory(declarations[plan.Outer].Single().type, declarations[plan.OuterCarrier].Single().type,
+                        id, factory, plan.Carrier, prefix, count, referenceBuild);
                 if (referenceBuild) continue;
                 var constructed = Instance("method");
                 var creation = new BirNew { Type = constructed, LocalCtorIndex = index,
