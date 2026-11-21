@@ -10985,6 +10985,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
 {
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }
+    internal bool SourceCallableVirtual { get; set; }
+    internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }
     internal int FacadeModalityFlags { get; set; }
     public OptionalField<string> Name { get; set; }
     public OptionalField<string> SourceName { get; set; }

@@ -52,6 +52,7 @@ static partial class DeclarationSignatureIdentity
                 BirFunctionDeclaration method => method with {
                     Params = CaptureParameters(method.Params, method.TypeParams),
                     HasNativeOverrideSlot = method.Overrides.OrEmpty().Any(edge => !edge.DeclarationId.HasValue),
+                    SourceCallableVirtual = method.Virtual.OrDefault() || method.Override.OrDefault() || method.Abstract.OrDefault(),
                     SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
                         ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
                 },

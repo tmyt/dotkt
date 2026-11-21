@@ -4,6 +4,7 @@ using roundtrip.invariantstorage;
 namespace GenericValueInterop;
 
 public interface IProjectedMark { }
+public interface IRichProjectedMark : IProjectedMark { }
 public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMark
 {
     public T FromNative(T item) => item;

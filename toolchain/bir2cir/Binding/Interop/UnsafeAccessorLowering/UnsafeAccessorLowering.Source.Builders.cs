@@ -63,6 +63,8 @@ static partial class UnsafeAccessorLowering
         var identity = DeclarationIdentityBinding.PhysicalOnlyId(caller.Name, "unsafe-accessor:" + accessorName);
         var accessor = SourceAccessorDeclaration(accessorName, result, parameters.ToArray(), kind, targetName);
         accessor.DeclarationId = identity;
+        if (kind is 1 or 2 && methodFrame is { Length: > 0 } && targetDeclarationId != null)
+            accessor.ProjectedAccessBinding = (identity, targetDeclarationId);
         if (targetDeclarationId != null)
         {
             if (kind == 0) accessor.UnsafeSignatureTargetDeclarationId = targetDeclarationId;
@@ -74,8 +76,23 @@ static partial class UnsafeAccessorLowering
         if (ownerCount == 0)
         {
             StampSourceNullableOwnership(accessor, nullableReturn, ownershipKnown);
-            caller.Append(accessor, context.Transitions);
-            definition = new(accessorName, null, declarationSignature, 0, methodFrame?.Length ?? 0, identity);
+            // A generic method accessor matches its target's declaring frame,
+            // not the generic class where the Kotlin access happened.
+            if (accessor.ProjectedAccessBinding != null && caller.Type != null && TypeParameterFrame.Count(caller.Type) != 0)
+            {
+                var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
+                accessor.Vis = "internal";
+                var holder = new BirClassDefinition { Name = holderName, Kind = "class", Generated = true,
+                    Vis = "internal", Methods = new[] { accessor } };
+                caller.File.Types = caller.File.Types.OrEmpty().Append(holder).ToArray();
+                context.Transitions.PublishTypes(caller.File, new IBirTypeDeclaration[] { holder });
+                definition = new(accessorName, holderName, declarationSignature, 0, methodFrame.Length, identity);
+            }
+            else
+            {
+                caller.Append(accessor, context.Transitions);
+                definition = new(accessorName, null, declarationSignature, 0, methodFrame?.Length ?? 0, identity);
+            }
         }
         else
         {
@@ -100,6 +117,7 @@ static partial class UnsafeAccessorLowering
                 Body = SourceReturningBody(call, result), Attrs = Array.Empty<BirAttribute>(),
             };
             if (targetDeclarationId != null) wrapper.UnsafeSignatureTargetDeclarationId = targetDeclarationId;
+            if (accessor.ProjectedAccessBinding != null) wrapper.ProjectedAccessBinding = (wrapperIdentity, targetDeclarationId);
             if (methodFrame != null) wrapper.TypeParams = CopySourceParameters(methodFrame);
             StampSourceNullableOwnership(wrapper, nullableReturn, ownershipKnown);
             var holder = new BirClassDefinition {

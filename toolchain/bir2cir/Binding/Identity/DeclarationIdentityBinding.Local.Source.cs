@@ -173,7 +173,7 @@ static partial class DeclarationIdentityBinding
         }
     }
 
-    static void RewriteUnsafeAccessorTarget(BirFunctionDeclaration method, string physicalName)
+    internal static void RewriteUnsafeAccessorTarget(BirFunctionDeclaration method, string physicalName)
     {
         if (!method.Attrs.HasValue)
             throw new InvalidOperationException("bir2cir: declaration-bound UnsafeAccessor has no attribute list");

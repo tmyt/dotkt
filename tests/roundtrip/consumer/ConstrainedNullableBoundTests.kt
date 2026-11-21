@@ -30,6 +30,7 @@ import roundtrip.constrainedbound.ScopedBoundOwner
 import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 import GenericValueInterop.IProjectedMark
+import GenericValueInterop.IRichProjectedMark
 import GenericValueInterop.MarkedStreamReceiver
 import GenericValueInterop.NativeStreamBase
 import GenericValueInterop.TwoMarkedTags
@@ -46,6 +47,11 @@ private class ForeignBoundHolder<T : VisibleBoundBase>(val element: T) {
     fun read(): String = publicBoundName(keepBound(element))
 }
 private fun <T : UsableBound> publicBoundName(value: T): String = value.name
+private fun <T> lastNative(first: T, second: T): T where T : MemoryStream, T : IProjectedMark =
+    NativeBoxApi.LastMarked<T>(first, second)
+private fun <X, Y> secondNative(first: X, second: Y): Y
+    where X : MemoryStream, X : IProjectedMark, Y : MemoryStream, Y : IProjectedMark =
+    NativeBoxApi.SecondMarkedStream<X, Y>(first, second)
 private class ScopedBoundConsumer : ScopedBoundOwner() {
     private fun <T : State> keep(value: T): T = value
     fun <T : ScopedBoundOwner.Item> forward(value: T): T = keep(value)
@@ -65,6 +71,10 @@ class ConstrainedNullableBoundTests {
     private class MarkedStream<T> : MemoryStream(), IProjectedMark
     private open class ExactStream : MemoryStream(), IProjectedMark
     private class DerivedStream : ExactStream()
+    private class SharedBaseStream<T> : ExactStream(), IRichProjectedMark
+    private class RichSlot<A> : NativeStreamBase<A>() where A : MemoryStream, A : IRichProjectedMark {
+        fun roundtrip(value: A) = FromNative(value)
+    }
     private class NativeBaseSlot<A, B> : NativeStreamBase<A>()
         where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark {
         var other: B? = null
@@ -82,7 +92,10 @@ class ConstrainedNullableBoundTests {
         }
         fun keep(value: A): A = MarkedStreamReceiver().Keep<A>(value)
         fun interfaceWitness() = NativeBoxApi.InterfaceWitness<A>()
-        fun last(first: A, second: A): A = NativeBoxApi.LastMarked<A>(first, second)
+        fun last(first: A, second: A): A = lastNative<A>(first, second)
+        fun <T> choose(first: A, second: T): T where T : MemoryStream, T : IProjectedMark =
+            secondNative<A, T>(first, second)
+        fun bothScopes(first: A, second: B): B = choose<B>(first, second)
         fun keepAliased(value: A): A {
             var n = 0
             val result = MarkedStreamReceiver().WriteAliased<A>(value, byref(n), byref(n))
@@ -134,10 +147,13 @@ class ConstrainedNullableBoundTests {
         check(mixed.firstType(DerivedStream(), second) == "ExactStream")
         check(mixed.interfaceWitness() == "ExactStream")
         check(streams.interfaceWitness() == "IProjectedMark" && streams.last(first, second) === second)
+        check(streams.bothScopes(first, second) === second)
         val native = NativeBaseSlot<ExactStream, MarkedStream<*>>()
         native.other = first
         val exactStream = ExactStream()
         check(native.roundtrip(exactStream) === exactStream && native.other === first)
+        val shared = SharedBaseStream<Int>()
+        check(RichSlot<SharedBaseStream<*>>().roundtrip(shared) === shared)
         native.other = second
         check(native.other === second)
         check(streams.dependent(second) === second)

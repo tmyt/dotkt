@@ -60,7 +60,7 @@ static partial class FBoundStarProjectionErasure
         HashSet<string> emittedTypes, ReferenceMetadataIndex references, bool referenceBuild)
     {
         var callables = new ProjectedCallableEntries(documents, references, referenceBuild);
-        if (carriers.ProjectedStorage.Count == 0) { callables.BindExactSuperCalls(documents); return; }
+        if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
         // Slot positions survived lowering; a bound's spelling need not
@@ -116,11 +116,9 @@ static partial class FBoundStarProjectionErasure
             var exactParameters = TypeParameterFrame.Declarations(exact).ToArray();
             TypeNode.Fqn Instance(string scope) => new(plan.Implementation,
                 Enumerable.Range(0, count).Select(i => (TypeNode)new TypeNode.Tv(scope, i)).ToArray());
-            foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             if (!referenceBuild)
             {
-                foreach (var method in exact.Methods.OrEmpty())
-                    method.Visit(n => callables.Bind(n, "type", exactParameters, []));
+                callables.BindExactOwnerMethods(exact, exactParameters);
                 var generated = new List<IBirTypeDeclaration>();
                 var ordinal = 0;
                 string Allocate(string role)
@@ -132,14 +130,7 @@ static partial class FBoundStarProjectionErasure
                 void CaptureBody(BirClassDefinition lexical)
                 {
                     var helpers = new List<BirFunctionDeclaration>();
-                    BirGraphValue Capture(BirGraphValue node)
-                    {
-                        if (node is IBirExecutablePayload or BirMemberReference) return node;
-                        node.VisitChildSlots(slot => slot.Replace(Capture(slot.Value)));
-                        if (callables.Bind(node, "type", exactParameters, plan.Slots)) return node;
-                        return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references, Allocate, generated, lexical, helpers);
-                    }
-                    Capture(lexical);
+                    callables.RewriteBody(lexical, lexical, exactParameters, plan.Slots, Allocate, generated, helpers);
                     if (helpers.Count != 0) lexical.Methods = lexical.Methods.OrEmpty().Concat(helpers).ToArray();
                 }
                 ProjectLexicalClosures(storage, plan, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,
@@ -148,6 +139,7 @@ static partial class FBoundStarProjectionErasure
                 CaptureBody(storage);
                 file.Types = file.Types.Value.Concat(generated).ToArray();
             }
+            foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             storage.Visit(node => {
                 // A locally bound constructor keeps its overload index when its
                 // declaring class is cloned. If a parameter comes from this
@@ -208,7 +200,7 @@ static partial class FBoundStarProjectionErasure
             file.Types = file.Types.Value.Append(storage).ToArray();
             emittedTypes.Add(plan.Implementation);
         }
-        callables.BindExactSuperCalls(documents);
+        callables.Finish(documents, emittedTypes);
     }
 
     // Closure placement has already captured the enclosing CLR frame. Its copy

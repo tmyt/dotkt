@@ -414,6 +414,8 @@ def outputs(root, definitions):
         if name == "BirFunctionDeclaration":
             model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",
+                      "    internal bool SourceCallableVirtual { get; set; }",
+                      "    internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }",
                       "    internal int FacadeModalityFlags { get; set; }"]
         if node:
             tag = shape["properties"]["k"]["const"]
