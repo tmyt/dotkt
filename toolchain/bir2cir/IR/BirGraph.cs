@@ -13,6 +13,12 @@ namespace DotKt.Bir.Lowering;
 // while passes establish/remove facts; no missing declaration fact is inferred.
 internal abstract record BirGraphValue
 {
+    // The binding owner already selected this declaration. A physical clone
+    // of a generic caller may need its joint-constraint entry after binding.
+    internal virtual string? SelectedGenericCallable {
+        get => null;
+        set => throw new InvalidOperationException("Not a generic call occurrence");
+    }
     public virtual TypeNode? ResultTypeStamp => null;
     public virtual TypeNode? FunctionTypeStamp => null;
     public virtual TypeNode? CallBindingTypeHint => null;

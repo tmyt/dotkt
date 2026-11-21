@@ -81,6 +81,9 @@ static partial class ClrMemberResolution
                     if (plan.SetVirtual) call.Virtual = true;
                     break;
             }
+        if (plan.ClearIdentity && node is (BirCallStatic or BirCallInstance or BirConstrainedCall) &&
+            node.ApplicationTypeArguments.OrEmpty().Length != 0 && node.DeclarationIdentityFact.OrDefault() is string id)
+            node.SelectedGenericCallable = id;
         if (plan.ClearIdentity)
             switch (node)
             {

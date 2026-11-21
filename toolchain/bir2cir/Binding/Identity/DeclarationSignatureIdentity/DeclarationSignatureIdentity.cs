@@ -51,6 +51,7 @@ static partial class DeclarationSignatureIdentity
             {
                 BirFunctionDeclaration method => method with {
                     Params = CaptureParameters(method.Params, method.TypeParams),
+                    HasNativeOverrideSlot = method.Overrides.OrEmpty().Any(edge => !edge.DeclarationId.HasValue),
                     SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
                         ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
                 },

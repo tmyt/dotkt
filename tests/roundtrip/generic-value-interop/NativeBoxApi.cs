@@ -4,8 +4,19 @@ using roundtrip.invariantstorage;
 namespace GenericValueInterop;
 
 public interface IProjectedMark { }
-public sealed class MarkedStreamReceiver
+public interface IMarkedTag<T> { }
+public sealed class TwoMarkedTags : IMarkedTag<int>, IMarkedTag<string> { }
+public sealed class ForeignFirstSelector : roundtrip.constrainedbound.MarkedSelector
 {
+    public override object selectMarkedProjected<A, Storage, Proof>(object left, object right) => left;
+    public static object FromExact(roundtrip.constrainedbound.MarkedSelector selector,
+        roundtrip.constrainedbound.ConcreteMarkedItem first, roundtrip.constrainedbound.ConcreteMarkedItem last) =>
+        selector.selectMarked<roundtrip.constrainedbound.ConcreteMarkedItem, roundtrip.constrainedbound.ConcreteMarkedItem>(first, last);
+}
+public class MarkedStreamReceiver
+{
+    public virtual string Source<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => "base";
+    protected string Inherited<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => "protected";
     public T Keep<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => item;
     public T WriteAliased<T>(T item, ref int first, ref int second) where T : System.IO.MemoryStream, IProjectedMark
     {
@@ -31,6 +42,8 @@ public static class NativeBoxApi
 {
     public static B SecondMarkedStream<A, B>(A first, B second)
         where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => second;
+    public static string FirstMarkedType<A, B>(A first, B second, IMarkedTag<int> tag)
+        where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => typeof(A).Name;
     public static B DependentMarkedStream<A, B>(A first, B second)
         where A : System.IO.MemoryStream, IProjectedMark where B : A => second;
     static Box<string, string> live = new("initial");

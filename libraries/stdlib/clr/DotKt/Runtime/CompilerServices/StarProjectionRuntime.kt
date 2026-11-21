@@ -69,6 +69,7 @@ internal interface StarProjectionConstructor {
 @kotlin.clr.ClrEnum
 internal enum class StarProjectionBindingFlags(value: Int) {
     INSTANCE_PUBLIC_NON_PUBLIC(52),
+    DECLARED_INSTANCE_STATIC_PUBLIC_NON_PUBLIC(62),
 }
 
 @kotlin.clr.ClrTypeAlias("System.Reflection.ParameterInfo")
@@ -159,6 +160,9 @@ internal interface StarProjectionType {
 
     @kotlin.clr.ClrIntrinsic("GetMethods")
     fun getMethods(): Array<StarProjectionMethod>
+
+    @kotlin.clr.ClrIntrinsic("GetMethods")
+    fun getMethods(flags: StarProjectionBindingFlags): Array<StarProjectionMethod>
 
     @kotlin.clr.ClrIntrinsic("GetMethod")
     fun functionInvoke(name: String): StarProjectionMethod?
@@ -517,11 +521,11 @@ internal fun starProjectionInvokeStaticHelperUnit(
 @PublishedApi
 internal fun starProjectionInvokeIntersection(
     receiver: Any?, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
-    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, missing: IntArray,
+    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>,
 ): Any? {
     val target = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authored, missing, arguments, null)
+        authored, slots, facets, arguments, null)
     try {
         return target.invoke(receiver, arguments)
     } catch (failure: StarProjectionInvocationException) {
@@ -531,15 +535,20 @@ internal fun starProjectionInvokeIntersection(
 
 private fun starProjectionCloseIntersection(
     declaringType: StarProjectionType, metadataToken: Int, memberName: String,
-    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, missing: IntArray,
+    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>, physicalSlots: Array<StarProjectionType?>?,
 ): StarProjectionMethod {
     val open = if (declaringType.isGenericType) declaringType.getGenericTypeDefinition() else declaringType
-    val definition = starProjectionOpenMethod(open, metadataToken, memberName, authored.size, parameterTypeKeys)
+    // A local lexical super forwarder has a compiler-allocated unique name,
+    // but no metadata token at the point the call is lowered.
+    val flags = StarProjectionBindingFlags.DECLARED_INSTANCE_STATIC_PUBLIC_NON_PUBLIC
+    val definition = if (metadataToken == 0) open.getMethods(flags).single {
+        it.name == memberName && it.getGenericArguments().size == authored.size
+    } else starProjectionOpenMethod(open, metadataToken, memberName, authored.size, parameterTypeKeys, true)
     var selected = definition
     if (open != declaringType) {
         var closed: StarProjectionMethod? = null
-        for (candidate in declaringType.getMethods()) {
+        for (candidate in declaringType.getMethods(flags)) {
             if (candidate.module == definition.module && candidate.metadataToken == definition.metadataToken) {
                 closed = candidate
                 break
@@ -547,6 +556,9 @@ private fun starProjectionCloseIntersection(
         }
         selected = closed ?: throw IllegalStateException("Missing closed projected method")
     }
+    val missing = slots.indices.filter { !facets[it].isAssignableFrom(authored[slots[it]]) }
+        .map { slots[it] }.distinct().toIntArray()
+    if (missing.isEmpty()) return selected.makeGenericMethod(authored)
     val parameters = selected.getParameters()
     val inferred = arrayOfNulls<StarProjectionType>(authored.size)
     val exact = BooleanArray(authored.size)
@@ -582,16 +594,23 @@ private fun starProjectionCloseIntersection(
     return selected.makeGenericMethod(types)
 }
 
+private fun starProjectionUsesMethodSlot(type: StarProjectionType, slots: IntArray): Boolean {
+    if (type.isGenericParameter)
+        return type.declaringMethod != null && type.genericParameterPosition in slots
+    if (type.isArray || type.isByRef) return starProjectionUsesMethodSlot(type.getElementType()!!, slots)
+    return type.isGenericType && type.getGenericArguments().any { starProjectionUsesMethodSlot(it, slots) }
+}
+
 // Only the stateless adapter constructor is reflected. User ref/out locations
 // and byref-like operands never enter a reflection argument array.
 @PublishedApi
 internal fun starProjectionIntersectionAdapter(
     adapter: StarProjectionType, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
-    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, missing: IntArray,
+    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>, physicalSlots: Array<StarProjectionType?>,
 ): Any? {
     val selected = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authored, missing, arguments, physicalSlots)
+        authored, slots, facets, arguments, physicalSlots)
     val owner = declaringType.getGenericArguments()
     val method = selected.getGenericArguments()
     val frame = Array<StarProjectionType>(owner.size + method.size) {
@@ -604,10 +623,10 @@ internal fun starProjectionIntersectionAdapter(
 @PublishedApi
 internal fun starProjectionInvokeIntersectionUnit(
     receiver: Any?, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
-    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, missing: IntArray,
+    parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>,
 ) {
-    starProjectionInvokeIntersection(receiver, declaringType, metadataToken, memberName, parameterTypeKeys, authored, missing, arguments)
+    starProjectionInvokeIntersection(receiver, declaringType, metadataToken, memberName, parameterTypeKeys, authored, slots, facets, arguments)
 }
 
 // A captured invocation carries explicit argument witnesses and method-slot ownership. Other slots retain the
@@ -834,13 +853,11 @@ private fun starProjectionBindConstructionSlots(
     methodSlots: Boolean = false,
     allowedMethodSlots: IntArray? = null,
 ) {
+    // A concrete sibling (e.g. ITag<Int>) can have several runtime views.
+    // It cannot bind a requested method slot, so never choose a view for it.
+    if (allowedMethodSlots != null && !starProjectionUsesMethodSlot(declaration, allowedMethodSlots)) return
     if (declaration.isGenericParameter && (declaration.declaringMethod != null) == methodSlots) {
         val slot = declaration.genericParameterPosition
-        if (allowedMethodSlots != null) {
-            var allowed = false
-            for (candidate in allowedMethodSlots) if (candidate == slot) allowed = true
-            if (!allowed) return
-        }
         val previous = bindings[slot]
         if (previous != null && previous != actual)
             throw IllegalStateException("Conflicting projected declaration type argument")
@@ -953,10 +970,13 @@ private fun starProjectionOpenMethod(
     memberName: String,
     methodArity: Int,
     parameterTypeKeys: Array<String>,
+    includeNonPublic: Boolean = false,
 ): StarProjectionMethod {
     var tokenMatch: StarProjectionMethod? = null
     var structuralMatch: StarProjectionMethod? = null
-    for (candidate in openGenericType.getMethods()) {
+    val methods = if (includeNonPublic) openGenericType.getMethods(StarProjectionBindingFlags.DECLARED_INSTANCE_STATIC_PUBLIC_NON_PUBLIC)
+        else openGenericType.getMethods()
+    for (candidate in methods) {
         if (!starProjectionDeclaresOn(candidate.declaringType, openGenericType)
             || candidate.name != memberName
             || candidate.getGenericArguments().size != methodArity) continue

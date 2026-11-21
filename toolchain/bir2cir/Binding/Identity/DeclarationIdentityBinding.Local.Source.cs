@@ -103,6 +103,8 @@ static partial class DeclarationIdentityBinding
                 method.UnsafeTargetDeclarationId = default;
             }
             if (node.DeclarationIdentityFact.OrDefault() is not string id || !physicalById.ContainsKey(id)) return;
+            if (node is (BirCallStatic or BirCallInstance or BirConstrainedCall) && node.ApplicationTypeArguments.OrEmpty().Length != 0)
+                node.SelectedGenericCallable = id;
             switch (node)
             {
                 case BirCallStatic call:

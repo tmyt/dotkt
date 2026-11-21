@@ -14,7 +14,7 @@ sealed partial class ReferenceMetadataIndex
     // The identity selects an exact reference MethodDef token, then the existing
     // twin resolver selects its shipped declaration. Do not reuse the owner's
     // local/admission guard or a source parameter row as another selector here.
-    internal BirTypeParameter[] PhysicalMethodTypeParametersInPhysicalFrame(string identity)
-        => PhysicalMethodForParameterFacts(identity) is { } method
-            ? method.GetGenericArguments().Select(GenericParamSourceDeclaration).ToArray() : null;
+    internal BirTypeParameter[] PhysicalMethodTypeParametersInPhysicalFrame(string identity, bool nativeNames = false)
+        => SelectedPhysicalMethod(identity) is { } method
+            ? method.GetGenericArguments().Select(p => GenericParamDeclaration(p, native: nativeNames)).ToArray() : null;
 }

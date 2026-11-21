@@ -2231,7 +2231,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return PhysicalProofOwner(type);
     }
 
-    MethodBase PhysicalMethodForParameterFacts(string declarationIdentity)
+    internal MethodBase SelectedPhysicalMethod(string declarationIdentity)
     {
         if (declarationIdentity == null || !_declarationById.TryGetValue(declarationIdentity, out var declaration))
             return null;

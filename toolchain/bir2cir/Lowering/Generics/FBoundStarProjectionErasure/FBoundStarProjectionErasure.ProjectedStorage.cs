@@ -59,7 +59,8 @@ static partial class FBoundStarProjectionErasure
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
         HashSet<string> emittedTypes, ReferenceMetadataIndex references, bool referenceBuild)
     {
-        if (carriers.ProjectedStorage.Count == 0) return;
+        var callables = new ProjectedCallableEntries(documents, references, referenceBuild);
+        if (carriers.ProjectedStorage.Count == 0) { callables.BindExactSuperCalls(documents); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
         // Slot positions survived lowering; a bound's spelling need not
@@ -112,11 +113,14 @@ static partial class FBoundStarProjectionErasure
             storage.Methods = storage.Methods.OrEmpty().Where(m => !m.Static.OrDefault()).ToArray();
             storage.Fields = storage.Fields.OrEmpty().Where(f => !f.Static.OrDefault()).ToArray();
             var count = fullFrame.Length;
+            var exactParameters = TypeParameterFrame.Declarations(exact).ToArray();
             TypeNode.Fqn Instance(string scope) => new(plan.Implementation,
                 Enumerable.Range(0, count).Select(i => (TypeNode)new TypeNode.Tv(scope, i)).ToArray());
             foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             if (!referenceBuild)
             {
+                foreach (var method in exact.Methods.OrEmpty())
+                    method.Visit(n => callables.Bind(n, "type", exactParameters, []));
                 var generated = new List<IBirTypeDeclaration>();
                 var ordinal = 0;
                 string Allocate(string role)
@@ -125,16 +129,23 @@ static partial class FBoundStarProjectionErasure
                     do name = plan.Implementation + "$" + role + ordinal++; while (!emittedTypes.Add(name));
                     return name;
                 }
-                BirGraphValue Capture(BirGraphValue node)
+                void CaptureBody(BirClassDefinition lexical)
                 {
-                    if (node is IBirExecutablePayload or BirMemberReference) return node;
-                    node.VisitChildSlots(slot => slot.Replace(Capture(slot.Value)));
-                    return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references, Allocate, generated);
+                    var helpers = new List<BirFunctionDeclaration>();
+                    BirGraphValue Capture(BirGraphValue node)
+                    {
+                        if (node is IBirExecutablePayload or BirMemberReference) return node;
+                        node.VisitChildSlots(slot => slot.Replace(Capture(slot.Value)));
+                        if (callables.Bind(node, "type", exactParameters, plan.Slots)) return node;
+                        return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references, Allocate, generated, lexical, helpers);
+                    }
+                    Capture(lexical);
+                    if (helpers.Count != 0) lexical.Methods = lexical.Methods.OrEmpty().Concat(helpers).ToArray();
                 }
                 ProjectLexicalClosures(storage, plan, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,
                     Allocate, generated);
-                foreach (var closure in generated.OfType<BirClassDefinition>().ToArray()) Capture(closure);
-                Capture(storage);
+                foreach (var closure in generated.OfType<BirClassDefinition>().ToArray()) CaptureBody(closure);
+                CaptureBody(storage);
                 file.Types = file.Types.Value.Concat(generated).ToArray();
             }
             storage.Visit(node => {
@@ -197,6 +208,7 @@ static partial class FBoundStarProjectionErasure
             file.Types = file.Types.Value.Append(storage).ToArray();
             emittedTypes.Add(plan.Implementation);
         }
+        callables.BindExactSuperCalls(documents);
     }
 
     // Closure placement has already captured the enclosing CLR frame. Its copy

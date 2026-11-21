@@ -5385,6 +5385,7 @@ internal sealed record BirOverride : BirGraphValue
 
 internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttributeValue
 {
+    internal override string? SelectedGenericCallable { get; set; }
     public override string Tag => "callStatic";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<TypeNode> Owner { get; set; }
@@ -6184,6 +6185,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
 
 internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttributeValue
 {
+    internal override string? SelectedGenericCallable { get; set; }
     public override string Tag => "callInstance";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
@@ -10981,6 +10983,9 @@ internal sealed record BirDeclarationPosition : BirGraphValue
 
 internal sealed record BirFunctionDeclaration : BirGraphValue
 {
+    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
+    internal bool HasNativeOverrideSlot { get; set; }
+    internal int FacadeModalityFlags { get; set; }
     public OptionalField<string> Name { get; set; }
     public OptionalField<string> SourceName { get; set; }
     public OptionalField<bool> Static { get; set; }
@@ -29644,6 +29649,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
 
 internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAttributeValue
 {
+    internal override string? SelectedGenericCallable { get; set; }
     public override string Tag => "constrainedCall";
     public OptionalField<string> Method { get; set; }
     public OptionalField<TypeNode> Iface { get; set; }

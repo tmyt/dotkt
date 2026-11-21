@@ -12,7 +12,7 @@ static partial class CapturedGenericInvocation
     // interface proof. Close a stateless typed forwarder, not the ref/out
     // operands: those keep their original storage across the entire call.
     static BirGraphValue ProjectAddressCall(Invocation site, MethodInfo selected, TypeNode.Fqn owner,
-        int[] missing, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated)
+        (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
@@ -122,7 +122,7 @@ static partial class CapturedGenericInvocation
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         TypeNode[] lookup = [type, type, new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"),
             new TypeNode.Array(new TypeNode.Fqn("kotlin.String")), new TypeNode.Array(type), new TypeNode.Fqn("kotlin.IntArray"),
-            new TypeNode.Array(any), new TypeNode.Array(new TypeNode.Nullable(type))];
+            new TypeNode.Array(type), new TypeNode.Array(any), new TypeNode.Array(new TypeNode.Nullable(type))];
         if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, helperName, 0, true, lookup, null, out _, out var helper, out var declaring))
             throw new InvalidOperationException($"Projected address call has no runtime binding for '{helperName}'");
         var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, helper, "method", declaring, null));
@@ -130,7 +130,8 @@ static partial class CapturedGenericInvocation
             Ret = member.ReturnType, ResolvedMemberReturn = member.ReturnType,
             Args = new IBirExpression[] { ClassRef(new TypeNode.Fqn(adapterName)), ClassRef(owner), Number(selected.MetadataToken), Text(selected.Name),
                 NewArray(String, formals.Select(p => (IBirExpression)Text(ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)))),
-                NewArray(Type, authored.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, missing.Select(i => (IBirExpression)Number(i))),
+                NewArray(Type, authored.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
+                NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))),
                 NewArray(Object, witnesses), NewArray(Type, invariantTypes) } };
         var closedResult = SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());
         var invoke = new BirCallInstance { OwnerType = callerContract, Method = "Invoke", Virtual = true, Recv = Cast(callerContract, create),

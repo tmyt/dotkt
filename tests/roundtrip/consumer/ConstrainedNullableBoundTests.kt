@@ -11,6 +11,10 @@ import roundtrip.constrainedbound.ResultSource.ResultItem
 import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
+import roundtrip.constrainedbound.MarkedSelector
+import roundtrip.constrainedbound.ConcreteMarkedItem
+import roundtrip.constrainedbound.MarkedChoice
+import roundtrip.constrainedbound.absentMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
 import roundtrip.constrainedbound.ResultSource.Mark
@@ -27,6 +31,8 @@ import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 import GenericValueInterop.IProjectedMark
 import GenericValueInterop.MarkedStreamReceiver
+import GenericValueInterop.TwoMarkedTags
+import GenericValueInterop.ForeignFirstSelector
 import kotlin.clr.byref
 import GenericValueInterop.NativeBoxApi
 import System.IO.MemoryStream
@@ -45,9 +51,22 @@ private class ScopedBoundConsumer : ScopedBoundOwner() {
 
 class ConstrainedNullableBoundTests {
     private class ClientItem<T>(val payload: T) : PendingItems.Item(), Mark
+    private class FirstSelector : MarkedSelector() {
+        override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : Mark = left
+        fun callBase(left: ClientItem<Long>, right: ClientItem<Long>) = super.selectMarked(left, right)
+    }
+    private class MethodSlot<A> where A : PendingItems.Item, A : Mark {
+        fun pick(selector: MarkedSelector, first: A, last: A): A = selector.selectMarked(first, last)
+        fun fromInterface(selector: MarkedChoice, first: A, last: A): A = selector.selectMarked(first, last)
+        fun absent(): A? = absentMarked<A>()
+    }
     private class MarkedStream<T> : MemoryStream(), IProjectedMark
-    private class StreamSlot<A, B>(var item: A)
+    private open class ExactStream : MemoryStream(), IProjectedMark
+    private class DerivedStream : ExactStream()
+    private class StreamSlot<A, B>(var item: A) : MarkedStreamReceiver()
         where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark {
+        override fun <T> Source(item: T): String where T : MemoryStream, T : IProjectedMark = "derived"
+        fun source(value: A) = super.Source<A>(value) + ":" + Inherited<A>(value)
         fun keep(value: A): A = MarkedStreamReceiver().Keep<A>(value)
         fun keepAliased(value: A): A {
             var n = 0
@@ -56,6 +75,7 @@ class ConstrainedNullableBoundTests {
             return result
         }
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
+        fun firstType(first: A, second: B) = NativeBoxApi.FirstMarkedType<A, B>(first, second, TwoMarkedTags())
         fun dependent(value: A): A = NativeBoxApi.DependentMarkedStream<A, A>(value, value)
     }
 
@@ -66,6 +86,15 @@ class ConstrainedNullableBoundTests {
         val concrete = object : AbstractMarkedSlot<ClientItem<String>>(text) {}
         check(concrete.value === text)
         val slot = MarkedItemSlot<ClientItem<*>>()
+        val methods = MethodSlot<ClientItem<*>>()
+        check(methods.pick(MarkedSelector(), number, text) === text && methods.absent() == null)
+        check(methods.pick(FirstSelector(), number, text) === number)
+        check(methods.fromInterface(FirstSelector(), text, number) === text)
+        check(FirstSelector().callBase(ClientItem(1L), number) === number)
+        val foreign = ForeignFirstSelector()
+        check(methods.fromInterface(foreign, text, number) === text)
+        val exactItem = ConcreteMarkedItem()
+        check(ForeignFirstSelector.FromExact(foreign, exactItem, ConcreteMarkedItem()) === exactItem)
         slot.item = number
         check(slot.item === number)
         check(slot.accept(text) === text && slot.duplicate().item === number)
@@ -81,10 +110,13 @@ class ConstrainedNullableBoundTests {
         val first = MarkedStream<Long>()
         val second = MarkedStream<String>()
         val streams = StreamSlot<MarkedStream<*>, MarkedStream<*>>(first)
+        check(streams.source(first) == "base:protected")
         check(streams.item === first && streams.keep(first) === first)
         streams.item = second
         check(streams.item === second && streams.keep(second) === second)
         check(streams.second(first, second) === second)
+        val mixed = StreamSlot<ExactStream, MarkedStream<*>>(ExactStream())
+        check(mixed.firstType(DerivedStream(), second) == "ExactStream")
         check(streams.dependent(second) === second)
         val outer: MarkedItemOwner<*> = MarkedItemOwner("outer")
         val inner = outer.Slot<ClientItem<*>>(number)

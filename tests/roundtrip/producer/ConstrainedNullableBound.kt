@@ -28,6 +28,8 @@ class ResultSource {
     class ResultItem<T>(val result: T) : Tagged<String>()
 }
 
+class ConcreteMarkedItem : ResultSource.Tagged<String>()
+
 class ItemSlot<A : PendingItems.Item> {
     var item: A? = null
 }
@@ -35,6 +37,16 @@ class ItemSlot<A : PendingItems.Item> {
 class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 
 interface MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark { fun accept(value: A): A }
+fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.Item, A : ResultSource.Mark =
+    if (first) left else right
+interface MarkedChoice {
+    fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
+}
+open class MarkedSelector : MarkedChoice {
+    override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark =
+        pickMarked(left, right, false)
+}
+fun <A> absentMarked(): A? where A : PendingItems.Item, A : ResultSource.Mark = null
 class MarkedItemSlot<A> : MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark {
     var item: A? = null
     override fun accept(value: A): A = value

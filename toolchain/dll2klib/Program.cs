@@ -7579,7 +7579,8 @@ internal static class Flags
         | (hasEnumEntries ? 1 << 15 : 0) | (isData ? 1 << 10 : 0);
     public static int Callable(MethodAttributes attrs, int modality, int kotlinFlags = 0, bool isInline = false,
         int memberKind = DeclarationMember) =>
-        Visibility(attrs) | (modality << 4)
+        Visibility(attrs) | (((kotlinFlags & KotlinFacadeModality.Abstract) != 0 ? 2 :
+            (kotlinFlags & KotlinFacadeModality.Open) != 0 ? 1 : modality) << 4)
         | (memberKind << 6)
         | ((kotlinFlags & 2) != 0 ? 1 << 8 : 0)
         | ((kotlinFlags & 1) != 0 ? 1 << 9 : 0)
