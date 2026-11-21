@@ -43,6 +43,8 @@ interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
 }
 open class MarkedSelector : MarkedChoice {
+    open fun <A> later(x: A): () -> () -> A where A : PendingItems.Item, A : ResultSource.Mark = { { x } }
+    open fun <A> identity(): (A) -> A where A : PendingItems.Item, A : ResultSource.Mark = { it }
     override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark =
         pickMarked(left, right, false)
 }

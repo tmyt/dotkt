@@ -3,8 +3,11 @@ using roundtrip.invariantstorage;
 
 namespace GenericValueInterop;
 
-public interface IProjectedMark { }
+public interface ILeftMark { }
+public interface IRightMark { }
+public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
+public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
 public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMark
 {
     public T FromNative(T item) => item;
@@ -60,6 +63,7 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 public static class NativeBoxApi
 {
     public static string InterfaceWitness<T>() where T : IProjectedMark => typeof(T).Name;
+    public static string JointInterfaceWitness<T>() where T : ILeftMark, IRightMark => typeof(T).Name;
     public static T LastMarked<T>(T first, T second) where T : IProjectedMark => second;
     public static B SecondMarkedStream<A, B>(A first, B second)
         where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => second;

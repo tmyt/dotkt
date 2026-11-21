@@ -33,6 +33,7 @@ import GenericValueInterop.IProjectedMark
 import GenericValueInterop.IRichProjectedMark
 import GenericValueInterop.MarkedStreamReceiver
 import GenericValueInterop.NativeStreamBase
+import GenericValueInterop.SharedNativeStream
 import GenericValueInterop.TwoMarkedTags
 import GenericValueInterop.ForeignFirstSelector
 import kotlin.clr.byref
@@ -64,11 +65,21 @@ class ConstrainedNullableBoundTests {
         fun callBase(left: ClientItem<Long>, right: ClientItem<Long>) = super.selectMarked(left, right)
     }
     private class MethodSlot<A> where A : PendingItems.Item, A : Mark {
+        fun newSlot() = MarkedItemSlot<A>()
+        fun fromClosures(selector: MarkedSelector, x: A) = selector.identity<A>()(selector.later(x)()())
         fun pick(selector: MarkedSelector, first: A, last: A): A = selector.selectMarked(first, last)
         fun fromInterface(selector: MarkedChoice, first: A, last: A): A = selector.selectMarked(first, last)
         fun absent(): A? = absentMarked<A>()
     }
-    private class MarkedStream<T> : MemoryStream(), IProjectedMark
+    private open class MarkedStream<T> : MemoryStream(), IProjectedMark
+    private class LongStream : MarkedStream<Long>()
+    private class PartialStream<X,Y> : SharedNativeStream<X>()
+    private class RichStream<T> : MemoryStream(), IRichProjectedMark
+    private class LinkedSlot<A, B : A> where A : MemoryStream, A : IProjectedMark { var value: B? = null }
+    private class RichMethodSlot<A> where A : MemoryStream, A : IRichProjectedMark {
+        fun choose(first: A, second: A) = lastNative<A>(first, second)
+        fun witness() = NativeBoxApi.JointInterfaceWitness<A>()
+    }
     private open class ExactStream : MemoryStream(), IProjectedMark
     private class DerivedStream : ExactStream()
     private class SharedBaseStream<T> : ExactStream(), IRichProjectedMark
@@ -104,7 +115,7 @@ class ConstrainedNullableBoundTests {
         }
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
         fun firstType(first: A, second: B) = NativeBoxApi.FirstMarkedType<A, B>(first, second, TwoMarkedTags())
-        fun dependent(value: A): A = NativeBoxApi.DependentMarkedStream<A, A>(value, value)
+        fun dependent(first: A, second: A): A = NativeBoxApi.DependentMarkedStream<A, A>(first, second)
     }
 
     @TestAttribute
@@ -115,6 +126,10 @@ class ConstrainedNullableBoundTests {
         check(concrete.value === text)
         val slot = MarkedItemSlot<ClientItem<*>>()
         val methods = MethodSlot<ClientItem<*>>()
+        val imported = methods.newSlot()
+        imported.item = text
+        check(imported.item === text)
+        check(methods.fromClosures(MarkedSelector(), number) === number)
         check(methods.pick(MarkedSelector(), number, text) === text && methods.absent() == null)
         check(methods.pick(FirstSelector(), number, text) === number)
         check(methods.fromInterface(FirstSelector(), text, number) === text)
@@ -156,7 +171,15 @@ class ConstrainedNullableBoundTests {
         check(RichSlot<SharedBaseStream<*>>().roundtrip(shared) === shared)
         native.other = second
         check(native.other === second)
-        check(streams.dependent(second) === second)
+        check(streams.dependent(LongStream(), first) === first)
+        val linked = LinkedSlot<MarkedStream<*>, MarkedStream<*>>()
+        linked.value = second
+        check(linked.value === second)
+        val partial = PartialStream<String, Int>()
+        check(NativeBaseSlot<PartialStream<String, *>, MarkedStream<*>>().roundtrip(partial) === partial)
+        val rich = RichMethodSlot<RichStream<*>>()
+        val value = RichStream<Long>()
+        check(rich.choose(value, value) === value && rich.witness() == "IRichProjectedMark")
         val outer: MarkedItemOwner<*> = MarkedItemOwner("outer")
         val inner = outer.Slot<ClientItem<*>>(number)
         inner.item = text

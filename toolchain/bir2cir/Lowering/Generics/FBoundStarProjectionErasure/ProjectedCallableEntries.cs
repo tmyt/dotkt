@@ -15,7 +15,9 @@ sealed class ProjectedCallableEntries
     readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
+    readonly Dictionary<string, BirClassDefinition> classes;
     readonly ReferenceMetadataIndex references;
+    readonly Lazy<IReadOnlyDictionary<string, SupertypeGraph.Def>> classHierarchy;
     readonly bool referenceBuild;
 
     static string EntryId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-call");
@@ -23,7 +25,11 @@ sealed class ProjectedCallableEntries
     internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild)
     {
         this.references = references;
+        classHierarchy = new(() => SupertypeGraph.CollectSource(files));
         this.referenceBuild = referenceBuild;
+        classes = files.SelectMany(f => f.Types.OrEmpty()).OfType<BirClassDefinition>()
+            .Where(t => t.Name.HasValue).ToLookup(t => t.Name.Value, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         kinds = files.SelectMany(f => f.Types.OrEmpty()).Where(t => t.Name.HasValue)
             .ToLookup(t => t.Name.Value, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Kind.OrDefault(), StringComparer.Ordinal);
@@ -67,7 +73,7 @@ sealed class ProjectedCallableEntries
                 if (type.Methods.HasValue) type.Methods = DeclareAccessors(type.Methods.Value);
         }
         var hierarchy = bodies.Any(b => b.Method.SelectedGenericOverrides is { Count: > 0 })
-            ? SupertypeGraph.CollectSource(files) : null;
+            ? classHierarchy.Value : null;
         foreach (var (owner, method, entry) in bodies)
         {
             if (owner == null || method.SelectedGenericOverrides is not { Count: > 0 } slots) continue;
@@ -110,14 +116,15 @@ sealed class ProjectedCallableEntries
         foreach (var m in source)
         {
             var identity = m.RoundtripDeclarationIdentity.OrDefault();
-            if (m.HasNativeOverrideSlot || m.RequiresClrOverride.OrDefault() || identity?.DeclarationId.OrDefault() is not string id ||
-                id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||
+            var bodyEntry = m.LocalBodyEntry;
+            if (m.HasNativeOverrideSlot || m.RequiresClrOverride.OrDefault() || (bodyEntry?.Id ?? identity?.DeclarationId.OrDefault()) is not string id ||
+                bodyEntry == null && id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||
                 m.TypeParams.OrEmpty() is not { Length: > 0 } parameters || Frame(parameters) is not { } frame) continue;
             // This is also the override point for C# subclasses: use an identifier
             // that C# source can name. The binding is still by identity, not suffix.
             var name = m.Name.Value + "Projected";
             for (var i = 0; !names.Add(name); i++) name = m.Name.Value + "Projected" + i;
-            var entry = new Entry(name, frame, parameters, identity.NullableRepresentationFrame.OrDefault());
+            var entry = new Entry(name, frame, parameters, bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault());
             entries.Add(id, entry);
             emittedEntries.Add(EntryId(id), entry);
             var copy = (BirFunctionDeclaration)m.DeepClone();
@@ -130,7 +137,8 @@ sealed class ProjectedCallableEntries
             copy.RequiresClrOverride = default;
             copy.Override = false;
             copy.Attrs = default;
-            copy.RoundtripDeclarationIdentity = new BirRoundtripDeclarationIdentity {
+            if (bodyEntry is { } local) copy.LocalBodyEntry = (EntryId(id), local.Frame);
+            else copy.RoundtripDeclarationIdentity = new BirRoundtripDeclarationIdentity {
                 DeclarationId = EntryId(id), DeclarationSourceName = name };
             if (owner != null && !m.Static.OrDefault())
             {
@@ -207,6 +215,10 @@ sealed class ProjectedCallableEntries
                 methodScope = MethodEntry(method) is { } entry ? new(entry.Original, entry.Frame.Interfaces) :
                     new(method.TypeParams.OrEmpty(), []);
             node.VisitChildSlots(slot => slot.Replace(Rewrite(slot.Value, methodScope)));
+            if (node is BirNew construction && ReferencedConstruction(construction, ownerScope, methodScope) is { } factory)
+                return factory;
+            if (node is BirNewClosure or BirNewSam)
+                ProjectClosureCreation(node, ownerScope, methodScope, allocate, generated);
             if (Bind(node, ownerScope, methodScope)) return node;
             return CapturedGenericInvocation.ProjectStorageCall(node, ownerSlots, methodScope.Slots ?? [], references, allocate, generated, owner, helpers);
         }
@@ -214,7 +226,7 @@ sealed class ProjectedCallableEntries
     }
 
     Entry MethodEntry(BirFunctionDeclaration method) =>
-        method.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() is string id
+        (method.LocalBodyEntry?.Id ?? method.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault()) is string id
             ? emittedEntries.GetValueOrDefault(id) : null;
 
     internal void BindExactOwnerMethods(IBirTypeDeclaration owner, BirTypeParameter[] ownerParameters)
@@ -242,6 +254,9 @@ sealed class ProjectedCallableEntries
                 foreach (var method in methods)
                     if (MethodEntry(method) != null) RewriteBody(method, owner,
                         owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(), [], Allocate, generated, helpers);
+                    else if (method.LocalBodyEntry.HasValue)
+                        method.Visit(n => Bind(n, new(owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(), []),
+                            new(method.TypeParams.OrEmpty(), [])));
                 if (helpers.Count != 0) owner.Methods = owner.Methods.OrEmpty().Concat(helpers).ToArray();
             }
             Process(file.Methods.OrEmpty(), null);
@@ -260,6 +275,81 @@ sealed class ProjectedCallableEntries
         return entries[id] = new(name, frame, parameters, references.NullableMethodFrame(id));
     }
 
+    TypeNode Proof(TypeNode ordinary, TypeNode bound, Scope ownerScope, Scope methodScope)
+    {
+        if (ordinary is not TypeNode.Tv v) return null;
+        var scope = v.Scope == "method" ? methodScope : ownerScope;
+        var i = Array.FindIndex(scope.Slots ?? [], slot => slot.OwnerIndex == v.I && slot.Bound.Equals(bound));
+        if (i < 0 && bound is TypeNode.Fqn required)
+            i = Array.FindIndex(scope.Slots ?? [], slot => slot.OwnerIndex == v.I && slot.Bound is TypeNode.Fqn available
+                && SupertypeGraph.Reaches(available, required, classHierarchy.Value, references));
+        return i < 0 ? null : new TypeNode.Tv(v.Scope, scope.Parameters.Length + i);
+    }
+
+    BirCallStatic ReferencedConstruction(BirNew creation, Scope owner, Scope method)
+    {
+        if (creation.ReferencedProjectedFactory is not { } factory ||
+            creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual } ||
+            !factory.ProofOwners.Any(i => actual[i] is TypeNode.Tv tv &&
+                (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
+        var selected = references.SelectedPhysicalMethod(factory.Id);
+        var formals = references.PhysicalMethodTypeParametersInPhysicalFrame(factory.Id, nativeNames: true);
+        if (selected == null || formals?.Length != actual.Length + factory.ProofOwners.Length)
+            throw new InvalidOperationException($"Selected projected constructor factory '{factory.Id}' has no matching physical frame");
+        var arguments = actual.Concat(factory.ProofOwners.Select((source, i) => {
+            var required = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(
+                formals[actual.Length + i].Constraints.Value.Single(), [], actual);
+            return Proof(actual[source], required, owner, method) ?? actual[source];
+        })).ToArray();
+        var target = ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, null);
+        var signature = target.ParameterTypes.Select(t =>
+            FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(t, [], arguments)).ToArray();
+        return new BirCallStatic { Owner = target.DeclaringType, Method = target.Name, TypeArgs = arguments,
+            Args = creation.Args, Sig = signature, Ret = target.ReturnType, MemberRef = BirMemberReference.FromPhysical(target) };
+    }
+
+    void ProjectClosureCreation(BirGraphValue node, Scope owner, Scope method, Func<string,string> allocate,
+        List<IBirTypeDeclaration> generated)
+    {
+        if (method.Slots is not { Length: > 0 } && owner.Slots is not { Length: > 0 }) return;
+        var target = node is BirNewClosure c ? c.ClosureType.OrDefault() : ((BirNewSam)node).SamType.OrDefault();
+        if (target is not TypeNode.Fqn named || node.ApplicationTypeArguments.OrDefault() is not { } args) return;
+        BirClassDefinition Definition(string name) => classes.GetValueOrDefault(name)
+            ?? generated.OfType<BirClassDefinition>().FirstOrDefault(t => t.Name.OrDefault() == name);
+        if (Definition(named.Name) is not { } original) return;
+        var parameters = TypeParameterFrame.Declarations(original).ToArray();
+        if (parameters.Length != args.Length || Frame(parameters) is not { } frame) return;
+        var prefix = original.CapturedTypeParams.OrEmpty().Length;
+        var split = frame.Interfaces.Where(s => s.OwnerIndex >= prefix && Proof(args[s.OwnerIndex],
+            SupertypeGraph.SubstOwnerTvs(s.Bound, args), owner, method) != null).ToArray();
+        if (split.Length == 0) return;
+        var copy = (BirClassDefinition)original.DeepClone();
+        copy.Name = allocate("closure");
+        copy.RoundtripTypeHeaderPending = default;
+        copy.RoundtripSupertypesPre = default;
+        var full = ProjectedClassStorageFrame.Declare(parameters, split);
+        copy.TypeParams = full[prefix..];
+        var children = new List<IBirTypeDeclaration>();
+        FBoundStarProjectionErasure.ProjectLexicalClosures(copy, named.Name, split.Length, full, Definition, allocate, children);
+        copy.Visit(n => n.RewriteOwnTypeFieldsInPlace((field, _, type) =>
+            n is BirMemberReference && field != "declaringType" ? type :
+            SourceDeclarationSignature.RewriteType(type, f => f.Name == named.Name && f.Args?.Length == args.Length
+                ? new TypeNode.Fqn(copy.Name.Value, f.Args.Concat(Enumerable.Range(args.Length, split.Length)
+                    .Select(i => (TypeNode)new TypeNode.Tv("type", i))).ToArray()) : f)));
+        foreach (var closure in children.Append(copy).OfType<BirClassDefinition>())
+        {
+            classes.Add(closure.Name.Value, closure);
+            var helpers = new List<BirFunctionDeclaration>();
+            RewriteBody(closure, closure, parameters, split, allocate, generated, helpers);
+            if (helpers.Count != 0) closure.Methods = closure.Methods.OrEmpty().Concat(helpers).ToArray();
+            generated.Add(closure);
+        }
+        node.ApplicationTypeArguments = args.Concat(split.Select(s => Proof(args[s.OwnerIndex],
+            SupertypeGraph.SubstOwnerTvs(s.Bound, args), owner, method))).ToArray();
+        if (node is BirNewClosure lambda) lambda.ClosureType = new TypeNode.Fqn(copy.Name.Value);
+        else ((BirNewSam)node).SamType = new TypeNode.Fqn(copy.Name.Value);
+    }
+
     bool Bind(BirGraphValue node, Scope ownerScope, Scope methodScope)
     {
         if (node.SelectedGenericCallable is not { } id ||
@@ -267,17 +357,11 @@ sealed class ProjectedCallableEntries
             actual.Length != target.Original.Length) return false;
         var member = node switch {
             BirCallStatic s => s.MemberRef.OrDefault(), BirCallInstance c => c.MemberRef.OrDefault(),
+            BirNewDelegate d => d.MemberRef.OrDefault(), BirNewBoundDelegate d => d.MemberRef.OrDefault(),
             BirConstrainedCall c => c.MemberRef.OrDefault(), _ => null };
         var ownerArgs = (member?.DeclaringType.OrDefault() as TypeNode.Fqn)?.Args ?? [];
         TypeNode Closed(TypeNode bound) => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(bound, ownerArgs, actual);
-        TypeNode Proof(TypeNode ordinary, TypeNode bound)
-        {
-            if (ordinary is not TypeNode.Tv v) return null;
-            var scope = v.Scope == "method" ? methodScope : ownerScope;
-            var i = Array.FindIndex(scope.Slots ?? [], slot => slot.OwnerIndex == v.I && slot.Bound.Equals(bound));
-            return i < 0 ? null : new TypeNode.Tv(v.Scope, scope.Parameters.Length + i);
-        }
-        var proofs = target.Frame.Interfaces.Select(slot => Proof(actual[slot.OwnerIndex], Closed(slot.Bound))).ToArray();
+        var proofs = target.Frame.Interfaces.Select(slot => Proof(actual[slot.OwnerIndex], Closed(slot.Bound), ownerScope, methodScope)).ToArray();
         var arguments = actual.ToArray();
         bool Declares(TypeNode argument, TypeNode bound) => argument is TypeNode.Tv v
             && (v.Scope == "method" ? methodScope : ownerScope).Parameters is { } parameters
@@ -290,7 +374,7 @@ sealed class ProjectedCallableEntries
                 var bounds = target.Original[i].Constraints.OrEmpty();
                 if (bounds.Length != 1) continue;
                 var bound = Closed(bounds[0]);
-                if (Proof(actual[source], bound) is { } proof) arguments[i] = proof;
+                if (Proof(actual[source], bound, ownerScope, methodScope) is { } proof) arguments[i] = proof;
                 else if (!Declares(actual[i], bound) && Declares(actual[source], bound)) arguments[i] = actual[source];
             }
         if (proofs.All(p => p == null) && !(node is BirCallInstance super && super.Super.OrDefault()))
@@ -302,6 +386,8 @@ sealed class ProjectedCallableEntries
             case BirCallStatic s: s.Method = target.Name; break;
             case BirCallInstance c: c.Method = target.Name; break;
             case BirConstrainedCall c: c.Method = target.Name; break;
+            case BirNewDelegate d: d.Method = target.Name; break;
+            case BirNewBoundDelegate d: d.Method = target.Name; break;
             default: throw new InvalidOperationException("Expected a selected generic call");
         }
         node.ApplicationTypeArguments = arguments.Concat(proofs.Select((p, i) => p ?? actual[target.Frame.Interfaces[i].OwnerIndex])).ToArray();

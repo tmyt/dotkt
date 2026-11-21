@@ -1798,19 +1798,39 @@ static void VerifyUnsafeAccessorDll(string path, string producerPath)
         Require((capture.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private,
             $"inner member-default fixture widened its lexical capture on {name}");
     }
-    // Each selected generic crossing owns one private extern and one generated internal entry. Assert that
-    // relationship, not an assembly-wide total that changes when an unrelated fixture needs another bridge.
+    // A projected crossing can add another pair in the same holder. Check
+    // the actual wrapper -> private extern calls, not their generated names.
     Require(holderMethods.Length > 0 && holderMethods.All(methods =>
     {
         var externs = methods.Where(handle => HasMethodAttribute(md, handle,
             "System.Runtime.CompilerServices.UnsafeAccessorAttribute")).ToArray();
-        var entries = methods.Where(handle => md.GetString(md.GetMethodDefinition(handle).Name)
-            .EndsWith("$invoke", StringComparison.Ordinal)).ToArray();
-        if (externs.Length != 1 || entries.Length != 1) return false;
-        var entry = md.GetMethodDefinition(entries[0]);
-        return (entry.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
-            (entry.Attributes & MethodAttributes.Static) != 0 && entry.RelativeVirtualAddress != 0 &&
-            HasMethodAttribute(md, entries[0], "System.Runtime.CompilerServices.CompilerGeneratedAttribute");
+        var entries = methods.Where(h => (md.GetMethodDefinition(h).Attributes & MethodAttributes.SpecialName) == 0)
+            .Except(externs).ToArray();
+        if (externs.Length == 0 || entries.Length != externs.Length) return false;
+        var pending = externs.ToHashSet();
+        foreach (var h in entries)
+        {
+            var entry = md.GetMethodDefinition(h);
+            if ((entry.Attributes & MethodAttributes.MemberAccessMask) != MethodAttributes.Assembly ||
+                (entry.Attributes & MethodAttributes.Static) == 0 || entry.RelativeVirtualAddress == 0 ||
+                !HasMethodAttribute(md, h, "System.Runtime.CompilerServices.CompilerGeneratedAttribute")) return false;
+            var calls = ReadInstructions(pe.GetMethodBody(entry.RelativeVirtualAddress).GetILBytes()!)
+                .Where(i => i.Op == OpCodes.Call).ToArray();
+            if (calls.Length != 1) return false;
+            var target = System.Reflection.Metadata.Ecma335.MetadataTokens.EntityHandle(calls[0].Token);
+            if (target.Kind == HandleKind.MethodSpecification)
+                target = md.GetMethodSpecification((MethodSpecificationHandle)target).Method;
+            if (target.Kind == HandleKind.MemberReference)
+            {
+                var member = md.GetMemberReference((MemberReferenceHandle)target);
+                var owner = member.Parent.Kind == HandleKind.TypeSpecification
+                    ? TypeSpecificationTarget(md, (TypeSpecificationHandle)member.Parent) : member.Parent;
+                if (owner != entry.GetDeclaringType()) return false;
+                target = externs.SingleOrDefault(e => md.StringComparer.Equals(md.GetMethodDefinition(e).Name, md.GetString(member.Name)));
+            }
+            if (target.Kind != HandleKind.MethodDefinition || !pending.Remove((MethodDefinitionHandle)target)) return false;
+        }
+        return pending.Count == 0;
     }), "generic UnsafeAccessor holder must pair its private extern with one compiler-generated internal wrapper");
 }
 

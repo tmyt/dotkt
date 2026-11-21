@@ -128,8 +128,18 @@ static partial class FBoundStarProjectionErasure
         BirGraphValue BindOuter() =>
             BindStarInnerConstructionSource(node, existentialTypes, existentialMethods, state);
         if (node is not BirNew construction || construction.Type.OrDefault() is not TypeNode.Fqn { Args: { Length: > 0 } } owner
-            || !owner.Args.Any(ContainsExistentialProjection) || !construction.MemberSignature.HasValue
+            || !construction.MemberSignature.HasValue
             || !construction.Args.HasValue || construction.MemberSignature.Value.Length != construction.Args.Value.Length) return BindOuter();
+        if (!owner.Args.Any(ContainsExistentialProjection))
+        {
+            // Binding clears the source ctor ID before physical method/class clones
+            // exist. Keep its producer-selected factory for calls forwarding a TV.
+            if (owner.Args.Any(a => a is TypeNode.Tv) && construction.ConstructorDeclarationId.OrDefault() is string ctor &&
+                state.References.TryDeclarationIdentity(StorageFactoryId(ctor), out _, out _, out _, out _) &&
+                state.Projection.StorageFrame(owner.Name) is { } layout)
+                construction.ReferencedProjectedFactory = (StorageFactoryId(ctor), layout.Interfaces.Select(s => s.OwnerIndex).ToArray());
+            return BindOuter();
+        }
         var signature = construction.MemberSignature.Value;
         if (construction.ConstructorDeclarationId.OrDefault() is string id &&
             state.Projection.ProjectedConstructorArguments(owner) is { } physicalArguments)

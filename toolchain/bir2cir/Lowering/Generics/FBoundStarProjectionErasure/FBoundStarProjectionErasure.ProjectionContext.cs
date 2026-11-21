@@ -133,7 +133,10 @@ static partial class FBoundStarProjectionErasure
             Func<int, TypeNode> closeArgument = null)
             => ClassStorageWitness(owner, index, application, closeArgument, allowIntersection: false)?.Class;
 
-        internal sealed record StorageWitness(TypeNode.Fqn Class, TypeNode.Fqn[] Interfaces);
+        internal sealed record StorageWitness(TypeNode.Fqn Class, (int OwnerIndex, TypeNode.Fqn Bound)[] Required)
+        {
+            internal TypeNode.Fqn[] Interfaces => Required.Select(r => r.Bound).Distinct().ToArray();
+        }
 
         BirTypeParameter[] ConstraintParameters(string owner)
         {
@@ -229,7 +232,7 @@ static partial class FBoundStarProjectionErasure
                                     + "requires a single type argument that satisfies both its class and interface constraints");
                         }
                         primary[i] = proof.Class;
-                        foreach (var bound in proof.Interfaces) required.Add((i, bound));
+                        required.AddRange(proof.Required);
                     }
                     else if (layout?.Interfaces.Any(slot => slot.OwnerIndex == i) == true)
                         unproven = true;
@@ -318,9 +321,11 @@ static partial class FBoundStarProjectionErasure
                 } while (changed);
             }
             if (linked.Any(i => parameters[i].SpecialConstraints.OrEmpty().Any(special => special != "class"))) return null;
-            var bounds = linked.SelectMany(i => parameters[i].Constraints.OrEmpty().Select(bound => physicalBound?.Invoke(i, bound) ?? bound))
-                .Where(bound => bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
-                .Select(bound => StripSourceNullability(substitute(bound))).Distinct().ToArray();
+            var declared = linked.SelectMany(i => parameters[i].Constraints.OrEmpty().Select(bound =>
+                    (Index: i, Bound: physicalBound?.Invoke(i, bound) ?? bound)))
+                .Where(r => r.Bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
+                .Select(r => (r.Index, Bound: StripSourceNullability(substitute(r.Bound)))).Distinct().ToArray();
+            var bounds = declared.Select(r => r.Bound).Distinct().ToArray();
             if (bounds.Length == 0) return null;
             TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
                 ? References.PhysicalConstraintType(type) : type;
@@ -330,7 +335,12 @@ static partial class FBoundStarProjectionErasure
             // shared base of the possible constructions only if it proves every constraint.
             // Prove the ancestor independently of hidden or variant Kotlin arguments. A
             // Mid<object> inferred from the static view need not be a base of Mid<string>.
-            var common = application with { Args = application.Args.Select(_ => (TypeNode)new TypeNode.Star()).ToArray() };
+            var variances = LocalDeclaration(application.Name)?.Variances ?? References.OwnerTypeParametersInPhysicalFrame(application.Name)
+                ?.Select(p => p.Variance.OrDefault()).ToArray();
+            var partiallyOpen = ContainsExistentialProjection(application);
+            var common = application with { Args = application.Args.Select((arg, i) =>
+                !partiallyOpen || ContainsExistentialProjection(arg) ||
+                variances?.ElementAtOrDefault(i) is "in" or "out" ? (TypeNode)new TypeNode.Star() : arg).ToArray() };
             var supers = SupertypeGraph.ReachableFromClass(common, Preparation.SourceSupertypes, References).Skip(1).ToArray();
             StorageWitness split = null;
             foreach (var (ancestor, isInterface) in supers.Reverse())
@@ -345,7 +355,8 @@ static partial class FBoundStarProjectionErasure
                 if (allowIntersection && split == null && missing.All(bound => bound is TypeNode.Fqn required
                     && !ContainsExistentialProjection(required) && supers.Any(edge => edge.isInterface
                         && Identity(edge.spec) == Identity(required))))
-                    split = new(ancestor, missing.Cast<TypeNode.Fqn>().ToArray());
+                    split = new(ancestor, declared.Where(r => missing.Contains(r.Bound))
+                        .Select(r => (r.Index, (TypeNode.Fqn)r.Bound)).ToArray());
             }
             return split;
         }

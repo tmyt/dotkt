@@ -73,33 +73,19 @@ static partial class UnsafeAccessorLowering
         if (methodFrame != null) accessor.TypeParams = CopySourceParameters(methodFrame);
         var declarationSignature = parameters.Select(p => CopySourceType(p.Type.Value)).ToArray();
         SourceAccessor definition;
-        if (ownerCount == 0)
+        var separateMethodHost = methodFrame is { Length: > 0 } && caller.Type != null && TypeParameterFrame.Count(caller.Type) != 0;
+        if (ownerCount == 0 && !separateMethodHost)
         {
             StampSourceNullableOwnership(accessor, nullableReturn, ownershipKnown);
-            // A generic method accessor matches its target's declaring frame,
-            // not the generic class where the Kotlin access happened.
-            if (accessor.ProjectedAccessBinding != null && caller.Type != null && TypeParameterFrame.Count(caller.Type) != 0)
-            {
-                var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
-                accessor.Vis = "internal";
-                var holder = new BirClassDefinition { Name = holderName, Kind = "class", Generated = true,
-                    Vis = "internal", Methods = new[] { accessor } };
-                caller.File.Types = caller.File.Types.OrEmpty().Append(holder).ToArray();
-                context.Transitions.PublishTypes(caller.File, new IBirTypeDeclaration[] { holder });
-                definition = new(accessorName, holderName, declarationSignature, 0, methodFrame.Length, identity);
-            }
-            else
-            {
-                caller.Append(accessor, context.Transitions);
-                definition = new(accessorName, null, declarationSignature, 0, methodFrame?.Length ?? 0, identity);
-            }
+            caller.Append(accessor, context.Transitions);
+            definition = new(accessorName, null, declarationSignature, 0, methodFrame?.Length ?? 0, identity);
         }
         else
         {
             // TYPE variables stay on a physical holder, never on the accessor
             // method: UnsafeAccessor matches the exact target declaration frame.
             var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
-            var holderFrame = CopySourceParameters(ownerParameters, "__owner");
+            var holderFrame = CopySourceParameters(ownerParameters, "__owner") ?? [];
             var entryName = accessorName + "$invoke";
             var wrapperIdentity = DeclarationIdentityBinding.PhysicalOnlyId(caller.Name, "unsafe-wrapper:" + accessorName);
             var holderSelf = (TypeNode.Fqn)OpenSourceOwner(new TypeNode.Fqn(holderName), ownerCount);

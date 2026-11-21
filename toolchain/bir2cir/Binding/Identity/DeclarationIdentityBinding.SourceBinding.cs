@@ -77,7 +77,7 @@ static partial class DeclarationIdentityBinding
                     return node;
             }
             var consumeIdentity = !deferUnknown && !preserveForScalarResolution;
-            if (node is (BirCallStatic or BirCallInstance or BirConstrainedCall) && node.ApplicationTypeArguments.OrEmpty().Length != 0)
+            if (node is (BirCallStatic or BirCallInstance or BirConstrainedCall or BirNewDelegate or BirNewBoundDelegate) && node.ApplicationTypeArguments.OrEmpty().Length != 0)
                 node.SelectedGenericCallable = id;
             switch (node)
             {

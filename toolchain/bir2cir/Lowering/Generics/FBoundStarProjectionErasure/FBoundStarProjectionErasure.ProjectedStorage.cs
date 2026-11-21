@@ -133,7 +133,7 @@ static partial class FBoundStarProjectionErasure
                     callables.RewriteBody(lexical, lexical, exactParameters, plan.Slots, Allocate, generated, helpers);
                     if (helpers.Count != 0) lexical.Methods = lexical.Methods.OrEmpty().Concat(helpers).ToArray();
                 }
-                ProjectLexicalClosures(storage, plan, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,
+                ProjectLexicalClosures(storage, plan.Exact, plan.Slots.Length, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,
                     Allocate, generated);
                 foreach (var closure in generated.OfType<BirClassDefinition>().ToArray()) CaptureBody(closure);
                 CaptureBody(storage);
@@ -206,12 +206,11 @@ static partial class FBoundStarProjectionErasure
     // Closure placement has already captured the enclosing CLR frame. Its copy
     // under a different declaring type needs that type's frame, followed by the
     // original lambda/method slots. The original closure remains untouched.
-    static void ProjectLexicalClosures(BirClassDefinition storage, ProjectedStorageOwner plan, BirTypeParameter[] frame,
+    internal static void ProjectLexicalClosures(BirClassDefinition storage, string originalName, int width, BirTypeParameter[] frame,
         Func<string, BirClassDefinition> definition, Func<string, string> allocate, List<IBirTypeDeclaration> generated)
     {
-        var width = plan.Slots.Length;
         var prefix = frame.Length - width;
-        var names = new Dictionary<string, string>(StringComparer.Ordinal) { [plan.Exact] = plan.Implementation };
+        var names = new Dictionary<string, string>(StringComparer.Ordinal) { [originalName] = storage.Name.Value };
         TypeNode[] Extend(TypeNode[] args) => args.Take(prefix)
             .Concat(Enumerable.Range(prefix, width).Select(i => (TypeNode)new TypeNode.Tv("type", i)))
             .Concat(args.Skip(prefix)).ToArray();

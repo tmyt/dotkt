@@ -598,13 +598,33 @@ private fun starProjectionCloseIntersection(
     // native contract. A declared interface proof works even with no operands.
     // Never widen invariant operand evidence (e.g. a native ref or List<T>).
     val genericParameters = selected.getGenericArguments()
+    // A parameter constrained by another parameter supplies a lower bound
+    // for that other slot. In M<X,Y> where Y : X, X must admit both its own
+    // direct operands and the chosen Y, not just the first observed X value.
+    // Invariant/ref witnesses and unaffected authored slots cannot be widened.
+    repeat(genericParameters.size) {
+        for (child in genericParameters.indices) {
+            for (bound in genericParameters[child].getGenericParameterConstraints()) {
+                if (!bound.isGenericParameter || bound.declaringMethod == null) continue
+                val parent = bound.genericParameterPosition
+                if (parent !in missing || exact[parent] || types[parent].isAssignableFrom(types[child])) continue
+                var common: StarProjectionType? = types[parent]
+                while (common != null && !common.isAssignableFrom(types[child])) common = common.baseType
+                if (common != null) types[parent] = common
+            }
+        }
+    }
     for (slot in missing) {
         if (exact[slot]) continue
-        val constraints = genericParameters[slot].getGenericParameterConstraints()
+        val constraints = genericParameters[slot].getGenericParameterConstraints().map { bound ->
+            if (bound.isGenericParameter && bound.declaringMethod != null) types[bound.genericParameterPosition] else bound
+        }
         if (constraints.all { it.isAssignableFrom(types[slot]) }) continue
-        val common = constraints.singleOrNull { candidate ->
-            constraints.all { it.isAssignableFrom(candidate) } &&
-                slots.indices.any { slots[it] == slot && candidate.isAssignableFrom(facets[it]) }
+        val available = slots.indices.filter { slots[it] == slot }.map { facets[it] }
+        // A supplied derived interface can itself satisfy several otherwise
+        // unrelated required interfaces; it need not occur in the constraint list.
+        val common = (available + constraints).distinct().firstOrNull { candidate ->
+            constraints.all { it.isAssignableFrom(candidate) } && available.any { candidate.isAssignableFrom(it) }
         }
         if (common != null) types[slot] = common
     }
