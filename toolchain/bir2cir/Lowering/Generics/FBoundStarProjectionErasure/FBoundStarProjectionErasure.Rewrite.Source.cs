@@ -296,8 +296,9 @@ static partial class FBoundStarProjectionErasure
         closing ??= new();
         if (!closing.Add(index)) return projected;
         var arguments = call.ApplicationTypeArguments.Value;
-        var result = state.Projection.MethodClassWitness(selected?.Source as BirFunctionDeclaration, identity,
-            frame, owner, arguments, index, application, projected,
+        var methodApplication = state.Projection.SelectPhysicalMethodApplication(selected?.Source as BirFunctionDeclaration,
+            identity, frame, owner, arguments);
+        var result = state.Projection.MethodClassWitness(methodApplication, index, application, projected,
             i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing));
         closing.Remove(index);
         if (result != projected && result is TypeNode.Fqn { Args.Length: > 0 })
