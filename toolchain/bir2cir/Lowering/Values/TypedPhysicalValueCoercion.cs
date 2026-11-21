@@ -839,9 +839,15 @@ static class TypedPhysicalValueCoercion
                     var pos = signature != null && child is BirArrayGet read ? Array.FindIndex(supplied, a => ReferenceEquals(a, read)) : -1;
                     var pointer = pos >= 0 && pos < signature.Length ? SignatureValueTypes.Of(signature[pos]) as TypeNode.ByRef : null;
                     var rewritten = Rewrite(child, scope, index, location: pointer != null);
-                    if (pointer != null && rewritten is BirArrayGet indexed && indexed.Elem.OrDefault() != pointer.Of)
+                    if (pointer != null && rewritten is BirArrayGet indexed)
                     {
-                        indexed.Array = Field(Cast(Graph(indexed.Array.Value), new TypeNode.Array(pointer.Of)));
+                        // ldelema also requires a vector-typed receiver. An open
+                        // Kotlin Array<T> is System.Array even when the element
+                        // already names exactly the selected ref T.
+                        var vector = new TypeNode.Array(pointer.Of);
+                        var receiver = Graph(indexed.Array.Value);
+                        if (ExprType(receiver, scope, index) != vector)
+                            indexed.Array = Field(Cast(receiver, vector));
                         indexed.Elem = pointer.Of;
                     }
                     slot.Replace(rewritten);
