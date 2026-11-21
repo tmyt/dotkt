@@ -60,6 +60,13 @@ class MarkedItemSlot<A> : MarkedItemSink<A> where A : PendingItems.Item, A : Res
     fun <B> deferred(label: B): () -> () -> Pair<B, A?> = { { label to item } }
 }
 abstract class AbstractMarkedSlot<A>(val value: A) where A : PendingItems.Item, A : ResultSource.Mark
+class JointOuter<A>(private val value: A) where A : PendingItems.Item, A : ResultSource.Mark {
+    private fun captured() = value
+    inner class Inner<B>(val item: B) where B : PendingItems.Item, B : ResultSource.Mark {
+        fun owner() = this@JointOuter
+        fun outerValue() = captured()
+    }
+}
 class MarkedItemOwner<X>(val outerValue: X) {
     private class Secret(val n: Int)
     inner class Slot<A>(var item: A) where A : PendingItems.Item, A : ResultSource.Mark {

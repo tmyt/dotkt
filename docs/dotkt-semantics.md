@@ -143,10 +143,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   the source-named entry with both original constraints; this non-overridable entry forwards to the virtual
   implementation. A C# subclass overrides the projected implementation, not the forwarding entry.
   Kotlin callers and subclasses keep the original source signature. Imported C# virtual slots are unchanged.
-- A constructed CLR base class must have one actual type per generic parameter. If the base
-  requires both a class and an interface, a star-projected argument is accepted when a common CLR
-  type satisfies both. Otherwise constructing that subclass is a compile-time error. Independent
-  type parameters not used by the base can still use separate witnesses.
+- A CLR base class or an implemented CLR interface needs **one actual CLR type** for each of its
+  generic parameters. If that parameter requires both a class and an interface, a star-projected
+  Kotlin argument is accepted when a common CLR type satisfies both. Otherwise constructing the
+  Kotlin class is a compile-time error. An interface-only requirement can use the Kotlin value's
+  interface representation instead. A star on one argument does not erase an unrelated argument.
 - **A native managed-reference location retains its exact pointee contract.** Passing a local or captured local to
   an imported CLR `ref G<String>` parameter gives that declaration one exact location for the whole body, shared
   by repeated aliases. Explicit `@ClrField` storage and live CLR ref-return delegates likewise retain their native

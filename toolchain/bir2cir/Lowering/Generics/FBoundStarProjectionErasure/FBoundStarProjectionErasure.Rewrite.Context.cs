@@ -14,6 +14,7 @@ static partial class FBoundStarProjectionErasure
         internal IReadOnlyDictionary<string, Owner> Owners => Projection.Owners;
         internal IReadOnlyDictionary<string, string> LocalClrAliases => Projection.LocalClrAliases;
         internal IReadOnlySet<string> Carriers { get; }
+        internal IReadOnlySet<string> SharedOuters { get; }
         internal Func<TypeNode, IBirExpression, IBirExpression> ComponentPredicate { get; }
         readonly CarrierTypeContext types;
         readonly CurrentPhysicalTypeView currentPhysical;
@@ -39,6 +40,7 @@ static partial class FBoundStarProjectionErasure
             types = currentPhysical == null ? CarrierTypeContext.ForSource(realization.Preparation, realization.References)
                 : CarrierTypeContext.ForSource(currentPhysical.Definitions, realization.References);
             Carriers = Owners.Values.Select(owner => owner.ErasedName).ToHashSet(StringComparer.Ordinal);
+            SharedOuters = realization.ProjectedStorage.Select(p => p.Exact).ToHashSet(StringComparer.Ordinal);
         }
 
         internal IBirTypeDeclaration Definition(string name) => currentPhysical != null
@@ -190,7 +192,8 @@ static partial class FBoundStarProjectionErasure
     };
 
     static TypeSlotFacts SourceTypeSlotFacts(BirGraphValue node, CarrierProjectionContext context,
-        bool declarationDescriptor, IReadOnlyDictionary<string, string> currentAliases = null)
+        bool declarationDescriptor, IReadOnlyDictionary<string, string> currentAliases = null,
+        IReadOnlySet<string> sharedOuters = null)
     {
         var kind = (node as BirGraphNode)?.Tag;
         var refs = context.References;
@@ -244,7 +247,12 @@ static partial class FBoundStarProjectionErasure
                 BirStaticFieldGet value => value._nativeFieldAddress.OrDefault(), _ => false },
             ValueTemporaryConstruction = node is BirVariable temporary && temporary._callEvalTemporary.OrDefault()
                 && temporary.Init.OrDefault() is BirNew construction && construction.Type.OrDefault() == temporary.Type.OrDefault(),
-            LexicalReceiver = receiver is BirThis || receiver != null && SourceExactOuter(receiver),
+            LexicalReceiver = receiver is BirThis || receiver != null && SourceExactOuter(receiver)
+                && !((node switch {
+                    BirCallInstance use => use.OwnerType.OrDefault(), BirNewBoundDelegate use => use.OwnerType.OrDefault(),
+                    BirFieldGet use => use.OwnerType.OrDefault(), BirSetField use => use.OwnerType.OrDefault(),
+                    BirFieldSetExpression use => use.OwnerType.OrDefault(), _ => null,
+                }) is TypeNode.Fqn o && sharedOuters?.Contains(o.Name) == true),
             ExactOuter = SourceExactOuter(node), TypeDefinition = node is IBirTypeDeclaration definition && IsTypeDefinition(definition.Kind.OrDefault()),
         };
     }

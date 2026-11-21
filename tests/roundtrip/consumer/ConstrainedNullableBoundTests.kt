@@ -17,6 +17,7 @@ import roundtrip.constrainedbound.MarkedChoice
 import roundtrip.constrainedbound.absentMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
+import roundtrip.constrainedbound.JointOuter
 import roundtrip.constrainedbound.ResultSource.Mark
 import roundtrip.constrainedbound.localRelatedItem
 import roundtrip.constrainedbound.localItemResult
@@ -205,6 +206,11 @@ class ConstrainedNullableBoundTests {
         val inner = outer.Slot<ClientItem<*>>(number)
         inner.item = text
         check(inner.item === text && inner.ownerValue() == "outer" && inner.number() == 42)
+        val joint = JointOuter<ClientItem<*>>(number)
+        val child = joint.Inner<ClientItem<*>>(text)
+        check(child.owner() === joint && child.outerValue() === number && child.item === text)
+        val concrete = JointOuter(text)
+        check(concrete.Inner<ClientItem<*>>(number).outerValue() === text)
         check(streams.keepAliased(second) === second)
     }
 

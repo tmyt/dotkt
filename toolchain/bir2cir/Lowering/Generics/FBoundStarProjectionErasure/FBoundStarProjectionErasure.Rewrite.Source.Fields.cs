@@ -19,7 +19,7 @@ static partial class FBoundStarProjectionErasure
         };
         if (ownerType is not TypeNode.Fqn owner || name == null || receiver == null
             || node is BirFieldGet addressed && addressed._nativeFieldAddress.OrDefault() || SourceExactOuter(node)
-            || receiver is BirThis || SourceExactOuter((BirGraphValue)receiver)) return node;
+            || receiver is BirThis || SourceExactOuter((BirGraphValue)receiver) && !state.SharedOuters.Contains(owner.Name)) return node;
         var setter = node is BirFieldSetExpression or BirSetField;
         var role = setter ? "set" : "get";
         if (state.Owners.TryGetValue(owner.Name, out var local))

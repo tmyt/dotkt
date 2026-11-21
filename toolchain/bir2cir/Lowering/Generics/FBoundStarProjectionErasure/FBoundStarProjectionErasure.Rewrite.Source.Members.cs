@@ -67,7 +67,8 @@ static partial class FBoundStarProjectionErasure
         var ownerArguments = projected is { Args: { } projectedArgs } && (projected.Name == owner.Name
             || refs.TryExactPhysicalTypeName(projected.Name, projectedArgs.Length, out var exact) && exact == owner.Name)
             ? projectedArgs : args;
-        var lexical = call.Receiver is BirThis || call.Receiver is BirGraphValue receiver && SourceExactOuter(receiver);
+        var lexical = call.Receiver is BirThis || call.Receiver is BirGraphValue receiver && SourceExactOuter(receiver)
+            && !state.SharedOuters.Contains(owner.Name);
         var erasedCast = call.Receiver is BirCast cast && !cast._exactBridgeCast.OrDefault()
             && cast.Type.OrDefault() is TypeNode.Fqn { Args: { } castArguments } castOwner
             && castOwner.Name == owner.Name && castArguments.Any(ContainsStarOrTypeVariable);

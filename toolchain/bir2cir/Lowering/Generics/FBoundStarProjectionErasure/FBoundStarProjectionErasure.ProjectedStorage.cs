@@ -70,12 +70,15 @@ static partial class FBoundStarProjectionErasure
             return p with { Slots = p.Slots.Select(slot => slot with {
                 Bound = parameters[slot.OwnerIndex].Constraints.Value[slot.BoundIndex] }).ToArray() };
         }, StringComparer.Ordinal);
+        var implementations = new Dictionary<string, BirClassDefinition>(StringComparer.Ordinal);
+        var innerFactories = new List<(ProjectedStorageOwner Plan, string Id, BirFunctionDeclaration Factory, int Prefix, int Original)>();
         foreach (var plan in storageOwners.Values)
         {
             var (file, type) = declarations[plan.Exact].Single();
             var carrier = declarations[plan.Carrier].Single().type;
             var exact = (BirClassDefinition)type;
             var storage = (BirClassDefinition)exact.DeepClone();
+            implementations.Add(plan.Exact, storage);
             storage.Name = plan.Implementation;
             storage.Generated = true;
             storage.Vis = "internal";
@@ -188,8 +191,7 @@ static partial class FBoundStarProjectionErasure
                 var factory = carrier.Methods.Value.Single(m =>
                     m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == factoryId);
                 if (plan.Outer != null)
-                    MaterializeProjectedInnerFactory(declarations[plan.Outer].Single().type, declarations[plan.OuterCarrier].Single().type,
-                        id, factory, plan.Carrier, prefix, count, referenceBuild);
+                    innerFactories.Add((plan,id,factory,prefix,exactParameters.Length));
                 if (referenceBuild) continue;
                 var constructed = Instance("method");
                 var creation = new BirNew { Type = constructed, LocalCtorIndex = index,
@@ -200,6 +202,17 @@ static partial class FBoundStarProjectionErasure
             }
             file.Types = file.Types.Value.Append(storage).ToArray();
             emittedTypes.Add(plan.Implementation);
+        }
+        // The lexical receiver supplies the outer frame. Both implementations
+        // need their own bridge, independent of TypeDef traversal order.
+        foreach (var (inner,id,factory,prefix,original) in innerFactories)
+        {
+            var outerCarrier = declarations[inner.OuterCarrier].Single().type;
+            MaterializeProjectedInnerFactory(declarations[inner.Outer].Single().type, outerCarrier,
+                id, factory, inner, prefix, original, null, referenceBuild);
+            if (implementations.TryGetValue(inner.Outer, out var outer))
+                MaterializeProjectedInnerFactory(outer, outerCarrier, id, factory, inner, prefix, original,
+                    storageOwners[inner.Outer], referenceBuild);
         }
         callables.Finish(documents, emittedTypes);
     }

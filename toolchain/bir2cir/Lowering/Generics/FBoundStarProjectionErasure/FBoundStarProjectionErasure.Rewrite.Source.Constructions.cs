@@ -15,7 +15,8 @@ static partial class FBoundStarProjectionErasure
         var signature = construction.MemberSignature.HasValue ? construction.MemberSignature.Value : construction.ArgTypes.OrDefault();
         if (signature is not { Length: > 0 } || signature[0] is not TypeNode.Fqn selectedOuter) return node;
         var suppliedOuter = SourceCarrierExpressionType(arguments[0] as BirGraphValue);
-        var exact = arguments[0] is BirThis or BirNew || SourceExactOuter((BirGraphValue)arguments[0]);
+        var exact = arguments[0] is BirThis or BirNew || SourceExactOuter((BirGraphValue)arguments[0])
+            && !state.SharedOuters.Contains(selectedOuter.Name);
         var variant = !exact && state.Projection.RequiresKotlinValueCarrier(selectedOuter);
         if (!variant && (suppliedOuter == null || !ContainsExistential(suppliedOuter, existentialTypes, existentialMethods))) return node;
         var innerDefinition = state.Definition(innerType.Name);
@@ -148,7 +149,12 @@ static partial class FBoundStarProjectionErasure
             if (state.Declarations.ProjectedInnerFactories.TryGetValue(innerFactoryId, out var innerFactory) ||
                 state.References.TryPhysicalInstanceFactory(innerFactoryId, out innerFactory))
             {
-                var methodArgsOnly = physicalArguments[^innerFactory.Arity..];
+                var captured = state.Owners.TryGetValue(owner.Name, out var inner) ? inner.OuterCount
+                    : state.References.TryInnerSemanticOwner(owner.Name, out var outerName)
+                        ? state.References.PhysicalOwnerTypeParametersInPhysicalFrame(outerName).Length
+                        : throw new InvalidOperationException("Projected inner factory has no enclosing declaration");
+                var methodArgsOnly = InnerMethodFrame(owner.Args.Length, captured, state.Projection.StorageFrame(owner.Name).Interfaces)
+                    .Select(i => physicalArguments[i]).ToArray();
                 var virtualCall = new BirCallInstance {
                     OwnerType = new TypeNode.Fqn(innerFactory.Owner), Method = innerFactory.Name, DeclarationId = innerFactoryId,
                     Virtual = true, Sig = innerFactory.Parameters.Select(BirGraphValue.CopyType).ToArray(),
