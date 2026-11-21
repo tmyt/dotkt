@@ -32,6 +32,12 @@ sealed class ProjectedClassStorageFrame
 
     internal BirTypeParameter[] Declare() => Declare(original, Interfaces);
 
+    internal ProjectedClassStorageFrame Retaining(Func<InterfaceSlot, bool> requiredOnPrimary)
+    {
+        var split = Interfaces.Where(s => !requiredOnPrimary(s)).ToArray();
+        return split.Length == 0 ? null : split.Length == Interfaces.Length ? this : new(original, split);
+    }
+
     internal static BirTypeParameter[] Declare(BirTypeParameter[] original, IReadOnlyList<InterfaceSlot> slots)
     {
         var parameters = original.Select(p => (BirTypeParameter)p.DeepClone()).ToList();

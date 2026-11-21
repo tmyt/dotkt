@@ -12,21 +12,25 @@ static partial class CapturedGenericInvocation
     // interface proof. Close a stateless typed forwarder, not the ref/out
     // operands: those keep their original storage across the entire call.
     static BirGraphValue ProjectAddressCall(Invocation site, MethodInfo selected, TypeNode.Fqn owner,
-        (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated)
+        (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
+        LexicalTarget lexical)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
+        owner = lexical?.Owner ?? owner;
         var ownerArgs = owner.Args ?? [];
         var authored = site.TypeArguments.Value;
         var openOwner = selected.DeclaringType;
         if (openOwner.IsConstructedGenericType) openOwner = openOwner.GetGenericTypeDefinition();
-        var ownerParameters = openOwner.GetGenericArguments();
-        var methodParameters = selected.GetGenericArguments();
+        var ownerParameters = lexical?.OwnerFrame ?? openOwner.GetGenericArguments().Select(p =>
+            ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
+        var methodParameters = lexical?.Method.TypeParams.Value ?? selected.GetGenericArguments().Select(p =>
+            ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
         TypeNode AdapterFrame(TypeNode type) => Map(type, t => new TypeNode.Tv("type",
             t.Scope == "type" ? t.I : ownerParameters.Length + t.I));
         TypeNode CallerFrame(TypeNode type) => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(type, ownerArgs, authored);
         var adapterFrame = ownerParameters.Concat(methodParameters).Select((p, index) => {
-            var variable = CloneParameter(ReferenceMetadataReader.GenericParamDeclaration(p, native: true), AdapterFrame);
+            var variable = CloneParameter(p, AdapterFrame);
             variable.Name = "T" + index; variable.Variance = default; return variable;
         }).ToArray();
         TypeNode[] Frame(int start, int count) => Enumerable.Range(start, count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
@@ -75,11 +79,12 @@ static partial class CapturedGenericInvocation
             Operand(site.Receiver, byAddress ? new TypeNode.ByRef(owner) : owner,
                 byAddress ? new TypeNode.ByRef(adapterOwner) : adapterOwner, byAddress, true);
         }
-        var selectedSignature = site.Member.ParameterTypes.Value.Select(SignatureValueTypes.Of).ToArray();
+        var selectedSignature = lexical?.Method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() ??
+            site.Member.ParameterTypes.Value.Select(SignatureValueTypes.Of).ToArray();
         for (var i = 0; i < formals.Length; i++)
             Operand(site.Arguments.Value[i], CallerFrame(selectedSignature[i]), AdapterFrame(selectedSignature[i]),
                 RequiresTypedSlot(formals[i].ParameterType), false);
-        var nativeResult = SignatureValueTypes.Of(site.Member.ReturnType.Value);
+        var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(site.Member.ReturnType.Value);
         var result = CallerFrame(nativeResult);
         var forwardResult = AdapterFrame(nativeResult);
         var unit = selected.ReturnType.FullName == "System.Void";
@@ -87,12 +92,18 @@ static partial class CapturedGenericInvocation
             RequiresTypedSlot(selected.ReturnType));
         TypeNode.Fqn Contract(List<TypeNode> frame) => new(contractName, frame.Count == 0 ? null : frame.ToArray());
         var callerContract = Contract(contractArgs);
-        var forward = site.Forward(adapterOwner, authored.Length, selectedSignature, forwardResult, false);
+        BirGraphValue forward = lexical == null ? site.Forward(adapterOwner, authored.Length, selectedSignature, forwardResult, false) :
+            site.Instance ? new BirCallInstance { OwnerType = adapterOwner, Method = lexical.Method.Name, Virtual = false,
+                Sig = selectedSignature, CalleeRet = nativeResult, Ret = forwardResult } :
+            new BirCallStatic { Owner = adapterOwner, Method = lexical.Method.Name, Sig = selectedSignature,
+                CalleeRet = nativeResult, Ret = forwardResult };
         var actualArgs = forwarded.Skip(site.Instance ? 1 : 0).ToArray();
         var concreteArgs = Frame(ownerParameters.Length, authored.Length);
         switch (forward)
         {
             case BirGenericStatic s: s.TypeArgs = concreteArgs; s.Args = actualArgs; break;
+            case BirCallStatic s: s.TypeArgs = concreteArgs; s.Args = actualArgs; break;
+            case BirCallInstance i: i.TypeArgs = concreteArgs; i.Args = actualArgs; i.Recv = OptionalField<IBirExpression>.Of(forwarded[0]); break;
             case BirGenericInstance i: i.TypeArgs = concreteArgs; i.Args = actualArgs;
                 i.Recv = OptionalField<IBirExpression>.Of(openOwner.IsValueType ?
                     new BirByRefLoad { Local = "p0", Elem = adapterOwner } : forwarded[0]); break;
@@ -128,7 +139,8 @@ static partial class CapturedGenericInvocation
         var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, helper, "method", declaring, null));
         var create = new BirNativeStatic { Type = new TypeNode.Fqn(RuntimeOwner), Method = helperName, MemberRef = member,
             Ret = member.ReturnType, ResolvedMemberReturn = member.ReturnType,
-            Args = new IBirExpression[] { ClassRef(new TypeNode.Fqn(adapterName)), ClassRef(owner), Number(selected.MetadataToken), Text(selected.Name),
+            Args = new IBirExpression[] { ClassRef(new TypeNode.Fqn(adapterName)), ClassRef(owner),
+                Number(lexical == null ? selected.MetadataToken : 0), Text(lexical?.Method.Name.Value ?? selected.Name),
                 NewArray(String, formals.Select(p => (IBirExpression)Text(ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)))),
                 NewArray(Type, authored.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
                 NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))),

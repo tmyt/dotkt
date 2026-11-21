@@ -31,9 +31,11 @@ import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 import GenericValueInterop.IProjectedMark
 import GenericValueInterop.MarkedStreamReceiver
+import GenericValueInterop.NativeStreamBase
 import GenericValueInterop.TwoMarkedTags
 import GenericValueInterop.ForeignFirstSelector
 import kotlin.clr.byref
+import kotlin.clr.ClrRef
 import GenericValueInterop.NativeBoxApi
 import System.IO.MemoryStream
 
@@ -63,11 +65,24 @@ class ConstrainedNullableBoundTests {
     private class MarkedStream<T> : MemoryStream(), IProjectedMark
     private open class ExactStream : MemoryStream(), IProjectedMark
     private class DerivedStream : ExactStream()
+    private class NativeBaseSlot<A, B> : NativeStreamBase<A>()
+        where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark {
+        var other: B? = null
+        fun roundtrip(value: A) = FromNative(value)
+    }
     private class StreamSlot<A, B>(var item: A) : MarkedStreamReceiver()
         where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark {
         override fun <T> Source(item: T): String where T : MemoryStream, T : IProjectedMark = "derived"
-        fun source(value: A) = super.Source<A>(value) + ":" + Inherited<A>(value)
+        override fun <T> SourceRef(item: T, n: ClrRef<Int>): Int where T : MemoryStream, T : IProjectedMark = -1
+        fun source(value: A): String {
+            var n = 0
+            check(super.SourceRef<A>(value, byref(n)) == 42 && n == 42)
+            check(Inherited<A>(value, byref(n)) == 43 && n == 43)
+            return super.Source<A>(value)
+        }
         fun keep(value: A): A = MarkedStreamReceiver().Keep<A>(value)
+        fun interfaceWitness() = NativeBoxApi.InterfaceWitness<A>()
+        fun last(first: A, second: A): A = NativeBoxApi.LastMarked<A>(first, second)
         fun keepAliased(value: A): A {
             var n = 0
             val result = MarkedStreamReceiver().WriteAliased<A>(value, byref(n), byref(n))
@@ -110,13 +125,21 @@ class ConstrainedNullableBoundTests {
         val first = MarkedStream<Long>()
         val second = MarkedStream<String>()
         val streams = StreamSlot<MarkedStream<*>, MarkedStream<*>>(first)
-        check(streams.source(first) == "base:protected")
+        check(streams.source(first) == "base")
         check(streams.item === first && streams.keep(first) === first)
         streams.item = second
         check(streams.item === second && streams.keep(second) === second)
         check(streams.second(first, second) === second)
         val mixed = StreamSlot<ExactStream, MarkedStream<*>>(ExactStream())
         check(mixed.firstType(DerivedStream(), second) == "ExactStream")
+        check(mixed.interfaceWitness() == "ExactStream")
+        check(streams.interfaceWitness() == "IProjectedMark" && streams.last(first, second) === second)
+        val native = NativeBaseSlot<ExactStream, MarkedStream<*>>()
+        native.other = first
+        val exactStream = ExactStream()
+        check(native.roundtrip(exactStream) === exactStream && native.other === first)
+        native.other = second
+        check(native.other === second)
         check(streams.dependent(second) === second)
         val outer: MarkedItemOwner<*> = MarkedItemOwner("outer")
         val inner = outer.Slot<ClientItem<*>>(number)

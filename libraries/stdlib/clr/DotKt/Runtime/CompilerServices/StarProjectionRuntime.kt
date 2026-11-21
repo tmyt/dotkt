@@ -152,6 +152,9 @@ internal interface StarProjectionType {
     @kotlin.clr.ClrIntrinsic("MakeGenericType")
     fun makeGenericType(typeArguments: Array<StarProjectionType>): StarProjectionType
 
+    @kotlin.clr.ClrIntrinsic("GetGenericParameterConstraints")
+    fun getGenericParameterConstraints(): Array<StarProjectionType>
+
     @kotlin.clr.ClrIntrinsic("GetElementType")
     fun getElementType(): StarProjectionType?
 
@@ -591,6 +594,20 @@ private fun starProjectionCloseIntersection(
         }
     }
     val types = Array<StarProjectionType>(authored.size) { inferred[it] ?: authored[it] }
+    // Direct values may have no common *class* satisfying an interface-only
+    // native contract. A declared interface proof works even with no operands.
+    // Never widen invariant operand evidence (e.g. a native ref or List<T>).
+    val genericParameters = selected.getGenericArguments()
+    for (slot in missing) {
+        if (exact[slot]) continue
+        val constraints = genericParameters[slot].getGenericParameterConstraints()
+        if (constraints.all { it.isAssignableFrom(types[slot]) }) continue
+        val common = constraints.singleOrNull { candidate ->
+            constraints.all { it.isAssignableFrom(candidate) } &&
+                slots.indices.any { slots[it] == slot && candidate.isAssignableFrom(facets[it]) }
+        }
+        if (common != null) types[slot] = common
+    }
     return selected.makeGenericMethod(types)
 }
 

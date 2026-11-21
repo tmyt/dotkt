@@ -156,7 +156,7 @@ static partial class FBoundStarProjectionErasure
         {
             if (ConstraintParameters(owner) is not { Length: > 0 } parameters) return null;
             Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var declaration);
-            return ProjectedClassStorageFrame.Plan(parameters, (index, bound) => {
+            var frame = ProjectedClassStorageFrame.Plan(parameters, (index, bound) => {
                 // The local source may say Base<T> even though its emitted constraint is
                 // the Kotlin value interface. A pair of interfaces is not a class intersection.
                 var type = declaration == null ? bound :
@@ -166,13 +166,34 @@ static partial class FBoundStarProjectionErasure
                     return (type, "interface");
                 return (type, BoundKind(type));
             });
+            if (frame == null) return null;
+            // A derived TypeDef must be legal for *all* its instantiations, even
+            // if no one constructs its projected form. A constraint used by its
+            // exact base construction cannot be moved onto another CLR slot.
+            var parent = Preparation.SourceSupertypes.TryGetValue(owner, out var def) ? def.Base :
+                References.ReferencedSupertypes(new TypeNode.Fqn(owner, Enumerable.Range(0, parameters.Length)
+                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())).FirstOrDefault(e => !e.isInterface).spec;
+            if (parent?.Args == null) return frame;
+            var required = new List<(int Index, TypeNode.Fqn Bound)>();
+            BirGraphNameFields.VisitTypeNodes(parent, node => {
+                if (node is not TypeNode.Fqn { Args: { Length: > 0 } args } head ||
+                    ConstraintParameters(head.Name) is not { } formal || formal.Length != args.Length) return;
+                for (int i = 0; i < args.Length; i++)
+                    if (args[i] is TypeNode.Tv { Scope: "type" } actual)
+                        foreach (var constraint in formal[i].Constraints.OrEmpty())
+                            if (SupertypeGraph.SubstOwnerTvs(constraint, args) is TypeNode.Fqn bound)
+                                required.Add((actual.I, bound));
+            });
+            return required.Count == 0 ? frame : frame.Retaining(slot => required.Any(r => r.Index == slot.OwnerIndex
+                && slot.Bound is TypeNode.Fqn face && (r.Bound == face ||
+                    SupertypeGraph.Reaches(face, r.Bound, Preparation.SourceSupertypes, References))));
         }
 
         internal TypeNode[] ProjectedConstructorArguments(TypeNode.Fqn owner, ProjectedClassStorageFrame layout)
         {
             var primary = ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args;
             var visited = new bool[primary.Length];
-            var split = false;
+            var required = new List<(int OwnerIndex, TypeNode.Fqn Bound)>();
             var unproven = false;
             TypeNode Close(int i)
             {
@@ -182,7 +203,7 @@ static partial class FBoundStarProjectionErasure
                     if (ClassStorageWitness(owner, i, arg, Close, allowIntersection: true) is { } proof)
                     {
                         primary[i] = proof.Class;
-                        split |= proof.Interfaces.Length != 0;
+                        foreach (var bound in proof.Interfaces) required.Add((i, bound));
                     }
                     else if (layout.Interfaces.Any(slot => slot.OwnerIndex == i))
                         unproven = true;
@@ -190,7 +211,11 @@ static partial class FBoundStarProjectionErasure
                 return primary[i];
             }
             for (var i = 0; i < primary.Length; i++) Close(i);
-            return split && !unproven ? layout.Close(primary) : null;
+            // Substitute sibling arguments only after all primary slots have
+            // been closed: an interface may refer to a later slot.
+            if (unproven || required.Count == 0 || required.Any(r => !layout.Interfaces.Any(s =>
+                s.OwnerIndex == r.OwnerIndex && SupertypeGraph.SubstOwnerTvs(s.Bound, primary) == r.Bound))) return null;
+            return layout.Close(primary);
         }
 
         internal StorageWitness ClassStorageWitness(TypeNode.Fqn owner, int index, TypeNode.Fqn application,

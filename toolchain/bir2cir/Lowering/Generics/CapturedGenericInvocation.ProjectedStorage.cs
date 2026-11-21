@@ -4,6 +4,8 @@ using DotKt.Cir;
 
 static partial class CapturedGenericInvocation
 {
+    sealed record LexicalTarget(TypeNode.Fqn Owner, BirTypeParameter[] OwnerFrame, BirFunctionDeclaration Method);
+
     internal static BirGraphValue ProjectStorageCall(BirGraphValue call,
         ProjectedClassStorageFrame.InterfaceSlot[] intersections, ReferenceMetadataIndex refs,
         Func<string,string> allocate, List<IBirTypeDeclaration> generated, BirClassDefinition lexical,
@@ -45,14 +47,36 @@ static partial class CapturedGenericInvocation
             where facet.OwnerIndex == ((TypeNode.Tv)arguments[i]).I
             select (Slot: i, facet.Bound)).ToArray();
         var formal = selected.GetParameters();
-        if ((receiver != null && selected.DeclaringType.IsValueType)
-            || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType))
-            return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated);
+        bool typed = (receiver != null && selected.DeclaringType.IsValueType)
+            || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType);
+        var unit = selected.ReturnType.FullName == "System.Void";
+        LexicalTarget lexicalTarget = null;
+        if (site.Super || typed && !selected.IsPublic)
+        {
+            // Neither reflection's virtual Invoke nor a sibling adapter may
+            // issue a nonvirtual base call. Protected access likewise belongs
+            // to the lexical type. Retain the selected call in that context.
+            TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []);
+            var frame = generic.Select(p => CloneParameter(ReferenceMetadataReader.GenericParamDeclaration(p, native: true), Close)).ToArray();
+            var signature = member.ParameterTypes.Value.Select(t => Close(SignatureValueTypes.Of(t))).ToArray();
+            var ret = Close(SignatureValueTypes.Of(member.ReturnType.Value));
+            var forward = site.Instance ? site.SuperForward(signature, ret, generic.Length, false) :
+                site.Forward(owner, generic.Length, signature, ret, false);
+            var number = lexicalMethods.Count;
+            string lexicalName;
+            do lexicalName = "dotkt$projectedCall$" + number++;
+            while (lexical.Methods.OrEmpty().Concat(lexicalMethods).Any(m => m.Name.OrDefault() == lexicalName));
+            var method = Method(lexicalName, frame, signature, ret, Body(forward, unit, false), !site.Instance, typed ? "internal" : "private");
+            lexicalMethods.Add(method);
+            var ownerFrame = TypeParameterFrame.Declarations(lexical).ToArray();
+            lexicalTarget = new(new TypeNode.Fqn(lexical.Name.Value, Enumerable.Range(0, ownerFrame.Length)
+                .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, method);
+        }
+        if (typed) return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated, lexicalTarget);
 
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the
         // projected class's primary slot guarantees the class, not its interfaces.
-        var unit = selected.ReturnType.FullName == "System.Void";
         var name = unit ? "starProjectionInvokeIntersectionUnit" : "starProjectionInvokeIntersection";
         var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
@@ -62,26 +86,9 @@ static partial class CapturedGenericInvocation
         if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, name, 0, true, lookup, null, out _, out var helper, out var declaring))
             throw new InvalidOperationException($"Projected invocation has no runtime binding for '{name}'");
         var target = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, helper, "method", declaring, null));
-        var lookupOwner = owner;
-        var lookupName = selected.Name;
-        var lookupToken = selected.MetadataToken;
-        if (site.Super)
-        {
-            // MethodInfo.Invoke dispatches virtually. Put the nonvirtual call on
-            // its lexical this, then close and invoke just that private forwarder.
-            TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []);
-            var frame = generic.Select(p => CloneParameter(ReferenceMetadataReader.GenericParamDeclaration(p, native: true), Close)).ToArray();
-            var signature = member.ParameterTypes.Value.Select(t => Close(SignatureValueTypes.Of(t))).ToArray();
-            var ret = Close(SignatureValueTypes.Of(member.ReturnType.Value));
-            var forward = site.SuperForward(signature, ret, generic.Length, false);
-            var number = lexicalMethods.Count;
-            do lookupName = "dotkt$projectedSuper$" + number++;
-            while (lexical.Methods.OrEmpty().Concat(lexicalMethods).Any(m => m.Name.OrDefault() == lookupName));
-            lexicalMethods.Add(Method(lookupName, frame, signature, ret, Body(forward, unit, false), false, "private"));
-            lookupOwner = new TypeNode.Fqn(lexical.Name.Value, Enumerable.Range(0, TypeParameterFrame.Count(lexical))
-                .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
-            lookupToken = 0; // A generated local declaration has no MethodDef token until emission.
-        }
+        var lookupOwner = lexicalTarget?.Owner ?? owner;
+        var lookupName = lexicalTarget?.Method.Name.Value ?? selected.Name;
+        var lookupToken = lexicalTarget == null ? selected.MetadataToken : 0;
         var invoke = new BirNativeStatic {
             Type = new TypeNode.Fqn(RuntimeOwner), Method = name, MemberRef = target,
             Ret = target.ReturnType, ResolvedMemberReturn = target.ReturnType,
