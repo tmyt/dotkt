@@ -25,6 +25,7 @@ import roundtrip.constrainedbound.VisibleBoundBase
 import System.Collections.Generic.List as ClrList
 import GenericValueInterop.IProjectedMark
 import GenericValueInterop.MarkedStreamReceiver
+import kotlin.clr.byref
 import GenericValueInterop.NativeBoxApi
 import System.IO.MemoryStream
 
@@ -46,6 +47,12 @@ class ConstrainedNullableBoundTests {
     private class StreamSlot<A, B>(var item: A)
         where A : MemoryStream, A : IProjectedMark, B : MemoryStream, B : IProjectedMark {
         fun keep(value: A): A = MarkedStreamReceiver().Keep<A>(value)
+        fun keepAliased(value: A): A {
+            var n = 0
+            val result = MarkedStreamReceiver().WriteAliased<A>(value, byref(n), byref(n))
+            check(n == 42)
+            return result
+        }
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
     }
 
@@ -70,6 +77,7 @@ class ConstrainedNullableBoundTests {
         streams.item = second
         check(streams.item === second && streams.keep(second) === second)
         check(streams.second(first, second) === second)
+        check(streams.keepAliased(second) === second)
     }
 
     @TestAttribute

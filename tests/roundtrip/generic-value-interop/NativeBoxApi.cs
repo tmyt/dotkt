@@ -7,6 +7,13 @@ public interface IProjectedMark { }
 public sealed class MarkedStreamReceiver
 {
     public T Keep<T>(T item) where T : System.IO.MemoryStream, IProjectedMark => item;
+    public T WriteAliased<T>(T item, ref int first, ref int second) where T : System.IO.MemoryStream, IProjectedMark
+    {
+        first = 8;
+        if (second != 8) throw new System.InvalidOperationException("Expected the same managed location");
+        second = 42;
+        return item;
+    }
 }
 
 public interface NativeBoxReceiver

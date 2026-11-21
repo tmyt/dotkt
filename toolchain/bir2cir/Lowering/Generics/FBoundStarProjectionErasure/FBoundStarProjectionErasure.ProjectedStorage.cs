@@ -77,13 +77,22 @@ static partial class FBoundStarProjectionErasure
             foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             if (!referenceBuild)
             {
+                var generated = new List<IBirTypeDeclaration>();
+                var ordinal = 0;
+                string Allocate(string role)
+                {
+                    string name;
+                    do name = plan.Implementation + "$" + role + ordinal++; while (!emittedTypes.Add(name));
+                    return name;
+                }
                 BirGraphValue Capture(BirGraphValue node)
                 {
                     if (node is IBirExecutablePayload or BirMemberReference) return node;
                     node.VisitChildSlots(slot => slot.Replace(Capture(slot.Value)));
-                    return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references);
+                    return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references, Allocate, generated);
                 }
                 Capture(storage);
+                file.Types = file.Types.Value.Concat(generated).ToArray();
             }
             storage.Visit(node => {
                 // A self-receiver now belongs to the private implementation, not to

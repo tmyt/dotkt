@@ -5,7 +5,8 @@ using DotKt.Cir;
 static partial class CapturedGenericInvocation
 {
     internal static BirGraphValue ProjectStorageCall(BirGraphValue call,
-        ProjectedClassStorageFrame.InterfaceSlot[] intersections, ReferenceMetadataIndex refs)
+        ProjectedClassStorageFrame.InterfaceSlot[] intersections, ReferenceMetadataIndex refs,
+        Func<string,string> allocate, List<IBirTypeDeclaration> generated)
     {
         if (call is not (BirGenericStatic or BirGenericInstance)) return call;
         var (member, arguments, values, receiver) = call switch {
@@ -26,8 +27,9 @@ static partial class CapturedGenericInvocation
             .Select(row => row.index).ToArray();
         if (missing.Length == 0) return call;
         var formal = selected.GetParameters();
-        if (formal.Any(p => p.ParameterType.IsByRef || p.ParameterType.IsByRefLike)
-            || selected.ReturnType.IsByRef || selected.ReturnType.IsByRefLike) return call;
+        if ((receiver != null && selected.DeclaringType.IsValueType)
+            || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType))
+            return ProjectAddressCall(new Invocation(call), selected, owner, missing, refs, allocate, generated);
 
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the
