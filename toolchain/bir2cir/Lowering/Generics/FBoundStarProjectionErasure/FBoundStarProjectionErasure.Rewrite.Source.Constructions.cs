@@ -143,7 +143,7 @@ static partial class FBoundStarProjectionErasure
         }
         var signature = construction.MemberSignature.Value;
         if (construction.ConstructorDeclarationId.OrDefault() is string id &&
-            state.Projection.ProjectedConstructorArguments(owner) is { } physicalArguments)
+            state.Projection.ProjectedConstructorArguments(state.Projection.SelectPhysicalClassApplication(owner)) is { } physicalArguments)
         {
             var innerFactoryId = ProjectedInnerFactoryId(id);
             if (state.Declarations.ProjectedInnerFactories.TryGetValue(innerFactoryId, out var innerFactory) ||
@@ -244,5 +244,5 @@ static partial class FBoundStarProjectionErasure
     static TypeNode.Fqn SharedProjectedClassWitness(TypeNode.Fqn owner, int index, TypeNode argument, SourceRewriteState state)
         => StripSourceNullability(argument) is TypeNode.Fqn constructed && ContainsExistentialProjection(constructed)
             && state.Projection.TryExistentialCarrier(constructed.Name, out _)
-                ? state.Projection.SharedClassWitness(owner, index, constructed) : null;
+                ? state.Projection.SharedClassWitness(state.Projection.SelectPhysicalClassApplication(owner), index, constructed) : null;
 }

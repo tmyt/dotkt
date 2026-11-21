@@ -73,18 +73,48 @@ static partial class FBoundStarProjectionErasure
         twoIntersections.TypeParams = new[] { "X", "Y" }.Select(name => new BirTypeParameter {
             Name = name, Constraints = new TypeNode[] { rootBound, ifaceBound },
         }).ToArray();
+        var reorderedFrame = new NullableRepresentationFrame(2, [], [1, 0]);
+        var reordered = new BirClassDefinition { Name = "Reordered", Kind = "class", Generated = true,
+            TypeParams = new[] { new BirTypeParameter { Name = "B", Constraints = new[] { rootBound } }, new BirTypeParameter { Name = "A" } },
+            KotlinSupertypesPre = SourceTypeFacts.Empty.MergeNullableFrame(reorderedFrame) };
         var root = new BirFileDeclaration { FileClass = "ProjectionConstraints", Types = new IBirTypeDeclaration[] {
             Generic("Owner"), innerOwner, Generic("Bound"), constructionOwner, Generic("Variant", "out"), alias, fixture, late,
             new BirClassDefinition { Name = rootBound.Name, Kind = "class" },
             new BirInterfaceDefinition { Name = ifaceBound.Name, Kind = "interface" },
-            leaf, commonBase, commonLeaf, nonMember, intersection, twoIntersections, interfaceOnly,
+            leaf, commonBase, commonLeaf, nonMember, intersection, twoIntersections, interfaceOnly, reordered,
         } };
         var context = SourceSynthesisTestContext(root, refs);
         foreach (var owner in context.Owners.Values) owner.Needed = true;
         var projection = context.Projection;
+        var hiddenLeaf = new TypeNode.Fqn("DirectLeaf", [new TypeNode.Star()]);
+        var independent = new TypeNode.Fqn("kotlin.String");
+        var reorderedApplication = projection.SelectPhysicalClassApplication(
+            new TypeNode.Fqn("Reordered", reorderedFrame.Close([independent, hiddenLeaf], t => t, t => t)));
+        var physicalPair = new TypeNode.Fqn("Pair", [new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1)]);
+        Need(!context.Owners.ContainsKey("Reordered") && reorderedApplication.Layout?.SourcePosition(1) == 0
+            && reorderedApplication.CloseBound(physicalPair, 0, _ => independent) ==
+                new TypeNode.Fqn("Pair", [hiddenLeaf, independent])
+            && projection.ClassStorageWitness(reorderedApplication, 0, hiddenLeaf, null, false)?.Class == rootBound
+            && projection.ClassStorageWitness(reorderedApplication, 1, hiddenLeaf, null, false) == null,
+            "same-arity physical applications must not be re-ordered by source index");
+
+        var method = new BirFunctionDeclaration {
+            TypeParams = new[] { new BirTypeParameter(), new BirTypeParameter(), new BirTypeParameter() },
+        };
+        var methodApplication = projection.SelectPhysicalMethodApplication(method, "method", null,
+            new TypeNode.Fqn("Owner", [rootBound, independent]), [independent, rootBound, hiddenLeaf]);
+        var bothBinders = new TypeNode.Fqn("BothBinders",
+            [new TypeNode.Tv("type", 0), new TypeNode.Tv("type", 1), new TypeNode.Tv("method", 0), new TypeNode.Tv("method", 2)]);
+        var closedSlots = new List<int>();
+        var closedBound = methodApplication.CloseBound(bothBinders, 2, index => { closedSlots.Add(index); return ifaceBound; });
+        Need(closedBound == new TypeNode.Fqn("BothBinders", [rootBound, independent, ifaceBound, hiddenLeaf])
+            && closedSlots.SequenceEqual([0]),
+            "owner slot zero and method slot zero have separate substitution environments");
+
         CarrierProjectionContext.StorageWitness Witness(string leafName, bool split) {
             var app = new TypeNode.Fqn(leafName, [new TypeNode.Star()]);
-            return projection.ClassStorageWitness(new TypeNode.Fqn("Intersection", [app]), 0, app, null, split);
+            return projection.ClassStorageWitness(projection.SelectPhysicalClassApplication(new TypeNode.Fqn("Intersection", [app])),
+                0, app, null, split);
         }
         Need(Witness("DirectLeaf", false) == null
             && Witness("DirectLeaf", true) is { Class: var cls, Interfaces: [var iface] } && cls == rootBound && iface == ifaceBound
@@ -98,11 +128,13 @@ static partial class FBoundStarProjectionErasure
         Need(implementationParameters.Length == 2 && implementationParameters[0].Constraints.Value.SequenceEqual([rootBound])
             && implementationParameters[1].Constraints.Value.SequenceEqual([ifaceBound])
             && intersection.TypeParams.Value[0].Constraints.Value.Length == 2
-            && projection.ProjectedConstructorArguments(Applied("DirectLeaf"), layout).SequenceEqual([rootBound, ifaceBound])
-            && projection.ProjectedConstructorArguments(Applied("CommonLeaf"), layout) == null,
+            && projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(Applied("DirectLeaf")), layout)
+                .SequenceEqual([rootBound, ifaceBound])
+            && projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(Applied("CommonLeaf")), layout) == null,
             "the private implementation requires a separate frame without changing the exact owner");
         var partlyProven = new TypeNode.Fqn("TwoIntersections", [Applied("DirectLeaf").Args[0], Applied("Unmarked").Args[0]]);
-        Need(projection.ProjectedConstructorArguments(partlyProven, projection.StorageFrame(partlyProven.Name)) == null,
+        Need(projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(partlyProven),
+                projection.StorageFrame(partlyProven.Name)) == null,
             "one proven intersection cannot authorize splitting another parameter with a missing interface");
         TypeNode View(string name) => new TypeNode.Fqn(context.Owners[name].ErasedName);
         FunctionRewriteTests.Check("F-bound rewrite", type => projection.Rewrite(type));
