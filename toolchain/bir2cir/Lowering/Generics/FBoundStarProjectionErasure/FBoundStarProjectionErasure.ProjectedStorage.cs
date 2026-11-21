@@ -55,7 +55,14 @@ static partial class FBoundStarProjectionErasure
         if (carriers.ProjectedStorage.Count == 0) return;
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
-        foreach (var plan in carriers.ProjectedStorage)
+        // Slot positions survived lowering; a bound's spelling need not
+        // (nested owner placement, aliases, nullable representations).
+        var storageOwners = carriers.ProjectedStorage.ToDictionary(p => p.Exact, p => {
+            var parameters = TypeParameterFrame.Declarations(declarations[p.Exact].Single().type).ToArray();
+            return p with { Slots = p.Slots.Select(slot => slot with {
+                Bound = parameters[slot.OwnerIndex].Constraints.Value[slot.BoundIndex] }).ToArray() };
+        }, StringComparer.Ordinal);
+        foreach (var plan in storageOwners.Values)
         {
             var (file, type) = declarations[plan.Exact].Single();
             var carrier = declarations[plan.Carrier].Single().type;
@@ -73,6 +80,26 @@ static partial class FBoundStarProjectionErasure
             var prefix = exact.CapturedTypeParams.OrEmpty().Length;
             if (prefix != 0) storage.CapturedTypeParams = fullFrame[..prefix];
             storage.TypeParams = fullFrame[prefix..];
+            // An exact interface application can require both halves on a
+            // single CLR parameter. The split implementation instead implements
+            // its Kotlin interface through its declaration's existing carrier.
+            TypeNode ProjectInterface(TypeNode type)
+            {
+                if (type is not TypeNode.Fqn { Args: { } args } face ||
+                    !carriers.LocalOwners.TryGetValue(face.Name, out var erased) &&
+                    !references.TryExistentialPhysicalOwner(face.Name, out erased)) return type;
+                var formal = declarations[face.Name].FirstOrDefault().type is { } local
+                    ? TypeParameterFrame.Declarations(local).ToArray()
+                    : references.PhysicalOwnerTypeParametersInPhysicalFrame(face.Name);
+                if (formal == null || formal.Length != args.Length) return type;
+                for (var i = 0; i < args.Length; i++)
+                    if (args[i] is TypeNode.Tv { Scope: "type" } actual &&
+                        formal[i].Constraints.OrEmpty().Any(constraint => plan.Slots.Any(s => s.OwnerIndex == actual.I &&
+                            s.Bound.Equals(SupertypeGraph.SubstOwnerTvs(constraint, args)))))
+                        return new TypeNode.Fqn(erased);
+                return type;
+            }
+            storage.Interfaces = storage.Interfaces.OrEmpty().Select(ProjectInterface).DistinctBy(SupertypeGraph.TypeKey).ToArray();
             storage.Attrs = storage.Attrs.OrEmpty().Where(a =>
                 a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.RuntimeClassifierAttribute }).ToArray();
             storage.Methods = storage.Methods.OrEmpty().Where(m => !m.Static.OrDefault()).ToArray();
@@ -97,10 +124,38 @@ static partial class FBoundStarProjectionErasure
                     node.VisitChildSlots(slot => slot.Replace(Capture(slot.Value)));
                     return CapturedGenericInvocation.ProjectStorageCall(node, plan.Slots, references, Allocate, generated);
                 }
+                ProjectLexicalClosures(storage, plan, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,
+                    Allocate, generated);
+                foreach (var closure in generated.OfType<BirClassDefinition>().ToArray()) Capture(closure);
                 Capture(storage);
                 file.Types = file.Types.Value.Concat(generated).ToArray();
             }
             storage.Visit(node => {
+                // A locally bound constructor keeps its overload index when its
+                // declaring class is cloned. If a parameter comes from this
+                // split frame, close the destination implementation with its
+                // matching interface witnesses, not the weakened class slot.
+                if (node is BirNew creation && creation.LocalCtorIndex.HasValue
+                    && creation.Type.OrDefault() is TypeNode.Fqn { Args: { } arguments } selected
+                    && storageOwners.TryGetValue(selected.Name, out var destination))
+                {
+                    bool forwarded = false;
+                    var witnesses = destination.Slots.Select(required => {
+                        var bound = SupertypeGraph.SubstOwnerTvs(required.Bound, arguments);
+                        if (arguments[required.OwnerIndex] is TypeNode.Tv { Scope: "type" } source)
+                        {
+                            var slot = Array.FindIndex(plan.Slots, available => available.OwnerIndex == source.I
+                                && available.Bound.Equals(bound));
+                            if (slot >= 0)
+                            {
+                                forwarded = true;
+                                return (TypeNode)new TypeNode.Tv("type", fullFrame.Length - plan.Slots.Length + slot);
+                            }
+                        }
+                        return bound;
+                    }).ToArray();
+                    if (forwarded) creation.Type = new TypeNode.Fqn(destination.Implementation, arguments.Concat(witnesses).ToArray());
+                }
                 // A self-receiver now belongs to the private implementation, not to
                 // an exact instantiation of the original Kotlin class. Other
                 // instances and unrelated calls keep their original physical owner.
@@ -135,5 +190,58 @@ static partial class FBoundStarProjectionErasure
             file.Types = file.Types.Value.Append(storage).ToArray();
             emittedTypes.Add(plan.Implementation);
         }
+    }
+
+    // Closure placement has already captured the enclosing CLR frame. Its copy
+    // under a different declaring type needs that type's frame, followed by the
+    // original lambda/method slots. The original closure remains untouched.
+    static void ProjectLexicalClosures(BirClassDefinition storage, ProjectedStorageOwner plan, BirTypeParameter[] frame,
+        Func<string, BirClassDefinition> definition, Func<string, string> allocate, List<IBirTypeDeclaration> generated)
+    {
+        var width = plan.Slots.Length;
+        var prefix = frame.Length - width;
+        var names = new Dictionary<string, string>(StringComparer.Ordinal) { [plan.Exact] = plan.Implementation };
+        TypeNode[] Extend(TypeNode[] args) => args.Take(prefix)
+            .Concat(Enumerable.Range(prefix, width).Select(i => (TypeNode)new TypeNode.Tv("type", i)))
+            .Concat(args.Skip(prefix)).ToArray();
+        bool OwnPrefix(TypeNode[] args) => args?.Length >= prefix &&
+            Enumerable.Range(0, prefix).All(i => args[i] is TypeNode.Tv { Scope: "type" } tv && tv.I == i);
+        void Scan(BirClassDefinition owner, bool copied)
+        {
+            owner.Visit(node => {
+                if (copied) node.RewriteOwnTypeFieldsInPlace((field, role, type) => {
+                    if (node is BirMemberReference && field != "declaringType") return type;
+                    var shifted = CapturedGenericInvocation.Map(type, tv =>
+                        tv.Scope == "type" && tv.I >= prefix ? new TypeNode.Tv("type", tv.I + width) : tv);
+                    return SourceDeclarationSignature.RewriteType(shifted, f =>
+                        OwnPrefix(f.Args) && names.TryGetValue(f.Name, out var name)
+                            ? new TypeNode.Fqn(name, Extend(f.Args)) : f);
+                });
+                var target = node switch { BirNewClosure c => c.ClosureType.OrDefault() as TypeNode.Fqn,
+                    BirNewSam s => s.SamType.OrDefault() as TypeNode.Fqn, _ => null };
+                if (target == null || node is not BirGraphNode creation ||
+                    creation.ApplicationTypeArguments.OrDefault() is not { } args || !OwnPrefix(args) ||
+                    definition(target.Name) is not { } original || original.NestedIn.OrDefault() is not { } parent ||
+                    !names.TryGetValue(parent, out var projectedParent)) return;
+                if (!names.TryGetValue(target.Name, out var projected))
+                {
+                    projected = allocate("closure");
+                    names.Add(target.Name, projected);
+                    var closure = (BirClassDefinition)original.DeepClone();
+                    closure.Name = projected;
+                    closure.NestedIn = projectedParent;
+                    closure.RoundtripTypeHeaderPending = default;
+                    closure.RoundtripSupertypesPre = default;
+                    Scan(closure, true);
+                    closure.CapturedTypeParams = frame.Select(p => (BirTypeParameter)p.DeepClone())
+                        .Concat(closure.CapturedTypeParams.OrEmpty().Skip(prefix)).ToArray();
+                    generated.Add(closure);
+                }
+                creation.ApplicationTypeArguments = Extend(args);
+                if (creation is BirNewClosure lambda) lambda.ClosureType = new TypeNode.Fqn(projected);
+                else ((BirNewSam)creation).SamType = new TypeNode.Fqn(projected);
+            });
+        }
+        Scan(storage, false);
     }
 }

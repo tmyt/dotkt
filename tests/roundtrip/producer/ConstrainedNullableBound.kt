@@ -34,8 +34,16 @@ class ItemSlot<A : PendingItems.Item> {
 
 class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 
-class MarkedItemSlot<A> where A : PendingItems.Item, A : ResultSource.Mark {
+interface MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark { fun accept(value: A): A }
+class MarkedItemSlot<A> : MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark {
     var item: A? = null
+    override fun accept(value: A): A = value
+    fun duplicate(): MarkedItemSlot<A> {
+        val copy = MarkedItemSlot<A>()
+        copy.item = item
+        return copy
+    }
+    fun <B> deferred(label: B): () -> () -> Pair<B, A?> = { { label to item } }
 }
 abstract class AbstractMarkedSlot<A>(val value: A) where A : PendingItems.Item, A : ResultSource.Mark
 class MarkedItemOwner<X>(val outerValue: X) {

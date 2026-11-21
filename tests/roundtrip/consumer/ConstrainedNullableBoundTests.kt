@@ -68,6 +68,9 @@ class ConstrainedNullableBoundTests {
         val slot = MarkedItemSlot<ClientItem<*>>()
         slot.item = number
         check(slot.item === number)
+        check(slot.accept(text) === text && slot.duplicate().item === number)
+        val captured = slot.deferred("held")()()
+        check(captured.first == "held" && captured.second === number)
         slot.item = text
         check(slot.item === text)
         val any: Any = slot
