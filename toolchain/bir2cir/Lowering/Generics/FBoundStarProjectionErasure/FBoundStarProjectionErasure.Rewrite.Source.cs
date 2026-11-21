@@ -193,12 +193,15 @@ static partial class FBoundStarProjectionErasure
                 || ExactLexicalTypeSlot(facts, field) && !(facts.ExactOuter && sharedOuter && field != "ownerType")
                 || facts.TypeDefinition && field is "base" or "interfaces"
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape);
-        }, (field, _, child) => {
+        }, (field, role, child) => {
+            // An override edge identifies the source declaration. Its arguments are
+            // not an application of that declaration's physical generic frame.
+            if (role == BirGenericFrameRole.OverrideDeclaration) return;
             if (!typesOnly && earlyOperand && field == "e") return;
             var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases);
             var next = childScope with { Bound = scope.Bound || BoundTypeSlot(facts, field),
                 ArrayShape = scope.ArrayShape || NativeArrayTypeSlot(facts, field),
-                Descriptor = field is "clrBaseImpls" or "clrInterfaceImpls" or "overrides" or "inheritedImplementation",
+                Descriptor = field is "clrBaseImpls" or "clrInterfaceImpls" or "inheritedImplementation",
                 ParameterOwner = null, ParameterIndex = -1 };
             if (field == "typeParams" && child.Value is BirTypeParameter)
             {
