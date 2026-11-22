@@ -24338,11 +24338,12 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<TypeNode[]> field10 = default;
         OptionalField<TypeNode> field11 = default;
         OptionalField<BirTypeParameter[]> field12 = default;
+        OptionalField<BirMethodWitness[]> field13 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 13); if (IrMessagePack.ReadString(ref reader) != "clrGenericStatic") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 14); if (IrMessagePack.ReadString(ref reader) != "clrGenericStatic") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -24395,6 +24396,10 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 12);
                     field12 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
                     break;
+                case "projectedMethodWitnesses":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<BirMethodWitness[]>.Null : OptionalField<BirMethodWitness[]>.Of(ReadArray<BirMethodWitness>(ref reader, (ref MessagePackReader reader) => ReadBirMethodWitness(ref reader)));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -24414,13 +24419,14 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             ResolvedMemberParams = field10,
             ResolvedMemberReturn = field11,
             _resolvedMethodTypeParams = field12,
+            ProjectedMethodWitnesses = field13,
         };
     }
 
     internal static void WriteBirGenericStatic(ref MessagePackWriter writer, BirGenericStatic value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0) + (value._resolvedMethodTypeParams.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0) + (value._resolvedMethodTypeParams.IsPresent ? 1 : 0) + (value.ProjectedMethodWitnesses.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrGenericStatic");
         if (value.Type.IsPresent)
@@ -24565,6 +24571,20 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 }
             }
         }
+        if (value.ProjectedMethodWitnesses.IsPresent)
+        {
+            writer.Write("projectedMethodWitnesses");
+            if (value.ProjectedMethodWitnesses.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ProjectedMethodWitnesses.Value.Length);
+                foreach (var item0 in value.ProjectedMethodWitnesses.Value)
+                {
+                    WriteBirMethodWitness(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
     }
 
     internal static BirGenericInstance ReadBirGenericInstance(ref MessagePackReader reader)
@@ -24590,11 +24610,12 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<SourceTypeVector> field16 = default;
         OptionalField<TypeNode> field17 = default;
         OptionalField<BirTypeParameter[]> field18 = default;
+        OptionalField<BirMethodWitness[]> field19 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 19); if (IrMessagePack.ReadString(ref reader) != "clrGenericInstance") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 20); if (IrMessagePack.ReadString(ref reader) != "clrGenericInstance") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -24671,6 +24692,10 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 18);
                     field18 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
                     break;
+                case "projectedMethodWitnesses":
+                    Seen(ref seen, 1UL << 19);
+                    field19 = reader.TryReadNil() ? OptionalField<BirMethodWitness[]>.Null : OptionalField<BirMethodWitness[]>.Of(ReadArray<BirMethodWitness>(ref reader, (ref MessagePackReader reader) => ReadBirMethodWitness(ref reader)));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -24696,13 +24721,14 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             _foreignDeclarationSignature = field16,
             ResolvedMemberReturn = field17,
             _resolvedMethodTypeParams = field18,
+            ProjectedMethodWitnesses = field19,
         };
     }
 
     internal static void WriteBirGenericInstance(ref MessagePackWriter writer, BirGenericInstance value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ReceiverMode.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value._foreignDeclarationSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0) + (value._resolvedMethodTypeParams.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Method.IsPresent ? 1 : 0) + (value.TypeArgs.IsPresent ? 1 : 0) + (value.Recv.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ReceiverMode.IsPresent ? 1 : 0) + (value.Dispatch.IsPresent ? 1 : 0) + (value.Ret.IsPresent ? 1 : 0) + (value.Super.IsPresent ? 1 : 0) + (value.Sty.IsPresent ? 1 : 0) + (value.SuspendCall.IsPresent ? 1 : 0) + (value._capturedGenericArgument.IsPresent ? 1 : 0) + (value._capturedGenericResult.IsPresent ? 1 : 0) + (value._erasedConstraintDispatch.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value._foreignDeclarationSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0) + (value._resolvedMethodTypeParams.IsPresent ? 1 : 0) + (value.ProjectedMethodWitnesses.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("clrGenericInstance");
         if (value.Type.IsPresent)
@@ -24898,6 +24924,20 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 foreach (var item0 in value._resolvedMethodTypeParams.Value)
                 {
                     WriteBirTypeParameter(ref writer, item0, depth + 1 + 1);
+                }
+            }
+        }
+        if (value.ProjectedMethodWitnesses.IsPresent)
+        {
+            writer.Write("projectedMethodWitnesses");
+            if (value.ProjectedMethodWitnesses.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.ProjectedMethodWitnesses.Value.Length);
+                foreach (var item0 in value.ProjectedMethodWitnesses.Value)
+                {
+                    WriteBirMethodWitness(ref writer, item0, depth + 1 + 1);
                 }
             }
         }

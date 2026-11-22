@@ -2,6 +2,16 @@
 package roundtrip.constrainedbound
 
 import System.Collections.Generic.List as ClrList
+import RoundtripDependentNative.Base
+import RoundtripDependentNative.IMarker
+import RoundtripDependentNative.Selector
+
+class NativeChoice<T>(val value: T) : Base(), IMarker<String>
+class LastNativeChoice : Selector() {
+    override fun <T> Choose(first: T, last: T): T where T : Base, T : IMarker<String> = last
+    fun base(a: NativeChoice<*>, b: NativeChoice<*>) = super.Choose<NativeChoice<*>>(a, b)
+}
+fun localNativeChoice(s: LastNativeChoice, a: NativeChoice<*>, b: NativeChoice<*>) = s.Choose<NativeChoice<*>>(a, b)
 
 interface UsableBound { val name: String }
 internal interface HiddenBound : UsableBound

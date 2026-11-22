@@ -12,6 +12,9 @@ import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
 import roundtrip.constrainedbound.MarkedSelector
+import roundtrip.constrainedbound.NativeChoice
+import roundtrip.constrainedbound.LastNativeChoice
+import roundtrip.constrainedbound.localNativeChoice
 import roundtrip.constrainedbound.OwnerSelector
 import roundtrip.constrainedbound.OwnerTag
 import roundtrip.constrainedbound.OtherSelector
@@ -180,8 +183,25 @@ class ConstrainedNullableBoundTests {
         check(joined.item === value)
     }
 
+    private fun checkFixedVirtualDispatch() {
+        val chooser = LastNativeChoice()
+        val nativeChooser: RoundtripDependentNative.Selector = chooser
+        val a = NativeChoice("first")
+        val b = NativeChoice("last")
+        var order = ""
+        fun receiver(): LastNativeChoice { order += "r"; return chooser }
+        fun operand(label: String, x: NativeChoice<*>): NativeChoice<*> { order += label; return x }
+        check(receiver().Choose<NativeChoice<*>>(operand("first", a), operand("last", b)) === b)
+        check(order == "rfirstlast")
+        check(chooser.Choose<NativeChoice<String>>(a, b) === b)
+        check(nativeChooser.Choose<NativeChoice<*>>(a, b) === b)
+        check(localNativeChoice(chooser, a, b) === b)
+        check(chooser.base(a, b) === a)
+    }
+
     @TestAttribute
     fun separateClassAndInterfaceBoundsAcceptHeterogeneousProjectedValues() {
+        checkFixedVirtualDispatch()
         val number = ClientItem(42L)
         val text = ClientItem("text")
         val concrete = object : AbstractMarkedSlot<ClientItem<String>>(text) {}

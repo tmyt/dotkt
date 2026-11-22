@@ -80,6 +80,12 @@ static partial class CapturedGenericInvocation
                         Declare(child.Value, inner);
                     }
                 }
+                if (node.MethodWitnessFacts.HasValue && Invocation.Admits(node) &&
+                    FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs) is { } fixedCall)
+                {
+                    slot.Replace(fixedCall);
+                    return;
+                }
                 var capture = TakeCaptureFacts(node);
                 if (capture?.Arguments.HasValue != true || !Invocation.Admits(node)) return;
                 var call = new Invocation(node);
@@ -87,6 +93,59 @@ static partial class CapturedGenericInvocation
                 var result = capture.Result ?? BirNodeType.Of(node as BirGraphNode);
                 slot.Replace(Expand(call, capture, result, ownerFrame, methodFrame, lexicalOwner, scope, refs, emittedLocalTypes, generated, captureConstruction));
             }
+        }
+
+        BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs)
+        {
+            var id = call.Node.SelectedGenericCallable;
+            var owner = (TypeNode.Fqn)(call.Member?.DeclaringType.OrDefault() ?? call.Owner);
+            var local = id != null && declarations.TryGetValue(id, out var bindings)
+                ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method)?.Method : null;
+            if (call.Node is not (BirGenericInstance or BirGenericStatic) &&
+                !ProjectedCallableEntries.HasFixedAbi(local, id, refs)) return null;
+            var member = call.Member;
+            if (local == null && member == null) throw new InvalidOperationException("Fixed invocation lacks its selected declaration");
+            var signature = member?.ParameterTypes.Value ?? local.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray();
+            var ret = member?.ReturnType.Value ?? local.Ret.Value;
+            if (signature.Append(ret).Any(t => HasAddress(t) || ByRefLike(t, refs)))
+                return null;
+            var actual = call.TypeArguments.Value;
+            var authored = actual.ToArray();
+            var proofs = call.Node.MethodWitnessFacts.Value;
+            foreach (var proof in proofs) authored[proof.Argument.Value] = proof.Primary.Value;
+            var facets = proofs.SelectMany(p => p.Interfaces.Value.Select(bound => (p.Argument.Value, bound))).ToArray();
+            var result = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(ret, owner.Args ?? [], actual);
+            var keys = signature.Select(t => RuntimeKey(t, refs)).ToArray();
+            var unit = IsVoid(ret);
+            // The local MethodDef has no metadata token yet. The runtime binds
+            // its complete signature; zero is reserved for unique lexical thunks.
+            int token = -1;
+            var name = member?.Name.Value ?? local.Name.Value;
+            if (call.Super)
+            {
+                var frame = local?.TypeParams.OrEmpty() ?? call.SelectedFrame;
+                call.Node.MethodWitnessFacts = default;
+                var formals = signature.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? [])).ToArray();
+                var returns = SupertypeGraph.SubstOwnerTvs(ret, owner.Args ?? []);
+                name = SuperForwarder(call, lexicalOwner, frame.Select(p => CloneParameter(p,
+                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null);
+                owner = new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
+                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+                token = 0;
+            }
+            return IntersectionCall(call, owner, token, name, keys, authored, facets, result, unit, refs);
+        }
+
+        string SuperForwarder(Invocation call, string lexicalOwner, BirTypeParameter[] frame, TypeNode[] parameters, TypeNode result, bool local)
+        {
+            var definition = definitions[lexicalOwner].Type;
+            string name;
+            do { name = "dotkt$capturedSuper$" + _next++; }
+            while (definition.Methods.OrEmpty().Any(method => method.Name.OrDefault() == name));
+            var forward = call.SuperForward(parameters, result, frame.Length, local);
+            definition.Methods = definition.Methods.OrEmpty().Append(Method(name, frame, parameters, result,
+                Body(forward, IsVoid(result), objectResult: false), isStatic: false, visibility: "private")).ToArray();
+            return name;
         }
 
         static void Declare(BirGraphValue node, Dictionary<string, TypeNode> scope)
@@ -151,19 +210,13 @@ static partial class CapturedGenericInvocation
                 // A nonvirtual base call must consume this lexical method's own
                 // this. The thunk therefore uses a private instance forwarder,
                 // never a base invocation on an arbitrary receiver.
-                if (!definitions.TryGetValue(lexicalOwner, out var definition)) throw new InvalidOperationException("Captured super invocation has no lexical owner");
                 TypeNode CloseSuper(TypeNode type) => Map(type, variable => variable.Scope == "type"
                     ? owner.Args?[variable.I] ?? throw new InvalidOperationException("Captured super invocation has no base frame") : variable);
                 var superFrame = selectedFrame.Select(parameter => CloneParameter(parameter, CloseSuper)).ToArray();
                 var superParameters = declarationParameters.Select(CloseSuper).ToArray();
                 parameterWitnesses = parameterWitnesses.Select(CloseSuper).ToArray();
                 var superReturn = CloseSuper(declaredReturn);
-                var forward = call.SuperForward(superParameters, superReturn, selectedFrame.Length, local);
-                string superName;
-                do { superName = "dotkt$capturedSuper$" + _next++; }
-                while (definition.Type.Methods.OrEmpty().Any(method => method.Name.OrDefault() == superName));
-                definition.Type.Methods = definition.Type.Methods.OrEmpty().Append(Method(superName, superFrame, superParameters, superReturn,
-                    Body(forward, IsVoid(superReturn), objectResult: false), isStatic: false, visibility: "private")).ToArray();
+                var superName = SuperForwarder(call, lexicalOwner, superFrame, superParameters, superReturn, local);
                 owner = new TypeNode.Fqn(lexicalOwner, ownerFrame.Length == 0 ? null
                     : Enumerable.Range(0, ownerFrame.Length).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
                 declarationParameters = superParameters; declaredReturn = superReturn; selectedFrame = superFrame; local = true;

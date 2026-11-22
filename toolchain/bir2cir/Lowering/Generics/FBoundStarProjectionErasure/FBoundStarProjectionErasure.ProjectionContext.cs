@@ -209,9 +209,9 @@ static partial class FBoundStarProjectionErasure
         }
 
         internal PhysicalWitnessApplication SelectPhysicalMethodApplication(BirFunctionDeclaration local, string identity,
-            NullableRepresentationFrame frame, TypeNode.Fqn owner, TypeNode[] arguments)
+            NullableRepresentationFrame frame, TypeNode.Fqn owner, TypeNode[] arguments, BirTypeParameter[] nativeParameters = null)
         {
-            var parameters = local?.TypeParams.OrDefault();
+            var parameters = local?.TypeParams.OrDefault() ?? nativeParameters;
             if (local == null && identity != null && !referencedMethodWitnessParameters.TryGetValue(identity, out parameters))
                 referencedMethodWitnessParameters[identity] = parameters = References.PhysicalMethodTypeParametersInPhysicalFrame(identity);
             return new(WitnessBinder.Method, owner, identity, local, frame, parameters, arguments);

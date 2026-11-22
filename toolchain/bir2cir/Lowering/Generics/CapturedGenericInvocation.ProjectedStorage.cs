@@ -95,6 +95,16 @@ static partial class CapturedGenericInvocation
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the
         // projected class's primary slot guarantees the class, not its interfaces.
+        var result = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(member.ReturnType.Value, owner.Args ?? [], arguments);
+        return IntersectionCall(site, lexicalTarget?.Owner ?? owner, lexicalTarget == null ? selected.MetadataToken : 0,
+            lexicalTarget?.Method.Name.Value ?? selected.Name,
+            formal.Select(p => ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)), arguments, facets, result, unit, refs);
+    }
+
+    static BirGraphValue IntersectionCall(Invocation site, TypeNode.Fqn owner, int token, string method,
+        IEnumerable<string> parameterKeys, TypeNode[] arguments, (int Slot, TypeNode Bound)[] facets,
+        TypeNode result, bool unit, ReferenceMetadataIndex refs)
+    {
         var name = unit ? "starProjectionInvokeIntersectionUnit" : "starProjectionInvokeIntersection";
         var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
@@ -104,20 +114,16 @@ static partial class CapturedGenericInvocation
         if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, name, 0, true, lookup, null, out _, out var helper, out var declaring))
             throw new InvalidOperationException($"Projected invocation has no runtime binding for '{name}'");
         var target = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, helper, "method", declaring, null));
-        var lookupOwner = lexicalTarget?.Owner ?? owner;
-        var lookupName = lexicalTarget?.Method.Name.Value ?? selected.Name;
-        var lookupToken = lexicalTarget == null ? selected.MetadataToken : 0;
         var invoke = new BirNativeStatic {
             Type = new TypeNode.Fqn(RuntimeOwner), Method = name, MemberRef = target,
             Ret = target.ReturnType, ResolvedMemberReturn = target.ReturnType,
-            Args = new IBirExpression[] { receiver ?? Null(), ClassRef(lookupOwner), Number(lookupToken), Text(lookupName),
-                NewArray(String, formal.Select(p => (IBirExpression)Text(ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)))),
+            Args = new IBirExpression[] { site.Receiver ?? Null(), ClassRef(owner), Number(token), Text(method),
+                NewArray(String, parameterKeys.Select(p => (IBirExpression)Text(p))),
                 NewArray(Type, arguments.Select(t => (IBirExpression)ClassRef(t))),
                 NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
-                NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))), NewArray(Object, values) },
+                NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))), NewArray(Object, site.Arguments.Value) },
         };
         ForeignStarProjectionBinding.RequireRuntimeFallback();
-        var result = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(member.ReturnType.Value, owner.Args ?? [], arguments);
         return unit || IsObject(result) ? invoke : Cast(result, invoke);
     }
 }

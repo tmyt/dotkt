@@ -1135,7 +1135,7 @@ sealed partial class TypedCirProjection
 
     internal CirGenericStatic ProjectCirGenericStatic(BirGenericStatic value)
     {
-        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
+        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.ProjectedMethodWitnesses.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirGenericStatic");
         return new CirGenericStatic
         {
@@ -1149,7 +1149,7 @@ sealed partial class TypedCirProjection
 
     internal CirGenericInstance ProjectCirGenericInstance(BirGenericInstance value)
     {
-        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._erasedConstraintDispatch.IsPresent || value._foreignDeclarationSignature.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
+        if (value._capturedGenericArgument.IsPresent || value._capturedGenericResult.IsPresent || value._erasedConstraintDispatch.IsPresent || value._foreignDeclarationSignature.IsPresent || value._resolvedMethodTypeParams.IsPresent || value.ProjectedMethodWitnesses.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.Sty.IsPresent || value.SuspendCall.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirGenericInstance");
         return new CirGenericInstance
         {

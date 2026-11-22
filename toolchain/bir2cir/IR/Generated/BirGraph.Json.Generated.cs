@@ -10821,6 +10821,7 @@ internal static partial class BirGraphJson
         OptionalField<TypeNode[]> field10 = default;
         OptionalField<TypeNode> field11 = default;
         OptionalField<BirTypeParameter[]> field12 = default;
+        OptionalField<BirMethodWitness[]> field13 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -10828,7 +10829,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 13); if (ReadString(ref reader) != "clrGenericStatic") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 14); if (ReadString(ref reader) != "clrGenericStatic") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -10881,6 +10882,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 12);
                     field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirTypeParameter(ref reader)));
                     break;
+                case "projectedMethodWitnesses":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMethodWitness[]>.Null : OptionalField<BirMethodWitness[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirMethodWitness(ref reader)));
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -10900,6 +10905,7 @@ internal static partial class BirGraphJson
             ResolvedMemberParams = field10,
             ResolvedMemberReturn = field11,
             _resolvedMethodTypeParams = field12,
+            ProjectedMethodWitnesses = field13,
         };
     }
 
@@ -10926,6 +10932,7 @@ internal static partial class BirGraphJson
         OptionalField<SourceTypeVector> field16 = default;
         OptionalField<TypeNode> field17 = default;
         OptionalField<BirTypeParameter[]> field18 = default;
+        OptionalField<BirMethodWitness[]> field19 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -10933,7 +10940,7 @@ internal static partial class BirGraphJson
             if (!reader.Read()) throw new FormatException();
             switch (key)
             {
-                case "k": Seen(ref seen, 1UL << 19); if (ReadString(ref reader) != "clrGenericInstance") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 20); if (ReadString(ref reader) != "clrGenericInstance") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
@@ -11010,6 +11017,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 18);
                     field18 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirTypeParameter(ref reader)));
                     break;
+                case "projectedMethodWitnesses":
+                    Seen(ref seen, 1UL << 19);
+                    field19 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMethodWitness[]>.Null : OptionalField<BirMethodWitness[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirMethodWitness(ref reader)));
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -11035,6 +11046,7 @@ internal static partial class BirGraphJson
             _foreignDeclarationSignature = field16,
             ResolvedMemberReturn = field17,
             _resolvedMethodTypeParams = field18,
+            ProjectedMethodWitnesses = field19,
         };
     }
 

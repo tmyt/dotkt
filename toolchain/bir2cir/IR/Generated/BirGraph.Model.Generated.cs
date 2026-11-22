@@ -30542,11 +30542,13 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
+    public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
+    internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -30584,6 +30586,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; visit("projectedMethodWitnesses", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override void RewritePhysicalFieldsInPlace(
         Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
@@ -30600,6 +30603,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; child("projectedMethodWitnesses", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override void ConsumePhysicalSourceFacts()
     {
@@ -30633,6 +30637,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
         if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { visit((BirGraphValue)item0); } }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { visit((BirGraphValue)item0); } }
     }
     public override void VisitChildSlots(Action<BirGraphSlot> visit)
     {
@@ -30640,6 +30645,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (MemberRef.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override void VisitOwnChildSlots(
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
@@ -30648,6 +30654,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (MemberRef.HasValue) { visit("memberRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; visit("_capturedGenericArgument", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; visit("projectedMethodWitnesses", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -30655,6 +30662,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)MemberRef.Value)) : MemberRef,
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)rewrite((BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)rewrite((BirGraphValue)item0)).ToArray()) : ProjectedMethodWitnesses,
     };
     public override BirGraphValue DeepClone() => this with
     {
@@ -30669,6 +30677,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)((BirGraphValue)item0).DeepClone()).ToArray()) : ProjectedMethodWitnesses,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
     {
@@ -30685,6 +30694,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
             ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
             ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
             _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ProjectedMethodWitnesses,
         };
         born(this, result);
         return result;
@@ -30714,6 +30724,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ProjectedMethodWitnesses,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
@@ -30740,6 +30751,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { type(BirGenericFrameRole.ReferencedDeclaration, (TypeNode)item0); } }
         if (ResolvedMemberReturn.HasValue) { type(BirGenericFrameRole.ResolvedDeclaration, (TypeNode)ResolvedMemberReturn.Value); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -30756,6 +30768,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
@@ -30772,6 +30785,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -30788,6 +30802,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirGenericStatic value
@@ -30803,7 +30818,8 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
             && EqualField(_capturedGenericResult, value._capturedGenericResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(ResolvedMemberParams, value.ResolvedMemberParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
-            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -30821,6 +30837,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -30840,6 +30857,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         projected?.Invoke(this, result);
         return result;
     }
@@ -30867,11 +30885,13 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<SourceTypeVector> _foreignDeclarationSignature { get; set; }
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
+    public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
     public override TypeNode? ExplicitSourceType => Sty.OrDefault() ?? Type.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? OwnTypeOrReturnStamp => Type.OrDefault() ?? Ret.OrDefault();
+    internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -30910,6 +30930,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => rewrite("resolvedMemberParams", BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray());
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(rewrite("resolvedMemberReturn", BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; visit("projectedMethodWitnesses", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override void RewritePhysicalFieldsInPlace(
         Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
@@ -30927,6 +30948,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) ResolvedMemberParams = OptionalField<TypeNode[]>.Of(vector("resolvedMemberParams", BirPhysicalTypeRole.Value, ResolvedMemberParams.Value));
         if (ResolvedMemberReturn.HasValue) ResolvedMemberReturn = OptionalField<TypeNode>.Of(type("resolvedMemberReturn", BirPhysicalTypeRole.Structural, ResolvedMemberReturn.Value));
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; child("_resolvedMethodTypeParams", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; child("projectedMethodWitnesses", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override void ConsumePhysicalSourceFacts()
     {
@@ -30963,6 +30985,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (MemberRef.HasValue) { visit((BirGraphValue)MemberRef.Value); }
         if (_capturedGenericArgument.HasValue) { foreach (var item0 in _capturedGenericArgument.Value) { visit((BirGraphValue)item0); } }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { visit((BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { visit((BirGraphValue)item0); } }
     }
     public override void VisitChildSlots(Action<BirGraphSlot> visit)
     {
@@ -30971,6 +30994,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (MemberRef.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override void VisitOwnChildSlots(
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
@@ -30980,6 +31004,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (MemberRef.HasValue) { visit("memberRef", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)MemberRef.Value!, replacement => MemberRef = OptionalField<BirMemberReference>.Of((BirMemberReference)replacement))); }
         if (_capturedGenericArgument.HasValue) { for (var index0 = 0; index0 < _capturedGenericArgument.Value.Length; index0++) { var at0 = index0; var child0 = _capturedGenericArgument.Value[at0]; visit("_capturedGenericArgument", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)_capturedGenericArgument.Value[at0]!, replacement => _capturedGenericArgument.Value[at0] = (CapturedGenericArgument)replacement)); } }
         if (_resolvedMethodTypeParams.HasValue) { for (var index0 = 0; index0 < _resolvedMethodTypeParams.Value.Length; index0++) { var at0 = index0; var child0 = _resolvedMethodTypeParams.Value[at0]; visit("_resolvedMethodTypeParams", BirGenericFrameRole.ResolvedDeclaration, new BirGraphSlot(() => (BirGraphValue)_resolvedMethodTypeParams.Value[at0]!, replacement => _resolvedMethodTypeParams.Value[at0] = (BirTypeParameter)replacement)); } }
+        if (ProjectedMethodWitnesses.HasValue) { for (var index0 = 0; index0 < ProjectedMethodWitnesses.Value.Length; index0++) { var at0 = index0; var child0 = ProjectedMethodWitnesses.Value[at0]; visit("projectedMethodWitnesses", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ProjectedMethodWitnesses.Value[at0]!, replacement => ProjectedMethodWitnesses.Value[at0] = (BirMethodWitness)replacement)); } }
     }
     public override BirGraphValue RewriteChildren(Func<BirGraphValue, BirGraphValue> rewrite) => this with
     {
@@ -30988,6 +31013,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)rewrite((BirGraphValue)MemberRef.Value)) : MemberRef,
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)rewrite((BirGraphValue)item0)).ToArray()) : _capturedGenericArgument,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)rewrite((BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)rewrite((BirGraphValue)item0)).ToArray()) : ProjectedMethodWitnesses,
     };
     public override BirGraphValue DeepClone() => this with
     {
@@ -31003,6 +31029,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)((BirGraphValue)item0).DeepClone()).ToArray()) : ProjectedMethodWitnesses,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
     {
@@ -31020,6 +31047,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
             ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => CopyType(item0)).ToArray()) : ResolvedMemberParams,
             ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
             _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ProjectedMethodWitnesses,
         };
         born(this, result);
         return result;
@@ -31050,6 +31078,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         ResolvedMemberParams = ResolvedMemberParams.HasValue ? OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()) : ResolvedMemberParams,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0)).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedMethodWitnesses = ProjectedMethodWitnesses.HasValue ? OptionalField<BirMethodWitness[]>.Of(ProjectedMethodWitnesses.Value.Select(item0 => (BirMethodWitness)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ProjectedMethodWitnesses,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
@@ -31077,6 +31106,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { type(BirGenericFrameRole.ReferencedDeclaration, (TypeNode)item0); } }
         if (ResolvedMemberReturn.HasValue) { type(BirGenericFrameRole.ResolvedDeclaration, (TypeNode)ResolvedMemberReturn.Value); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -31094,6 +31124,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
@@ -31111,6 +31142,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirGenericFrameRole.ReferencedDeclaration, BirRepresentationRole.Foreign, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Foreign, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirGenericFrameRole.ResolvedDeclaration, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -31128,6 +31160,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberParams.HasValue) { ResolvedMemberParams = OptionalField<TypeNode[]>.Of(ResolvedMemberParams.Value.Select(item0 => type(BirOwnershipRole.ForeignVector, item0)).ToArray()); }
         if (ResolvedMemberReturn.HasValue) { ResolvedMemberReturn = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, ResolvedMemberReturn.Value)); }
         if (_resolvedMethodTypeParams.HasValue) { foreach (var item0 in _resolvedMethodTypeParams.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
+        if (ProjectedMethodWitnesses.HasValue) { foreach (var item0 in ProjectedMethodWitnesses.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirGenericInstance value
@@ -31149,7 +31182,8 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
             && EqualField(ResolvedMemberParams, value.ResolvedMemberParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(_foreignDeclarationSignature, value._foreignDeclarationSignature, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
-            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -31173,6 +31207,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         WriteOptional(writer, "_foreignDeclarationSignature", _foreignDeclarationSignature, (writer, value) => { SourceTypeVector.Write(writer, value); });
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -31198,6 +31233,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (_foreignDeclarationSignature.IsPresent) result["_foreignDeclarationSignature"] = _foreignDeclarationSignature.IsNull ? null : SourceTypeVector.ToDom(_foreignDeclarationSignature.Value);
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         projected?.Invoke(this, result);
         return result;
     }
