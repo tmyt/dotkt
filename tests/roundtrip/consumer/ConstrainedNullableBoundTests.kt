@@ -57,6 +57,7 @@ import GenericValueInterop.ForeignFirstSelector
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
 import GenericValueInterop.NativeBoxApi
+import GenericValueInterop.NativeResultProbe
 import System.IO.MemoryStream
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
@@ -117,6 +118,7 @@ class ConstrainedNullableBoundTests {
 
     @TestAttribute
     fun projectedManagedReferencesPreserveLocationsThroughDispatch() {
+        checkProjectedLocation(MarkedStream<Int>(), MarkedStream<Int>())
         val first = ClientItem(1)
         val second = ClientItem("two")
         val cell = Cell(first)
@@ -161,6 +163,21 @@ class ConstrainedNullableBoundTests {
         fun absent(): A? = absentMarked<A>()
     }
     private open class MarkedStream<T> : MemoryStream(), IProjectedMark
+    private fun checkProjectedLocation(first: MarkedStream<*>, next: MarkedStream<*>) {
+        val probe = NativeResultProbe()
+        var live by byref(probe.Location<MarkedStream<*>>(first))
+        check(live === first)
+        live = next
+        check(probe.Read(0) === next)
+    }
+    @TestAttribute
+    fun projectedNativeSpanRetainsItsElementTypeAcrossTheConsumer() = checkProjectedSpan(MarkedStream<Int>())
+    private fun checkProjectedSpan(stream: MarkedStream<*>) {
+        val probe = NativeResultProbe()
+        check(NativeResultProbe.Size(probe.Slice<MarkedStream<*>>(stream)) == 2)
+        NativeResultProbe.FillSecond(probe.Slice<MarkedStream<*>>(stream))
+        check(probe.Read(1) === stream)
+    }
     private class LongStream : MarkedStream<Long>()
     private class NativeRecord<A>(var item: A) : IMarkedRecord<A> where A : MemoryStream, A : IProjectedMark {
         override fun Read(): A = item

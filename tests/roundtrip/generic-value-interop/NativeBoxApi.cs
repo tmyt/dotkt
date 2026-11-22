@@ -8,6 +8,25 @@ public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public sealed class NativeResultProbe
+{
+    private System.Array backing;
+    public ref T Location<T>(T value) where T : System.IO.MemoryStream, IProjectedMark
+    {
+        T[] values = [value];
+        backing = values;
+        return ref values[0];
+    }
+    public System.Span<T> Slice<T>(T value) where T : System.IO.MemoryStream, IProjectedMark
+    {
+        T[] values = [value, default];
+        backing = values;
+        return values;
+    }
+    public object Read(int index) => backing.GetValue(index);
+    public static int Size<T>(System.Span<T> values) => values.Length;
+    public static void FillSecond<T>(System.Span<T> values) => values[1] = values[0];
+}
 public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMark
 {
     public T FromNative(T item) => item;

@@ -24,6 +24,7 @@ static partial class CapturedGenericInvocation
             bool finishFixedCalls = false)
         {
             var generated = new List<IBirTypeDeclaration>();
+            var liveResults = new Dictionary<BirGraphValue, LiveResultUse>(ReferenceEqualityComparer.Instance);
             BirGraphValue root = file;
             Walk(new BirGraphSlot(() => root, replacement => root = replacement), [], [], file.FileClass.OrDefault(), new());
             if (!ReferenceEquals(root, file)) throw new InvalidOperationException("Captured invocation replaced an owning file");
@@ -34,10 +35,12 @@ static partial class CapturedGenericInvocation
             }
 
             void Walk(BirGraphSlot slot, BirTypeParameter[] ownerFrame, BirTypeParameter[] methodFrame,
-                string lexicalOwner, Dictionary<string, TypeNode> incoming)
+                string lexicalOwner, Dictionary<string, TypeNode> incoming, NativeResultUse resultUse = null)
             {
                 var node = slot.Value;
                 if (node == null || node is IBirExecutablePayload) return;
+                if (liveResults.TryGetValue(node, out var liveUse)) resultUse = liveUse;
+                var consumer = NativeResultUse.Direct(node);
                 if (node is IBirTypeDeclaration owner && owner.Kind.OrDefault() is "class" or "interface" or "struct")
                 { ownerFrame = TypeParameterFrame.CloneDeclarations(owner); lexicalOwner = owner.Name.OrDefault(); }
                 if (node is BirFunctionDeclaration { Params.HasValue: true, Body.HasValue: true } function)
@@ -53,6 +56,20 @@ static partial class CapturedGenericInvocation
                     scope = new(scope, StringComparer.Ordinal);
                     foreach (var parameter in parameters)
                         if (parameter.Name.HasValue && parameter.Type.HasValue) scope[parameter.Name.Value] = parameter.Type.Value;
+                }
+                LiveResultUse live = null;
+                var host = lexicalOwner == file.FileClass.OrDefault() ? null : definitions.GetValueOrDefault(lexicalOwner)?.Type;
+                if (node is BirFunctionDeclaration enclosing && ownerFrame.Length == 0 && methodFrame.Length == 0 &&
+                    lexicalOwner != null && (host != null || lexicalOwner == file.FileClass.OrDefault()))
+                {
+                    string AllocateHelper() {
+                        var methods = (host != null ? host.Methods : file.Methods).OrEmpty();
+                        string name;
+                        do name = "dotkt$consumeReference$" + _next++; while (methods.Any(m => m.Name.OrDefault() == name));
+                        return name;
+                    }
+                    live = LiveResultUse.Find(enclosing, new(lexicalOwner), scope, AllocateHelper);
+                    if (live != null) liveResults.Add(live.Producer, live);
                 }
                 if (node is BirValueBlock block)
                 {
@@ -79,13 +96,25 @@ static partial class CapturedGenericInvocation
                     foreach (var (field, child) in children)
                     {
                         if (!scopes.TryGetValue(field, out var inner)) scopes[field] = inner = new(scope, StringComparer.Ordinal);
-                        Walk(child, ownerFrame, methodFrame, lexicalOwner, inner);
+                        Walk(child, ownerFrame, methodFrame, lexicalOwner, inner,
+                            consumer != null && ReferenceEquals(child.Value, consumer.Producer) ? consumer : null);
                         Declare(child.Value, inner);
                     }
                 }
+                if (live != null)
+                {
+                    liveResults.Remove(live.Producer);
+                    if (live.Replacement != null)
+                    {
+                        var helper = live.Finish();
+                        if (host != null) host.Methods = host.Methods.OrEmpty().Append(helper).ToArray();
+                        else file.Methods = file.Methods.OrEmpty().Append(helper).ToArray();
+                    }
+                }
+                if (consumer?.Replacement is { } consumed) { slot.Replace(consumed); return; }
                 if (node.MethodWitnessFacts.HasValue && Invocation.Admits(node) &&
                     FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated,
-                        deferVariableArguments: !finishFixedCalls) is { } fixedCall)
+                        deferVariableArguments: !finishFixedCalls, resultUse: resultUse) is { } fixedCall)
                 {
                     slot.Replace(fixedCall);
                     return;
@@ -103,7 +132,7 @@ static partial class CapturedGenericInvocation
         internal BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
             HashSet<string> emitted, List<IBirTypeDeclaration> generated, bool deferVariableArguments = false,
             CallableWitnessScope classScope = default, CallableWitnessScope methodScope = default,
-            Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null)
+            Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null, NativeResultUse resultUse = null)
         {
             var occurrence = call.Node;
             call = SelectedInvocation(call, out var access);
@@ -187,7 +216,7 @@ static partial class CapturedGenericInvocation
                 return name;
             }
             return typed || access != null ? ProjectAddressCall(call, target, owner, facets, refs, allocate ?? Allocate, generated, lexical, access, authored,
-                captures: rows, capturedResult: capturedResult)
+                captures: rows, capturedResult: capturedResult, resultUse: resultUse)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
                     lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs, rows);
         }
