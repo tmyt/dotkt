@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Keep a native call's hidden element type when Kotlin uses its projected live reference or passes its span to a matching native consumer.
+- Preserve erased Kotlin iterator elements when advancing a CLR enumerator; only reading the typed `Current` requires a matching CLR element.
 
 - Enforce Kotlin DSL receiver restrictions across referenced DotKt libraries as well as within a single module.
 - Fix a runtime type-load failure in lambdas that capture a type parameter bounded by a CLR class such as `System.IO.Stream` (#1820).

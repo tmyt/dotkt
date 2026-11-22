@@ -90,8 +90,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             "adapter's native layout, construction ABI, descriptor order or empty Dispose semantics changed");
         var branch = ((BirIf)adapter.Methods.Value[0].Body.Value[0]).Branches.Value.Single();
         Need(branch.Cond.Value is BirCallInstance hasNext && hasNext.Method.Value == "physicalHasNext"
-            && branch.Body.Value[0] is BirSetField { Value.HasValue: true } store && store.Value.Value is BirCast cast
-            && cast.Type.Value == ownerT && cast.E.Value is BirCallInstance next && next.Method.Value == "physicalNext"
+            && branch.Body.Value[0] is BirSetField { Value.Value: BirCallInstance next } && next.Method.Value == "physicalNext"
             && next.Ret.Value == new TypeNode.Fqn("System.Object") && !next.MemberRef.IsPresent,
             "iterator protocol bypassed its selected physical slot/result or bound MemberRef before the genuine binder");
         var independent = AdapterSource("IndependentAdapter", refs);
