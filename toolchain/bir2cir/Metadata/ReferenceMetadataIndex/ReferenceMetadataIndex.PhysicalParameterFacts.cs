@@ -5,6 +5,13 @@ using DotKt.Bir.Lowering;
 sealed partial class ReferenceMetadataIndex
 {
     readonly Dictionary<(string Id, bool NativeNames), ProjectedConstructorPlan> constructorPlans = new();
+    internal ProjectedMethodPlan ProjectedMethod(string id)
+    {
+        if (SelectedReferenceMethod(id) is not { } declaration) return null;
+        var parameters = PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true)
+            ?? throw new InvalidOperationException($"No shipped projected method '{id}'");
+        return new(parameters, ProjectedMethodFacetSources(declaration));
+    }
     internal TypeNode WitnessConstraintKey(TypeNode type) =>
         ClrMemberResolution.MethodImplComparisonType(PhysicalConstraintType(type), this);
     internal ProjectedConstructorPlan ConstructorPlan(string id, bool nativeNames)

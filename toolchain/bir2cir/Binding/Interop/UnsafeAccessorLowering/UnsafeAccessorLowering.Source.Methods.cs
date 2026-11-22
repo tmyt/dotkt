@@ -131,7 +131,10 @@ static partial class UnsafeAccessorLowering
                     selected, "method", declaring, owner.Args));
             if (native != null) replacement.NativeAccessorTarget = (native, edge.Static);
         }
-        if (edge.TypeArgs.HasValue) replacement.TypeArgs = CopySourceTypes(edge.TypeArgs.Value);
+        if (edge.TypeArgs.HasValue) {
+            replacement.TypeArgs = CopySourceTypes(edge.TypeArgs.Value);
+            replacement.MethodWitnessFacts = node.MethodWitnessFacts;
+        }
         replacement.Sty = CopySourceType(result);
         return replacement;
     }
@@ -176,7 +179,10 @@ static partial class UnsafeAccessorLowering
         var replacement = new BirNewBoundDelegate { OwnerType = CopySourceType(callOwner), CalleeOwner = CopySourceType(callOwner),
             Method = definition.EntryName, DeclarationId = definition.Identity, Sig = CopySourceTypes(definition.Signature),
             Virtual = false, Recv = access.Recv, FuncType = access.FuncType.HasValue ? CopySourceType(access.FuncType.Value) : OptionalField<TypeNode>.Null };
-        if (access.TypeArgs.HasValue) replacement.TypeArgs = CopySourceTypes(access.TypeArgs.Value);
+        if (access.TypeArgs.HasValue) {
+            replacement.TypeArgs = CopySourceTypes(access.TypeArgs.Value);
+            replacement.MethodWitnessFacts = access.MethodWitnessFacts;
+        }
         return replacement;
     }
 

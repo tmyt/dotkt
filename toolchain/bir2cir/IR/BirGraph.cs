@@ -8,6 +8,8 @@ using DotKt.Cir;
 
 namespace DotKt.Bir.Lowering;
 
+internal enum ExistentialCallableRole { None, Slot, Forwarder }
+
 // These are owning values, not a view over JSON. Phase-specific facts are explicit
 // properties generated from source and physical profiles. Presence is retained
 // while passes establish/remove facts; no missing declaration fact is inferred.
@@ -48,6 +50,11 @@ internal abstract record BirGraphValue
     {
         get => default;
         set => throw new InvalidOperationException("This graph occurrence has no application type arguments");
+    }
+    internal virtual OptionalField<BirMethodWitness[]> MethodWitnessFacts
+    {
+        get => default;
+        set => throw new InvalidOperationException("Not a generic method application");
     }
     public virtual OptionalField<TypeNode> SuspendFunctionTypeFact
     {

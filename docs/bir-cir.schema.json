@@ -102,6 +102,15 @@
       "properties": { "inner": { "type": "string" }, "declaration": { "type": "string" }, "typeArgs": { "type": "array", "items": { "type": "integer" } } },
       "required": ["inner", "declaration", "typeArgs"], "additionalProperties": false
     },
+    "birMethodWitness": {
+      "type": "object", "x-dotkt-model": { "name": "BirMethodWitness", "domain": "birLoweringValues" },
+      "properties": {
+        "argument": { "type": "integer" },
+        "primary": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical", "x-dotkt-physical-role": "GenericArgument" },
+        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" }, "x-dotkt-frame-role": "Lexical", "x-dotkt-physical-role": "GenericArgument" }
+      },
+      "required": ["argument", "primary", "interfaces"], "additionalProperties": false
+    },
     "capturedGenericArgument": {
       "type": "object", "x-dotkt-model": { "name": "CapturedGenericArgument", "domain": "birLoweringValues" },
       "properties": { "argument": { "type": "integer" }, "slots": { "type": "array", "items": { "type": "integer" } } },
@@ -346,7 +355,7 @@
       "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
     },
     "birCallStatic": {
-      "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+      "type": "object", "x-dotkt-model": { "name": "BirCallStatic", "domain": "birCore", "role": "expression", "loweringProperties": { "projectedMethodWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birMethodWitness" } }, "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "_innerFactoryArguments": { "type": "boolean" },
         "declarationReferencedIntrinsic": { "type": "boolean" },
         "declarationReferencedFactory": { "type": "boolean" },
@@ -381,7 +390,7 @@
       "required": ["k", "method", "args"], "additionalProperties": false
     },
     "birCallInstance": {
-      "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
+      "type": "object", "x-dotkt-model": { "name": "BirCallInstance", "domain": "birCore", "role": "expression", "loweringProperties": { "projectedMethodWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birMethodWitness" } }, "_erasedValueVariable": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" }, "retSuspendFnTypePre": { "type": "string", "x-dotkt-kotlin-json-type": true },
         "_innerFactoryArguments": { "type": "boolean" },
         "declarationReferencedIntrinsic": { "type": "boolean" },
         "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
@@ -886,7 +895,7 @@
       "required": ["k", "closureType", "captures", "method", "funcType", "synthClass"], "additionalProperties": false
     },
     "birNewDelegate": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "dotktDeclarationIdentityBound": { "type": "boolean" }, "dotktDelegateSlot": { "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } } } },
+      "type": "object", "x-dotkt-model": { "name": "BirNewDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "projectedMethodWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birMethodWitness" } }, "dotktDeclarationIdentityBound": { "type": "boolean" }, "dotktDelegateSlot": { "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } } } },
       "properties": {
         "k": { "const": "newDelegate" }, "method": { "type": "string" }, "funcType": { "$ref": "#/$defs/type" },
         "sig": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "typeArgs": { "x-dotkt-representation-role": "TypeArguments", "type": "array", "items": { "$ref": "#/$defs/type" } },
@@ -1011,7 +1020,7 @@
       "required": ["k", "callee", "owner", "pc", "ga", "typeArgs", "recvs", "args", "retType", "paramSig"], "additionalProperties": false
     },
     "birNewBoundDelegate": {
-      "type": "object", "x-dotkt-model": { "name": "BirNewBoundDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "declarationReferencedIntrinsic": { "type": "boolean" }, "companionCall": { "type": "boolean" }, "dotktDeclarationIdentityBound": { "type": "boolean" }, "dotktDelegateSlot": { "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } } } },
+      "type": "object", "x-dotkt-model": { "name": "BirNewBoundDelegate", "domain": "birCore", "role": "expression", "loweringProperties": { "projectedMethodWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birMethodWitness" } }, "declarationReferencedIntrinsic": { "type": "boolean" }, "companionCall": { "type": "boolean" }, "dotktDeclarationIdentityBound": { "type": "boolean" }, "dotktDelegateSlot": { "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } } } },
       "properties": {
         "k": { "const": "newBoundDelegate" }, "ownerType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "typeArgs": { "x-dotkt-representation-role": "TypeArguments", "type": "array", "items": { "$ref": "#/$defs/type" } },
         "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "virtual": { "type": "boolean" }, "recv": { "$ref": "#/$defs/birExpressionNode" }, "funcType": { "$ref": "#/$defs/type" }, "anySlot": { "type": "boolean" },
@@ -2207,7 +2216,7 @@
       }, "required": ["k", "method", "ownerType", "recv", "args"], "additionalProperties": false
     },
     "cirConstrainedCallNode": {
-      "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": {
+      "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": { "projectedMethodWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birMethodWitness" } },
         "super": { "type": "boolean" },
         "memberVisibility": { "type": "string" },
         "memberOwnerTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },

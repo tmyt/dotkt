@@ -53,6 +53,7 @@ static partial class RoundtripMetadata
     const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
     const string AKInnerConstructorFactory = Ns + "KotlinInnerConstructorFactoryAttribute";
     internal const string AKProjectedConstructor = Ns + "KotlinProjectedConstructorAttribute";
+    internal const string AKProjectedMethod = Ns + "KotlinProjectedMethodAttribute";
     internal const string AKManagedReferenceContract = Ns + "KotlinManagedReferenceContractAttribute";
     const string AKDeclarationIdentity = Ns + "KotlinDeclarationIdentityAttribute";
     const string AKConstructorAdapter = Ns + "KotlinConstructorAdapterAttribute";
@@ -246,6 +247,7 @@ static partial class RoundtripMetadata
             AttrClass(AKInnerConstructorFactory, Ctor(Param("System.String"), Param(ByteArrayType()))), // existential outer -> exact inner constructor
             AttrClass(AKManagedReferenceContract, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKProjectedConstructor, Ctor(Param("System.String"), Param(ByteArrayType()))),
+            AttrClass(AKProjectedMethod, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #395 — frontend callable identity + source name
             AttrClass(AKConstructorAdapter, Ctor(Param("System.String"), Param(ByteArrayType()))), // alias ctor declaration -> terminal physical delegation
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts

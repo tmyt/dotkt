@@ -109,7 +109,7 @@ static partial class FBoundStarProjectionErasure
         BirTemporaryNames names, bool typesOnly)
     {
         var node = slot.Value;
-        if (node is null or IBirExecutablePayload) return;
+        if (node is null or IBirExecutablePayload or BirMethodWitness) return;
         var projectedRead = node is BirArrayGet read && state.ProjectedRead(read);
         TypeNode.Fqn writableSemantic = null, writablePhysical = null;
         var writable = false;
@@ -298,9 +298,23 @@ static partial class FBoundStarProjectionErasure
         var arguments = call.ApplicationTypeArguments.Value;
         var methodApplication = state.Projection.SelectPhysicalMethodApplication(selected?.Source as BirFunctionDeclaration,
             identity, frame, owner, arguments);
-        var result = state.Projection.MethodClassWitness(methodApplication.Slot(index), projected,
+        var proof = state.Projection.MethodClassWitness(methodApplication.Slot(index),
             i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing));
         closing.Remove(index);
+        // A split proof is admissible only at a projected MethodDef. Keep it
+        // alongside, not in place of, the arguments of the exact entry until
+        // binding selects a body. These types travel with lexical frame rewrites.
+        if (proof?.Required.Length > 0)
+        {
+            if (ProjectedCallableEntries.HasFixedAbi(selected?.Source as BirFunctionDeclaration, identity, state.References))
+                return projected;
+            if (call is BirCallStatic or BirCallInstance or BirNewDelegate or BirNewBoundDelegate or BirConstrainedCall)
+                call.MethodWitnessFacts = call.MethodWitnessFacts.OrEmpty().Where(w => w.Argument.Value != index)
+                    .Append(new BirMethodWitness { Argument = index, Primary = proof.Class,
+                        Interfaces = proof.Interfaces.Cast<TypeNode>().ToArray() }).ToArray();
+            return projected;
+        }
+        var result = proof?.Class ?? projected;
         if (result != projected && result is TypeNode.Fqn { Args.Length: > 0 })
         {
             if (byIndex == null) state.MethodWitnesses[call] = byIndex = new();
@@ -309,10 +323,11 @@ static partial class FBoundStarProjectionErasure
         return result;
     }
 
-    static TypeNode SourceSelectedOwner(BirGraphValue node) => node switch {
+    internal static TypeNode SourceSelectedOwner(BirGraphValue node) => node switch {
         BirCallStatic value => value.CalleeOwner.OrDefault() ?? value.OwnerType.OrDefault() ?? value.Owner.OrDefault(),
         BirCallInstance value => value.OwnerType.OrDefault(), BirNewDelegate value => value.CalleeOwner.OrDefault(),
-        BirNewBoundDelegate value => value.CalleeOwner.OrDefault() ?? value.OwnerType.OrDefault(), _ => null,
+        BirNewBoundDelegate value => value.CalleeOwner.OrDefault() ?? value.OwnerType.OrDefault(),
+        BirConstrainedCall value => value.Iface.OrDefault(), _ => null,
     };
 
     static IBirExpression[] SourceArguments(BirGraphValue node) => node switch {

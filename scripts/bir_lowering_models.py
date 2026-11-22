@@ -417,6 +417,7 @@ def outputs(root, definitions):
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
             model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
+                      "    internal ExistentialCallableRole ExistentialCallable { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",
                       "    internal bool SourceCallableVirtual { get; set; }",
                       "    internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }",
@@ -476,6 +477,8 @@ def outputs(root, definitions):
             model += ["    }"]
         if "dotktDelegateSlot" in shape["properties"]:
             model += ["    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;"]
+        if "projectedMethodWitnesses" in shape["properties"]:
+            model += ["    internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }"]
         if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":
             model += ["    public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }"]
         for field, api in [("suspendFnTypePre", "SuspendFunctionTypeFact"), ("retSuspendFnTypePre", "SuspendFunctionReturnFact"),
@@ -529,7 +532,9 @@ def outputs(root, definitions):
             if is_type_slot(value):
                 # Only known physical type fields enter the scalar engine. Other
                 # maintained TypeNode fields keep the old structural leaf effect.
-                if field in physical_returns:
+                if "x-dotkt-physical-role" in value:
+                    physical = value["x-dotkt-physical-role"]
+                elif field in physical_returns:
                     physical = "Return"
                 elif field == "funcType":
                     physical = "Delegate"

@@ -155,7 +155,7 @@ static partial class FBoundStarProjectionErasure
             call.BindOwner(erasedOwner); call.Name = erasedMethod; call.Parameters(erasedSignature);
             // Slot constraints and source representation roles belong to different declarations.
             if (selection.Slot != null && call.Arguments.Length != 0) state.SelectedMethodArgumentSlots[node] = selection;
-            MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor);
+            MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor, arity == 0 ? null : selection.Slot);
             return Align(physicalReturn, declarationReturn, ownerArguments);
         }
         // A fake override can name the child as its receiver while its selected

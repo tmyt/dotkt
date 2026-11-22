@@ -1567,6 +1567,9 @@ internal sealed partial class AssemblyScanner : IDisposable
             MetadataAttributes.DotKtNs + "KotlinProjectedConstructorAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinProjectedMethodAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute",
             HandleKind.TypeDefinition);
         _attrs.ValidateCarrierTargets(

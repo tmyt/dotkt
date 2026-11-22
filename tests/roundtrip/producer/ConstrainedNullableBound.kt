@@ -60,6 +60,13 @@ fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.
 interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
 }
+interface OwnerTag<P>
+open class OwnerSelector<P> {
+    open fun <A> select(left: A, right: A): A where A : PendingItems.Item, A : OwnerTag<P>, A : ResultSource.Mark = left
+}
+interface OtherSelector<P> {
+    fun <A> select(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark, A : OwnerTag<P>
+}
 open class MarkedSelector : MarkedChoice {
     open fun <A> later(x: A): () -> () -> A where A : PendingItems.Item, A : ResultSource.Mark = { { x } }
     open fun <A> identity(): (A) -> A where A : PendingItems.Item, A : ResultSource.Mark = { it }
