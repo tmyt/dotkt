@@ -1,3 +1,3 @@
 import UncarryableOptionalDelegation.Base
 
-class Derived : Base()
+class Derived : Base(UncarryableOptionalDelegation.Key<Int>())

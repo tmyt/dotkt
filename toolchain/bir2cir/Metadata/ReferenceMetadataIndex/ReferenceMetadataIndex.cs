@@ -917,6 +917,15 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     public Dictionary<int, IBirExpression> KotlinDefaultValuesForDeclarationIdentity(string id) =>
         _executablePayloads.DefaultValuesByIdentity(id);
 
+    internal Dictionary<int, IBirExpression> DefaultValuesForNativeBaseConstructor(TypeNode.Fqn owner, TypeNode[] signature)
+    {
+        if (owner == null || signature == null || ClrMemberResolution.ResolveOwnerType(owner, this) is not { } open) return null;
+        var declaration = signature.Select(slot => ClrDeclarationMatching.CanonicalNativeFormalType(this, slot)).ToArray();
+        var candidates = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var selected = ClrDeclarationMatching.PickDeclaredConstructor(this, candidates, declaration, $"base constructor on '{owner.Name}'");
+        return CallableDefaultsOf(selected, _universe.CoreType);
+    }
+
     // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
     // from that MethodDef. A call through a derived receiver names the derived type but can select a base declaration;
     // looking up defaults by the call owner would either miss that declaration or, when the derived type declares a
