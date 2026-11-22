@@ -72,7 +72,7 @@ public interface NativeBoxReceiver
 }
 
 public sealed class NativeBoxContainer<T>(T value) { public T Value { get; } = value; }
-public sealed class NativeBoxArrayLease(Box<string, string>[] values)
+public class NativeBoxArrayLease(Box<string, string>[] values)
 {
     public object ArrayIdentity => values;
     public Box<string, string> First { get => values[0]; set => values[0] = value; }
