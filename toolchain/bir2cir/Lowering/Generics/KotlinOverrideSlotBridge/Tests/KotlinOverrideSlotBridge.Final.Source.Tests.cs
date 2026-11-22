@@ -213,7 +213,7 @@ static partial class KotlinOverrideSlotBridge
         var iterator=Method("iterator","bag-iterator",new TypeNode.Fqn("kotlin.collections.Iterator",new TypeNode[] { text }));
         iterator.RetKotlinType=iterator.Ret;
         var bag=new BirClassDefinition { Kind="class",Name="Bag",Methods=new[] { iterator },
-            Interfaces=new TypeNode[] { new TypeNode.Fqn("System.Collections.Generic.IEnumerable",new TypeNode[] { text }) } };
+            Interfaces=new TypeNode[] { new TypeNode.Fqn("System.Collections.Generic.IEnumerable",new TypeNode[] { text }),new TypeNode.Fqn(KotlinCollectionIdentitySynthesis.IterableIdentity) } };
         var bagFile=new BirFileDeclaration { Types=new IBirTypeDeclaration[] { bag } };
         var inventory=CreateSourceSelection(new[] { bagFile });
         var reservation=ReverseEnumeratorBridgeSynthesis.ReserveSlots(inventory.Definitions["Bag"],inventory.Definitions,references,inventory.Declarations);

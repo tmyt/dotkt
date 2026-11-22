@@ -4,27 +4,39 @@ using DotKt.Cir;
 
 static partial class KotlinOverrideSlotBridge
 {
+    static TypeNode.Fqn NativeCursorResult(TypeNode original, TypeNode actual, TypeNode required,
+        ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+    {
+        if (refs == null || required is not TypeNode.Fqn { Args.Length: 1 } cursor
+            || ReferenceMetadataIndex.BareOwnerFqn(cursor.Name) != "System.Collections.Generic.IEnumerator"
+            || original is not TypeNode.Fqn source || !LowersToObject(actual, refs)
+            || !AliasVarianceRepresentation.RequiresErasure(source, refs)) return null;
+        var bound = BirTypeLowering.LowerPhysicalType(source, refs.Aliases, isValue, refs.PhysicalTypeNames,
+            typeArg: false, nullableFrames: refs.NullableTypeFrames);
+        return ClrMemberResolution.SameInterfaceSlotType(bound, required) ? cursor : null;
+    }
+
     internal static BirFunctionDeclaration BuildBridgeSource(IBirTypeDeclaration owner,
         BirFunctionDeclaration implementation, TypeNode[] parameters, TypeNode result, string name,
         ValueTypeOracle isValue, ReferenceMetadataIndex refs, TypeNode.Fqn callOwner = null,
         bool virtualCall = true, string callMember = null, bool unitValueReturn = false,
-        bool physicalImplementation = false) => BuildBridgeSource(owner, SelectedMethodHeader.FromSource(implementation),
-            parameters, result, name, isValue, refs, callOwner, virtualCall, callMember, unitValueReturn, physicalImplementation);
+        bool physicalImplementation = false, Action nativeCursor = null) => BuildBridgeSource(owner, SelectedMethodHeader.FromSource(implementation),
+            parameters, result, name, isValue, refs, callOwner, virtualCall, callMember, unitValueReturn, physicalImplementation, nativeCursor: nativeCursor);
 
     internal static BirFunctionDeclaration BuildBridgeSource(IBirTypeDeclaration owner,
         SelectedInheritedSourceMethod selected, TypeNode[] parameters, TypeNode result, string name,
         ValueTypeOracle isValue, ReferenceMetadataIndex refs, TypeNode.Fqn callOwner = null,
         bool virtualCall = true, string callMember = null, bool unitValueReturn = false,
-        bool physicalImplementation = false) => BuildBridgeSource(owner, selected.Method,
+        bool physicalImplementation = false, Action nativeCursor = null) => BuildBridgeSource(owner, selected.Method,
             parameters, result, name, isValue, refs, callOwner ?? selected.Owner, virtualCall,
             callMember ?? selected.Method.ExplicitClrName.OrDefault(),
-            unitValueReturn, physicalImplementation, selected.DeclarationSignature, selected.DeclarationId);
+            unitValueReturn, physicalImplementation, selected.DeclarationSignature, selected.DeclarationId, nativeCursor);
 
     static BirFunctionDeclaration BuildBridgeSource(IBirTypeDeclaration owner, SelectedMethodHeader implementation,
         TypeNode[] parameters, TypeNode result, string name, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         TypeNode.Fqn callOwner = null, bool virtualCall = true, string callMember = null,
         bool unitValueReturn = false, bool physicalImplementation = false,
-        TypeNode[] declarationSignature = null, string declarationId = null)
+        TypeNode[] declarationSignature = null, string declarationId = null, Action nativeCursor = null)
     {
         var declared = implementation.Params.OrEmpty();
         var bridgeParameters = new BirParameter[parameters.Length];
@@ -77,7 +89,10 @@ static partial class KotlinOverrideSlotBridge
             IBirExpression returned = call;
             if (implementationReturn != null && !implementationReturn.Equals(result))
             {
-                returned = StringCharSequenceBridge.CanAdaptStringReturn(implementationReturn, result)
+                returned = nativeCursor != null && NativeCursorResult(implementation.RetKotlinType.OrDefault(),
+                    implementationReturn, result, isValue, refs) is { } cursor
+                    ? ReverseEnumeratorBridgeSynthesis.AdaptNativeCursor(returned, cursor, nativeCursor)
+                    : StringCharSequenceBridge.CanAdaptStringReturn(implementationReturn, result)
                     ? StringCharSequenceBridge.AdaptStringReturn(returned, implementationReturn)
                     : IsNullableValueSlot(result, implementationReturn, refs, isValue, returnPosition: true)
                     && implementationReturn is TypeNode.Nullable nullable

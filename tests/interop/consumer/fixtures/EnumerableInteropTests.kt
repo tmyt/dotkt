@@ -32,6 +32,8 @@ private fun sumNativeElements(values: ClrEnumerable<Int>): Int {
     return sum
 }
 
+private class DelegatingNativeProbe<T>(values: kotlin.collections.ClrEnumerable<T>) : kotlin.collections.ClrEnumerable<T> by values
+
 class EnumerableInteropTests {
     @TestAttribute
     fun nativeInterfaceIteration() {
@@ -101,6 +103,13 @@ class EnumerableInteropTests {
         try { assertEquals(true, (enumerator as System.Collections.IEnumerator).MoveNext()) }
         finally { enumerator.Dispose() }
         assertEquals(1, owned.Disposals)
+        val widened = DelegatingNativeProbe<Any>(owned.Source() as Any as kotlin.collections.ClrEnumerable<Int>)
+        val view = (widened as Any as ClrEnumerable<Any>).GetEnumerator()
+        try {
+            check((view as System.Collections.IEnumerator).MoveNext())
+            assertEquals(9, view.Current)
+        } finally { view.Dispose() }
+        assertEquals(2, owned.Disposals)
     }
 
     @TestAttribute
