@@ -383,7 +383,7 @@ sealed partial class TypedCirProjection
 
     internal CirConstructor ProjectCirConstructor(BirConstructor value)
     {
-        if (value.DeclarationId.IsPresent || value.DeclarationSignatureAllocation.IsPresent || value.DeclarationSourceName.IsPresent || value.DelegationBindings.IsPresent || value.DelegationDeclarationId.IsPresent || value.DelegationOuterSlot.IsPresent || value.Primary.IsPresent || value.RoundtripDeclarationIdentity.IsPresent || value.RoundtripMetadataPending.IsPresent)
+        if (value.DeclarationId.IsPresent || value.DeclarationSignatureAllocation.IsPresent || value.DeclarationSourceName.IsPresent || value.DelegationBindings.IsPresent || value.DelegationDeclarationId.IsPresent || value.DelegationNativeKey.IsPresent || value.DelegationOuterSlot.IsPresent || value.Primary.IsPresent || value.RoundtripDeclarationIdentity.IsPresent || value.RoundtripMetadataPending.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirConstructor");
         return new CirConstructor
         {

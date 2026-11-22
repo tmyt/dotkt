@@ -46,6 +46,7 @@
     <Compile Include="../cir-common/OptionalField.cs" Link="OptionalField.cs" />
     <Compile Include="../cir-common/IrSanity.Cir.cs" Link="IrSanity.Cir.cs" />
     <Compile Include="../bir-common/FunctionPointerVocabulary.cs" Link="FunctionPointerVocabulary.cs" />
+    <Compile Include="../ref-common/RawSignatureTypeProvider.cs" Link="RawSignatureTypeProvider.cs" />
     <Compile Include="../bir-common/NativeSignatureReader.cs" Link="NativeSignatureReader.cs" />
     <Compile Include="../bir-common/NullableRepresentationFrame.cs" Link="NullableRepresentationFrame.cs" />
     <Compile Include="../bir-common/KotlinFacadeModality.cs" Link="KotlinFacadeModality.cs" />

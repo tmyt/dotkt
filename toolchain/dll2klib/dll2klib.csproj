@@ -9,6 +9,7 @@
     <AssemblyName>dll2klib</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../ref-common/RawSignatureTypeProvider.cs" Link="RawSignatureTypeProvider.cs" />
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
     <Compile Include="../bir-common/NativeSignatureReader.cs" Link="NativeSignatureReader.cs" />
     <Compile Include="../bir-common/TypeNode.Model.Generated.cs" Link="TypeNode.Model.Generated.cs" />

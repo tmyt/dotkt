@@ -10385,16 +10385,17 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<string> field7 = default;
         OptionalField<string> field8 = default;
         OptionalField<string> field9 = default;
-        OptionalField<BirAttribute[]> field10 = default;
-        OptionalField<IBirStatement[]> field11 = default;
-        OptionalField<bool> field12 = default;
+        OptionalField<string> field10 = default;
+        OptionalField<BirAttribute[]> field11 = default;
+        OptionalField<IBirStatement[]> field12 = default;
         OptionalField<bool> field13 = default;
         OptionalField<bool> field14 = default;
-        OptionalField<BirRoundtripDeclarationIdentity> field15 = default;
-        OptionalField<BirMemberReference> field16 = default;
-        OptionalField<int> field17 = default;
-        OptionalField<IBirStatement[]> field18 = default;
-        OptionalField<BirDeclarationPosition> field19 = default;
+        OptionalField<bool> field15 = default;
+        OptionalField<BirRoundtripDeclarationIdentity> field16 = default;
+        OptionalField<BirMemberReference> field17 = default;
+        OptionalField<int> field18 = default;
+        OptionalField<IBirStatement[]> field19 = default;
+        OptionalField<BirDeclarationPosition> field20 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -10427,57 +10428,61 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "declarationId":
+                case "delegationNativeKey":
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "declarationSourceName":
+                case "declarationId":
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "vis":
+                case "declarationSourceName":
                     Seen(ref seen, 1UL << 9);
                     field9 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "attrs":
+                case "vis":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
+                    field10 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "attrs":
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TryReadNil() ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray<BirAttribute>(ref reader, (ref MessagePackReader reader) => ReadBirAttribute(ref reader)));
                     break;
                 case "body":
-                    Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "primary":
-                    Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
-                    break;
-                case "declarationSignatureAllocation":
                     Seen(ref seen, 1UL << 13);
                     field13 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "roundtripMetadataPending":
+                case "declarationSignatureAllocation":
                     Seen(ref seen, 1UL << 14);
                     field14 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
-                case "roundtripDeclarationIdentity":
+                case "roundtripMetadataPending":
                     Seen(ref seen, 1UL << 15);
-                    field15 = reader.TryReadNil() ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
+                    field15 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    break;
+                case "roundtripDeclarationIdentity":
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TryReadNil() ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
                     break;
                 case "baseCtorRef":
-                    Seen(ref seen, 1UL << 16);
-                    field16 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "localCtorIndex":
-                    Seen(ref seen, 1UL << 17);
-                    field17 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
                     break;
                 case "preStmts":
-                    Seen(ref seen, 1UL << 18);
-                    field18 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 19);
+                    field19 = reader.TryReadNil() ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray<IBirStatement>(ref reader, (ref MessagePackReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "pos":
-                    Seen(ref seen, 1UL << 19);
-                    field19 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
+                    Seen(ref seen, 1UL << 20);
+                    field20 = reader.TryReadNil() ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -10492,26 +10497,27 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             DelegationBindings = field4,
             DelegationOuterSlot = field5,
             DelegationDeclarationId = field6,
-            DeclarationId = field7,
-            DeclarationSourceName = field8,
-            Vis = field9,
-            Attrs = field10,
-            Body = field11,
-            Primary = field12,
-            DeclarationSignatureAllocation = field13,
-            RoundtripMetadataPending = field14,
-            RoundtripDeclarationIdentity = field15,
-            BaseCtorRef = field16,
-            LocalCtorIndex = field17,
-            PreStmts = field18,
-            Pos = field19,
+            DelegationNativeKey = field7,
+            DeclarationId = field8,
+            DeclarationSourceName = field9,
+            Vis = field10,
+            Attrs = field11,
+            Body = field12,
+            Primary = field13,
+            DeclarationSignatureAllocation = field14,
+            RoundtripMetadataPending = field15,
+            RoundtripDeclarationIdentity = field16,
+            BaseCtorRef = field17,
+            LocalCtorIndex = field18,
+            PreStmts = field19,
+            Pos = field20,
         };
     }
 
     internal static void WriteBirConstructor(ref MessagePackWriter writer, BirConstructor value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Params.IsPresent ? 1 : 0) + (value.BaseArgs.IsPresent ? 1 : 0) + (value.DelegationSig.IsPresent ? 1 : 0) + (value.ThisArgs.IsPresent ? 1 : 0) + (value.DelegationBindings.IsPresent ? 1 : 0) + (value.DelegationOuterSlot.IsPresent ? 1 : 0) + (value.DelegationDeclarationId.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.Primary.IsPresent ? 1 : 0) + (value.DeclarationSignatureAllocation.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.RoundtripDeclarationIdentity.IsPresent ? 1 : 0) + (value.BaseCtorRef.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.PreStmts.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Params.IsPresent ? 1 : 0) + (value.BaseArgs.IsPresent ? 1 : 0) + (value.DelegationSig.IsPresent ? 1 : 0) + (value.ThisArgs.IsPresent ? 1 : 0) + (value.DelegationBindings.IsPresent ? 1 : 0) + (value.DelegationOuterSlot.IsPresent ? 1 : 0) + (value.DelegationDeclarationId.IsPresent ? 1 : 0) + (value.DelegationNativeKey.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.DeclarationSourceName.IsPresent ? 1 : 0) + (value.Vis.IsPresent ? 1 : 0) + (value.Attrs.IsPresent ? 1 : 0) + (value.Body.IsPresent ? 1 : 0) + (value.Primary.IsPresent ? 1 : 0) + (value.DeclarationSignatureAllocation.IsPresent ? 1 : 0) + (value.RoundtripMetadataPending.IsPresent ? 1 : 0) + (value.RoundtripDeclarationIdentity.IsPresent ? 1 : 0) + (value.BaseCtorRef.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.PreStmts.IsPresent ? 1 : 0) + (value.Pos.IsPresent ? 1 : 0));
         if (value.Params.IsPresent)
         {
             writer.Write("params");
@@ -10598,6 +10604,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             else
             {
                 IrMessagePack.WriteString(ref writer, value.DelegationDeclarationId.Value);
+            }
+        }
+        if (value.DelegationNativeKey.IsPresent)
+        {
+            writer.Write("delegationNativeKey");
+            if (value.DelegationNativeKey.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.DelegationNativeKey.Value);
             }
         }
         if (value.DeclarationId.IsPresent)

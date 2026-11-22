@@ -2203,6 +2203,7 @@ internal fun BirEmitter.sourceConstructor(klass: IrClass, ctor: IrConstructor, c
 	return BirConstructor(params = params, declarationId = declarationIdForPhysicalAllocation(ctor), declarationSourceName = ".ctor",
 		baseArgs = baseArgs, thisArgs = thisArgs?.let { BirField.Value(it) } ?: BirField.Null,
 		delegationSig = delegationSig, delegationDeclarationId = delegationIdentity, delegationOuterSlot = delegationOuterSlot,
+		delegationNativeKey = delegating?.takeIf { baseArgs != null && !isThisDelegate }?.symbol?.owner?.let { nativeConstructorKey(it) },
 		delegationBindings = delegationBindings, vis = visOf(ctor), body = ctorBody, attrs = sourceAttributes(ctor.annotations), primary = ctor.isPrimary)
 }
 

@@ -1845,6 +1845,7 @@ data class BirConstructor(
     val delegationBindings: List<BirCallBinding>? = null,
     val delegationOuterSlot: Int? = null,
     val delegationDeclarationId: String? = null,
+    val delegationNativeKey: String? = null,
     val declarationId: String? = null,
     val declarationSourceName: String? = null,
     val vis: String? = null,
@@ -1911,6 +1912,10 @@ data class BirConstructor(
         }
         delegationDeclarationId?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"delegationDeclarationId\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        delegationNativeKey?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"delegationNativeKey\":")
             TypeNodeJson.writeString(value, output)
         }
         declarationId?.let { value ->

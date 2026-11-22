@@ -1045,6 +1045,17 @@ static class ReferenceMetadataReader
         }
     }
 
+    internal static Dictionary<string, ConstructorInfo> NativeConstructorDeclarations(Type owner)
+    {
+        using var stream = File.OpenRead(owner.Module.FullyQualifiedName);
+        using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+        var reader = pe.GetMetadataReader();
+        return owner.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(ClrMemberResolution.IsPublicOrProtected).ToDictionary(constructor =>
+                DotKt.Toolchain.RawSignatureTypeProvider<object>.ConstructorKey(reader,
+                    (MethodDefinitionHandle)MetadataTokens.Handle(constructor.MetadataToken)), StringComparer.Ordinal);
+    }
+
     static bool TryMethodImplDeclaration(MetadataReader reader, MethodImplOwnerTypeProvider provider,
         EntityHandle declaration, out TypeNode.Fqn owner, out string member)
     {
