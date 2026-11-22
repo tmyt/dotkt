@@ -102,6 +102,10 @@ static partial class NullableRepresentationMaterialization
             var view = owner.View;
             var frame = owners[owner.Declaration];
             var mapping = Mapping(frame, empty, view.Name);
+            // The capture is rewritten before the enclosing declaration's physical parameter rows exist.
+            var captures = new List<(BirTypeParameter Destination, BirGraphValue Declaration, int Slot)>();
+            Action<BirTypeParameter, TypeNode.Tv> CaptureIn(BirGraphValue method) => (destination, actual) =>
+                captures.Add((destination, actual.Scope == "type" ? view.Node : method, actual.I));
             try
             {
                 PreserveCompanionSourceBounds(view.Node, frame, owner: true);
@@ -118,11 +122,11 @@ static partial class NullableRepresentationMaterialization
                         ?? owner.Methods.FirstOrDefault(method => association != null && method.View.Function?.PropertyAssociation.OrDefault() == association);
                     var propertyMapping = accessor == null ? mapping : Mapping(frame, methodFrames[accessor.Declaration], view.Name);
                     PreserveValueFact(property, propertyMapping);
-                    Rewrite(property, propertyMapping, methods, DeclarationMapping);
+                    Rewrite(property, propertyMapping, methods, DeclarationMapping, captureStorage: CaptureIn(accessor?.Declaration));
                 }
                 Rewrite(view.Node, mapping, methods, DeclarationMapping, skipChild: child => child is
                     IBirTypeDeclaration or BirRefTypeDeclaration or BirFunctionDeclaration or BirPropertyDeclaration
-                    or BirInheritedDefaultMethod or BirInheritedDefaultAccessor or BirInheritedClassMethod);
+                    or BirInheritedDefaultMethod or BirInheritedDefaultAccessor or BirInheritedClassMethod, captureStorage: CaptureIn(null));
                 foreach (var method in owner.Methods)
                 {
                     var methodFrame = methodFrames[method.Declaration];
@@ -141,7 +145,7 @@ static partial class NullableRepresentationMaterialization
                     if (method.View.Inherited)
                     {
                         PreserveCompanionSourceBounds(method.Implementation, methodFrame, owner: false);
-                        RewriteInheritedSignature(method.View, methodMapping, methods, DeclarationMapping);
+                        RewriteInheritedSignature(method.View, methodMapping, methods, DeclarationMapping, CaptureIn(method.Implementation));
                         var implementation = DeclarationMapping(method.Implementation);
                         RewriteImplementation(method.Implementation,
                             implementation == null ? null : Mapping(implementation.OwnerFrame, methodFrame), methodMapping);
@@ -157,18 +161,24 @@ static partial class NullableRepresentationMaterialization
                     var entry = method.View.Function;
                     var source = split ? (BirFunctionDeclaration)entry.DeepClone() : null;
                     if (split) entry.Body = Array.Empty<IBirStatement>();
-                    Rewrite(entry, methodMapping, methods, DeclarationMapping);
+                    Rewrite(entry, methodMapping, methods, DeclarationMapping, captureStorage: CaptureIn(entry));
                     AppendParameters(entry, methodFrame, policy: policy, enclosingParameters: view.Parameters.OrDefault(), enclosingFrame: frame);
                     if (methodFrame.RequiresMetadata) entry.NullableRepresentationFrame = methodFrame;
                     if (split) NullableBodyDispatch.Build(view, source, entry, frame, methodFrame, method.Body, (helper, helperFrame) => {
                         PreserveCompanionSourceBounds(helper, helperFrame, owner: false);
-                        Rewrite(helper, Mapping(frame, helperFrame, view.Name), methods, DeclarationMapping);
+                        Rewrite(helper, Mapping(frame, helperFrame, view.Name), methods, DeclarationMapping, captureStorage: CaptureIn(helper));
                         AppendParameters(helper, helperFrame, policy: policy, bodyOnlyStorage: true,
                             enclosingParameters: view.Parameters.OrDefault(), enclosingFrame: frame);
                         helper.NullableRepresentationFrame = helperFrame;
                     });
                 }
                 AppendParameters(view.Node, frame, "type", policy);
+                foreach (var (destination, declaration, slot) in captures)
+                {
+                    var actual = (BirTypeParameter)NullableRepresentationViews.TypeParameters(declaration).Value[slot].DeepClone();
+                    destination.Constraints = actual.Constraints;
+                    destination.ErasedInnerConstraints = actual.ErasedInnerConstraints;
+                }
                 if (owner.CapturedOwner != null && view.Node is BirClassDefinition captured)
                 {
                     captured.OuterTypeParamCount = owners[owner.CapturedOwner.Declaration].PhysicalArity;
@@ -194,14 +204,15 @@ static partial class NullableRepresentationMaterialization
     };
 
     static void RewriteInheritedSignature(MethodView method, NullableRepresentationTypes mapping,
-        IReadOnlyDictionary<string, NullableRepresentationFrame> methods, Func<BirGraphValue, NullableRepresentationTypes> declarationMapping)
+        IReadOnlyDictionary<string, NullableRepresentationFrame> methods, Func<BirGraphValue, NullableRepresentationTypes> declarationMapping,
+        Action<BirTypeParameter, TypeNode.Tv> captureStorage)
     {
         var parameters = method.SignatureParameters.Select(mapping.Slot).ToArray();
         switch (method.Node) {
             case BirInheritedDefaultMethod target: if (target.Params.HasValue) target.Params = parameters; break;
             case BirInheritedDefaultAccessor target: if (target.Params.HasValue) target.Params = parameters; break;
             case BirInheritedClassMethod target:
-                foreach (var parameter in target.Params.OrEmpty()) Rewrite(parameter, mapping, methods, declarationMapping);
+                foreach (var parameter in target.Params.OrEmpty()) Rewrite(parameter, mapping, methods, declarationMapping, captureStorage: captureStorage);
                 break;
         }
         if (method.Return != null) method.Return = mapping.Slot(method.Return);

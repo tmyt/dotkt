@@ -6,10 +6,11 @@ static partial class NullableRepresentationMaterialization
 {
     static void Rewrite(BirGraphValue node, NullableRepresentationTypes mapping,
         IReadOnlyDictionary<string, NullableRepresentationFrame> methods, Func<BirGraphValue, NullableRepresentationTypes> declarationMapping,
+        Action<BirTypeParameter, TypeNode.Tv> captureStorage,
         NullableGenericErasure.Pos position = NullableGenericErasure.Pos.Slot, Func<BirGraphValue, bool> skipChild = null)
     {
         if (node is IBirExecutablePayload) return;
-        try { RewriteCore(node, mapping, methods, declarationMapping, position, skipChild); }
+        try { RewriteCore(node, mapping, methods, declarationMapping, position, skipChild, captureStorage); }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException)
         {
             var description = node is BirFunctionDeclaration method ? "Nullable frame rewrite of " + method.Name.OrDefault()
@@ -21,7 +22,7 @@ static partial class NullableRepresentationMaterialization
 
     static void RewriteCore(BirGraphValue node, NullableRepresentationTypes mapping,
         IReadOnlyDictionary<string, NullableRepresentationFrame> methods, Func<BirGraphValue, NullableRepresentationTypes> declarationMapping,
-        NullableGenericErasure.Pos position, Func<BirGraphValue, bool> skipChild)
+        NullableGenericErasure.Pos position, Func<BirGraphValue, bool> skipChild, Action<BirTypeParameter, TypeNode.Tv> captureStorage)
     {
         var selected = node is BirGraphNode || node is BirConstructor { DelegationSig.HasValue: true }
             || node is BirInlineCapture { SharedCellTypeParams.HasValue: true } ? declarationMapping(node) : null;
@@ -136,7 +137,7 @@ static partial class NullableRepresentationMaterialization
             if (NullableRepresentationViews.Frozen(ownership) || ownership is BirGenericFrameRole.OverrideDeclaration or BirGenericFrameRole.SyntheticApplication
                 || role is BirRepresentationRole.Attributes or BirRepresentationRole.TypeParameterDeclarations || skipChild?.Invoke(child) == true) return;
             if (role == BirRepresentationRole.InheritedImplementation) RewriteImplementation((BirInheritedImplementation)child, declarationMapping(child), mapping);
-            else Rewrite(child, mapping, methods, declarationMapping, position);
+            else Rewrite(child, mapping, methods, declarationMapping, captureStorage, position);
         });
         if (locations != null)
             foreach (var (read, component) in locations) read.Elem = mapping.ElementArgument(component);
@@ -145,9 +146,13 @@ static partial class NullableRepresentationMaterialization
         if (capturedFrame != null)
         {
             var parameters = NullableRepresentationViews.TypeParameters(synthetic).Value;
+            foreach (var sourceIndex in capturedFrame.StorageIndices)
+            {
+                var slot = capturedFrame.Variable(new TypeNode.Tv("type", sourceIndex), NullableRepresentationFrame.Role.Storage).I;
+                captureStorage(parameters[slot], (TypeNode.Tv)closedArguments[slot]);
+            }
             foreach (var (index, bounds) in storageBounds)
             {
-                mapping.SetStorageBounds(parameters[index], bounds);
                 var ordinary = capturedFrame.SourcePosition(capturedFrame.PhysicalSlot(index).SourceIndex);
                 parameters[ordinary].Constraints = parameters[ordinary].Constraints.OrEmpty().Concat(bounds).Distinct().ToArray();
             }

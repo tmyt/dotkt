@@ -6,7 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Enforce Kotlin DSL receiver restrictions across referenced DotKt libraries as well as within a single module.
-
+- Fix a runtime type-load failure in lambdas that capture a type parameter bounded by a CLR class such as `System.IO.Stream` (#1820).
 - Preserve writes through `byref` when calling a Kotlin generic method with a star-projected type satisfying both class and interface bounds.
 - Fix reads and writes of generic top-level extension properties imported from another DotKt assembly when the caller supplies its own type parameters (#1814).
 
