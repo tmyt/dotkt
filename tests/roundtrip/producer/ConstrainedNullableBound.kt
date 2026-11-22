@@ -2,6 +2,7 @@
 package roundtrip.constrainedbound
 
 import System.Collections.Generic.List as ClrList
+import kotlin.clr.ClrRef
 
 interface UsableBound { val name: String }
 internal interface HiddenBound : UsableBound
@@ -59,6 +60,14 @@ fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.
     if (first) left else right
 interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
+}
+open class MarkedWriter {
+    open fun <A> write(left: ClrRef<A>, right: ClrRef<A>, value: A, fail: Boolean): A
+        where A : PendingItems.Item, A : ResultSource.Mark {
+        left.value = value
+        if (fail) throw IllegalStateException("after write")
+        return right.value
+    }
 }
 interface OwnerTag<P>
 open class OwnerSelector<P> {

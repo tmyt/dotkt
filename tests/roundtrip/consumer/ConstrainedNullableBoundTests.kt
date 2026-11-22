@@ -23,6 +23,7 @@ import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
 import RoundtripDependentNative.Family.IMark
 import roundtrip.constrainedbound.MarkedChoice
+import roundtrip.constrainedbound.MarkedWriter
 import roundtrip.constrainedbound.absentMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
@@ -77,6 +78,29 @@ class ConstrainedNullableBoundTests {
         fun fromBase(a: TaggedItem<*>, b: TaggedItem<*>) = super.select(a, b)
     }
     private class ClientItem<T>(val payload: T) : PendingItems.Item(), Mark
+    private class Cell(@kotlin.clr.ClrField var item: ClientItem<*>)
+    private class ClientWriter : MarkedWriter() {
+        override fun <A> write(left: ClrRef<A>, right: ClrRef<A>, value: A, fail: Boolean): A
+            where A : PendingItems.Item, A : Mark = super.write(left, right, value, fail)
+    }
+
+    @TestAttribute
+    fun projectedManagedReferencesPreserveLocationsThroughDispatch() {
+        val first = ClientItem(1)
+        val second = ClientItem("two")
+        val cell = Cell(first)
+        val writer: MarkedWriter = ClientWriter()
+        check(writer.write<ClientItem<*>>(byref(cell.item), byref(cell.item), second, false) === second)
+        check(cell.item === second)
+        var local: ClientItem<*> = second
+        try {
+            writer.write<ClientItem<*>>(byref(local), byref(cell.item), first, true)
+            error("did not throw")
+        } catch (e: IllegalStateException) {
+            check(e.message == "after write")
+        }
+        check(local === first && cell.item === second)
+    }
     private class FirstSelector : MarkedSelector() {
         override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : Mark = left
         fun callBase(left: ClientItem<Long>, right: ClientItem<Long>) = super.selectMarked(left, right)

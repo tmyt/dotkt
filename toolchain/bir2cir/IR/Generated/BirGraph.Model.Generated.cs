@@ -5575,6 +5575,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode> _capturedGenericResult { get; set; }
     public OptionalField<string> _capturedGenericTarget { get; set; }
     public OptionalField<IBirExpression[]> ReflectedArguments { get; set; }
+    public OptionalField<int[]> ProjectedAddressOperands { get; set; }
     public OptionalField<TypeNode> CalleeRet { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
@@ -5596,6 +5597,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         }
     }
     internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }
+    internal override OptionalField<int[]> LocationOperandFacts { get => ProjectedAddressOperands; set => ProjectedAddressOperands = value; }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
@@ -5865,6 +5867,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone()).ToArray()) : _capturedGenericArgument,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
         ReflectedArguments = ReflectedArguments.HasValue ? OptionalField<IBirExpression[]>.Of(ReflectedArguments.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : ReflectedArguments,
+        ProjectedAddressOperands = ProjectedAddressOperands.HasValue ? OptionalField<int[]>.Of(ProjectedAddressOperands.Value.Select(item0 => item0).ToArray()) : ProjectedAddressOperands,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
@@ -5903,6 +5906,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
             _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
             _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
             ReflectedArguments = ReflectedArguments.HasValue ? OptionalField<IBirExpression[]>.Of(ReflectedArguments.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ReflectedArguments,
+            ProjectedAddressOperands = ProjectedAddressOperands.HasValue ? OptionalField<int[]>.Of(ProjectedAddressOperands.Value.Select(item0 => item0).ToArray()) : ProjectedAddressOperands,
             CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
             CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
             MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
@@ -6206,6 +6210,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
             && EqualField(_capturedGenericResult, value._capturedGenericResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_capturedGenericTarget, value._capturedGenericTarget, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(ReflectedArguments, value.ReflectedArguments, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ProjectedAddressOperands, value.ProjectedAddressOperands, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)))
             && EqualField(CalleeRet, value.CalleeRet, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(CalleeParams, value.CalleeParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(MemberRef, value.MemberRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -6266,6 +6271,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "_capturedGenericResult", _capturedGenericResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_capturedGenericTarget", _capturedGenericTarget, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "reflectedArguments", ReflectedArguments, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "projectedAddressOperands", ProjectedAddressOperands, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -6328,6 +6334,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (_capturedGenericResult.IsPresent) result["_capturedGenericResult"] = _capturedGenericResult.IsNull ? null : TypeNode.Write(_capturedGenericResult.Value);
         if (_capturedGenericTarget.IsPresent) result["_capturedGenericTarget"] = _capturedGenericTarget.IsNull ? null : JsonValue.Create(_capturedGenericTarget.Value);
         if (ReflectedArguments.IsPresent) result["reflectedArguments"] = ReflectedArguments.IsNull ? null : new JsonArray(ReflectedArguments.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ProjectedAddressOperands.IsPresent) result["projectedAddressOperands"] = ProjectedAddressOperands.IsNull ? null : new JsonArray(ProjectedAddressOperands.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom(projected);
@@ -6395,6 +6402,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<TypeNode> _capturedGenericResult { get; set; }
     public OptionalField<string> _capturedGenericTarget { get; set; }
     public OptionalField<IBirExpression[]> ReflectedArguments { get; set; }
+    public OptionalField<int[]> ProjectedAddressOperands { get; set; }
     public OptionalField<TypeNode> CalleeRet { get; set; }
     public OptionalField<TypeNode[]> CalleeParams { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
@@ -6417,6 +6425,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         }
     }
     internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }
+    internal override OptionalField<int[]> LocationOperandFacts { get => ProjectedAddressOperands; set => ProjectedAddressOperands = value; }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override OptionalField<TypeNode> SuspendFunctionReturnFact { get => RetSuspendFnTypePre; set => RetSuspendFnTypePre = value; }
     public override OptionalField<TypeNode> ErasedValueVariableFact { get => _erasedValueVariable; set => _erasedValueVariable = value; }
@@ -6687,6 +6696,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone()).ToArray()) : _capturedGenericArgument,
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
         ReflectedArguments = ReflectedArguments.HasValue ? OptionalField<IBirExpression[]>.Of(ReflectedArguments.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone()).ToArray()) : ReflectedArguments,
+        ProjectedAddressOperands = ProjectedAddressOperands.HasValue ? OptionalField<int[]>.Of(ProjectedAddressOperands.Value.Select(item0 => item0).ToArray()) : ProjectedAddressOperands,
         CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
         CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
         MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone()) : MemberRef,
@@ -6725,6 +6735,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
             _capturedGenericArgument = _capturedGenericArgument.HasValue ? OptionalField<CapturedGenericArgument[]>.Of(_capturedGenericArgument.Value.Select(item0 => (CapturedGenericArgument)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _capturedGenericArgument,
             _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
             ReflectedArguments = ReflectedArguments.HasValue ? OptionalField<IBirExpression[]>.Of(ReflectedArguments.Value.Select(item0 => (IBirExpression)((BirGraphValue)item0).DeepClone(born)).ToArray()) : ReflectedArguments,
+            ProjectedAddressOperands = ProjectedAddressOperands.HasValue ? OptionalField<int[]>.Of(ProjectedAddressOperands.Value.Select(item0 => item0).ToArray()) : ProjectedAddressOperands,
             CalleeRet = CalleeRet.HasValue ? OptionalField<TypeNode>.Of(CopyType(CalleeRet.Value)) : CalleeRet,
             CalleeParams = CalleeParams.HasValue ? OptionalField<TypeNode[]>.Of(CalleeParams.Value.Select(item0 => CopyType(item0)).ToArray()) : CalleeParams,
             MemberRef = MemberRef.HasValue ? OptionalField<BirMemberReference>.Of((BirMemberReference)((BirGraphValue)MemberRef.Value).DeepClone(born)) : MemberRef,
@@ -7025,6 +7036,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
             && EqualField(_capturedGenericResult, value._capturedGenericResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_capturedGenericTarget, value._capturedGenericTarget, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(ReflectedArguments, value.ReflectedArguments, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ProjectedAddressOperands, value.ProjectedAddressOperands, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)))
             && EqualField(CalleeRet, value.CalleeRet, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(CalleeParams, value.CalleeParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(MemberRef, value.MemberRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -7088,6 +7100,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "_capturedGenericResult", _capturedGenericResult, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_capturedGenericTarget", _capturedGenericTarget, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "reflectedArguments", ReflectedArguments, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "projectedAddressOperands", ProjectedAddressOperands, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "calleeRet", CalleeRet, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "calleeParams", CalleeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -7153,6 +7166,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (_capturedGenericResult.IsPresent) result["_capturedGenericResult"] = _capturedGenericResult.IsNull ? null : TypeNode.Write(_capturedGenericResult.Value);
         if (_capturedGenericTarget.IsPresent) result["_capturedGenericTarget"] = _capturedGenericTarget.IsNull ? null : JsonValue.Create(_capturedGenericTarget.Value);
         if (ReflectedArguments.IsPresent) result["reflectedArguments"] = ReflectedArguments.IsNull ? null : new JsonArray(ReflectedArguments.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ProjectedAddressOperands.IsPresent) result["projectedAddressOperands"] = ProjectedAddressOperands.IsNull ? null : new JsonArray(ProjectedAddressOperands.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (CalleeRet.IsPresent) result["calleeRet"] = CalleeRet.IsNull ? null : TypeNode.Write(CalleeRet.Value);
         if (CalleeParams.IsPresent) result["calleeParams"] = CalleeParams.IsNull ? null : new JsonArray(CalleeParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom(projected);
@@ -29909,6 +29923,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<SourceTypeVector> _foreignDeclarationSignature { get; set; }
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
+    public OptionalField<int[]> ProjectedAddressOperands { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault();
@@ -29923,6 +29938,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         }
     }
     internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }
+    internal override OptionalField<int[]> LocationOperandFacts { get => ProjectedAddressOperands; set => ProjectedAddressOperands = value; }
     public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
@@ -30155,6 +30171,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
         ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
         _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone()).ToArray()) : _resolvedMethodTypeParams,
+        ProjectedAddressOperands = ProjectedAddressOperands.HasValue ? OptionalField<int[]>.Of(ProjectedAddressOperands.Value.Select(item0 => item0).ToArray()) : ProjectedAddressOperands,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
     {
@@ -30186,6 +30203,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
             _capturedGenericResult = _capturedGenericResult.HasValue ? OptionalField<TypeNode>.Of(CopyType(_capturedGenericResult.Value)) : _capturedGenericResult,
             ResolvedMemberReturn = ResolvedMemberReturn.HasValue ? OptionalField<TypeNode>.Of(CopyType(ResolvedMemberReturn.Value)) : ResolvedMemberReturn,
             _resolvedMethodTypeParams = _resolvedMethodTypeParams.HasValue ? OptionalField<BirTypeParameter[]>.Of(_resolvedMethodTypeParams.Value.Select(item0 => (BirTypeParameter)((BirGraphValue)item0).DeepClone(born)).ToArray()) : _resolvedMethodTypeParams,
+            ProjectedAddressOperands = ProjectedAddressOperands.HasValue ? OptionalField<int[]>.Of(ProjectedAddressOperands.Value.Select(item0 => item0).ToArray()) : ProjectedAddressOperands,
         };
         born(this, result);
         return result;
@@ -30430,7 +30448,8 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
             && EqualField(_capturedGenericResult, value._capturedGenericResult, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_foreignDeclarationSignature, value._foreignDeclarationSignature, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
-            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ProjectedAddressOperands, value.ProjectedAddressOperands, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -30475,6 +30494,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         WriteOptional(writer, "_foreignDeclarationSignature", _foreignDeclarationSignature, (writer, value) => { SourceTypeVector.Write(writer, value); });
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "projectedAddressOperands", ProjectedAddressOperands, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -30521,6 +30541,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         if (_foreignDeclarationSignature.IsPresent) result["_foreignDeclarationSignature"] = _foreignDeclarationSignature.IsNull ? null : SourceTypeVector.ToDom(_foreignDeclarationSignature.Value);
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ProjectedAddressOperands.IsPresent) result["projectedAddressOperands"] = ProjectedAddressOperands.IsNull ? null : new JsonArray(ProjectedAddressOperands.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         projected?.Invoke(this, result);
         return result;
     }
@@ -36721,6 +36742,7 @@ internal static class BirCallConversion
             _capturedGenericResult = source._capturedGenericResult,
             _capturedGenericTarget = source._capturedGenericTarget,
             ReflectedArguments = source.ReflectedArguments,
+            ProjectedAddressOperands = source.ProjectedAddressOperands,
             CalleeRet = source.CalleeRet,
             CalleeParams = source.CalleeParams,
             ResolvedMemberParams = source.ResolvedMemberParams,

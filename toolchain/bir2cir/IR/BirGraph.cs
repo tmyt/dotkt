@@ -56,6 +56,11 @@ internal abstract record BirGraphValue
         get => default;
         set => throw new InvalidOperationException("Not a generic method application");
     }
+    internal virtual OptionalField<int[]> LocationOperandFacts
+    {
+        get => default;
+        set => throw new InvalidOperationException("Not a projected method call");
+    }
     public virtual OptionalField<TypeNode> SuspendFunctionTypeFact
     {
         get => default;

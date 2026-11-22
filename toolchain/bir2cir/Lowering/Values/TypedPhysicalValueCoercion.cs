@@ -447,6 +447,7 @@ static class TypedPhysicalValueCoercion
             if (boundCall)
                 for (var i = 0; i < callParameters.Length; i++)
                 {
+                    if (node.LocationOperandFacts.OrDefault()?.Contains(i) == true) continue;
                     if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference) continue;
                     var location = arguments[i] is BirByRefOf address ? address.Inner.OrDefault() : arguments[i];
                     if (location is not BirLocal { Name.HasValue: true } local
@@ -667,6 +668,20 @@ static class TypedPhysicalValueCoercion
             var rewritten = TypedGenericArrayStorageLowering.LowerOperation(node, index.References,
                 index.ArrayNames, ExprType(Graph(array), scope, index), external: !index.LocalArrayRuntime);
             if (!ReferenceEquals(rewritten, node)) return Rewrite(rewritten, scope, index, resultUsed);
+        }
+        if (node.LocationOperandFacts.OrDefault() is { } positions)
+        {
+            var operands = Arguments(node);
+            var actual = node.ApplicationTypeArguments.Value;
+            for (int i = 0; i < positions.Length; i++)
+            {
+                var operand = operands[positions[i]];
+                var value = operand is BirByRefOf pointer ? pointer.Inner.Value : operand;
+                var type = ManagedAddress(operand, scope, index)?.Of ?? ExprType(Graph(value), scope, index);
+                actual[actual.Length - positions.Length + i] = type is TypeNode.ByRef p ? p.Of :
+                    type ?? throw new InvalidOperationException("Projected argument has no physical location type");
+            }
+            node.LocationOperandFacts = default;
         }
         if (node is BirByRefLoad load)
         {
