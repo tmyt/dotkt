@@ -755,10 +755,10 @@ static partial class FBoundStarProjectionErasure
                     return physical[i];
                 visited ??= new bool[physical.Length];
                 visited[i] = true;
-                if (context.ClassWitnessCandidate(application.Args[i], physical[i]) is not { } candidate)
+                if (!context.NeedsClassWitness(application.Args[i], physical[i]))
                     return physical[i];
                 witnessFrame ??= context.SelectPhysicalClassApplication(application);
-                return physical[i] = context.ClassConstrainedArgument(witnessFrame.Value, i, candidate, physical[i], Close);
+                return physical[i] = context.ClassConstrainedArgument(witnessFrame.Value.Slot(i), physical[i], Close);
             }
             for (int i = 0; i < physical.Length; ++i) Close(i);
             return physical;
