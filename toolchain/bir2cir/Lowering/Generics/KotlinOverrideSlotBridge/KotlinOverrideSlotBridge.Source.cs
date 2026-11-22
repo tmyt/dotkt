@@ -108,6 +108,14 @@ static partial class KotlinOverrideSlotBridge
             // A selected Nothing-returning override never produces a value.
             // It owes the same exact slot whether its base is local or imported.
             if (NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+            // The Kotlin value ABI erases variant aliases to object; a selected CLR declaration
+            // still owes the exact alias construction that its MethodDef returns.
+            else if (phase == Phase.PhysicalBridges && supIsInterface && referencedSlot
+                && IsBareObject(PhysicalSlotType(declRet))
+                && impl.Source?.RetKotlinType.OrDefault() is TypeNode.Fqn semantic
+                && AliasVarianceRepresentation.RequiresErasure(semantic, refs)
+                && ClrMemberResolution.SameInterfaceSlotType(PhysicalSlotType(semantic), slotRet))
+                retFit = Fit.Bridge;
             else if (!supIsInterface && phase == Phase.PhysicalBridges
                 && StringCharSequenceBridge.CanAdaptStringReturn(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), slotRet))
                 retFit = Fit.Bridge;

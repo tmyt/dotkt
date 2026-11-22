@@ -1,4 +1,6 @@
 import NUnit.Framework.TestAttribute
+import System.Collections.IEnumerable as RawEnumerable
+import System.Collections.Generic.IEnumerable as NativeEnumerable
 
 private fun <T> projectedCollectionReturnIdentity(value: T): T = value
 private fun projectedCollectionReturnConsume(items: List<Any>): Int = items.size
@@ -9,6 +11,7 @@ private fun projectedCollectionSame(left: Any, right: Any): Boolean = left === r
 private class ProjectedEnumeratorReturn<T>(private val source: ClrEnumerable<T>) {
     fun enumerator(): ClrEnumerator<T> = source.GetEnumerator()
 }
+private class DelegatedEnumerable<T>(source: ClrEnumerable<T>) : ClrEnumerable<T> by source
 private open class ProjectedConstructorReturn<T> {
     val result: String
     constructor(items: List<T>) { result = "list:" + items.size }
@@ -37,6 +40,11 @@ class ProjectedCollectionReturnTests {
         val generic = ProjectedEnumeratorReturn<Int>(source).enumerator()
         check(generic.MoveNext())
         check(generic.current() == 7)
+        val delegated: Any = DelegatedEnumerable(source)
+        val native = (delegated as NativeEnumerable<Int>).GetEnumerator()
+        check((native as System.Collections.IEnumerator).MoveNext() && native.Current == 7)
+        val raw = (delegated as RawEnumerable).GetEnumerator()
+        check(raw.MoveNext() && raw.Current == 7)
         check(ProjectedConstructorReturn<Int>(listOf(7)).result == "list:1")
         check(ProjectedConstructorReturn<Int>(7 as Any).result == "any:7")
         check(ProjectedConstructorReturn<Int>(listOf(7), "delegate").result == "list:1")

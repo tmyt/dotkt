@@ -80,6 +80,8 @@ Binding the identities directly would make `hasNext()` consume an element or req
 
 `dotkt$EnumeratorOverKotlinIterator<T>` wraps a Kotlin iterator as an `IEnumerator<T>`. Generated `GetEnumerator()` bridges let a Kotlin `Iterable<T>` implementation satisfy CLR enumeration consumers without changing Kotlin's iterator contract.
 
+A class implementing `ClrEnumerable<T>` directly or by delegation already supplies an enumerator, so it needs no iterator adapter. Its generic CLR slot returns `IEnumerator<T>`, even if the Kotlin body carries the value as `object`. When that slot is the sole enumerator implementation and there is no existing non-generic implementation, the non-generic CLR slot forwards to it.
+
 bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, constructor, method bodies, and the `GetEnumerator()`/`dotkt$NonGenericGetEnumerator()` pair on each qualifying class, each carrying the exact MethodImpl descriptor of the slot it fills. The adapter cannot be written in Kotlin, because `IEnumerator<T>` and the non-generic `IEnumerator` declare two `Current` slots that differ only in return type; it is emitted once per module, since its CLR identity never appears in a signature.
 
 Inherited interfaces read from reference metadata resolve through the same alias declarations as local interfaces;
