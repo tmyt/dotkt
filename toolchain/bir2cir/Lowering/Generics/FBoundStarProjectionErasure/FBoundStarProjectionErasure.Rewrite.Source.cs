@@ -296,19 +296,28 @@ static partial class FBoundStarProjectionErasure
         closing ??= new();
         if (!closing.Add(index)) return projected;
         var arguments = call.ApplicationTypeArguments.Value;
+        var nativeParameters = call switch {
+            BirGenericInstance c when c.ResolvedMemberParams.HasValue =>
+                ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, c, state.References),
+            BirGenericStatic c when c.ResolvedMemberParams.HasValue =>
+                ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, c, state.References),
+            BirCallInstance c when identity == null && c.MemberSignature.HasValue => c.MemberMethodTypeParams.OrDefault(),
+            BirCallStatic c when identity == null && c.MemberSignature.HasValue => c.MemberMethodTypeParams.OrDefault(),
+            _ => null,
+        };
         var methodApplication = state.Projection.SelectPhysicalMethodApplication(selected?.Source as BirFunctionDeclaration,
-            identity, frame, owner, arguments);
+            identity, frame, owner, arguments, nativeParameters);
         var proof = state.Projection.MethodClassWitness(methodApplication.Slot(index),
             i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing));
         closing.Remove(index);
-        // A split proof is admissible only at a projected MethodDef. Keep it
-        // alongside, not in place of, the arguments of the exact entry until
-        // binding selects a body. These types travel with lexical frame rewrites.
+        // Keep the split proof alongside the Kotlin argument. Projected
+        // entries consume both parts separately; fixed CLR calls must close
+        // their single slot at the invocation without changing the declaration.
         if (proof?.Required.Length > 0)
         {
-            if (ProjectedCallableEntries.HasFixedAbi(selected?.Source as BirFunctionDeclaration, identity, state.References))
-                return projected;
-            if (call is BirCallStatic or BirCallInstance or BirNewDelegate or BirNewBoundDelegate or BirConstrainedCall)
+            if (CapturedGenericInvocation.Invocation.Admits(call) ||
+                call is BirNewDelegate or BirNewBoundDelegate or BirConstrainedCall &&
+                !ProjectedCallableEntries.HasFixedAbi(selected?.Source as BirFunctionDeclaration, identity, state.References))
                 call.MethodWitnessFacts = call.MethodWitnessFacts.OrEmpty().Where(w => w.Argument.Value != index)
                     .Append(new BirMethodWitness { Argument = index, Primary = proof.Class,
                         Interfaces = proof.Interfaces.Cast<TypeNode>().ToArray() }).ToArray();
@@ -326,6 +335,7 @@ static partial class FBoundStarProjectionErasure
     internal static TypeNode SourceSelectedOwner(BirGraphValue node) => node switch {
         BirCallStatic value => value.CalleeOwner.OrDefault() ?? value.OwnerType.OrDefault() ?? value.Owner.OrDefault(),
         BirCallInstance value => value.OwnerType.OrDefault(), BirNewDelegate value => value.CalleeOwner.OrDefault(),
+        BirGenericInstance value => value.Type.OrDefault(), BirGenericStatic value => value.Type.OrDefault(),
         BirNewBoundDelegate value => value.CalleeOwner.OrDefault() ?? value.OwnerType.OrDefault(),
         BirConstrainedCall value => value.Iface.OrDefault(), _ => null,
     };

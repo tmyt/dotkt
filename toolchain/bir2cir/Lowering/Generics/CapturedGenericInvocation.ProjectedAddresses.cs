@@ -8,24 +8,40 @@ static partial class CapturedGenericInvocation
     static bool RequiresTypedSlot(System.Type type) => type.IsByRef || type.IsByRefLike
         || type.IsGenericParameter && (type.GenericParameterAttributes & GenericParameterAttributes.AllowByRefLike) != 0;
 
+    sealed record AddressTarget(string Name, int Token, string[] Keys, BirTypeParameter[] OwnerFrame,
+        BirTypeParameter[] MethodFrame, bool ValueOwner, TypeNode[] Signature, bool[] TypedParameters,
+        TypeNode Result, bool TypedResult)
+    {
+        internal static AddressTarget FromReference(MethodInfo method, BirMemberReference reference)
+        {
+            var owner = method.DeclaringType;
+            if (owner.IsConstructedGenericType) owner = owner.GetGenericTypeDefinition();
+            var parameters = method.GetParameters();
+            BirTypeParameter[] Frame(System.Type[] frame) => frame.Select(p =>
+                ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
+            return new(method.Name, method.MetadataToken, parameters.Select(p =>
+                ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)).ToArray(),
+                Frame(owner.GetGenericArguments()), Frame(method.GetGenericArguments()), owner.IsValueType,
+                reference.ParameterTypes.Value, parameters.Select(p => RequiresTypedSlot(p.ParameterType)).ToArray(),
+                reference.ReturnType.Value, RequiresTypedSlot(method.ReturnType));
+        }
+    }
+
     // A verified CLR call cannot use its class bound in place of a missing
     // interface proof. Close a stateless typed forwarder, not the ref/out
     // operands: those keep their original storage across the entire call.
-    static BirGraphValue ProjectAddressCall(Invocation site, MethodInfo selected, TypeNode.Fqn owner,
+    static BirGraphValue ProjectAddressCall(Invocation site, AddressTarget selected, TypeNode.Fqn owner,
         (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
-        LexicalTarget lexical, BirCallStatic access, Dictionary<int, TypeNode> fixedAddresses)
+        LexicalTarget lexical, BirCallStatic access, TypeNode[] closureArguments, Dictionary<int, TypeNode> fixedAddresses = null,
+        CaptureRow[] captures = null, TypeNode capturedResult = null)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
         owner = lexical?.Owner ?? owner;
         var ownerArgs = owner.Args ?? [];
         var authored = site.TypeArguments.Value;
-        var openOwner = selected.DeclaringType;
-        if (openOwner.IsConstructedGenericType) openOwner = openOwner.GetGenericTypeDefinition();
-        var ownerParameters = lexical?.OwnerFrame ?? openOwner.GetGenericArguments().Select(p =>
-            ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
-        var methodParameters = lexical?.Method.TypeParams.Value ?? selected.GetGenericArguments().Select(p =>
-            ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
+        var ownerParameters = lexical?.OwnerFrame ?? selected.OwnerFrame;
+        var methodParameters = lexical?.Method.TypeParams.Value ?? selected.MethodFrame;
         TypeNode AdapterFrame(TypeNode type) => Map(type, t => new TypeNode.Tv("type",
             t.Scope == "type" ? t.I : ownerParameters.Length + t.I));
         TypeNode CallerFrame(TypeNode type) => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(type, ownerArgs, authored);
@@ -44,7 +60,6 @@ static partial class CapturedGenericInvocation
         var witnesses = new List<IBirExpression>();
         var invariantTypes = new List<IBirExpression>();
         var statements = new List<IBirStatement>();
-        var formals = selected.GetParameters();
         (TypeNode open, TypeNode impl) BoundarySlot(TypeNode caller, TypeNode impl, bool typed)
         {
             if (!typed) return (Object, Object);
@@ -75,34 +90,36 @@ static partial class CapturedGenericInvocation
         }
         if (site.Instance)
         {
-            bool byAddress = openOwner.IsValueType;
+            bool byAddress = selected.ValueOwner;
             Operand(site.Receiver, byAddress ? new TypeNode.ByRef(owner) : owner,
                 byAddress ? new TypeNode.ByRef(adapterOwner) : adapterOwner, byAddress, true);
         }
         var selectedSignature = lexical?.Method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() ??
-            site.Member.ParameterTypes.Value.Select(SignatureValueTypes.Of).ToArray();
-        var nativeArguments = authored;
+            selected.Signature.Select(SignatureValueTypes.Of).ToArray();
         if (fixedAddresses != null)
         {
-            nativeArguments = authored.ToArray();
+            closureArguments = closureArguments.ToArray();
             foreach (var (i, storage) in fixedAddresses)
-                nativeArguments[formals[i].ParameterType.GetElementType().GenericParameterPosition] = storage;
+            {
+                var pointee = ((TypeNode.ByRef)SignatureValueTypes.Of(selected.Signature[i])).Of;
+                closureArguments[((TypeNode.Tv)pointee).I] = storage;
+            }
         }
-        for (var i = 0; i < formals.Length; i++)
+        for (var i = 0; i < selectedSignature.Length; i++)
         {
             var caller = fixedAddresses?.GetValueOrDefault(i) is { } location
                 ? new TypeNode.ByRef(location) : CallerFrame(selectedSignature[i]);
-            Operand(site.Arguments.Value[i], caller, AdapterFrame(selectedSignature[i]), RequiresTypedSlot(formals[i].ParameterType), false);
+            Operand(site.Arguments.Value[i], caller, AdapterFrame(selectedSignature[i]), selected.TypedParameters[i], false);
         }
-        var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(site.Member.ReturnType.Value);
-        var result = CallerFrame(nativeResult);
+        var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(selected.Result);
+        var result = capturedResult ?? CallerFrame(nativeResult);
         var forwardResult = AdapterFrame(nativeResult);
-        var unit = selected.ReturnType.FullName == "System.Void";
+        var unit = IsVoid(nativeResult);
         var (contractResult, implResult) = unit ? (result, result) : BoundarySlot(result, forwardResult,
-            RequiresTypedSlot(selected.ReturnType));
+            selected.TypedResult);
         TypeNode.Fqn Contract(List<TypeNode> frame) => new(contractName, frame.Count == 0 ? null : frame.ToArray());
         var callerContract = Contract(contractArgs);
-        BirGraphValue forward = lexical == null ? site.Forward(adapterOwner, authored.Length, selectedSignature, forwardResult, false) :
+        BirGraphValue forward = lexical == null ? site.Forward(adapterOwner, authored.Length, selectedSignature, forwardResult, site.Member == null) :
             site.Instance ? new BirCallInstance { OwnerType = adapterOwner, Method = lexical.Method.Name, Virtual = false,
                 Sig = selectedSignature, CalleeRet = nativeResult, Ret = forwardResult } :
             new BirCallStatic { Owner = adapterOwner, Method = lexical.Method.Name, Sig = selectedSignature,
@@ -126,7 +143,7 @@ static partial class CapturedGenericInvocation
             case BirCallStatic s: s.TypeArgs = concreteArgs; s.Args = actualArgs; break;
             case BirCallInstance i: i.TypeArgs = concreteArgs; i.Args = actualArgs; i.Recv = OptionalField<IBirExpression>.Of(forwarded[0]); break;
             case BirGenericInstance i: i.TypeArgs = concreteArgs; i.Args = actualArgs;
-                i.Recv = OptionalField<IBirExpression>.Of(openOwner.IsValueType ?
+                i.Recv = OptionalField<IBirExpression>.Of(selected.ValueOwner ?
                     new BirByRefLoad { Local = "p0", Elem = adapterOwner } : forwarded[0]); break;
         }
         BirFunctionDeclaration Method(List<TypeNode> parameters, TypeNode ret, bool abstractMethod, IBirStatement[] body) => new() {
@@ -154,18 +171,19 @@ static partial class CapturedGenericInvocation
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         TypeNode[] lookup = [type, type, new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"),
             new TypeNode.Array(new TypeNode.Fqn("kotlin.String")), new TypeNode.Array(type), new TypeNode.Fqn("kotlin.IntArray"),
-            new TypeNode.Array(type), new TypeNode.Array(any), new TypeNode.Array(new TypeNode.Nullable(type))];
+            new TypeNode.Array(type), new TypeNode.Array(any), new TypeNode.Array(new TypeNode.Nullable(type)),
+            new TypeNode.Nullable(new TypeNode.Array(type)), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.IntArray"))];
         if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, helperName, 0, true, lookup, null, out _, out var helper, out var declaring))
             throw new InvalidOperationException($"Projected address call has no runtime binding for '{helperName}'");
         var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, helper, "method", declaring, null));
         var create = new BirNativeStatic { Type = new TypeNode.Fqn(RuntimeOwner), Method = helperName, MemberRef = member,
             Ret = member.ReturnType, ResolvedMemberReturn = member.ReturnType,
             Args = new IBirExpression[] { ClassRef(new TypeNode.Fqn(adapterName)), ClassRef(owner),
-                Number(lexical == null ? selected.MetadataToken : 0), Text(lexical?.Method.Name.Value ?? selected.Name),
-                NewArray(String, formals.Select(p => (IBirExpression)Text(ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)))),
-                NewArray(Type, nativeArguments.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
+                Number(lexical == null ? selected.Token : 0), Text(lexical?.Method.Name.Value ?? selected.Name),
+                NewArray(String, selected.Keys.Select(p => (IBirExpression)Text(p))),
+                NewArray(Type, closureArguments.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
                 NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))),
-                NewArray(Object, witnesses), NewArray(Type, invariantTypes) } };
+                NewArray(Object, witnesses), NewArray(Type, invariantTypes), CaptureOwners(captures), CaptureCoordinates(captures) } };
         var closedResult = SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());
         var invoke = new BirCallInstance { OwnerType = callerContract, Method = "Invoke", Virtual = true, Recv = Cast(callerContract, create),
             Sig = signature.ToArray(), Ret = closedResult, CalleeRet = contractResult, Args = operands.ToArray() };

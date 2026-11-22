@@ -2,9 +2,48 @@
 package roundtrip.constrainedbound
 
 import System.Collections.Generic.List as ClrList
+import RoundtripDependentNative.Base
+import RoundtripDependentNative.IMarker
+import RoundtripDependentNative.Selector
 import kotlin.clr.ClrRef
 import kotlin.clr.byref
 import roundtrip.clrrefparameters.ReferenceBox
+
+class NativeChoice<T>(val value: T) : Base(), IMarker<String>
+open class LastNativeChoice : Selector() {
+    override fun <X,Y> Capture(value: X, key: RoundtripDependentNative.IKey<Y>): RoundtripDependentNative.IKey<Y>
+        where X : Base, X : IMarker<String> = key
+    override fun <X,Y> Capture(value: X, key: RoundtripDependentNative.IKey<Y>, visits: ClrRef<Int>): RoundtripDependentNative.IKey<Y>
+        where X : Base, X : IMarker<String> {
+        visits.value += 2
+        return key
+    }
+    override fun <X,Y> Pair(first: X, second: Y): Y
+        where X : Base, X : IMarker<String>, Y : Base, Y : IMarker<String> = second
+    protected override fun <T> Visit(item: T, count: ClrRef<Int>): T where T : Base, T : IMarker<String> {
+        var visits = count.value
+        val result = super.Visit<T>(item, byref(visits))
+        count.value = visits
+        return result
+    }
+    override fun <T> Choose(first: T, last: T): T where T : Base, T : IMarker<String> = last
+    override fun <T> Choose(first: T, last: T, visits: ClrRef<Int>): T where T : Base, T : IMarker<String> {
+        visits.value += 2
+        return last
+    }
+    fun base(a: NativeChoice<*>, b: NativeChoice<*>) = super.Choose<NativeChoice<*>>(a, b)
+    fun baseRef(a: NativeChoice<*>, b: NativeChoice<*>): Boolean {
+        var visits = 0
+        return super.Choose<NativeChoice<*>>(a, b, byref(visits)) === a && visits == 1
+    }
+    fun visitOther(other: LastNativeChoice, a: NativeChoice<*>): Boolean {
+        var visits = 0
+        return other.Visit<NativeChoice<*>>(a, byref(visits)) === a && visits == 1
+    }
+}
+fun localNativeChoice(s: LastNativeChoice, a: NativeChoice<*>, b: NativeChoice<*>) = s.Choose<NativeChoice<*>>(a, b)
+fun <S : LastNativeChoice> localBoundedNativeChoice(s: S, a: NativeChoice<*>, b: NativeChoice<*>) =
+    s.Choose<NativeChoice<*>>(a, b)
 
 interface UsableBound { val name: String }
 internal interface HiddenBound : UsableBound

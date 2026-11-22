@@ -4661,6 +4661,7 @@ internal static class BirGraphDom
                 case "resolvedMemberParams": break;
                 case "resolvedMemberReturn": break;
                 case "_resolvedMethodTypeParams": break;
+                case "projectedMethodWitnesses": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirGenericStatic at {source.GetPath()}");
             }
         return new BirGenericStatic
@@ -4678,6 +4679,7 @@ internal static class BirGraphDom
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
+            ProjectedMethodWitnesses = Field<BirMethodWitness[]>(fields, "projectedMethodWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirMethodWitness(item0!)).ToArray()),
         };
     }
 
@@ -4707,6 +4709,7 @@ internal static class BirGraphDom
                 case "_foreignDeclarationSignature": break;
                 case "resolvedMemberReturn": break;
                 case "_resolvedMethodTypeParams": break;
+                case "projectedMethodWitnesses": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirGenericInstance at {source.GetPath()}");
             }
         return new BirGenericInstance
@@ -4730,6 +4733,7 @@ internal static class BirGraphDom
             _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
+            ProjectedMethodWitnesses = Field<BirMethodWitness[]>(fields, "projectedMethodWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirMethodWitness(item0!)).ToArray()),
         };
     }
 
