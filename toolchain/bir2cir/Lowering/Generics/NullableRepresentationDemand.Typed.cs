@@ -235,6 +235,8 @@ static partial class NullableRepresentationDemand
             foreach (var slot in frame.Companions) RequireRepresentation(arguments[slot.SourceIndex], slot.Representation, result);
         }
         var snapshot = NullableRepresentationViews.ReturnFacts(node);
+        if (IndexedLocations(node) is { } addresses)
+            foreach (var (_, component) in addresses) Visit(component, true, result, types, policy, element: true);
         if (UnstampedOpenElement(node) is { } inferred)
             Visit(inferred, true, result, types, policy, element: true);
         node.RewriteRepresentationInPlace((ownership, role, type) => {
@@ -258,6 +260,27 @@ static partial class NullableRepresentationDemand
                     or BirRepresentationRole.Declaration or BirRepresentationRole.TypeParameterDeclarations))
                 Scan(child, result, types, methods, locals, policy);
         });
+    }
+
+    // An indexed ref operand is a storage location. Its caller-side array
+    // component is independent of the selected method's value/constraint slot.
+    internal static List<(BirArrayGet, TypeNode)> IndexedLocations(BirGraphValue node)
+    {
+        (IBirExpression[] args, TypeNode[] sig) = node switch {
+            BirCallStatic s => (s.Args.OrDefault(), s.Sig.OrDefault()),
+            BirCallInstance c => (c.Args.OrDefault(), c.Sig.OrDefault()),
+            BirConstrainedCall c => (c.Args.OrDefault(), c.Sig.OrDefault()),
+            _ => (null, null),
+        };
+        if (args == null || sig == null || args.Length != sig.Length) return null;
+        List<(BirArrayGet, TypeNode)> result = null;
+        for (int i = 0; i < args.Length; i++)
+            if ((args[i] is BirByRefOf address ? address.Inner.OrDefault() : args[i]) is BirArrayGet read &&
+                SignatureValueTypes.Of(sig[i]) is TypeNode.ByRef &&
+                (read.Elem.OrDefault() ?? ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface(read.Array.OrDefault(),
+                    System.Collections.Immutable.ImmutableDictionary<string, TypeNode>.Empty))) is { } component)
+                (result ??= new()).Add((read, component));
+        return result;
     }
 
     internal static bool IsOpenArrayComponent(BirGraphValue node, BirRepresentationRole role, TypeNode type) =>

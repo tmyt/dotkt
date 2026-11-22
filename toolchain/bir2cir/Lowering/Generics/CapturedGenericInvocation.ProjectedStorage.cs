@@ -9,7 +9,7 @@ static partial class CapturedGenericInvocation
     internal static BirGraphValue ProjectStorageCall(BirGraphValue call,
         CallableWitnessScope ownerScope, CallableWitnessScope methodScope,
         ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated, IBirTypeDeclaration lexical,
-        List<BirFunctionDeclaration> lexicalMethods)
+        List<BirFunctionDeclaration> lexicalMethods, IReadOnlyDictionary<string, TypeNode> locations)
     {
         if (!Invocation.Admits(call)) return call;
         var site = new Invocation(call);
@@ -30,10 +30,17 @@ static partial class CapturedGenericInvocation
         var (member, arguments, values, receiver) = (site.Member, site.TypeArguments.OrDefault(),
             site.Arguments.OrDefault(), site.Receiver);
         if (member?.DeclaringType.OrDefault() is not TypeNode.Fqn owner || arguments == null || values == null) return call;
+        TypeNode Location(IBirExpression value) => (value is BirByRefOf r ? r.Inner.OrDefault() : value) is BirLocal local
+            ? locations?.GetValueOrDefault(local.Name.Value) : null;
+        Dictionary<int, TypeNode> fixedAddresses = null;
+        if (locations != null && member.ParameterTypes.Value.Length == values.Length)
+            for (int i = 0; i < values.Length; i++)
+                if (SignatureValueTypes.Of(member.ParameterTypes.Value[i]) is TypeNode.ByRef { Of: TypeNode.Tv { Scope: "method" } }
+                    && Location(values[i]) is { } pointee) (fixedAddresses ??= new()).Add(i, pointee);
         var candidates = arguments.Select((argument, index) => (argument, index))
             .Where(row => CallableWitnessScope.For(row.argument, ownerScope, methodScope).Any())
             .ToArray();
-        if (candidates.Length == 0 || !refs.TryResolveStaticMemberSignature(owner.Name, member.Name.Value, arguments.Length,
+        if ((candidates.Length == 0 && fixedAddresses == null) || !refs.TryResolveStaticMemberSignature(owner.Name, member.Name.Value, arguments.Length,
             receiver == null, member.ParameterTypes.Value, owner.Args, out _, out var selected, out var declaringOwner)) return call;
         var resolved = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, selected, "method", declaringOwner, owner.Args));
         if (!member.StructurallyEquals(resolved)) throw new InvalidOperationException("Projected generic call lost its selected MethodDef");
@@ -53,7 +60,7 @@ static partial class CapturedGenericInvocation
                 if (generic[index].GetGenericParameterConstraints().Any(UsesLostSlot)) lost.Add(index);
         } while (previous != lost.Count);
         var missing = lost.Order().ToArray();
-        if (missing.Length == 0) return call;
+        if (missing.Length == 0 && fixedAddresses == null) return call;
         // A different parameter can force this storage class to split. Preserve
         // each authored native argument whose own primary still proves its facets.
         var proofs = (from i in missing
@@ -90,7 +97,7 @@ static partial class CapturedGenericInvocation
             lexicalTarget = new(new TypeNode.Fqn(lexical.Name.Value, Enumerable.Range(0, ownerFrame.Length)
                 .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, method);
         }
-        if (typed || access != null) return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated, lexicalTarget, access);
+        if (typed || access != null) return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated, lexicalTarget, access, fixedAddresses);
 
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the

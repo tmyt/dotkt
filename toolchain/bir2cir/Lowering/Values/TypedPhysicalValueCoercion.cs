@@ -188,7 +188,7 @@ static class TypedPhysicalValueCoercion
     {
         internal readonly Dictionary<string, TypeNode> Locals;
         internal readonly TypeNode Return, Owner;
-        internal bool NativeArrayReturn;
+        internal bool NativeArrayReturn, ProjectedCallable;
         internal HashSet<string> ManagedAddresses = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, TypeNode> TemporaryFields, TemporaryLocals;
         internal Scope(TypeNode owner = null, TypeNode ret = null, Dictionary<string, TypeNode> locals = null,
@@ -200,7 +200,7 @@ static class TypedPhysicalValueCoercion
             TemporaryLocals = temporaryLocals ?? new(StringComparer.Ordinal);
         }
         internal Scope Copy() => new(Owner, Return, new(Locals, StringComparer.Ordinal), TemporaryFields, TemporaryLocals)
-            { NativeArrayReturn = NativeArrayReturn, ManagedAddresses = new(ManagedAddresses, StringComparer.Ordinal) };
+            { NativeArrayReturn = NativeArrayReturn, ProjectedCallable = ProjectedCallable, ManagedAddresses = new(ManagedAddresses, StringComparer.Ordinal) };
         internal static Scope Frame(BirParameter[] parameters, IEnumerable<BirGraphValue> parts, TypeNode owner, TypeNode ret)
         {
             var scope = new Scope(owner, ret);
@@ -264,6 +264,7 @@ static class TypedPhysicalValueCoercion
         foreach (var method in methods)
         {
             var scope = Scope.Frame(method.Params.OrEmpty(), method.Body.OrEmpty().Cast<BirGraphValue>(), owner, method.Ret.OrDefault());
+            scope.ProjectedCallable = method.Attrs.OrEmpty().Any(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.AKProjectedMethod });
             scope.NativeArrayReturn = MayHoldArray(scope.Return, index) &&
                 (method.SourceClrBoundary || method.Overrides.OrEmpty().Select(o => o.Owner.OrDefault())
                     .Concat(method.ClrInterfaceImpls.OrEmpty().Concat(method.ClrBaseImpls.OrEmpty()).Select(o => o.Owner.OrDefault()))
@@ -300,12 +301,48 @@ static class TypedPhysicalValueCoercion
     static IBirExpression CoerceExpression(IBirExpression value, TypeNode target, Scope scope, Index index, TypeNode selected = null)
     {
         if (value == null) return null;
+        if (scope.ProjectedCallable && SignatureValueTypes.Of(target) is TypeNode.ByRef to &&
+            ManagedAddress(value is BirByRefOf address ? address.Inner.OrDefault() : value, scope, index) is { Of: TypeNode.Tv } from &&
+            from.Of != to.Of)
+            return CheckedAddressView(value, from, to, index);
         // The source slot selects the Kotlin conversion; the actual CLR slot selects
         // the cast. Their type arguments can differ, e.g. on imported base constructors.
         if (FunctionSlot(target, selected, index) != target
             && FunctionViewOperand(Graph(value), ExprType(Graph(value), scope, index), selected, index) is { } view)
             return Cast(view, SignatureValueTypes.Of(target));
         return Expression(Coerce(Graph(value), target, scope, index));
+    }
+
+    // A fixed ref slot cannot accept a covariant reference or a converted
+    // temporary. Reuse the pointer only when its actual CLR element is identical.
+    static IBirExpression CheckedAddressView(IBirExpression value, TypeNode.ByRef from, TypeNode.ByRef to, Index index)
+    {
+        var refs = index.References;
+        const string owner = "System.Runtime.CompilerServices.Unsafe";
+        TypeNode[] signature = [new TypeNode.ByRef(new TypeNode.Tv("method", 0))];
+        if (!refs.TryResolveStaticMemberSignature(owner, "As", 2, true, signature, null,
+                out _, out var method, out var declaring))
+            throw new InvalidOperationException("Missing CLR managed-reference identity conversion");
+        var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, method, "method", declaring, null));
+        var failure = refs.ResolveRefType("System.InvalidCastException");
+        var mismatch = new BirBinaryOperation { Op = "!=", Lhs = new BirClassReference { Type = from.Of },
+            Rhs = new BirClassReference { Type = to.Of } };
+        var fail = new BirThrow { Value = new BirNewClr { Type = new TypeNode.Fqn(failure.FullName), Args = Array.Empty<IBirExpression>(),
+            MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs,
+                failure.GetConstructor(System.Type.EmptyTypes), "ctor", failure, null)) } };
+        var statements = new List<IBirStatement>();
+        if (value is BirByRefOf { Inner.Value: BirLocal local }) value = local;
+        if (value is not BirLocal)
+        {
+            var name = index.ArrayNames.Next("$fixedAddress$");
+            statements.Add(new BirVariable { Name = name, Type = from, Init = Field(value) });
+            value = new BirLocal { Name = name };
+        }
+        statements.Add(new BirIf { Branches = new[] { new BirBranch { Cond = mismatch, Body = new IBirStatement[] { fail } } } });
+        var view = new BirGenericStatic { Type = new TypeNode.Fqn(owner), Method = "As",
+            TypeArgs = new[] { from.Of, to.Of }, MemberRef = member, Args = new[] { value } };
+        return new BirValueBlock { Type = to, Stmts = statements.ToArray(),
+            Result = view };
     }
     static void CoerceVector(IBirExpression[] values, TypeNode[] targets, Scope scope, Index index, TypeNode[] selected = null)
     {
@@ -677,7 +714,7 @@ static class TypedPhysicalValueCoercion
             {
                 var operand = operands[positions[i]];
                 var value = operand is BirByRefOf pointer ? pointer.Inner.Value : operand;
-                var type = ManagedAddress(operand, scope, index)?.Of ?? ExprType(Graph(value), scope, index);
+                var type = (value as BirArrayGet)?.Elem.OrDefault() ?? ManagedAddress(operand, scope, index)?.Of ?? ExprType(Graph(value), scope, index);
                 actual[actual.Length - positions.Length + i] = type is TypeNode.ByRef p ? p.Of :
                     type ?? throw new InvalidOperationException("Projected argument has no physical location type");
             }
@@ -943,11 +980,13 @@ static class TypedPhysicalValueCoercion
                         // ldelema also requires a vector-typed receiver. An open
                         // Kotlin Array<T> is System.Array even when the element
                         // already names exactly the selected ref T.
-                        var vector = new TypeNode.Array(pointer.Of);
+                        var component = node.LocationOperandFacts.OrDefault()?.Contains(pos) == true
+                            ? indexed.Elem.Value : pointer.Of;
+                        var vector = new TypeNode.Array(component);
                         var receiver = Graph(indexed.Array.Value);
                         if (ExprType(receiver, scope, index) != vector)
                             indexed.Array = Field(Cast(receiver, vector));
-                        indexed.Elem = pointer.Of;
+                        indexed.Elem = component;
                     }
                     slot.Replace(rewritten);
                 });

@@ -13,7 +13,7 @@ static partial class CapturedGenericInvocation
     // operands: those keep their original storage across the entire call.
     static BirGraphValue ProjectAddressCall(Invocation site, MethodInfo selected, TypeNode.Fqn owner,
         (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
-        LexicalTarget lexical, BirCallStatic access)
+        LexicalTarget lexical, BirCallStatic access, Dictionary<int, TypeNode> fixedAddresses)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
@@ -81,9 +81,19 @@ static partial class CapturedGenericInvocation
         }
         var selectedSignature = lexical?.Method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() ??
             site.Member.ParameterTypes.Value.Select(SignatureValueTypes.Of).ToArray();
+        var nativeArguments = authored;
+        if (fixedAddresses != null)
+        {
+            nativeArguments = authored.ToArray();
+            foreach (var (i, storage) in fixedAddresses)
+                nativeArguments[formals[i].ParameterType.GetElementType().GenericParameterPosition] = storage;
+        }
         for (var i = 0; i < formals.Length; i++)
-            Operand(site.Arguments.Value[i], CallerFrame(selectedSignature[i]), AdapterFrame(selectedSignature[i]),
-                RequiresTypedSlot(formals[i].ParameterType), false);
+        {
+            var caller = fixedAddresses?.GetValueOrDefault(i) is { } location
+                ? new TypeNode.ByRef(location) : CallerFrame(selectedSignature[i]);
+            Operand(site.Arguments.Value[i], caller, AdapterFrame(selectedSignature[i]), RequiresTypedSlot(formals[i].ParameterType), false);
+        }
         var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(site.Member.ReturnType.Value);
         var result = CallerFrame(nativeResult);
         var forwardResult = AdapterFrame(nativeResult);
@@ -153,7 +163,7 @@ static partial class CapturedGenericInvocation
             Args = new IBirExpression[] { ClassRef(new TypeNode.Fqn(adapterName)), ClassRef(owner),
                 Number(lexical == null ? selected.MetadataToken : 0), Text(lexical?.Method.Name.Value ?? selected.Name),
                 NewArray(String, formals.Select(p => (IBirExpression)Text(ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)))),
-                NewArray(Type, authored.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
+                NewArray(Type, nativeArguments.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
                 NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))),
                 NewArray(Object, witnesses), NewArray(Type, invariantTypes) } };
         var closedResult = SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());

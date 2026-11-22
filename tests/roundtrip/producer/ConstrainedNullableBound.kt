@@ -3,6 +3,8 @@ package roundtrip.constrainedbound
 
 import System.Collections.Generic.List as ClrList
 import kotlin.clr.ClrRef
+import kotlin.clr.byref
+import roundtrip.clrrefparameters.ReferenceBox
 
 interface UsableBound { val name: String }
 internal interface HiddenBound : UsableBound
@@ -62,12 +64,27 @@ interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
 }
 open class MarkedWriter {
+    fun <A> writeElement(xs: Array<A>, index: Int, value: A): A where A : PendingItems.Item, A : ResultSource.Mark =
+        write(byref(xs[index]), byref(xs[index]), value, false)
+    fun <A> exchange(slot: ClrRef<ReferenceBox<A>>, next: () -> ReferenceBox<A>)
+        where A : PendingItems.Item, A : ResultSource.Mark = exchangeBox(slot, next)
+    open fun <A, B> replaceSpan(slot: ClrRef<System.Span<A>>, other: ClrRef<System.Span<A>>, tag: B): Int
+        where A : PendingItems.Item, A : ResultSource.Mark, B : PendingItems.Item, B : ResultSource.Mark {
+        val length = slot.value.Length
+        slot.value = other.value
+        return length
+    }
     open fun <A> write(left: ClrRef<A>, right: ClrRef<A>, value: A, fail: Boolean): A
         where A : PendingItems.Item, A : ResultSource.Mark {
         left.value = value
         if (fail) throw IllegalStateException("after write")
         return right.value
     }
+}
+private fun <A> exchangeBox(slot: ClrRef<ReferenceBox<A>>, next: () -> ReferenceBox<A>): ReferenceBox<A> {
+    val previous = slot.value
+    slot.value = next()
+    return previous
 }
 interface OwnerTag<P>
 open class OwnerSelector<P> {

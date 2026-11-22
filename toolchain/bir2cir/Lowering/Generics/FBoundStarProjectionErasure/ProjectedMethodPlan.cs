@@ -11,17 +11,26 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
         new ProjectedClassStorageFrame.WitnessSlot(source,
             Parameters[Parameters.Length - FacetSources.Length - AddressOperands.Length + i].Constraints.OrEmpty().Single(), false)).ToArray();
 
-    internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands)
+    internal static bool HasMethodLocation(BirParameter parameter, ReferenceMetadataIndex references)
+    {
+        if (parameter.Type.OrDefault() is not TypeNode.ByRef reference) return false;
+        // A managed ref to a stack-only CLR construction has a nominal, invariant
+        // pointee. Keep that construction in the signature and method body: it
+        // cannot be transported as an opaque, potentially boxed Kotlin value.
+        if (reference.Of is TypeNode.Fqn f && references.IsByRefLikeFqn(f)) return false;
+        bool dependsOnMethod = false;
+        BirGraphNameFields.VisitTypeNodes(reference.Of, t => dependsOnMethod |= t is TypeNode.Tv { Scope: "method" });
+        return dependsOnMethod;
+    }
+
+    internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands, ReferenceMetadataIndex references)
     {
         var formals = frame.Declare().ToList();
         var facets = frame.Interfaces.Select(slot => slot.OwnerIndex).ToArray();
         var addresses = new List<int>();
         for (int i = 0; i < operands.Length; i++)
         {
-            if (SignatureValueTypes.Of(operands[i].Type.Value) is not TypeNode.ByRef reference) continue;
-            bool split = false;
-            CapturedGenericInvocation.Map(reference.Of, v => { split |= v.Scope == "method" && facets.Contains(v.I); return v; });
-            if (!split) continue;
+            if (!HasMethodLocation(operands[i], references)) continue;
             addresses.Add(i);
             formals.Add(new BirTypeParameter { Name = "$location$" + i });
         }
@@ -75,7 +84,7 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
     internal sealed record Application(bool Projected, TypeNode[] Arguments);
 
     internal Application Close(TypeNode[] actual, TypeNode[] ownerArgs, BirMethodWitness[] candidates,
-        BirTypeParameter[] original, NullableRepresentationFrame representations, bool nonvirtualBase,
+        BirTypeParameter[] original, NullableRepresentationFrame representations, bool requireProjectedEntry,
         Func<TypeNode, TypeNode, TypeNode> lexicalProof, Func<TypeNode, TypeNode, bool> declares,
         Func<TypeNode, TypeNode, bool> proves)
     {
@@ -107,7 +116,7 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
                 else if (!declares(actual[i], bound) && declares(actual[source], bound)) arguments[i] = actual[source];
             }
         var proofs = Facets.Select(Facet).ToArray();
-        return proofs.All(p => p == null) && !nonvirtualBase ? new(false, arguments) :
+        return proofs.All(p => p == null) && !requireProjectedEntry ? new(false, arguments) :
             new(true, arguments.Concat(proofs.Select((p, i) => p ?? actual[FacetSources[i]])).ToArray());
     }
 }

@@ -18,7 +18,7 @@ sealed class ProjectedClassStorageFrame
         => (this.original, Interfaces) = (original, interfaces);
 
     internal static ProjectedClassStorageFrame Plan(BirTypeParameter[] parameters,
-        Func<int, TypeNode.Fqn, (TypeNode.Fqn Type, string Kind)> physicalBound)
+        Func<int, TypeNode.Fqn, (TypeNode.Fqn Type, string Kind)> physicalBound, bool includeWithoutFacets = false)
     {
         var slots = new List<InterfaceSlot>();
         for (int i = 0; i < parameters.Length; i++)
@@ -30,7 +30,7 @@ sealed class ProjectedClassStorageFrame
             foreach (var row in physical.Where(row => row.Bound.Kind == "interface"))
                 slots.Add(new(i, row.j, row.Bound.Type));
         }
-        return slots.Count == 0 ? null : new(parameters, slots.ToArray());
+        return slots.Count == 0 && !includeWithoutFacets ? null : new(parameters, slots.ToArray());
     }
 
     internal BirTypeParameter[] Declare() => Declare(original, Interfaces);
