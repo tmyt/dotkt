@@ -79,14 +79,13 @@
        CLI header by the shared tool-side reference catalog. -->
   <Target Name="DotKtResolveReferenceSets" DependsOnTargets="DotKtInitializeIntermediatePaths;ResolveReferences">
     <ItemGroup>
-      <_DotKtCompileReference Include="@(ReferencePath)" />
+      <!-- A declaration key is read from the selected reference PE. Bind against that
+           same PE even when the implementation uses a different type-forwarding scope. -->
+      <_DotKtCompileReference Include="@(ReferencePathWithRefAssemblies)" />
+      <_DotKtCompileReference Include="@(ReferencePath)" Condition="'@(ReferencePathWithRefAssemblies)' == ''" />
       <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <_DotKtKlibReference Include="@(ReferencePathWithRefAssemblies)"
-                           Condition="'%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
-        <KlibPath>$(DotKtReferenceKlibPath)/%(Filename).klib</KlibPath>
-      </_DotKtKlibReference>
       <_DotKtKlibReference Include="@(_DotKtCompileReference)"
-                           Condition="'@(ReferencePathWithRefAssemblies)' == '' and '%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
+                           Condition="'%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
         <KlibPath>$(DotKtReferenceKlibPath)/%(Filename).klib</KlibPath>
       </_DotKtKlibReference>
       <!-- The stdlib twins are never projected (the frontend KLIB is authoritative), but dll2klib still needs their

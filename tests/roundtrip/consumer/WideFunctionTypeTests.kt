@@ -6,9 +6,17 @@ import roundtrip.wide.param17
 import roundtrip.wide.ret17
 import roundtrip.wide.retAction17
 
+private class LastArgument : (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> Any {
+    override fun invoke(a: Any, b: Any, c: Any, d: Any, e: Any, f: Any, g: Any, h: Any, i: Any,
+                        j: Any, k: Any, l: Any, m: Any, n: Any, o: Any, p: Any, q: Any): Any = q
+}
+
+private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.NativeCallbackBase(op)
+
 class WideFunctionTypeTests {
     @TestAttribute
     fun wideFunctionValuesCrossTheModuleBoundary() {
+        assertEquals(17, NativeCallbackDerived(LastArgument()).Read())
         assertEquals(18, param17 { p1, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p17 -> p1 + p17 })
         assertEquals(18, ret17()(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
 
