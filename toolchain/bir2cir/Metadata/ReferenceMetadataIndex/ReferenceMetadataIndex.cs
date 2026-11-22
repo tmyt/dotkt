@@ -587,10 +587,16 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // is still the right precedence there, matching Roslyn CS0436). `@ClrTypeAlias`/`@ClrIntrinsic` maps are empty for a
     // user lib, so TryResolveClrOwner never mis-binds a local user type.
     IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
+    IReadOnlyDictionary<string, string> _localCarrierBindings;
     public void SetLocalEmittedTypes(IReadOnlySet<string> fqns)
     {
         _localEmittedTypes = fqns.Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
             .ToHashSet(StringComparer.Ordinal);
+        _physicalTypeNamesSnapshot = null;
+    }
+    internal void SetLocalCarrierBindings(IReadOnlyDictionary<string, string> localCarriers)
+    {
+        _localCarrierBindings = localCarriers;
         _physicalTypeNamesSnapshot = null;
     }
 
@@ -2311,13 +2317,27 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // Exact CLR metadata identity for a trusted external DotKt classifier. Local source declarations remain
     // authoritative and therefore never rewrite through a same-named reference.
     // Reference mappings are complete at construction; replacing the local inventory starts a new snapshot lifetime.
-    public IReadOnlyDictionary<string, string> PhysicalTypeNames =>
-        _physicalTypeNamesSnapshot ??= _physicalTypeBySemanticName
+    public IReadOnlyDictionary<string, string> PhysicalTypeNames => _physicalTypeNamesSnapshot ??= PhysicalBindings();
+    Dictionary<string, string> PhysicalBindings()
+    {
+        var bindings = _physicalTypeBySemanticName
             .Where(kv => !IsLocalEmittedType(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        // A reference twin's signatures can name the actual nested TypeDef.
+        // When this module emits the same classifier, CIR operands must use
+        // its allocated local declaration key, not an external TypeRef.
+        if (_localCarrierBindings != null)
+            foreach (var (source, local) in _localCarrierBindings)
+                if (TryExistentialPhysicalOwner(source, out var key) &&
+                    _physicalTypeBySemanticName.TryGetValue(key, out var exact))
+                {
+                    if (key != local) bindings[key] = local;
+                    if (exact != local) bindings[exact] = local;
+                }
+        return bindings;
+    }
 
-    internal string RecordedPhysicalTypeName(string sourceName) => !IsLocalEmittedType(sourceName)
-        && _physicalTypeBySemanticName.TryGetValue(sourceName, out var physical) ? physical : sourceName;
+    internal string RecordedPhysicalTypeName(string sourceName) => PhysicalTypeNames.GetValueOrDefault(sourceName, sourceName);
 
     // Kotlin inner applications arrive in BIR as [own..., outer...]. Trusted DotKt metadata supplies the number of
     // semantic outer slots for referenced declarations; TypeOwnershipLowering alone projects them to CLR's flattened

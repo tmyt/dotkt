@@ -3,6 +3,7 @@ package roundtrip.innerowner
 import NUnit.Framework.TestAttribute
 
 private fun <O, I> read(value: Outer<O>.Inner<I>): I = value.value
+private fun readStar(value: Outer<Int>.Inner<*>): Any? = value.value
 private fun <O, I> readNullable(value: NullableOuter<O>.Inner<I>): I? = value.value
 private fun <O, I> readOverloaded(value: NullableOuter<O>.Inner<I>): I? = readOverloadedInner(value)
 private fun <O, M, L> readLeaf(value: NullableOuter<O>.Middle<M>.Leaf<L>): L? = value.value
@@ -21,6 +22,7 @@ class InnerSourceOwnerTests {
         val inner = Outer<Int>().Inner<String>("inner")
         check(inner.value == "inner")
         check(read(inner) == "inner")
+        check(readStar(inner) == "inner")
         inner.visit { check(it == "inner") }
         PlainInline(17).visit { check(it == 17) }
         PlainInline("plain").visit { check(it == "plain") }
