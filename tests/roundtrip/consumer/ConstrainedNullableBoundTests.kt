@@ -13,6 +13,10 @@ import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
 import roundtrip.constrainedbound.MarkedSelector
+import roundtrip.constrainedbound.NativeChoice
+import roundtrip.constrainedbound.LastNativeChoice
+import roundtrip.constrainedbound.localNativeChoice
+import roundtrip.constrainedbound.localBoundedNativeChoice
 import roundtrip.constrainedbound.OwnerSelector
 import roundtrip.constrainedbound.OwnerTag
 import roundtrip.constrainedbound.OtherSelector
@@ -70,6 +74,26 @@ private fun <X, Y> secondNative(first: X, second: Y): Y
 private class ScopedBoundConsumer : ScopedBoundOwner() {
     private fun <T : State> keep(value: T): T = value
     fun <T : ScopedBoundOwner.Item> forward(value: T): T = keep(value)
+}
+
+private class ScopedNativeSelector<T> : RoundtripDependentNative.Selector() {
+    fun callback(other: ScopedNativeSelector<Int>, item: NativeChoice<*>) = {
+        var count = 0
+        other.Visit<NativeChoice<*>>(item, byref(count)) === item && count == 1
+    }
+}
+
+private fun <Y> callFixedPair(chooser: LastNativeChoice, first: NativeChoice<*>, second: Y): Y
+    where Y : Base, Y : IMarker<String> = chooser.Pair<NativeChoice<*>, Y>(first, second)
+
+private class NestedChoice : LastNativeChoice() {
+    override fun <T> Choose(first: T, last: T, visits: ClrRef<Int>): T where T : Base, T : IMarker<String> = first
+    inner class Caller {
+        fun base(first: NativeChoice<*>, last: NativeChoice<*>): Boolean {
+            var visits = 0
+            return super@NestedChoice.Choose<NativeChoice<*>>(first, last, byref(visits)) === last && visits == 2
+        }
+    }
 }
 
 class ConstrainedNullableBoundTests {
@@ -227,8 +251,47 @@ class ConstrainedNullableBoundTests {
         check(joined.item === value)
     }
 
+    private fun checkFixedVirtualDispatch() {
+        val chooser = LastNativeChoice()
+        val nativeChooser: RoundtripDependentNative.Selector = chooser
+        val a = NativeChoice("first")
+        val b = NativeChoice("last")
+        var order = ""
+        fun receiver(): LastNativeChoice { order += "r"; return chooser }
+        fun operand(label: String, x: NativeChoice<*>): NativeChoice<*> { order += label; return x }
+        check(receiver().Choose<NativeChoice<*>>(operand("first", a), operand("last", b)) === b)
+        check(order == "rfirstlast")
+        check(chooser.Choose<NativeChoice<String>>(a, b) === b)
+        check(nativeChooser.Choose<NativeChoice<*>>(a, b) === b)
+        check(callFixedPair<NativeChoice<*>>(chooser, a, b) === b)
+        val key: RoundtripDependentNative.IKey<*> = RoundtripDependentNative.StringKey()
+        val projected: NativeChoice<*> = a
+        check(chooser.Capture(projected, key) === key)
+        var capturedVisits = 0
+        check(chooser.Capture(projected, key, byref(capturedVisits)) === key && capturedVisits == 2)
+        val callbackOwner = ScopedNativeSelector<String>()
+        val callbackTarget = ScopedNativeSelector<Int>()
+        check(callbackOwner.callback(callbackTarget, b)())
+        check(callbackOwner.Visits == 0 && callbackTarget.Visits == 1)
+        var calls = 0
+        check(nativeChooser.Apply<NativeChoice<*>>(a, System.Action { calls++ }) === a)
+        check(nativeChooser.Apply<NativeChoice<*>>(b, System.Action1<Int> { calls += it }) === b)
+        check(calls == 43)
+        check(localNativeChoice(chooser, a, b) === b)
+        check(localBoundedNativeChoice(chooser, a, b) === b)
+        check(chooser.base(a, b) === a)
+        var visits = 0
+        check(chooser.Choose<NativeChoice<*>>(a, b, byref(visits)) === b && visits == 2)
+        check(nativeChooser.Choose<NativeChoice<*>>(a, b, byref(visits)) === b && visits == 4)
+        check(chooser.baseRef(a, b))
+        check(NestedChoice().Caller().base(a, b))
+        val other = LastNativeChoice()
+        check(chooser.visitOther(other, a) && chooser.Visits == 0 && other.Visits == 1)
+    }
+
     @TestAttribute
     fun separateClassAndInterfaceBoundsAcceptHeterogeneousProjectedValues() {
+        checkFixedVirtualDispatch()
         val number = ClientItem(42L)
         val text = ClientItem("text")
         val concrete = object : AbstractMarkedSlot<ClientItem<String>>(text) {}

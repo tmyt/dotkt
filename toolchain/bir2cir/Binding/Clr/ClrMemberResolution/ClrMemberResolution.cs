@@ -30,8 +30,8 @@ static partial class ClrMemberResolution
         var selected = ClrDeclarationMatching.SelectedGenericDeclaration(refs, bindingLocalTypes, declaration, name, arity, instance, signature, parameterOwnerArguments)
             ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{name}' "
                 + $"has no exact selected MethodDef for descriptor {string.Join(", ", parameters)}; candidates: "
-                + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
-                    .Where(method => method.Name == name)
+                + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+                    .Where(method => IsPublicOrProtected(method) && method.Name == name)
                     .Select(method => method.ToString())));
         return selected;
     }

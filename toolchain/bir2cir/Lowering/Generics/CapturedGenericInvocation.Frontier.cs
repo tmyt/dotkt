@@ -1,3 +1,4 @@
+using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
@@ -101,7 +102,7 @@ static partial class CapturedGenericInvocation
     // owning records. Validate the original complete vectors before releasing
     // any staged anchor; a metadata ID is not permission to replace a record.
     internal static PreparedInvocation BindPhysicalDeclarations(PendingDeclarations pending,
-        IReadOnlyList<BirFileDeclaration> typedRoots)
+        IReadOnlyList<BirFileDeclaration> typedRoots, Func<TypeNode, TypeNode.Fqn> captureConstruction = null)
     {
         if (pending.Roots == null || pending.Roots.Length != typedRoots.Count) throw FrontierMismatch();
         var occurrences = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
@@ -139,7 +140,7 @@ static partial class CapturedGenericInvocation
         }
         pending.Roots = null;
         return new PreparedInvocation(pending.Declarations, pending.Types, pending.FlattenMissingOwners,
-            TypedPhysicalValueCoercion.ResultTypeOracle(typedRoots));
+            TypedPhysicalValueCoercion.ResultTypeOracle(typedRoots), captureConstruction);
 
         void Validate(ContainerBinding original)
         {

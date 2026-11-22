@@ -525,10 +525,10 @@ internal fun starProjectionInvokeStaticHelperUnit(
 internal fun starProjectionInvokeIntersection(
     receiver: Any?, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
     parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
-    arguments: Array<Any?>,
+    arguments: Array<Any?>, captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?,
 ): Any? {
     val target = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authored, slots, facets, arguments, null)
+        authored, slots, facets, arguments, null, captureOwners, capturePlan)
     try {
         return target.invoke(receiver, arguments)
     } catch (failure: StarProjectionInvocationException) {
@@ -540,6 +540,7 @@ private fun starProjectionCloseIntersection(
     declaringType: StarProjectionType, metadataToken: Int, memberName: String,
     parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>, physicalSlots: Array<StarProjectionType?>?,
+    captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?,
 ): StarProjectionMethod {
     val open = if (declaringType.isGenericType) declaringType.getGenericTypeDefinition() else declaringType
     // A local lexical super forwarder has a compiler-allocated unique name,
@@ -559,9 +560,20 @@ private fun starProjectionCloseIntersection(
         }
         selected = closed ?: throw IllegalStateException("Missing closed projected method")
     }
-    val missing = slots.indices.filter { !facets[it].isAssignableFrom(authored[slots[it]]) }
+    // Captures are exact: an invariant IKey<string> fixes its method slot to
+    // string. Only slots still missing an intersection proof can be widened.
+    val captured = if (captureOwners == null) null else arrayOfNulls<StarProjectionType>(authored.size).also { found ->
+        val plan = capturePlan!!
+        for (i in captureOwners.indices) {
+            val row = 4 * i
+            starProjectionBindCapture(found, arguments[plan[row]], captureOwners[i],
+                plan[row + 1], plan[row + 2], plan[row + 3])
+        }
+    }
+    val initial = if (captured == null) authored else Array<StarProjectionType>(authored.size) { captured[it] ?: authored[it] }
+    val missing = slots.indices.filter { captured?.get(slots[it]) == null && !facets[it].isAssignableFrom(initial[slots[it]]) }
         .map { slots[it] }.distinct().toIntArray()
-    if (missing.isEmpty()) return selected.makeGenericMethod(authored)
+    if (missing.isEmpty()) return selected.makeGenericMethod(initial)
     val parameters = selected.getParameters()
     val inferred = arrayOfNulls<StarProjectionType>(authored.size)
     val exact = BooleanArray(authored.size)
@@ -593,7 +605,7 @@ private fun starProjectionCloseIntersection(
             if (!direct) exact[slot] = true
         }
     }
-    val types = Array<StarProjectionType>(authored.size) { inferred[it] ?: authored[it] }
+    val types = Array<StarProjectionType>(authored.size) { inferred[it] ?: initial[it] }
     // Direct values may have no common *class* satisfying an interface-only
     // native contract. A declared interface proof works even with no operands.
     // Never widen invariant operand evidence (e.g. a native ref or List<T>).
@@ -645,9 +657,10 @@ internal fun starProjectionIntersectionAdapter(
     adapter: StarProjectionType, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
     parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>, physicalSlots: Array<StarProjectionType?>,
+    captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?,
 ): Any? {
     val selected = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authored, slots, facets, arguments, physicalSlots)
+        authored, slots, facets, arguments, physicalSlots, captureOwners, capturePlan)
     val owner = declaringType.getGenericArguments()
     val method = selected.getGenericArguments()
     val frame = Array<StarProjectionType>(owner.size + method.size) {
@@ -661,9 +674,24 @@ internal fun starProjectionIntersectionAdapter(
 internal fun starProjectionInvokeIntersectionUnit(
     receiver: Any?, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
     parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
-    arguments: Array<Any?>,
+    arguments: Array<Any?>, captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?,
 ) {
-    starProjectionInvokeIntersection(receiver, declaringType, metadataToken, memberName, parameterTypeKeys, authored, slots, facets, arguments)
+    starProjectionInvokeIntersection(receiver, declaringType, metadataToken, memberName, parameterTypeKeys, authored, slots, facets,
+        arguments, captureOwners, capturePlan)
+}
+
+private fun starProjectionBindCapture(inferred: Array<StarProjectionType?>, argument: Any?, owner: StarProjectionType,
+    position: Int, slot: Int, nullableSlot: Int) {
+    // Native class tokens represent T directly; other values expose their
+    // declared construction, not necessarily their own TypeDef's arguments.
+    val actual = if (argument is StarProjectionType && (RepresentedTypeConstruction::class as StarProjectionType).isAssignableFrom(owner)) argument
+        else if (argument == null) null
+        else starProjectionClosedView(argument.starProjectionRuntimeType(), owner)?.getGenericArguments()?.get(position)
+    if (actual == null) return
+    val previous = inferred[slot]
+    if (previous != null && previous != actual) throw IllegalStateException("Conflicting projected declaration type argument")
+    inferred[slot] = actual
+    if (nullableSlot >= 0) inferred[nullableSlot] = if (actual.isValueType) Any::class as StarProjectionType else actual
 }
 
 // A captured invocation carries explicit argument witnesses and method-slot ownership. Other slots retain the
@@ -690,26 +718,8 @@ internal fun starProjectionInvokeCapturedHelper(
     val inferred = arrayOfNulls<StarProjectionType>(authoredTypeArguments.size)
     var capture = 0
     while (capture < capturedArgumentIndices.size) {
-        val argument = arguments[capturedArgumentIndices[capture]]
-        val owner = capturedOwners[capture]
-        // Native class tokens represent T directly. Authored implementations expose
-        // their declared construction, which need not match the receiver's own type arguments.
-        val actual = if (argument is StarProjectionType && (RepresentedTypeConstruction::class as StarProjectionType).isAssignableFrom(owner)) argument
-            else if (argument == null) null
-            else starProjectionClosedView(argument.starProjectionRuntimeType(), owner)?.getGenericArguments()?.get(capturedOwnerPositions[capture])
-        if (actual != null) {
-            val slot = capturedMethodSlots[capture]
-            val previous = inferred[slot]
-            if (previous != null && previous != actual)
-                throw IllegalStateException("Conflicting projected declaration type argument")
-            inferred[slot] = actual
-            val nullableSlot = capturedNullableSlots[capture]
-            if (nullableSlot >= 0) {
-                // Nullable generic arguments box value types; a nullable reference
-                // retains the same CLR type as its non-null counterpart.
-                inferred[nullableSlot] = if (actual.isValueType) Any::class as StarProjectionType else actual
-            }
-        }
+        starProjectionBindCapture(inferred, arguments[capturedArgumentIndices[capture]], capturedOwners[capture],
+            capturedOwnerPositions[capture], capturedMethodSlots[capture], capturedNullableSlots[capture])
         capture++
     }
     val closedArguments = Array<StarProjectionType>(authoredTypeArguments.size) { slot ->

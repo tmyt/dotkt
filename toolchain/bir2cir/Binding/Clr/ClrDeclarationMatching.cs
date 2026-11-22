@@ -79,9 +79,9 @@ static class ClrDeclarationMatching
     internal static MethodInfo SelectedGenericDeclaration(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, Type owner, string name, int arity, bool instance,
         List<TypeNode> signature, TypeNode[] parameterOwnerArguments = null)
     {
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | (instance ? BindingFlags.Instance : BindingFlags.Static);
         List<MethodInfo> Candidates(Type declaration) => declaration.GetMethods(flags)
-            .Where(method => method.Name == name && method.IsGenericMethodDefinition
+            .Where(method => ClrMemberResolution.IsPublicOrProtected(method) && method.Name == name && method.IsGenericMethodDefinition
                 && method.GetGenericArguments().Length == arity
                 && method.GetParameters().Length == signature.Count).ToList();
         return TryPickDeclared(references, localTypes, Candidates(owner), signature, owner, parameterOwnerArguments)

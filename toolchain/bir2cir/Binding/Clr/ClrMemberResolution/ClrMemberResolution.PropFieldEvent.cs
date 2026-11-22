@@ -225,7 +225,7 @@ static partial class ClrMemberResolution
         catch { return null; }
     }
 
-    static bool IsPublicOrProtected(MethodBase method) =>
+    internal static bool IsPublicOrProtected(MethodBase method) =>
         method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly;
 
     // When the resolved accessor lives on a GENERIC base INTERFACE of the owner (`IReadOnlyCollection<T>.get_Count`

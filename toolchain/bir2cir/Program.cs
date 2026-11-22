@@ -1302,10 +1302,10 @@ sealed class Pipeline
         // declaration inventory. Both invocation and receiver materialization
         // now consume these same owning typed records before dispatch metadata.
         var physicalCapturedInvocations = CapturedGenericInvocation.BindPhysicalDeclarations(
-            capturedInvocations, physicalDocuments);
+            capturedInvocations, physicalDocuments, valueRepresentations.CaptureConstruction);
         loweredRoots.Clear();
         foreach (var root in physicalDocuments)
-            physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes, valueRepresentations.CaptureConstruction);
+            physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes);
         // Final resolution distinguished actual accessors from public fields.
         // Consume their receiver-dispatch facts on the same owning typed graph;
         // retain each exact MemberRef and each resolved file's own arity snapshot.
@@ -1321,7 +1321,10 @@ sealed class Pipeline
         foreach (var root in physicalDocuments)
             externalGenericConstraintValidation.ApplyResolvedMembers(root);
         FBoundStarProjectionErasure.MaterializeProjectedStorage(physicalDocuments, module.Preparation.Carriers,
-            emittedLocalTypes, refs, _options.RefBuild);
+            emittedLocalTypes, refs, _options.RefBuild, physicalCapturedInvocations);
+        if (physicalCapturedInvocations.HasDeferredFixedCalls)
+            foreach (var root in physicalDocuments)
+                physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes, finishFixedCalls: true);
         // Only declarations marked at the original metadata phase own a header
         // obligation. Later synthesized types do not acquire source metadata;
         // pending source facts are opaque to the intervening physical binders.
