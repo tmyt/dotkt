@@ -835,6 +835,7 @@ sealed class Pipeline
                 MemberCallSubstitution.BindSpreadOperands(source, new CollectionHelperBinding.CollectionSourceContext(), isValueFqn);
         var localExistentialOwners = carrierRealization.Owners.Values.Where(owner => owner.Needed)
             .ToDictionary(owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal);
+        refs.SetLocalCarrierBindings(localExistentialOwners);
         ExistentialCaptureAlignment.ApplyAll(captured, localExistentialOwners, refs, isValueFqn, genericRepresentations,
             (owner, field, position, arity, storage) => NullableTvErasureCallRealign.RebindGeneratedCapture(
                 nullableDeclarations, owner, field, position, arity, storage));

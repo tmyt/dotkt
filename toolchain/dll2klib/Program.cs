@@ -1717,7 +1717,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 throw new InvalidDataException(
                     "KotlinStaticCarrier payload requires a non-empty string 'owner'");
             var definition = md.GetTypeDefinition(handle);
-            if ((definition.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.Public)
+            if ((definition.Attributes & TypeAttributes.VisibilityMask) is not (TypeAttributes.Public or TypeAttributes.NestedPublic))
                 throw new InvalidDataException(
                     $"KotlinStaticCarrier '{MetadataTypeName(handle)}' must be public");
             var ownerMatches = md.TypeDefinitions.Where(candidate =>

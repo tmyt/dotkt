@@ -55,7 +55,7 @@ static partial class FBoundStarProjectionErasure
         var outer = owner.Inner && owner.SemanticOwner != null && context.Owners.TryGetValue(owner.SemanticOwner, out var enclosing)
             && enclosing.Needed ? enclosing : null;
         context.ProjectedStorage.Add(new(owner.Name, owner.ErasedName,
-            context.Demand.AllocateReferenceContractName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry));
+            context.Demand.AllocateTypeName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry));
     }
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,

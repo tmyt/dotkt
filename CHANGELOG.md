@@ -12,6 +12,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Fix a runtime type-load failure in lambdas that capture a type parameter bounded by a CLR class such as `System.IO.Stream` (#1820).
 - Preserve writes through `byref` when calling a Kotlin generic method with a star-projected type satisfying both class and interface bounds.
 - Fix reads and writes of generic top-level extension properties imported from another DotKt assembly when the caller supplies its own type parameters (#1814).
+- Keep star-projected nested classes in their CLR access scope so implementing a private nested interface no longer prevents the assembly's types from loading.
 - Preserve class and interface bounds when a generic Kotlin method constructs a class defined in the same assembly (#1805).
 
 ## 0.9.31 (2026-11-22)
