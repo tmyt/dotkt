@@ -34,8 +34,12 @@ static void Same(string json, BirGraphValue graph, string? context = null)
     // Exercise the actual production seam too, not only the debug JSON writer.
     if (graph is BirFileDeclaration file)
     {
-        source.AsObject().Remove("typeAliases");
-        graph = file with { TypeAliases = default };
+        // Source metadata was checked above; only executable BIR crosses this boundary.
+        var root = source.AsObject();
+        root.Remove("typeAliases");
+        root.Remove("sourceCallables");
+        root.Remove("dslScopes");
+        graph = file with { TypeAliases = default, SourceCallables = default, DslScopes = default };
     }
     var dom = graph.ToDom();
     if (!LogicalBirValue.Equal(source, dom))

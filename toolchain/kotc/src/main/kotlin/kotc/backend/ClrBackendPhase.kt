@@ -34,13 +34,13 @@ object ClrBackendPhase : PipelinePhase<kotc.pipeline.ClrFir2IrPipelineArtifact, 
 	postActions = setOf(CheckCompilationErrors.CheckDiagnosticCollector),
 ) {
 	override fun executePhase(input: kotc.pipeline.ClrFir2IrPipelineArtifact): ClrBackendArtifact {
-		return emit(input.result, input.configuration, input.typeAliases, input.pluginSources)
+		return emit(input.result, input.configuration, input.headers, input.pluginSources)
 	}
 }
 
 @OptIn(org.jetbrains.kotlin.config.MessageCollectorAccess::class)
 private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfiguration,
-    typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>>, pluginSources: PluginCallableSources?): ClrBackendArtifact {
+    headers: TypeAliasDeclarations.Headers, pluginSources: PluginCallableSources?): ClrBackendArtifact {
 		val moduleFragment = result.irModuleFragment
 		val outputDir = configuration?.get(JVMConfigurationKeys.OUTPUT_DIRECTORY)
 			?: configuration?.get(CLIConfigurationKeys.METADATA_DESTINATION_DIRECTORY)
@@ -78,12 +78,13 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		var crashed = false
 		for (irFile in moduleFragment.files) {
 			try {
-				val birFile = bir.emitFile(irFile, typeAliases[File(irFile.fileEntry.name).canonicalPath].orEmpty())
+				val path = File(irFile.fileEntry.name).canonicalPath
+				val birFile = bir.emitFile(irFile, headers.aliases[path].orEmpty())
 				if (birFile != null) {
 					val baseName = artifactStem(File(irFile.fileEntry.name).name.removeSuffix(".kt"))
 					val sources = sourceCallables?.invoke(irFile, bir::declarationIdForPhysicalAllocation).orEmpty()
 					kotc.bir.BirFileCodec.write(File(outputDir, "$baseName.bir.${format.extension}"),
-						if (sources.isEmpty()) birFile else birFile.copy(sourceCallables = sources), format)
+						birFile.copy(sourceCallables = sources.takeIf { it.isNotEmpty() }, dslScopes = headers.scopes[path]), format)
 				}
 			} catch (e: Throwable) {
 				crashed = true

@@ -13,6 +13,9 @@ public static class SourceMetadataMessagePack
     public static SourceCallable ReadCallable(ref MessagePackReader reader) => ReadSourceCallable(ref reader);
     public static void Write(ref MessagePackWriter writer, SourceCallable value) => WriteSourceCallable(ref writer, value, 0);
     public static void Write(ref MessagePackWriter writer, SourceCallable value, int depth) => WriteSourceCallable(ref writer, value, depth);
+    public static SourceDslScope ReadDslScope(ref MessagePackReader reader) => ReadSourceDslScope(ref reader);
+    public static void Write(ref MessagePackWriter writer, SourceDslScope value) => WriteSourceDslScope(ref writer, value, 0);
+    public static void Write(ref MessagePackWriter writer, SourceDslScope value, int depth) => WriteSourceDslScope(ref writer, value, depth);
 
     private static SourceTypeAlias ReadSourceTypeAlias(ref MessagePackReader reader)
     {
@@ -104,6 +107,57 @@ public static class SourceMetadataMessagePack
         foreach (var item in value.Annotations)
         {
             WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+    }
+
+    private static SourceDslScope ReadSourceDslScope(ref MessagePackReader reader)
+    {
+        var count = ReadMap(ref reader);
+        ulong seen = 0;
+        SourceClassifier? classifier = default;
+        SourceAnnotation[]? annotations = default;
+        string? markerDependencyVisibility = default;
+        for (var i = 0; i < count; i++)
+        {
+            switch (ReadText(ref reader))
+            {
+                case "classifier":
+                    Seen(ref seen, 1UL);
+                    classifier = ReadSourceClassifier(ref reader);
+                    break;
+                case "annotations":
+                    Seen(ref seen, 2UL);
+                    annotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                case "markerDependencyVisibility":
+                    Seen(ref seen, 4UL);
+                    markerDependencyVisibility = ReadText(ref reader);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        if ((seen & 3UL) != 3UL) throw new FormatException();
+        reader.Depth--;
+        return new SourceDslScope(classifier!, annotations!, markerDependencyVisibility);
+    }
+
+    private static void WriteSourceDslScope(ref MessagePackWriter writer, SourceDslScope value, int depth)
+    {
+        if (depth >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteMapHeader(2 + (value.MarkerDependencyVisibility is null ? 0 : 1));
+        writer.Write("classifier");
+        WriteSourceClassifier(ref writer, value.Classifier, depth + 1);
+        writer.Write("annotations");
+        if (depth + 1 >= BirJson.MaxDepth) throw new FormatException();
+        writer.WriteArrayHeader(value.Annotations.Length);
+        foreach (var item in value.Annotations)
+        {
+            WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+        if (value.MarkerDependencyVisibility is { } markerDependencyVisibility)
+        {
+            writer.Write("markerDependencyVisibility");
+            IrMessagePack.WriteString(ref writer, markerDependencyVisibility);
         }
     }
 

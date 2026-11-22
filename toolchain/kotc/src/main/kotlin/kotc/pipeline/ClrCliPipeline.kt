@@ -130,15 +130,15 @@ private class ClrPlatformLanguageVersionSettings(
 		feature == LanguageFeature.CompanionBlocksAndExtensions || delegate.supportsFeature(feature)
 }
 
-class ClrFir2IrPipelineArtifact(
+class ClrFir2IrPipelineArtifact internal constructor(
 	override val result: Fir2IrActualizedResult,
 	override val configuration: org.jetbrains.kotlin.config.CompilerConfiguration,
-	val typeAliases: Map<String, List<kotc.bir.SourceTypeAlias>> = emptyMap(),
+	internal val headers: kotc.backend.TypeAliasDeclarations.Headers = kotc.backend.TypeAliasDeclarations.Headers(),
 	val pluginSources: kotc.backend.PluginCallableSources? = null,
 ) : Fir2IrPipelineArtifact() {
 	@OptIn(PipelineArtifact.CliPipelineInternals::class)
 	override fun withCompilerConfiguration(newConfiguration: org.jetbrains.kotlin.config.CompilerConfiguration): ClrFir2IrPipelineArtifact =
-		ClrFir2IrPipelineArtifact(result, newConfiguration, typeAliases, pluginSources)
+		ClrFir2IrPipelineArtifact(result, newConfiguration, headers, pluginSources)
 }
 
 object ClrCommonFir2IrPipelinePhase : PipelinePhase<MetadataFrontendPipelineArtifact, ClrFir2IrPipelineArtifact>(

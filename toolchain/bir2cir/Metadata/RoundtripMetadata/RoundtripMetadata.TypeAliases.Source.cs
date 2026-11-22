@@ -9,7 +9,8 @@ static partial class RoundtripMetadata
     {
         var aliases = file.TypeAliases.OrEmpty();
         var callables = file.SourceCallables.OrEmpty();
-        if (aliases.Length != 0 || callables.Length != 0)
+        var scopes = file.DslScopes.OrEmpty();
+        if (aliases.Length != 0 || callables.Length != 0 || scopes.Length != 0)
         {
             var attributes = file.AssemblyAttrs.OrEmpty().ToList();
             void Add(string name, byte[] payload) => attributes.Add(new BirAttribute {
@@ -26,9 +27,13 @@ static partial class RoundtripMetadata
             foreach (var callable in callables)
                 Add(AKSourceCallable, BirCarrier.EncodeBody(BirCarrier.MessagePackV1, callable,
                     SourceMetadataJson.Write, SourceMetadataMessagePack.Write));
+            foreach (var scope in scopes)
+                Add(AKDslScope, BirCarrier.EncodeBody(BirCarrier.MessagePackV1, scope,
+                    SourceMetadataJson.Write, SourceMetadataMessagePack.Write));
             file.AssemblyAttrs = attributes.ToArray();
         }
         file.TypeAliases = default;
         file.SourceCallables = default;
+        file.DslScopes = default;
     }
 }

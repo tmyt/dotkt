@@ -7,6 +7,7 @@
   "type": "object",
   "$comment": "A BIR/CIR file is a compilation unit. All structured BIR metadata attributes use bir-msgpack/1 or Release-selected bir-msgpack+deflate/1. KotlinInline's envelope is the birInlinePayload definition. Attribute constructors and carrier placement live in spec §0.",
   "properties": {
+    "dslScopes": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json#/$defs/dslScope" }, "description": "Direct Kotlin DSL marker annotations on source classifiers" },
     "typeAliases": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json" }, "description": "BIR-only actualized Kotlin alias declarations, encoded opaquely into CIR assemblyAttrs before physical lowering" },
     "sourceCallables": { "type": "array", "items": { "$ref": "kotlin-typealias.schema.json#/$defs/callable" }, "description": "Source-facing Kotlin signatures for IR-transformed callables, linked by declaration identity" },
     "assemblyAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" }, "description": "CIR assembly attribute applications, emitted literally after local constructors receive metadata tokens" },
@@ -142,6 +143,7 @@
 
     "birSourceTypeAlias": { "$ref": "kotlin-typealias.schema.json", "x-dotkt-model": { "name": "SourceTypeAlias" } },
     "birSourceCallable": { "$ref": "kotlin-typealias.schema.json#/$defs/callable", "x-dotkt-model": { "name": "SourceCallable" } },
+    "birSourceDslScope": { "$ref": "kotlin-typealias.schema.json#/$defs/dslScope", "x-dotkt-model": { "name": "SourceDslScope" } },
     "birTypeDeclaration": {
       "x-dotkt-model": { "name": "BirTypeDeclaration" },
       "oneOf": [{ "$ref": "#/$defs/birClassDefinition" }, { "$ref": "#/$defs/birInterfaceDefinition" }, { "$ref": "#/$defs/birEnumDefinition" }]
@@ -167,7 +169,8 @@
         "types": { "type": "array", "items": { "$ref": "#/$defs/birTypeDeclaration" } },
         "refTypes": { "type": "array", "items": { "$ref": "#/$defs/birRefTypeDeclaration" } },
         "typeAliases": { "type": "array", "items": { "$ref": "#/$defs/birSourceTypeAlias" } },
-        "sourceCallables": { "type": "array", "items": { "$ref": "#/$defs/birSourceCallable" } }
+        "sourceCallables": { "type": "array", "items": { "$ref": "#/$defs/birSourceCallable" } },
+        "dslScopes": { "type": "array", "items": { "$ref": "#/$defs/birSourceDslScope" } }
       },
       "required": ["fileClass", "hasMain", "fields", "methods", "properties", "types", "refTypes", "typeAliases"], "additionalProperties": false
     },

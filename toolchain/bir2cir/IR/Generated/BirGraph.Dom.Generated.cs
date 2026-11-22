@@ -210,6 +210,7 @@ internal static class BirGraphDom
                 case "refTypes": break;
                 case "typeAliases": break;
                 case "sourceCallables": break;
+                case "dslScopes": break;
                 case "roundtripMetadataPending": break;
                 case "assemblyAttrs": break;
                 case "attrs": break;
@@ -228,6 +229,7 @@ internal static class BirGraphDom
             RefTypes = Field<BirRefTypeDeclaration[]>(fields, "refTypes", value => ((JsonArray)value!).Select(item0 => ReadBirRefTypeDeclaration(item0!)).ToArray()),
             TypeAliases = fields.ContainsKey("typeAliases") ? throw new FormatException() : default,
             SourceCallables = fields.ContainsKey("sourceCallables") ? throw new FormatException() : default,
+            DslScopes = fields.ContainsKey("dslScopes") ? throw new FormatException() : default,
             RoundtripMetadataPending = Field<bool>(fields, "roundtripMetadataPending", value => value!.GetValue<bool>()),
             AssemblyAttrs = Field<BirAttribute[]>(fields, "assemblyAttrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
             Attrs = Field<BirAttribute[]>(fields, "attrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),

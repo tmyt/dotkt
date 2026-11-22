@@ -12,11 +12,19 @@ internal sealed class KotlinSourceMetadata
     readonly IReadOnlyList<SourceTypeAlias> _declarations;
     const string CallableAttribute = MetadataAttributes.DotKtNs + "KotlinSourceCallableAttribute";
     readonly IReadOnlyDictionary<string, SourceCallable> _callables;
+    const string DslScopeAttribute = MetadataAttributes.DotKtNs + "KotlinDslScopeAttribute";
+    readonly ILookup<string, SourceDslScope> _dslScopes;
 
     public KotlinSourceMetadata(MetadataReader reader, MetadataAttributes attributes)
     {
         attributes.ValidateCarrierTargets(AliasAttribute, HandleKind.AssemblyDefinition);
         attributes.ValidateCarrierTargets(CallableAttribute, HandleKind.AssemblyDefinition);
+        attributes.ValidateCarrierTargets(DslScopeAttribute, HandleKind.AssemblyDefinition);
+        _dslScopes = (reader.IsAssembly
+            ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), DslScopeAttribute)
+                .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
+                    SourceMetadataJson.ReadDslScope, SourceMetadataMessagePack.ReadDslScope)) : [])
+            .ToLookup(scope => scope.Classifier.PackageName, StringComparer.Ordinal);
         _callables = (reader.IsAssembly
             ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), CallableAttribute)
                 .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
@@ -35,8 +43,39 @@ internal sealed class KotlinSourceMetadata
 
     public IEnumerable<string> Packages => _declarations.Select(declaration => declaration.PackageName);
 
+    // A public scope's marker can be private. K2 needs its actual declaration (and containing
+    // classifiers) for symbol lookup, without making it an accessible Kotlin API.
+    public Dictionary<TypeDefinitionHandle, string> HiddenMarkerDependencies(MetadataReader reader,
+        Func<TypeDefinitionHandle, (string Package, IReadOnlyList<string> Chain)> classifier)
+    {
+        var hidden = new Dictionary<TypeDefinitionHandle, string>();
+        var required = _dslScopes.SelectMany(group => group).Where(scope => scope.MarkerDependencyVisibility != null)
+            .ToDictionary(scope => (scope.Classifier.PackageName, string.Join('.', scope.Classifier.OwnerPath.Append(scope.Classifier.Name))),
+                scope => scope.MarkerDependencyVisibility!);
+        if (!required.Values.Any(visibility => visibility != "public")) return hidden;
+        foreach (var handle in reader.TypeDefinitions)
+        {
+            if (PublicTypeCatalog.HasProjectedVisibility(reader, handle)) continue;
+            var (package, chain) = classifier(handle);
+            if (required.TryGetValue((package, string.Join('.', chain)), out var visibility))
+                hidden.Add(handle, visibility);
+        }
+        return hidden;
+    }
+
     public void Project(string packageName, PackageFragment fragment, NameTable names)
     {
+        var scopes = _dslScopes[packageName];
+        if (scopes.Any())
+        {
+            var targets = fragment.Class.ToDictionary(klass => klass.FqName);
+            foreach (var scope in scopes)
+                if (scope.Annotations.Length != 0 && targets.TryGetValue(Classifier(scope.Classifier, names), out var klass))
+                {
+                    klass.ClassAnnotation.Add(scope.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+                    klass.Flags |= 1;
+                }
+        }
         var owners = fragment.Class.ToDictionary(klass => names.ClassName(klass.FqName)!, StringComparer.Ordinal);
         foreach (var declaration in _declarations.Where(declaration => declaration.PackageName == packageName))
         {
@@ -217,8 +256,8 @@ internal sealed class KotlinSourceMetadata
         names.Class(source.PackageName, source.OwnerPath.Append(source.Name));
     static string Identity(SourceTypeAlias source) => string.Join('.', source.OwnerPath
         .Prepend(source.PackageName).Append(source.Name).Where(part => part.Length > 0));
-    static int Visibility(string visibility) => visibility switch {
+    internal static int Visibility(string visibility) => visibility switch {
         "internal" => 0, "private" => 2, "protected" => 4, "public" => 6, "private_to_this" => 8, "local" => 10,
-        _ => throw new InvalidDataException("invalid Kotlin typealias visibility"),
+        _ => throw new InvalidDataException($"invalid Kotlin source visibility '{visibility}'"),
     };
 }

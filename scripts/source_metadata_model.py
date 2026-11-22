@@ -58,7 +58,8 @@ def outputs(root, schema):
     writer = [header, "package kotc.bir", "", "internal object SourceMetadataJson {",
               "    fun encode(value: SourceTypeAlias): String = buildString { write(value, this) }",
               "    fun write(value: SourceTypeAlias, output: StringBuilder) = writeSourceTypeAlias(value, output)",
-              "    fun write(value: SourceCallable, output: StringBuilder) = writeSourceCallable(value, output)", ""]
+              "    fun write(value: SourceCallable, output: StringBuilder) = writeSourceCallable(value, output)",
+              "    fun write(value: SourceDslScope, output: StringBuilder) = writeSourceDslScope(value, output)", ""]
 
     def declaration(name, definition, parent=None, indent=""):
         fields = [f'val {key}: {type_name(shape)}' + ("? = null" if optional else "")
@@ -155,7 +156,9 @@ def outputs(root, schema):
         "    public static SourceTypeAlias[] ReadAliases(ref Utf8JsonReader reader) => ReadArray(ref reader, ReadSourceTypeAlias);",
         "    public static void Write(Utf8JsonWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(writer, value);",
         "    public static SourceCallable ReadCallable(ref Utf8JsonReader reader) => ReadSourceCallable(ref reader);",
-        "    public static void Write(Utf8JsonWriter writer, SourceCallable value) => WriteSourceCallable(writer, value);", ""]
+        "    public static void Write(Utf8JsonWriter writer, SourceCallable value) => WriteSourceCallable(writer, value);",
+        "    public static SourceDslScope ReadDslScope(ref Utf8JsonReader reader) => ReadSourceDslScope(ref reader);",
+        "    public static void Write(Utf8JsonWriter writer, SourceDslScope value) => WriteSourceDslScope(writer, value);", ""]
 
     def cs_read(shape):
         if shape.get("x-dotkt-codec") == "literalText":

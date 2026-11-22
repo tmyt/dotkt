@@ -2,6 +2,7 @@
 
 package kotc.backend
 
+import kotc.bir.SourceDslScope
 import kotc.bir.SourceAnnotation
 import kotc.bir.SourceAnnotationArgument
 import kotc.bir.SourceAnnotationValue
@@ -18,6 +19,11 @@ import org.jetbrains.kotlin.fir.pipeline.Fir2IrActualizedResult
 import org.jetbrains.kotlin.fir.pipeline.Fir2KlibMetadataSerializer
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirRegularClass
+import org.jetbrains.kotlin.fir.declarations.hasAnnotation
+import org.jetbrains.kotlin.fir.declarations.toAnnotationClassId
+import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
+import org.jetbrains.kotlin.name.ClassId
+import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.fir.declarations.FirTypeAlias
 import org.jetbrains.kotlin.library.metadata.KlibMetadataProtoBuf
 import org.jetbrains.kotlin.metadata.ProtoBuf
@@ -26,43 +32,81 @@ import org.jetbrains.kotlin.metadata.deserialization.NameResolverImpl
 import org.jetbrains.kotlin.metadata.deserialization.TypeTable
 import java.io.File
 
-/** Source-owned alias declarations, not executable types or CLR generic frames. The actualization-aware
+/** Source-owned classifier metadata, not executable types or CLR generic frames. The actualization-aware
  * frontend serializer is the authority for underlying/expanded types, annotations, and parameter identities.
  * Its resolved declarations become typed source metadata; JSON is written only at the file boundary.
  * No protobuf or KLIB is transported. */
 internal object TypeAliasDeclarations {
-    fun collect(frontend: MetadataFrontendPipelineArtifact, result: Fir2IrActualizedResult): Map<String, List<SourceTypeAlias>> {
-        fun hasAliases(declarations: List<FirDeclaration>): Boolean = declarations.any {
-            it is FirTypeAlias || it is FirRegularClass && hasAliases(it.declarations)
-        }
+    data class Headers(val aliases: Map<String, List<SourceTypeAlias>> = emptyMap(),
+                       val scopes: Map<String, List<SourceDslScope>> = emptyMap())
+
+    fun collect(frontend: MetadataFrontendPipelineArtifact, result: Fir2IrActualizedResult): Headers {
+
         // Nested aliases need not survive Fir2Ir as IrTypeAlias children. Their resolved FIR declaration, rather
         // than executable IR containment, is the authority for whether a file owns declaration metadata.
         val sources = result.irModuleFragment.files.map { File(it.fileEntry.name).canonicalPath }.toSet()
-        if (sources.isEmpty()) return emptyMap()
+        if (sources.isEmpty()) return Headers()
         val serializer = Fir2KlibMetadataSerializer(
             frontend.configuration, frontend.frontendOutput.outputs, result, produceHeaderKlib = false,
         )
         val declarations = linkedMapOf<String, List<SourceTypeAlias>>()
+        val scopes = linkedMapOf<String, List<SourceDslScope>>()
+        val dslMarker = ClassId.topLevel(FqName("kotlin.DslMarker"))
+        val retention = ClassId.topLevel(FqName("kotlin.annotation.Retention"))
         serializer.forEachFile { _, source, firFile, _, packageName ->
             val path = source.canonicalPath
-            if (path in sources && hasAliases(firFile.declarations)) {
+            if (path !in sources) return@forEachFile
+            val session = firFile.moduleData.session
+            val marked = mutableMapOf<ClassId, Set<ClassId>>()
+            val markerDependencies = mutableSetOf<ClassId>()
+            var hasAliases = false
+            fun visit(declarations: List<FirDeclaration>) {
+                for (klass in declarations) {
+                    if (klass is FirTypeAlias) hasAliases = true
+                    if (klass !is FirRegularClass) continue
+                    val markers = klass.annotations.mapNotNull { it.toAnnotationClassId(session) }.filter { id ->
+                        id == dslMarker || session.symbolProvider.getClassLikeSymbolByClassId(id)?.hasAnnotation(dslMarker, session) == true
+                    }
+                    val id = klass.symbol.classId
+                    if (dslMarker in markers) {
+                        // K2 resolves the annotation class, even if it and its owners are source-private.
+                        generateSequence(id) { it.outerClassId }.forEach(markerDependencies::add)
+                        marked[id] = markers.toSet() + retention
+                    } else if (markers.isNotEmpty()) marked[id] = markers.toSet()
+                    visit(klass.declarations)
+                }
+            }
+            visit(firFile.declarations)
+            if (marked.isNotEmpty() || hasAliases) {
                 val fragment = serializer.serializeSingleFileMetadata(firFile)
-                val projection = Projection(NameResolverImpl(fragment.strings, fragment.qualifiedNames))
+                val resolver = NameResolverImpl(fragment.strings, fragment.qualifiedNames)
+                val projection = Projection(resolver)
+                val fileScopes = mutableListOf<SourceDslScope>()
                 val aliases = mutableListOf<SourceTypeAlias>()
                 val packageTypes = TypeTable(fragment.`package`.typeTable)
                 for (alias in fragment.`package`.typeAliasList)
                     aliases += projection.declaration(packageName.asString(), emptyList<String>(), alias, packageTypes)
                 for (owner in fragment.class_List) {
                     val identity = projection.classifier(owner.fqName)
+                    val classId = ClassId.fromString(resolver.getQualifiedClassName(owner.fqName))
+                    val markers = marked[classId].orEmpty()
+                    val dependency = classId in markerDependencies
+                    if (markers.isNotEmpty() || dependency) {
+                        val annotations = owner.annotationList.ifEmpty { owner.getExtension(KlibMetadataProtoBuf.classAnnotation) }
+                            .filter { ClassId.fromString(resolver.getQualifiedClassName(it.id)) in markers }.map(projection::annotation)
+                        if (annotations.isNotEmpty() || dependency) fileScopes += SourceDslScope(identity, annotations,
+                            if (dependency) Flags.VISIBILITY.get(owner.flags).name.lowercase() else null)
+                    }
                     val ownerPath = identity.ownerPath + identity.name
                     val types = TypeTable(owner.typeTable)
                     for (alias in owner.typeAliasList)
                         aliases += projection.declaration(packageName.asString(), ownerPath, alias, types)
                 }
                 if (aliases.isNotEmpty()) declarations[path] = aliases
+                if (fileScopes.isNotEmpty()) scopes[path] = fileScopes
             }
         }
-        return declarations
+        return Headers(declarations, scopes)
     }
 
     internal class Projection(private val names: NameResolverImpl) {
@@ -214,7 +258,7 @@ internal object TypeAliasDeclarations {
             }
         }
 
-        private fun annotation(source: ProtoBuf.Annotation): SourceAnnotation = SourceAnnotation(
+        fun annotation(source: ProtoBuf.Annotation): SourceAnnotation = SourceAnnotation(
             classifier(source.id), source.argumentList.map {
                 SourceAnnotationArgument(names.getString(it.nameId), value(it.value))
             },
