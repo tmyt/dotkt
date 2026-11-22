@@ -34,6 +34,10 @@ fun arrayElement(array: Array<ClrFunctionPointer<Managed, (Int) -> Int>>, value:
 fun choose(p: ClrFunctionPointer<Managed, (Int) -> Int>): Int = Api.Call(p, 21)
 fun choose(p: ClrFunctionPointer<Cdecl, (Int) -> Int>): Int = Api.CallCdecl(p, 21)
 
+open class PointerCallbackBase {
+    open fun Clash(p: ClrFunctionPointer<Managed, (Int) -> Int>, f: (String) -> Int): Int = f("x") + 2
+}
+
 class CallbackOverride : CallbackBase() {
     override fun Echo(value: ClrFunctionPointer<Managed, (Int) -> Int>): ClrFunctionPointer<Managed, (Int) -> Int> = value
     override val Callback: ClrFunctionPointer<Managed, (Int) -> Int> get() = Api.Get()
