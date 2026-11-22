@@ -1,11 +1,14 @@
 package roundtriptests.capturedgeneric
 
 import NUnit.Framework.TestAttribute
+import System.Collections.Generic.List as CsList
 import kotlin.coroutines.CoroutineContext
 import roundtrip.capturedgeneric.*
 
 private fun readHere(context: CoroutineContext, element: CoroutineContext.Element): CoroutineContext.Element? = context[element.key]
 private fun lookupHere(context: Lookup, element: Element): Element? = context.lookup(element.key)
+private fun takeProjected(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = takeNativeHead(xs)
+private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
 
 private class EvaluationOrder {
     var order = ""
@@ -20,6 +23,18 @@ private class ThrowingElement : CoroutineContext.Element {
 }
 
 class CapturedGenericInvocationTests {
+    @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
+        val leaf = NativeListLeaf(42L)
+        val narrow = CsList<NativeListLeaf<Long>>()
+        narrow.Add(leaf)
+        check(takeProjected(narrow) === leaf)
+        check(narrow.Count == 0)
+
+        val broad = CsList<NativeListRoot>()
+        broad.Add(NativeListRoot())
+        clearProjected(broad)
+        check(broad.Count == 0)
+    }
     @TestAttribute fun stdlibCapturedKeyPreservesIdentity() {
         val first = FirstContextElement()
         val second = SecondContextElement()

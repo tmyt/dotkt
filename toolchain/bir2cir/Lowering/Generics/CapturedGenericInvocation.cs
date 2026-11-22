@@ -46,13 +46,16 @@ static partial class CapturedGenericInvocation
 
         CapturedGenericArgument[] Capture(IBirExpression[] arguments, TypeNode[] signature)
         {
+            // Use-site projections hide the invariant owner's actual argument:
+            // neither an out bound nor an in bound is the CLR construction.
+            static bool NeedsCapture(TypeNode type) => type is TypeNode.Star or TypeNode.Projection;
             var captures = new List<CapturedGenericArgument>();
             for (var index = 0; index < arguments.Length && index < signature.Length; index++)
             {
                 if (CaptureOwner(signature[index]) is not { Args: { } formalArgs } formal
                     || !formalArgs.Any(type => type is TypeNode.Tv { Scope: "method" })
                     || CaptureOwner(BirNodeType.Of(arguments[index] as BirGraphNode)) is not { Args: { } actualArgs } actual
-                    || !actualArgs.Any(type => type is TypeNode.Star)) continue;
+                    || !actualArgs.Any(NeedsCapture)) continue;
                 var formalOwner = OwnerIdentity(formal.Name);
                 if (OwnerIdentity(actual.Name) != formalOwner)
                 {
@@ -71,7 +74,7 @@ static partial class CapturedGenericInvocation
                     ? referencedFrame : null;
                 if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
                 var slots = formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
-                        && actualArgs[slot] is TypeNode.Star
+                        && NeedsCapture(actualArgs[slot])
                         && parameters[frame?.SourcePosition(slot) ?? slot].Variance.OrDefault() is not ("in" or "out")
                         ? ((TypeNode.Tv)type).I : -1)
                     .Where(slot => slot >= 0).Distinct().ToArray();
