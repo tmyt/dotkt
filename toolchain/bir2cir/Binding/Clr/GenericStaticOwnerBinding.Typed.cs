@@ -7,6 +7,7 @@ static partial class GenericStaticOwnerBinding
     public static void Materialize(IReadOnlyList<BirFileDeclaration> roots)
     {
         var original = roots.SelectMany(root => root.Types.OrEmpty()).ToArray();
+        var staticScopes = new List<(IBirTypeDeclaration Owner, BirClassDefinition Carrier)>();
         var names = original.Select(type => type.Name.OrDefault()).Where(name => name != null).ToHashSet(StringComparer.Ordinal);
         var nested = original.Where(type => type.SemanticOwner.HasValue && !type.Generated.OrDefault()
             && type is not BirClassDefinition { KotlinCompanion.HasValue: true } && !type.CompanionCarrier.HasValue
@@ -92,7 +93,16 @@ static partial class GenericStaticOwnerBinding
                         ProtectedNested = protectedNames.Count == 0 ? default : OptionalField<string[]>.Of(protectedNames.ToArray()) },
                 };
                 root.Types = root.Types.OrEmpty().Append((IBirTypeDeclaration)carrier).ToArray();
+                staticScopes.Add((owner, carrier));
             }
+        }
+        // Moving a static child out of its generic frame must not move it
+        // out of its caller's enclosing access scope. A parent can itself
+        // have moved above, so use the completed placement, not visit order.
+        foreach (var (owner, carrier) in staticScopes)
+        {
+            carrier.SemanticOwner = owner.SemanticOwner;
+            carrier.NestedIn = owner.NestedIn;
         }
         foreach (var root in roots) StripMarkers(root);
     }

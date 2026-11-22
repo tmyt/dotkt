@@ -348,7 +348,7 @@ static class ReferenceMetadataReader
                     if (payload == null) continue;
                     var owner = payload["owner"].GetValue<string>();
                     var physical = StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name));
-                    if (!carrierType.IsPublic)
+                    if (!carrierType.IsPublic && !carrierType.IsNestedPublic)
                         throw new MalformedTrustedStaticCarrierException(
                             $"trusted [KotlinStaticCarrier] '{carrierType.FullName}' must be public");
                     if (string.IsNullOrEmpty(owner) || carrierType.IsGenericType ||
@@ -429,6 +429,9 @@ static class ReferenceMetadataReader
                                 $"trusted Kotlin existential '{type.FullName}' resolves semantic owner "
                                 + $"'{semantic}'/{existentialArgs.Length} to {declarations.Length} declarations");
                         var physical = ExactPhysicalMetadataName(type);
+                        // The logical carrier key is dotted; a TypeRef to a
+                        // nested carrier needs its actual arity-bearing owner.
+                        metadata.PhysicalTypeBySemanticName[StripGenericArity(DottedFqn(physical))] = physical;
                         if (!metadata.ExistentialPhysicalBySemanticOwner.TryAdd(semantic, physical)
                             || metadata.ExistentialPhysicalBySemanticOwner[semantic] != physical)
                             throw new InvalidDataException($"duplicate Kotlin existential ABI for '{semantic}'");

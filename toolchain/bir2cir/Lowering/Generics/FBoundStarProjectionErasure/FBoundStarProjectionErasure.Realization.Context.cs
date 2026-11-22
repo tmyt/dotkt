@@ -109,6 +109,42 @@ static partial class FBoundStarProjectionErasure
         internal IBirTypeDeclaration Definition(Owner owner) => (IBirTypeDeclaration)owner.DefinitionBinding.Source;
         internal BirFileDeclaration Root(Owner owner) => (BirFileDeclaration)owner.RootBinding.Source;
 
+        readonly Dictionary<string, string> erasedScopes = new(StringComparer.Ordinal);
+
+        // An existential TypeDef has no enclosing generic parameters to repeat. At module
+        // scope its full name distinguishes it; under a real enclosing type CLR nesting
+        // uses only the simple name, so retain a distinct zero-frame scope for each owner.
+        internal string ErasedEnclosingScope(BirFileDeclaration root, IBirTypeDeclaration type)
+        {
+            var parent = type.NestedIn.OrDefault() ?? type.SemanticOwner.OrDefault();
+            if (parent == null) return null;
+            if (parent == root.FileClass.OrDefault()) return parent;
+            var declaration = (IBirTypeDeclaration)SourceDefinitions[parent].Source;
+            if (TypeParameterFrame.Count(declaration) == 0) return parent;
+            if (erasedScopes.TryGetValue(parent, out var scope)) return scope;
+            var outer = ErasedEnclosingScope(root, declaration);
+            if (outer == null) return null;
+            scope = Demand.AllocateTypeName(parent + "$dotkt_erased_scope");
+            erasedScopes.Add(parent, scope);
+            AttachType(root, new BirClassDefinition {
+                Name = scope, Kind = "class", Abstract = true, Final = true, Generated = true,
+                NestedIn = outer, Vis = VisibilityInScope(declaration, outer) ?? "public",
+                Base = OptionalField<TypeNode>.Null, Interfaces = Array.Empty<TypeNode>(), Fields = Array.Empty<BirFieldDeclaration>(),
+                Ctors = Array.Empty<BirConstructor>(), Methods = Array.Empty<BirFunctionDeclaration>(),
+                Properties = Array.Empty<BirPropertyDeclaration>(), Attrs = Array.Empty<BirAttribute>(),
+            });
+            return scope;
+        }
+
+        internal static string VisibilityInScope(IBirTypeDeclaration source, string scope)
+        {
+            var visibility = PublishedApiTypeVisibilityLowering.ResolveVisibility(source);
+            if (scope == (source.NestedIn.OrDefault() ?? source.SemanticOwner.OrDefault())) return visibility;
+            // The generated sibling is no longer a member of the source's declaring
+            // class. Preserve access for its assembly and for external subclasses.
+            return visibility switch { "private" => "internal", "protected" or "protectedInternal" => "public", _ => visibility };
+        }
+
         internal void AttachMethod(IBirTypeDeclaration owner, BirFunctionDeclaration method,
             BirFunctionDeclaration proofSource = null)
         {
