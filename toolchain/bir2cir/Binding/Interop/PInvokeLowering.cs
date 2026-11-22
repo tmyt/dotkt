@@ -66,7 +66,13 @@ static partial class PInvokeLowering
             var origin = string.IsNullOrEmpty(path) ? "bir2cir" : path;
             if (!string.IsNullOrEmpty(path) && position.L.OrDefault() is var line and > 0)
                 origin += position.C.OrDefault() is var column and > 0 ? $"({line},{column})" : $"({line})";
-            return $"{origin}: error DOTKTPINVOKE001: {Message}";
+            const string header = ": error DOTKTPINVOKE001:";
+            // MSBuild Exec parses the first 400 characters for the diagnostic header.
+            // Only a drive-letter prefix may contain a colon in its origin.
+            int drive = path is { Length: >= 2 } && char.IsAsciiLetter(path[0]) && path[1] == ':' ? 2 : 0;
+            return origin.Length + header.Length > 400 || (path?.IndexOf(':', drive) ?? -1) >= 0
+                ? $"bir2cir{header} {Message} ({origin})"
+                : $"{origin}{header} {Message}";
         }
     }
 
