@@ -11,6 +11,8 @@ public static class SourceMetadataJson
     public static void Write(Utf8JsonWriter writer, SourceTypeAlias value) => WriteSourceTypeAlias(writer, value);
     public static SourceCallable ReadCallable(ref Utf8JsonReader reader) => ReadSourceCallable(ref reader);
     public static void Write(Utf8JsonWriter writer, SourceCallable value) => WriteSourceCallable(writer, value);
+    public static SourceDslScope ReadDslScope(ref Utf8JsonReader reader) => ReadSourceDslScope(ref reader);
+    public static void Write(Utf8JsonWriter writer, SourceDslScope value) => WriteSourceDslScope(writer, value);
 
     private static SourceTypeAlias ReadSourceTypeAlias(ref Utf8JsonReader reader)
     {
@@ -98,6 +100,50 @@ public static class SourceMetadataJson
         WriteSourceType(writer, value.UnderlyingType);
         writer.WritePropertyName("expandedType");
         WriteSourceType(writer, value.ExpandedType);
+        writer.WritePropertyName("annotations");
+        writer.WriteStartArray();
+        foreach (var item in value.Annotations)
+        {
+            WriteSourceAnnotation(writer, item);
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
+
+    private static SourceDslScope ReadSourceDslScope(ref Utf8JsonReader reader)
+    {
+        Require(ref reader, JsonTokenType.StartObject);
+        ulong seen = 0;
+        SourceClassifier? classifier = default;
+        SourceAnnotation[]? annotations = default;
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
+        {
+            Require(ref reader, JsonTokenType.PropertyName);
+            var key = reader.GetString();
+            if (!reader.Read()) throw new FormatException();
+            switch (key)
+            {
+                case "classifier":
+                    Seen(ref seen, 1UL);
+                    classifier = ReadSourceClassifier(ref reader);
+                    break;
+                case "annotations":
+                    Seen(ref seen, 2UL);
+                    annotations = ReadArray(ref reader, ReadSourceAnnotation);
+                    break;
+                default: throw new FormatException();
+            }
+        }
+        Require(ref reader, JsonTokenType.EndObject);
+        if ((seen & 3UL) != 3UL) throw new FormatException();
+        return new SourceDslScope(classifier!, annotations!);
+    }
+
+    private static void WriteSourceDslScope(Utf8JsonWriter writer, SourceDslScope value)
+    {
+        writer.WriteStartObject();
+        writer.WritePropertyName("classifier");
+        WriteSourceClassifier(writer, value.Classifier);
         writer.WritePropertyName("annotations");
         writer.WriteStartArray();
         foreach (var item in value.Annotations)

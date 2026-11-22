@@ -1112,6 +1112,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
     public OptionalField<BirRefTypeDeclaration[]> RefTypes { get; set; }
     public OptionalField<SourceTypeAlias[]> TypeAliases { get; set; }
     public OptionalField<SourceCallable[]> SourceCallables { get; set; }
+    public OptionalField<SourceDslScope[]> DslScopes { get; set; }
     public OptionalField<bool> RoundtripMetadataPending { get; set; }
     public OptionalField<BirAttribute[]> AssemblyAttrs { get; set; }
     public OptionalField<BirAttribute[]> Attrs { get; set; }
@@ -1212,6 +1213,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
         RefTypes = RefTypes.HasValue ? OptionalField<BirRefTypeDeclaration[]>.Of(RefTypes.Value.Select(item0 => (BirRefTypeDeclaration)((BirGraphValue)item0).DeepClone()).ToArray()) : RefTypes,
         TypeAliases = TypeAliases.HasValue ? OptionalField<SourceTypeAlias[]>.Of(TypeAliases.Value.Select(item0 => item0).ToArray()) : TypeAliases,
         SourceCallables = SourceCallables.HasValue ? OptionalField<SourceCallable[]>.Of(SourceCallables.Value.Select(item0 => item0).ToArray()) : SourceCallables,
+        DslScopes = DslScopes.HasValue ? OptionalField<SourceDslScope[]>.Of(DslScopes.Value.Select(item0 => item0).ToArray()) : DslScopes,
         AssemblyAttrs = AssemblyAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(AssemblyAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : AssemblyAttrs,
         Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : Attrs,
         Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone()) : Pos,
@@ -1227,6 +1229,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
             RefTypes = RefTypes.HasValue ? OptionalField<BirRefTypeDeclaration[]>.Of(RefTypes.Value.Select(item0 => (BirRefTypeDeclaration)((BirGraphValue)item0).DeepClone(born)).ToArray()) : RefTypes,
             TypeAliases = TypeAliases.HasValue ? OptionalField<SourceTypeAlias[]>.Of(TypeAliases.Value.Select(item0 => item0).ToArray()) : TypeAliases,
             SourceCallables = SourceCallables.HasValue ? OptionalField<SourceCallable[]>.Of(SourceCallables.Value.Select(item0 => item0).ToArray()) : SourceCallables,
+            DslScopes = DslScopes.HasValue ? OptionalField<SourceDslScope[]>.Of(DslScopes.Value.Select(item0 => item0).ToArray()) : DslScopes,
             AssemblyAttrs = AssemblyAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(AssemblyAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : AssemblyAttrs,
             Attrs = Attrs.HasValue ? OptionalField<BirAttribute[]>.Of(Attrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : Attrs,
             Pos = Pos.HasValue ? OptionalField<BirDeclarationPosition>.Of((BirDeclarationPosition)((BirGraphValue)Pos.Value).DeepClone(born)) : Pos,
@@ -1316,6 +1319,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
             && EqualField(RefTypes, value.RefTypes, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(TypeAliases, value.TypeAliases, (left, right) => EqualItems(left, right, (left0, right0) => SourceMetadataDataEquality.Equal(left0, right0)))
             && EqualField(SourceCallables, value.SourceCallables, (left, right) => EqualItems(left, right, (left0, right0) => SourceMetadataDataEquality.Equal(left0, right0)))
+            && EqualField(DslScopes, value.DslScopes, (left, right) => EqualItems(left, right, (left0, right0) => SourceMetadataDataEquality.Equal(left0, right0)))
             && EqualField(RoundtripMetadataPending, value.RoundtripMetadataPending, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(AssemblyAttrs, value.AssemblyAttrs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Attrs, value.Attrs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
@@ -1333,6 +1337,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
         WriteOptional(writer, "refTypes", RefTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "typeAliases", TypeAliases, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { SourceMetadataJson.Write(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "sourceCallables", SourceCallables, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { SourceMetadataJson.Write(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "dslScopes", DslScopes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { SourceMetadataJson.Write(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "roundtripMetadataPending", RoundtripMetadataPending, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "assemblyAttrs", AssemblyAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "attrs", Attrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
@@ -1352,6 +1357,7 @@ internal sealed record BirFileDeclaration : BirGraphValue
         if (RefTypes.IsPresent) result["refTypes"] = RefTypes.IsNull ? null : new JsonArray(RefTypes.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (TypeAliases.IsPresent) throw new InvalidOperationException("Extract source metadata before the temporary DOM boundary");
         if (SourceCallables.IsPresent) throw new InvalidOperationException("Extract source metadata before the temporary DOM boundary");
+        if (DslScopes.IsPresent) throw new InvalidOperationException("Extract source metadata before the temporary DOM boundary");
         if (RoundtripMetadataPending.IsPresent) result["roundtripMetadataPending"] = RoundtripMetadataPending.IsNull ? null : JsonValue.Create(RoundtripMetadataPending.Value);
         if (AssemblyAttrs.IsPresent) result["assemblyAttrs"] = AssemblyAttrs.IsNull ? null : new JsonArray(AssemblyAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (Attrs.IsPresent) result["attrs"] = Attrs.IsNull ? null : new JsonArray(Attrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());

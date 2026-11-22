@@ -8,8 +8,8 @@ import copy
 import json
 
 # Opaque to physical lowering; the source model owns their structural equality and codecs.
-source_records = {"birSourceTypeAlias": "SourceTypeAlias", "birSourceCallable": "SourceCallable"}
-source_readers = {"birSourceTypeAlias": "Read", "birSourceCallable": "ReadCallable"}
+source_records = {"birSourceTypeAlias": "SourceTypeAlias", "birSourceCallable": "SourceCallable", "birSourceDslScope": "SourceDslScope"}
+source_readers = {"birSourceTypeAlias": "Read", "birSourceCallable": "ReadCallable", "birSourceDslScope": "ReadDslScope"}
 
 
 def base(field):

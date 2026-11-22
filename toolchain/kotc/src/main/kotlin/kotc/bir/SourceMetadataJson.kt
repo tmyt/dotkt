@@ -5,6 +5,7 @@ internal object SourceMetadataJson {
     fun encode(value: SourceTypeAlias): String = buildString { write(value, this) }
     fun write(value: SourceTypeAlias, output: StringBuilder) = writeSourceTypeAlias(value, output)
     fun write(value: SourceCallable, output: StringBuilder) = writeSourceCallable(value, output)
+    fun write(value: SourceDslScope, output: StringBuilder) = writeSourceDslScope(value, output)
 
     private fun writeSourceTypeAlias(value: SourceTypeAlias, sb: StringBuilder) {
         sb.append('{')
@@ -32,6 +33,20 @@ internal object SourceMetadataJson {
         writeSourceType(value.underlyingType, sb)
         sb.append(",\"expandedType\":")
         writeSourceType(value.expandedType, sb)
+        sb.append(",\"annotations\":")
+        sb.append('[')
+        value.annotations.forEachIndexed { index, item ->
+            if (index > 0) sb.append(',')
+            writeSourceAnnotation(item, sb)
+        }
+        sb.append(']')
+        sb.append('}')
+    }
+
+    private fun writeSourceDslScope(value: SourceDslScope, sb: StringBuilder) {
+        sb.append('{')
+        sb.append("\"classifier\":")
+        writeSourceClassifier(value.classifier, sb)
         sb.append(",\"annotations\":")
         sb.append('[')
         value.annotations.forEachIndexed { index, item ->

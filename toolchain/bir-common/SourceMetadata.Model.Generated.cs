@@ -5,6 +5,8 @@ namespace DotKt.Bir;
 
 public sealed record SourceTypeAlias(string PackageName, string[] OwnerPath, string Name, string Visibility, SourceTypeParameter[] TypeParameters, SourceType UnderlyingType, SourceType ExpandedType, SourceAnnotation[] Annotations);
 
+public sealed record SourceDslScope(SourceClassifier Classifier, SourceAnnotation[] Annotations);
+
 public sealed record SourceCallable(string DeclarationId, string Name, int Flags, SourceTypeParameter[] TypeParameters, int[] ReifiedParameters, SourceValueParameter[] ContextParameters, SourceValueParameter[] ValueParameters, SourceType ReturnType, SourceAnnotation[] Annotations, SourceAnnotation[] ReceiverAnnotations, SourceType? ReceiverType = null, SourcePropertyAccessors? PropertyAccessors = null);
 
 public sealed record SourcePropertyAccessors(SourceAnnotation[] GetterAnnotations, SourceAnnotation[] SetterAnnotations, int? GetterFlags = null, int? SetterFlags = null, SourceValueParameter? SetterParameter = null);
@@ -65,6 +67,12 @@ internal static class SourceMetadataDataEquality
             && ArrayEqual(left.TypeParameters, right.TypeParameters, (left0, right0) => Equal(left0, right0))
             && Equal(left.UnderlyingType, right.UnderlyingType)
             && Equal(left.ExpandedType, right.ExpandedType)
+            && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0));
+
+    internal static bool Equal(SourceDslScope? left, SourceDslScope? right) =>
+        global::System.Object.ReferenceEquals(left, right)
+        || left is not null && right is not null
+            && Equal(left.Classifier, right.Classifier)
             && ArrayEqual(left.Annotations, right.Annotations, (left0, right0) => Equal(left0, right0));
 
     internal static bool Equal(SourceCallable? left, SourceCallable? right) =>

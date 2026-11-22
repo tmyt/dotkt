@@ -12,11 +12,19 @@ internal sealed class KotlinSourceMetadata
     readonly IReadOnlyList<SourceTypeAlias> _declarations;
     const string CallableAttribute = MetadataAttributes.DotKtNs + "KotlinSourceCallableAttribute";
     readonly IReadOnlyDictionary<string, SourceCallable> _callables;
+    const string DslScopeAttribute = MetadataAttributes.DotKtNs + "KotlinDslScopeAttribute";
+    readonly ILookup<string, SourceDslScope> _dslScopes;
 
     public KotlinSourceMetadata(MetadataReader reader, MetadataAttributes attributes)
     {
         attributes.ValidateCarrierTargets(AliasAttribute, HandleKind.AssemblyDefinition);
         attributes.ValidateCarrierTargets(CallableAttribute, HandleKind.AssemblyDefinition);
+        attributes.ValidateCarrierTargets(DslScopeAttribute, HandleKind.AssemblyDefinition);
+        _dslScopes = (reader.IsAssembly
+            ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), DslScopeAttribute)
+                .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
+                    SourceMetadataJson.ReadDslScope, SourceMetadataMessagePack.ReadDslScope)) : [])
+            .ToLookup(scope => scope.Classifier.PackageName, StringComparer.Ordinal);
         _callables = (reader.IsAssembly
             ? attributes.CarrierPayloads(MetadataTokens.EntityHandle(0x20000001), CallableAttribute)
                 .Select(payload => BirCarrier.DecodeBody(payload.Codec, payload.Content,
@@ -37,6 +45,17 @@ internal sealed class KotlinSourceMetadata
 
     public void Project(string packageName, PackageFragment fragment, NameTable names)
     {
+        var scopes = _dslScopes[packageName];
+        if (scopes.Any())
+        {
+            var targets = fragment.Class.ToDictionary(klass => klass.FqName);
+            foreach (var scope in scopes)
+                if (targets.TryGetValue(Classifier(scope.Classifier, names), out var klass))
+                {
+                    klass.ClassAnnotation.Add(scope.Annotations.Select(annotation => ReadAnnotation(annotation, names)));
+                    klass.Flags |= 1;
+                }
+        }
         var owners = fragment.Class.ToDictionary(klass => names.ClassName(klass.FqName)!, StringComparer.Ordinal);
         foreach (var declaration in _declarations.Where(declaration => declaration.PackageName == packageName))
         {

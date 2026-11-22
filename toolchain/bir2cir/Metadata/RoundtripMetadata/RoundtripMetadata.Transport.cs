@@ -10,7 +10,7 @@ static partial class RoundtripMetadata
     // invokes this boundary. Nested opaque bytes remain byte-for-byte intact.
     internal static int CarrierCodecSlot(string name) => name switch {
             AKInline or AKType or AKNullableGen or AKCollIdentity or AKSuspendFn or AKSuspendResult
-                or AKTypeAlias or AKSourceCallable or AKConstructorAdapter or AKRichEnum or AKBasicEnum
+                or AKTypeAlias or AKSourceCallable or AKDslScope or AKConstructorAdapter or AKRichEnum or AKBasicEnum
                 or AKDeclarationIdentity or AKTypeVisibility or CallableVisibilityLowering.Carrier or AKSupertypes
                 or AKTypeParameterBounds or AKLateinitState or AKPropertyStorage or AKExtensionCore or AKSourceMethod
                 or AKPropertyAccessor or AKManagedReferenceContract or AKInnerConstructorFactory or AKProjectedConstructor or AKProjectedMethod

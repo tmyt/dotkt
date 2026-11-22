@@ -226,6 +226,10 @@ The projection includes:
 Arbitrary applications of arbitrary CLR `CustomAttribute`s are not reproduced
 as KLIB annotations. Annotation classes may themselves be projected, but
 general attribute-application round-tripping is outside this interop contract.
+Kotlin DSL scopes are source metadata, not ordinary CLR attributes: dll2klib
+restores the direct DSL annotations (including their original arguments) on
+importable classes and annotation classes. Kotlin then applies its normal
+implicit receiver rules, including markers inherited from a superclass.
 
 ### Static members and companions
 

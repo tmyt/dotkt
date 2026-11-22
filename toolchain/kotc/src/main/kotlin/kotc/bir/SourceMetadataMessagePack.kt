@@ -11,6 +11,7 @@ internal object SourceMetadataMessagePack {
     }
     fun write(value: SourceTypeAlias, packer: MessagePacker, depth: Int = 0) = writeSourceTypeAlias(value, packer, depth)
     fun write(value: SourceCallable, packer: MessagePacker, depth: Int = 0) = writeSourceCallable(value, packer, depth)
+    fun write(value: SourceDslScope, packer: MessagePacker, depth: Int = 0) = writeSourceDslScope(value, packer, depth)
     private fun checkDepth(depth: Int) { require(depth < 1024) { "BIR nesting exceeds 1024" } }
 
     private fun writeSourceTypeAlias(value: SourceTypeAlias, packer: MessagePacker, depth: Int) {
@@ -38,6 +39,19 @@ internal object SourceMetadataMessagePack {
         writeSourceType(value.underlyingType, packer, depth + 1)
         packer.packString("expandedType")
         writeSourceType(value.expandedType, packer, depth + 1)
+        packer.packString("annotations")
+        checkDepth(depth + 1)
+        packer.packArrayHeader(value.annotations.size)
+        value.annotations.forEach { item ->
+            writeSourceAnnotation(item, packer, depth + 2)
+        }
+    }
+
+    private fun writeSourceDslScope(value: SourceDslScope, packer: MessagePacker, depth: Int) {
+        checkDepth(depth)
+        packer.packMapHeader(2)
+        packer.packString("classifier")
+        writeSourceClassifier(value.classifier, packer, depth + 1)
         packer.packString("annotations")
         checkDepth(depth + 1)
         packer.packArrayHeader(value.annotations.size)
