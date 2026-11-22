@@ -16,7 +16,8 @@ data class SourceTypeAlias(
 
 data class SourceDslScope(
     val classifier: SourceClassifier,
-    val annotations: List<SourceAnnotation>
+    val annotations: List<SourceAnnotation>,
+    val markerDependencyVisibility: String? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) = SourceMetadataJson.write(this, output)
 }

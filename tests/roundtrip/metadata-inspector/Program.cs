@@ -44,6 +44,30 @@ if (args.Length == 3 && args[0] is "--data-identity" or "--native-data-identity"
     return;
 }
 
+if (args.Length == 2 && args[0] == "--dsl-marker-values")
+{
+    const string pkg = "roundtrip.annotationproperties.";
+    using var archive = ZipFile.OpenRead(args[1]);
+    var fragment = archive.Entries.Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry => { using var stream = entry.Open(); return PackageFragment.Parser.ParseFrom(stream); })
+        .Single(f => f.Class.Any(c => QualifiedName(f, c.FqName) == pkg + "OuterLayout"));
+    var sourceOnly = fragment.Class.Single(c => QualifiedName(fragment, c.FqName) == pkg + "SourceOnlyLayout");
+    var retention = sourceOnly.ClassAnnotation.Single(a => QualifiedName(fragment, a.Id) == "kotlin.annotation.Retention");
+    Require(String(fragment, retention.Argument.Single().Value.EnumValueId) == "SOURCE",
+        "the next compiler would treat the SOURCE-retained marker as runtime-retained");
+    foreach (var (type, expected) in new[] { ("OuterLayout", "outer"), ("InnerLayout", "inner") })
+    {
+        var scope = fragment.Class.Single(c => QualifiedName(fragment, c.FqName) == pkg + type);
+        Require(!scope.ClassAnnotation.Any(a => a.Id == sourceOnly.FqName), $"SOURCE-retained marker leaked on {type}");
+        var marker = scope.ClassAnnotation.Single(a => QualifiedName(fragment, a.Id) == pkg + "ScopeTags.LayoutScope");
+        var label = marker.Argument.Single(a => String(fragment, a.NameId) == "label").Value.Annotation;
+        Require(QualifiedName(fragment, label.Id) == pkg + "ImportedLabel" &&
+            String(fragment, label.Argument.Single(a => String(fragment, a.NameId) == "value").Value.StringValue) == expected,
+            $"nested marker argument was not preserved on {type}");
+    }
+    return;
+}
+
 if (args.Length == 2 && args[0] is "--constructor-kinds" or "--native-constructor-kinds")
 {
     VerifyConstructorKinds(args[1], native: args[0] == "--native-constructor-kinds");

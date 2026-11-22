@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Enforce Kotlin DSL receiver restrictions across referenced DotKt libraries as well as within a single module.
+
 - Preserve writes through `byref` when calling a Kotlin generic method with a star-projected type satisfying both class and interface bounds.
 
 ## 0.9.31 (2026-11-22)

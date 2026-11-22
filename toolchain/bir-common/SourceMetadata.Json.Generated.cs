@@ -116,6 +116,7 @@ public static class SourceMetadataJson
         ulong seen = 0;
         SourceClassifier? classifier = default;
         SourceAnnotation[]? annotations = default;
+        string? markerDependencyVisibility = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(ref reader, JsonTokenType.PropertyName);
@@ -131,12 +132,16 @@ public static class SourceMetadataJson
                     Seen(ref seen, 2UL);
                     annotations = ReadArray(ref reader, ReadSourceAnnotation);
                     break;
+                case "markerDependencyVisibility":
+                    Seen(ref seen, 4UL);
+                    markerDependencyVisibility = ReadString(ref reader);
+                    break;
                 default: throw new FormatException();
             }
         }
         Require(ref reader, JsonTokenType.EndObject);
         if ((seen & 3UL) != 3UL) throw new FormatException();
-        return new SourceDslScope(classifier!, annotations!);
+        return new SourceDslScope(classifier!, annotations!, markerDependencyVisibility);
     }
 
     private static void WriteSourceDslScope(Utf8JsonWriter writer, SourceDslScope value)
@@ -151,6 +156,11 @@ public static class SourceMetadataJson
             WriteSourceAnnotation(writer, item);
         }
         writer.WriteEndArray();
+        if (value.MarkerDependencyVisibility is { } markerDependencyVisibility)
+        {
+            writer.WritePropertyName("markerDependencyVisibility");
+            writer.WriteStringValue(markerDependencyVisibility);
+        }
         writer.WriteEndObject();
     }
 

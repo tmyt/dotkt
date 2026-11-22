@@ -1505,6 +1505,7 @@ internal sealed partial class AssemblyScanner : IDisposable
     private readonly string _definitionPath;
     private readonly MetadataAttributes _attrs;
     private readonly KotlinSourceMetadata _sourceMetadata;
+    private readonly Dictionary<TypeDefinitionHandle, string> _hiddenDslMarkerDependencies;
     private readonly SourceInterfaceViews _sourceViews;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
@@ -1598,6 +1599,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             HandleKind.Parameter);
         ValidateKotlinExtensionReceiverCarriers();
         _arityNames = arityNames;
+        _hiddenDslMarkerDependencies = _sourceMetadata.HiddenMarkerDependencies(md, KotlinDefinitionPath);
         _externalSignatureDecoders = new ExternalSignatureDecoderCache(inheritedArityClashes);
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
@@ -1753,7 +1755,8 @@ internal sealed partial class AssemblyScanner : IDisposable
     {
         var visible = _md.TypeDefinitions
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
-            .Where(x => x.Definition.GetDeclaringType().IsNil && PublicTypeCatalog.HasProjectedVisibility(_md, x.Handle))
+            .Where(x => x.Definition.GetDeclaringType().IsNil &&
+                (_hiddenDslMarkerDependencies.ContainsKey(x.Handle) || PublicTypeCatalog.HasProjectedVisibility(_md, x.Handle)))
             .Where(x => !_physicalCompanionCarriers.Contains(x.Handle))
             .Where(x => !_existentialCarriers.Contains(x.Handle))
             .Where(x => !_genericStaticCarriers.ContainsKey(x.Handle))
@@ -1861,8 +1864,11 @@ internal sealed partial class AssemblyScanner : IDisposable
                 ReadNestedClasses(handle, klass, fragment, names, signatures);
                 if (_genericStaticCarrierByOwner.TryGetValue(handle, out var staticCarrier))
                     ReadNestedClasses(staticCarrier, klass, fragment, names, signatures);
-                ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
-                ReadCSharp14StaticExtensions(handle, fragment.Package, names, signatures);
+                if (!_hiddenDslMarkerDependencies.ContainsKey(handle))
+                {
+                    ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
+                    ReadCSharp14StaticExtensions(handle, fragment.Package, names, signatures);
+                }
             }
             foreach (var (semanticName, klass) in projectedBySemanticName)
             {
@@ -2250,15 +2256,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem
             || _protectedStaticNested.Contains(handle))
             result.Flags = Flags.AsProtected(result.Flags);
-        if (_attrs.SourceTypeVisibility(handle) is { } visibility)
-            result.Flags = (result.Flags & ~0xE) | (visibility switch
-            {
-                "internal" => 0,
-                "private" => 2,
-                "protected" => 4,
-                "public" => 6,
-                _ => throw new InvalidDataException($"invalid Kotlin type visibility '{visibility}'"),
-            });
+        if ((_hiddenDslMarkerDependencies.GetValueOrDefault(handle) ?? _attrs.SourceTypeVisibility(handle)) is { } visibility)
+            result.Flags = (result.Flags & ~0xE) | KotlinSourceMetadata.Visibility(visibility);
         result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         if (isAnnotation)
             result.ClassAnnotation.Add(KotlinMarkerAnnotations(handle, names));
@@ -5381,8 +5380,9 @@ internal sealed partial class AssemblyScanner : IDisposable
             // declaration may itself have a user-authored CompilerGenerated attribute.
             var generated = _attrs.IsDotKtAssembly && _attrs.Has(childHandle,
                 "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false);
-            if (!PublicTypeCatalog.HasProjectedVisibility(_md, childHandle) ||
-                (generated && _attrs.SourceTypeVisibility(childHandle) != "internal"))
+            if (!_hiddenDslMarkerDependencies.ContainsKey(childHandle) &&
+                (!PublicTypeCatalog.HasProjectedVisibility(_md, childHandle) ||
+                (generated && _attrs.SourceTypeVisibility(childHandle) != "internal")))
                 continue;
             var child = ReadClass(childHandle, childDef, names, signatures, operatorPackage: fragment.Package);
             MergeGenericStaticCarrier(childHandle, child, names, signatures);

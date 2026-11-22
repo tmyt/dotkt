@@ -97,9 +97,12 @@ def validate_source_declarations(kind, value, path, report):
 
     def declaration(node, where):
         if kind == "dslScopes":
-            if shape(node, where, ("classifier", "annotations")):
+            if shape(node, where, ("classifier", "annotations"), ("markerDependencyVisibility",)):
                 classifier(node["classifier"], where + "/classifier")
                 sequence(node["annotations"], where + "/annotations", annotation)
+                if "markerDependencyVisibility" in node and node["markerDependencyVisibility"] not in (
+                        "public", "protected", "internal", "private", "private_to_this", "local"):
+                    error(where + "/markerDependencyVisibility", "invalid marker dependency visibility")
             return
         is_alias = kind == "typeAliases"
         if is_alias:

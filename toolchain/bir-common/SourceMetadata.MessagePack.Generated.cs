@@ -116,6 +116,7 @@ public static class SourceMetadataMessagePack
         ulong seen = 0;
         SourceClassifier? classifier = default;
         SourceAnnotation[]? annotations = default;
+        string? markerDependencyVisibility = default;
         for (var i = 0; i < count; i++)
         {
             switch (ReadText(ref reader))
@@ -128,18 +129,22 @@ public static class SourceMetadataMessagePack
                     Seen(ref seen, 2UL);
                     annotations = ReadArray(ref reader, ReadSourceAnnotation);
                     break;
+                case "markerDependencyVisibility":
+                    Seen(ref seen, 4UL);
+                    markerDependencyVisibility = ReadText(ref reader);
+                    break;
                 default: throw new FormatException();
             }
         }
         if ((seen & 3UL) != 3UL) throw new FormatException();
         reader.Depth--;
-        return new SourceDslScope(classifier!, annotations!);
+        return new SourceDslScope(classifier!, annotations!, markerDependencyVisibility);
     }
 
     private static void WriteSourceDslScope(ref MessagePackWriter writer, SourceDslScope value, int depth)
     {
         if (depth >= BirJson.MaxDepth) throw new FormatException();
-        writer.WriteMapHeader(2);
+        writer.WriteMapHeader(2 + (value.MarkerDependencyVisibility is null ? 0 : 1));
         writer.Write("classifier");
         WriteSourceClassifier(ref writer, value.Classifier, depth + 1);
         writer.Write("annotations");
@@ -148,6 +153,11 @@ public static class SourceMetadataMessagePack
         foreach (var item in value.Annotations)
         {
             WriteSourceAnnotation(ref writer, item, depth + 2);
+        }
+        if (value.MarkerDependencyVisibility is { } markerDependencyVisibility)
+        {
+            writer.Write("markerDependencyVisibility");
+            IrMessagePack.WriteString(ref writer, markerDependencyVisibility);
         }
     }
 

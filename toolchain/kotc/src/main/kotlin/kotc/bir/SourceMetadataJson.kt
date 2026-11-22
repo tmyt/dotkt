@@ -54,6 +54,10 @@ internal object SourceMetadataJson {
             writeSourceAnnotation(item, sb)
         }
         sb.append(']')
+        value.markerDependencyVisibility?.let { child ->
+            sb.append(",\"markerDependencyVisibility\":")
+            TypeNodeJson.writeString(child, sb)
+        }
         sb.append('}')
     }
 

@@ -52,11 +52,13 @@ internal object TypeAliasDeclarations {
         val declarations = linkedMapOf<String, List<SourceTypeAlias>>()
         val scopes = linkedMapOf<String, List<SourceDslScope>>()
         val dslMarker = ClassId.topLevel(FqName("kotlin.DslMarker"))
+        val retention = ClassId.topLevel(FqName("kotlin.annotation.Retention"))
         serializer.forEachFile { _, source, firFile, _, packageName ->
             val path = source.canonicalPath
             if (path !in sources) return@forEachFile
             val session = firFile.moduleData.session
             val marked = mutableMapOf<ClassId, Set<ClassId>>()
+            val markerDependencies = mutableSetOf<ClassId>()
             var hasAliases = false
             fun visit(declarations: List<FirDeclaration>) {
                 for (klass in declarations) {
@@ -65,7 +67,12 @@ internal object TypeAliasDeclarations {
                     val markers = klass.annotations.mapNotNull { it.toAnnotationClassId(session) }.filter { id ->
                         id == dslMarker || session.symbolProvider.getClassLikeSymbolByClassId(id)?.hasAnnotation(dslMarker, session) == true
                     }
-                    if (markers.isNotEmpty()) marked[klass.symbol.classId] = markers.toSet()
+                    val id = klass.symbol.classId
+                    if (dslMarker in markers) {
+                        // K2 resolves the annotation class, even if it and its owners are source-private.
+                        generateSequence(id) { it.outerClassId }.forEach(markerDependencies::add)
+                        marked[id] = markers.toSet() + retention
+                    } else if (markers.isNotEmpty()) marked[id] = markers.toSet()
                     visit(klass.declarations)
                 }
             }
@@ -81,11 +88,14 @@ internal object TypeAliasDeclarations {
                     aliases += projection.declaration(packageName.asString(), emptyList<String>(), alias, packageTypes)
                 for (owner in fragment.class_List) {
                     val identity = projection.classifier(owner.fqName)
-                    val markers = marked[ClassId.fromString(resolver.getQualifiedClassName(owner.fqName))]
-                    if (markers != null) {
+                    val classId = ClassId.fromString(resolver.getQualifiedClassName(owner.fqName))
+                    val markers = marked[classId].orEmpty()
+                    val dependency = classId in markerDependencies
+                    if (markers.isNotEmpty() || dependency) {
                         val annotations = owner.annotationList.ifEmpty { owner.getExtension(KlibMetadataProtoBuf.classAnnotation) }
                             .filter { ClassId.fromString(resolver.getQualifiedClassName(it.id)) in markers }.map(projection::annotation)
-                        if (annotations.isNotEmpty()) fileScopes += SourceDslScope(identity, annotations)
+                        if (annotations.isNotEmpty() || dependency) fileScopes += SourceDslScope(identity, annotations,
+                            if (dependency) Flags.VISIBILITY.get(owner.flags).name.lowercase() else null)
                     }
                     val ownerPath = identity.ownerPath + identity.name
                     val types = TypeTable(owner.typeTable)

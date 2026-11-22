@@ -44,7 +44,7 @@ static partial class ClrMemberResolution
         // Frontend stdlib meta-annotations are not CLR imports. Bind the
         // actual stdlib constructor before publishing them on a marker type.
         var stdlibMeta = !attr.AttrExternal.OrDefault()
-            && attrFqn.Name is "kotlin.annotation.Target" or "kotlin.RequiresOptIn" or "kotlin.DslMarker"
+            && attrFqn.Name is "kotlin.annotation.Target" or "kotlin.RequiresOptIn"
             && bindingLocalTypes?.Contains(attrFqn.Name) != true;
         if (!attr.AttrExternal.OrDefault() && !stdlibMeta) return;
         var assembly = attr.AttrAssembly.OrDefault();

@@ -108,7 +108,9 @@ map of the structured declaration, not protobuf or a serialized KLIB. ilemit app
 are defined. Declaration metadata survives reference-body stripping.
 
 BIR roots may carry `dslScopes`: each record identifies a Kotlin classifier and its direct
-DSL marker annotations, with the arguments retained by the Kotlin frontend. bir2cir publishes
+DSL marker annotations, with the arguments retained by the Kotlin frontend. Marker declarations
+retain their Kotlin retention policy. A marker and its containing classifiers carry their source
+visibility so import can resolve even a private marker without exposing it to user code. bir2cir publishes
 each record as a repeatable `KotlinDslScopeAttribute` on the assembly using the normal
 MessagePack and Release compression policy. The record survives reference assembly emission;
 it does not depend on whether the CLI can encode the original annotation as a custom attribute.

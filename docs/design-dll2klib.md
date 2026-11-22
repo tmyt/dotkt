@@ -228,7 +228,10 @@ as KLIB annotations. Annotation classes may themselves be projected, but
 general attribute-application round-tripping is outside this interop contract.
 Kotlin DSL scopes are source metadata, not ordinary CLR attributes: dll2klib
 restores the direct DSL annotations (including their original arguments) on
-importable classes and annotation classes. Kotlin then applies its normal
+importable classes and annotation classes. A non-public marker and its owners are
+included only with their original Kotlin visibility, so lookup for receiver checking
+does not make the marker accessible in source. The marker's retention remains in
+the header for subsequent compilations. Kotlin then applies its normal
 implicit receiver rules, including markers inherited from a superclass.
 
 ### Static members and companions

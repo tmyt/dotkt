@@ -49,7 +49,7 @@ internal object SourceMetadataMessagePack {
 
     private fun writeSourceDslScope(value: SourceDslScope, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(2)
+        packer.packMapHeader(2 + (if (value.markerDependencyVisibility == null) 0 else 1))
         packer.packString("classifier")
         writeSourceClassifier(value.classifier, packer, depth + 1)
         packer.packString("annotations")
@@ -57,6 +57,10 @@ internal object SourceMetadataMessagePack {
         packer.packArrayHeader(value.annotations.size)
         value.annotations.forEach { item ->
             writeSourceAnnotation(item, packer, depth + 2)
+        }
+        value.markerDependencyVisibility?.let { child ->
+            packer.packString("markerDependencyVisibility")
+            MessagePackText.write(packer, child)
         }
     }
 

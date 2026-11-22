@@ -31,5 +31,7 @@ grep -F "MissingMarkerOptIn.kt:" "$work/compiler.log" | grep -Fiq "preview API" 
 	|| die "expected the imported marker's error message: $(cat "$work/compiler.log")"
 
 grep -F "LeakedLayoutScope.kt:" "$work/compiler.log" | grep -Fq "cannot be called in this context with an implicit receiver" \
-    || die "expected imported DSL scopes to hide the outer implicit receiver: $(cat "$work/compiler.log")"
+	|| die "expected imported DSL scopes to hide the outer implicit receiver: $(cat "$work/compiler.log")"
+grep -F "LeakedLayoutScope.kt:" "$work/compiler.log" | grep -iF 'ScopeTags' | grep -iq 'private' \
+	|| die "expected the marker's private containing declaration to stay inaccessible: $(cat "$work/compiler.log")"
 echo "imported Kotlin reified, annotation target, opt-in and DSL scope restrictions enforced"
