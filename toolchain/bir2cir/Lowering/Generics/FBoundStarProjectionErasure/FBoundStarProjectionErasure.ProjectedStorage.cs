@@ -5,7 +5,8 @@ using DotKt.Cir;
 static partial class FBoundStarProjectionErasure
 {
     internal sealed record ProjectedStorageOwner(string Exact, string Carrier, string Implementation, string Outer, string OuterCarrier,
-        ProjectedClassStorageFrame.InterfaceSlot[] Slots, IReadOnlyDictionary<string, string> Constructors);
+        ProjectedClassStorageFrame.InterfaceSlot[] Slots, IReadOnlyDictionary<string, string> Constructors,
+        ProjectedConstructorPlan Entry);
 
     static string StorageFactoryId(string constructorId) =>
         DeclarationIdentityBinding.PhysicalOnlyId(constructorId, DeclarationIdentityBinding.ProjectedConstructorRole);
@@ -26,6 +27,7 @@ static partial class FBoundStarProjectionErasure
         if (constructors.Length == 0) return;
         var used = carrier.Methods.OrEmpty().Select(method => method.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
         var ids = new Dictionary<string, string>(StringComparer.Ordinal);
+        var entry = frame.Constructor(owner.OuterCount);
         int next = 0;
         foreach (var constructor in constructors)
         {
@@ -34,7 +36,7 @@ static partial class FBoundStarProjectionErasure
             string name;
             do name = "$projectedCtor$" + next++; while (!used.Add(name));
             ids.Add(id, factoryId);
-            context.Declarations.ProjectedConstructors.Add(factoryId, (owner.ErasedName, name));
+            context.Declarations.ProjectedConstructors.Add(factoryId, (owner.ErasedName, name, entry));
             var generic = frame.Declare();
             var methodFrame = Enumerable.Range(0, generic.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
             TypeNode InMethod(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, methodFrame);
@@ -53,7 +55,7 @@ static partial class FBoundStarProjectionErasure
         var outer = owner.Inner && owner.SemanticOwner != null && context.Owners.TryGetValue(owner.SemanticOwner, out var enclosing)
             && enclosing.Needed ? enclosing : null;
         context.ProjectedStorage.Add(new(owner.Name, owner.ErasedName,
-            context.Demand.AllocateReferenceContractName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids));
+            context.Demand.AllocateReferenceContractName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry));
     }
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
@@ -63,12 +65,21 @@ static partial class FBoundStarProjectionErasure
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
-        // Slot positions survived lowering; a bound's spelling need not
-        // (nested owner placement, aliases, nullable representations).
+        // All overloads were declared with the same factory type parameters. Use
+        // that entry's lowered formals, not the exact TypeDef: weakening an inner
+        // type's captured bounds can legitimately remove its original rows.
+        var frames = new Dictionary<string, BirTypeParameter[]>(StringComparer.Ordinal);
         var storageOwners = carriers.ProjectedStorage.ToDictionary(p => p.Exact, p => {
-            var parameters = TypeParameterFrame.Declarations(declarations[p.Exact].Single().type).ToArray();
-            return p with { Slots = p.Slots.Select(slot => slot with {
-                Bound = parameters[slot.OwnerIndex].Constraints.Value[slot.BoundIndex] }).ToArray() };
+            var id = p.Constructors.Values.First();
+            var factory = declarations[p.Carrier].Single().type.Methods.Value.Single(m =>
+                m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == id);
+            var frame = factory.TypeParams.Value.Select(param => CapturedGenericInvocation.CloneParameter(param, t =>
+                CapturedGenericInvocation.Map(t, tv => tv.Scope == "method" ? new TypeNode.Tv("type", tv.I) : tv))).ToArray();
+            frames.Add(p.Exact, frame);
+            var slots = p.Slots.Select((slot, i) => slot with {
+                Bound = ProjectedClassStorageFrame.DeclaredFacet(frame[p.Entry.PrimaryArity + i])
+            }).ToArray();
+            return p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame, p.Entry.Captured, slots) };
         }, StringComparer.Ordinal);
         var implementations = new Dictionary<string, BirClassDefinition>(StringComparer.Ordinal);
         var innerFactories = new List<(ProjectedStorageOwner Plan, string Id, BirFunctionDeclaration Factory, int Prefix, int Original)>();
@@ -87,8 +98,8 @@ static partial class FBoundStarProjectionErasure
             storage.RoundtripSupertypesPre = default;
             // The plan uses CLR slot indices. Placement has since separated
             // an inner class's enclosing prefix from its own type parameters.
-            var fullFrame = ProjectedClassStorageFrame.Declare(TypeParameterFrame.Declarations(exact).ToArray(), plan.Slots);
-            var prefix = exact.CapturedTypeParams.OrEmpty().Length;
+            var fullFrame = frames[plan.Exact];
+            var prefix = plan.Entry.Captured;
             if (prefix != 0) storage.CapturedTypeParams = fullFrame[..prefix];
             storage.TypeParams = fullFrame[prefix..];
             // An exact interface application can require both halves on a
@@ -151,25 +162,9 @@ static partial class FBoundStarProjectionErasure
                 // matching interface witnesses, not the weakened class slot.
                 if (node is BirNew creation && creation.LocalCtorIndex.HasValue
                     && creation.Type.OrDefault() is TypeNode.Fqn { Args: { } arguments } selected
-                    && storageOwners.TryGetValue(selected.Name, out var destination))
-                {
-                    bool forwarded = false;
-                    var witnesses = destination.Slots.Select(required => {
-                        var bound = SupertypeGraph.SubstOwnerTvs(required.Bound, arguments);
-                        if (arguments[required.OwnerIndex] is TypeNode.Tv { Scope: "type" } source)
-                        {
-                            var slot = Array.FindIndex(plan.Slots, available => available.OwnerIndex == source.I
-                                && available.Bound.Equals(bound));
-                            if (slot >= 0)
-                            {
-                                forwarded = true;
-                                return (TypeNode)new TypeNode.Tv("type", fullFrame.Length - plan.Slots.Length + slot);
-                            }
-                        }
-                        return required.NativeArgument ? arguments[required.OwnerIndex] : bound;
-                    }).ToArray();
-                    if (forwarded) creation.Type = new TypeNode.Fqn(destination.Implementation, arguments.Concat(witnesses).ToArray());
-                }
+                    && storageOwners.TryGetValue(selected.Name, out var destination)
+                    && callables.ForwardOwnerConstructor(destination.Entry, arguments, exactParameters, plan.Slots) is { } closed)
+                    creation.Type = new TypeNode.Fqn(destination.Implementation, closed);
                 // A self-receiver now belongs to the private implementation, not to
                 // an exact instantiation of the original Kotlin class. Other
                 // instances and unrelated calls keep their original physical owner.
@@ -190,7 +185,8 @@ static partial class FBoundStarProjectionErasure
                 constructor.Vis = "internal";
                 var factory = carrier.Methods.Value.Single(m =>
                     m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == factoryId);
-                if (plan.Outer != null)
+                RoundtripMetadata.StampProjectedConstructor(factory, plan.Entry);
+                if (plan.Outer != null && carriers.ProjectedInnerFactories.Contains(ProjectedInnerFactoryId(id)))
                     innerFactories.Add((plan,id,factory,prefix,exactParameters.Length));
                 if (referenceBuild) continue;
                 var constructed = Instance("method");

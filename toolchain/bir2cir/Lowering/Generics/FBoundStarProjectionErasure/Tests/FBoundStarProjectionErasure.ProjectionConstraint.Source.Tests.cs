@@ -131,6 +131,16 @@ static partial class FBoundStarProjectionErasure
             && Witness("CommonLeaf", true) is { Class.Name: "Both", Interfaces.Length: 0 }
             && Witness("Unmarked", true) == null, "projected storage needs real, independently proven class and interface bounds");
         var layout = projection.StorageFrame("Intersection");
+        var namedFacet = new TypeNode.Fqn("Facet", [new TypeNode.Tv("type", 1)]);
+        var physicalFacet = new TypeNode.Fqn("Facet", [new TypeNode.Tv("method", 1)]);
+        var published = ProjectedConstructorPlan.Bind([new(), new()], 1, [
+            ProjectedConstructorPlan.BindFacet(1, namedFacet, false,
+                [(ifaceBound, ifaceBound), (physicalFacet, physicalFacet)], t => t),
+        ]);
+        Need(published.InnerSlots().SequenceEqual([1, 2]) &&
+            published.Facets[0].Constraints.SequenceEqual([ifaceBound, namedFacet]) &&
+            published.Close([rootBound, independent], (_, b) => b).Last() == new TypeNode.Fqn("Facet", [independent]),
+            "the selected constructor facet binds its named row without discarding the other shipped constraints");
         Need(projection.StorageFrame("FBounded") == null,
             "a source class bound already projected to a CLR interface does not require separate storage");
         TypeNode.Fqn Applied(string name) => new("Intersection", [new TypeNode.Fqn(name, [new TypeNode.Star()])]);
@@ -138,13 +148,13 @@ static partial class FBoundStarProjectionErasure
         Need(implementationParameters.Length == 2 && implementationParameters[0].Constraints.Value.SequenceEqual([rootBound])
             && implementationParameters[1].Constraints.Value.SequenceEqual([ifaceBound])
             && intersection.TypeParams.Value[0].Constraints.Value.Length == 2
-            && projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(Applied("DirectLeaf")), layout)
+            && projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(Applied("DirectLeaf")), layout.Constructor(0))
                 .SequenceEqual([rootBound, ifaceBound])
-            && projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(Applied("CommonLeaf")), layout) == null,
+            && projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(Applied("CommonLeaf")), layout.Constructor(0)) == null,
             "the private implementation requires a separate frame without changing the exact owner");
         var partlyProven = new TypeNode.Fqn("TwoIntersections", [Applied("DirectLeaf").Args[0], Applied("Unmarked").Args[0]]);
         Need(projection.ProjectedConstructorArguments(projection.SelectPhysicalClassApplication(partlyProven),
-                projection.StorageFrame(partlyProven.Name)) == null,
+                projection.StorageFrame(partlyProven.Name).Constructor(0)) == null,
             "one proven intersection cannot authorize splitting another parameter with a missing interface");
         TypeNode View(string name) => new TypeNode.Fqn(context.Owners[name].ErasedName);
         FunctionRewriteTests.Check("F-bound rewrite", type => projection.Rewrite(type));

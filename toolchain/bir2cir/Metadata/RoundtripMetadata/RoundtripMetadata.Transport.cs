@@ -13,7 +13,7 @@ static partial class RoundtripMetadata
                 or AKTypeAlias or AKSourceCallable or AKConstructorAdapter or AKRichEnum or AKBasicEnum
                 or AKDeclarationIdentity or AKTypeVisibility or CallableVisibilityLowering.Carrier or AKSupertypes
                 or AKTypeParameterBounds or AKLateinitState or AKPropertyStorage or AKExtensionCore or AKSourceMethod
-                or AKPropertyAccessor or AKManagedReferenceContract or AKInnerConstructorFactory
+                or AKPropertyAccessor or AKManagedReferenceContract or AKInnerConstructorFactory or AKProjectedConstructor
                 or AKCompanion or AKCompanionExt or AKStaticCarrier => 0,
             DefaultBirCarrier.AttributeName => 1,
             _ => -1,

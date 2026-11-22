@@ -25029,7 +25029,7 @@ internal sealed record BirValueBlock : BirGraphNode, IBirExpression, IBirAttribu
 
 internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
 {
-    internal (string Id, int[] ProofOwners)? ReferencedProjectedFactory { get; set; }
+    internal string? ReferencedProjectedFactoryId { get; set; }
     public override string Tag => "new";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<TypeNode[]> ArgTypes { get; set; }

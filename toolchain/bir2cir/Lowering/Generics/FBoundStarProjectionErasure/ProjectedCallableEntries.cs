@@ -286,21 +286,39 @@ sealed class ProjectedCallableEntries
         return i < 0 ? null : new TypeNode.Tv(v.Scope, scope.Parameters.Length + i);
     }
 
+    internal TypeNode[] ForwardOwnerConstructor(ProjectedConstructorPlan plan, TypeNode[] actual,
+        BirTypeParameter[] parameters, ProjectedClassStorageFrame.InterfaceSlot[] slots)
+        => ForwardConstructor(plan, actual, new(parameters, slots), default);
+
+    TypeNode[] ForwardConstructor(ProjectedConstructorPlan plan, TypeNode[] actual, Scope owner, Scope method)
+    {
+        if (!plan.Facets.Any(f => actual[f.Primary] is TypeNode.Tv tv &&
+                (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
+        return plan.Close(actual, (f, required) =>
+        {
+            if (!f.NativeArgument || actual[f.Primary] is not TypeNode.Tv v)
+                return Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary];
+            var scope = v.Scope == "method" ? method : owner;
+            var slots = scope.Slots ?? [];
+            var sameValue = slots.Select((slot, i) => (slot, i))
+                .Where(row => row.slot.OwnerIndex == v.I && row.slot.NativeArgument).ToArray();
+            if (sameValue.Length == 0) return Proof(v, required, owner, method) ?? v;
+            // All native uses of this source argument share one CLR value witness.
+            // The open caller formal must prove the callee's whole conjunction.
+            foreach (var constraint in f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)))
+                if (!sameValue.Any(row => ProjectedConstructorPlan.Proves(row.slot.Bound, constraint, classHierarchy.Value, references)))
+                    throw new InvalidOperationException("Projected constructor argument lacks its declared native interface proof");
+            return new TypeNode.Tv(v.Scope, scope.Parameters.Length + sameValue[0].i);
+        });
+    }
+
     BirCallStatic ReferencedConstruction(BirNew creation, Scope owner, Scope method)
     {
-        if (creation.ReferencedProjectedFactory is not { } factory ||
-            creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual } ||
-            !factory.ProofOwners.Any(i => actual[i] is TypeNode.Tv tv &&
-                (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
-        var selected = references.SelectedPhysicalMethod(factory.Id);
-        var formals = references.PhysicalMethodTypeParametersInPhysicalFrame(factory.Id, nativeNames: true);
-        if (selected == null || formals?.Length != actual.Length + factory.ProofOwners.Length)
-            throw new InvalidOperationException($"Selected projected constructor factory '{factory.Id}' has no matching physical frame");
-        var arguments = actual.Concat(factory.ProofOwners.Select((source, i) => {
-            var required = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(
-                formals[actual.Length + i].Constraints.Value[0], [], actual);
-            return Proof(actual[source], required, owner, method) ?? actual[source];
-        })).ToArray();
+        if (creation.ReferencedProjectedFactoryId is not { } id ||
+            creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual }) return null;
+        var selected = references.SelectedPhysicalMethod(id);
+        var plan = references.ConstructorPlan(id, nativeNames: true) ?? throw new InvalidOperationException($"No projected constructor for '{id}'");
+        if (ForwardConstructor(plan, actual, owner, method) is not { } arguments) return null;
         var target = ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, null);
         var signature = target.ParameterTypes.Select(t =>
             FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(t, [], arguments)).ToArray();

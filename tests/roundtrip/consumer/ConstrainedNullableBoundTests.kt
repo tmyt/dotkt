@@ -13,6 +13,12 @@ import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
 import roundtrip.constrainedbound.MarkedSelector
 import roundtrip.constrainedbound.ConcreteMarkedItem
+import roundtrip.constrainedbound.NativeFacetHolder
+import roundtrip.constrainedbound.JoinedFactory
+import RoundtripDependentNative.IMarker
+import roundtrip.constrainedbound.CapturedBoundOwner
+import RoundtripDependentNative.Base
+import RoundtripDependentNative.Family.IMark
 import roundtrip.constrainedbound.MarkedChoice
 import roundtrip.constrainedbound.absentMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
@@ -131,6 +137,36 @@ class ConstrainedNullableBoundTests {
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
         fun firstType(first: A, second: B) = NativeBoxApi.FirstMarkedType<A, B>(first, second, TwoMarkedTags())
         fun dependent(first: A, second: A): A = NativeBoxApi.DependentMarkedStream<A, A>(first, second)
+    }
+
+    interface ChildMark : IMark<String>
+    private class Child<T> : Base(), ChildMark, IMarker<String>
+    private class LocalHolder<T> where T : Base, T : IMark<String> { var item: T? = null }
+    private class Forward<T> where T : Base, T : ChildMark {
+        fun local() = LocalHolder<T>()
+        fun imported() = NativeFacetHolder<T>()
+    }
+
+    private class JoinedForward<T> where T : Base, T : ChildMark, T : IMarker<String> {
+        fun factory() = JoinedFactory<T>()
+    }
+
+    @TestAttribute
+    fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
+        val value = Child<Int>()
+        val through = Forward<Child<*>>()
+        val local = through.local()
+        val imported = through.imported()
+        val direct = NativeFacetHolder<Child<*>>()
+        local.item = value
+        imported.item = value
+        direct.item = value
+        check(local.item === value && imported.item === value && direct.item === value)
+        val outer = CapturedBoundOwner<String>()
+        check(outer.Entry<Child<*>>(value).item === value)
+        val joined = JoinedForward<Child<*>>().factory().create()
+        joined.item = value
+        check(joined.item === value)
     }
 
     @TestAttribute

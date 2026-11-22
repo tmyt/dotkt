@@ -2245,21 +2245,27 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return PhysicalProofOwner(type);
     }
 
-    internal MethodBase SelectedPhysicalMethod(string declarationIdentity)
+    MethodInfo SelectedReferenceMethod(string declarationIdentity)
     {
         if (declarationIdentity == null || !_declarationById.TryGetValue(declarationIdentity, out var declaration))
             return null;
         var ownerName = declaration.DeclarationPhysicalOwner ?? declaration.Owner;
         var owner = ResolveRefType(ownerName, OwnerArity(ownerName))
             ?? PhysicalTypeNamed(ownerName, OwnerArity(ownerName));
-        if (owner == null) return null;
-        var selected = owner.GetMethods(MemberProbeFlags)
+        return owner?.GetMethods(MemberProbeFlags)
             .Single(method => method.MetadataToken == declaration.MetadataToken);
+    }
+
+    internal MethodBase SelectedPhysicalMethod(string declarationIdentity)
+        => SelectedReferenceMethod(declarationIdentity) is { } selected ? ShippedMethod(selected) : null;
+
+    MethodBase ShippedMethod(MethodInfo selected)
+    {
+        var owner = selected.DeclaringType;
         var physicalOwner = PhysicalProofOwner(owner);
         if (physicalOwner == null) return null;
-        var physical = physicalOwner == owner ? selected : PhysicalTwinOf(selected, owner)
-            ?? throw new InvalidOperationException($"Selected declaration '{declarationIdentity}' has no shipped MethodDef");
-        return physical;
+        return physicalOwner == owner ? selected : PhysicalTwinOf(selected, owner)
+            ?? throw new InvalidOperationException($"Selected declaration '{selected}' has no shipped MethodDef");
     }
 
     Type PhysicalProofOwner(Type reference)

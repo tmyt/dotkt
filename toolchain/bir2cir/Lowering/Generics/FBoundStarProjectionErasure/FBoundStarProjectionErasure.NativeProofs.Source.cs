@@ -10,6 +10,11 @@ static partial class FBoundStarProjectionErasure
 
     internal sealed partial class NativeProofPlan
     {
+        internal sealed record ConstructorEdge(string Id, TypeNode.Fqn Application);
+        readonly Dictionary<DeclarationBinding, List<ConstructorEdge>> forwardedConstructors = new();
+        internal IEnumerable<ConstructorEdge> ForwardedConstructors(DeclarationBinding owner) =>
+            owner != null && forwardedConstructors.TryGetValue(owner, out var uses) ? uses : [];
+
         internal NativeProofPlan(CurrentDeclarationBindings declarations, ReferenceMetadataIndex references,
             GenericRepresentationPolicy values)
         {
@@ -44,11 +49,12 @@ static partial class FBoundStarProjectionErasure
                     RegisterNativeOverrides(method, binding);
                 }
             }
-            bool changed;
+            bool changed, captureEdges = true;
             do
             {
                 changed = false;
                 foreach (var root in declarations.SourceRoots) Walk(root.Source, root, null);
+                captureEdges = false;
             } while (changed);
 
             void Walk(BirGraphValue node, DeclarationBinding owner, DeclarationBinding method)
@@ -67,7 +73,15 @@ static partial class FBoundStarProjectionErasure
                     BirNewSam value => value.SamType.OrDefault() as TypeNode.Fqn, _ => null,
                 };
                 if (construction?.Args is { } constructorArguments)
+                {
                     Require(TypeRows(construction.Name), constructorArguments, "type", null);
+                    if (captureEdges && node is BirNew creation && creation.ConstructorDeclarationId.OrDefault() is string id &&
+                        constructorArguments.Any(a => a is TypeNode.Tv { Scope: "type" }))
+                    {
+                        if (!forwardedConstructors.TryGetValue(owner, out var uses)) forwardedConstructors[owner] = uses = [];
+                        uses.Add(new(id, construction));
+                    }
+                }
                 if (node.ApplicationTypeArguments.HasValue)
                 {
                     var methodArguments = node.ApplicationTypeArguments.Value;
