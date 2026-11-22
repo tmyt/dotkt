@@ -18,10 +18,11 @@ static partial class ExistentialReceiverBinding
     public sealed class Index
     {
         internal readonly Dictionary<string, List<Member>> Members = new(StringComparer.Ordinal);
-        internal readonly Dictionary<string, string> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
+        internal readonly Dictionary<string, TypeNode.Fqn> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string[]> Bases = new(StringComparer.Ordinal);
         internal readonly Dictionary<(string Owner, string Name), TypeNode> Fields = new();
         internal IReadOnlyDictionary<string, string> SourceDeclarations = new Dictionary<string, string>();
+        internal IReadOnlyDictionary<string, SupertypeGraph.Def> SourceHierarchy;
     }
 
     internal sealed record Member(string Name, string SourceName, string AccessorKind,
@@ -116,6 +117,16 @@ static partial class ExistentialReceiverBinding
                 slot = new Member(erasedMethod, sourceMethod, accessorKind,
                     erasedSignature.Select(SignatureValueTypes.Of).ToArray(), erasedResult, ga,
                     SignatureParameters: erasedSignature);
+                return true;
+            }
+            // A non-generic base has no carrier of its own. Its declaration
+            // can still have a published slot on the receiver's carrier.
+            if (selectedId != null && semanticOwner.Name != sourceOwner &&
+                refs.TryInheritedStarSlot(referencedReceiver.Name, selectedId, ga, pc, out declaringOwner, out var inherited, out _))
+            {
+                slot = new Member(inherited.Name, sourceMethod, accessorKind, inherited.ParamTypeNodes,
+                    inherited.SuspendReturnType ?? inherited.ReturnTypeNode, ga, inherited.DeclarationId,
+                    SignatureParameters: inherited.SignatureParameters);
                 return true;
             }
             return false;
