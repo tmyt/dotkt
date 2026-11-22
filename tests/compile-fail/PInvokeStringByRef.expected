@@ -1,1 +1,1 @@
-P/Invoke 'unsupportedStringByRef' parameter 'value' is outside
+error DOTKTPINVOKE001: P/Invoke 'unsupportedStringByRef' does not support parameter 'value' of type 'ref System.String'

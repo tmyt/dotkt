@@ -74,7 +74,10 @@ public static class FieldLegality
         TypeNode.Fqn f => f.Args == null || f.Args.Length == 0
             ? DisplayFqn(f.Name)
             : DisplayFqn(f.Name) + "<" + string.Join(", ", System.Array.ConvertAll(f.Args, Render)) + ">",
-        TypeNode.Array a => "Array<" + Render(a.Elem) + ">",
+        TypeNode.Array { SzArray: true } a => "Array<" + Render(a.Elem) + ">",
+        TypeNode.Array a => Render(a.Elem) + "[" + (a.Rank == 1 ? "*" : new string(',', a.Rank - 1)) + "]",
+        TypeNode.Ptr p => Render(p.Of) + "*",
+        TypeNode.FnPtr f => "fnptr(" + string.Join(", ", System.Array.ConvertAll(f.Params, Render)) + ") -> " + Render(f.Ret),
         TypeNode.Nullable n => Render(n.Of) + "?",
         TypeNode.Oblivious ob => Render(ob.Of) + "!",
         TypeNode.ByRef b => "ref " + Render(b.Of),

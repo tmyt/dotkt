@@ -1,1 +1,3 @@
-return type is outside the supported blittable primitive, enum, IntPtr, and UIntPtr subset
+PInvokeUnsupportedType.kt(4,
+error DOTKTPINVOKE001: P/Invoke 'unsupportedPInvoke' does not support return type 'System.String'
+Strings are supported only as by-value input parameters

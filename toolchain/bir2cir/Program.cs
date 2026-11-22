@@ -309,6 +309,11 @@ static class Bir2Cir
             Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--build-stdlib=metadata|runtime] [--reflection-restricted] [--configuration <target-configuration>] [--cir-format=json|msgpack] <file.bir.json|file.bir.msgpack>...");
             return 1;
         }
+        catch (PInvokeLowering.DiagnosticException ex)
+        {
+            Console.Error.WriteLine(ex.Format());
+            return 1;
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"bir2cir: {ex.Message}");
