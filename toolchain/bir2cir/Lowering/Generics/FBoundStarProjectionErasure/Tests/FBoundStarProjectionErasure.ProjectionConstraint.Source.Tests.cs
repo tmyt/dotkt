@@ -65,6 +65,14 @@ static partial class FBoundStarProjectionErasure
         var nonMember = Generic("Unmarked"); nonMember.Base = rootBound;
         var intersection = Generic("Intersection");
         intersection.TypeParams.Value[0].Constraints = new TypeNode[] { rootBound, ifaceBound };
+        var methodBounds = new BirFunctionDeclaration { Name = "choose", DeclarationId = "choose", Static = true,
+            TypeParams = new[] { rootBound, new TypeNode.Fqn("Both") }.Select(b =>
+                new BirTypeParameter { Constraints = new TypeNode[] { b } }).ToArray() };
+        leaf.Methods = new[] { methodBounds };
+        var methodCall = new BirCallStatic { Owner = new TypeNode.Fqn("DirectLeaf", [rootBound]), Method = "choose",
+            DeclarationId = "choose", TypeArgs = new TypeNode[] {
+                new TypeNode.Fqn("DirectLeaf", [new TypeNode.Star()]), new TypeNode.Fqn("CommonLeaf", [new TypeNode.Star()]) } };
+        use.Body = use.Body.Value.Append(Evaluate(methodCall)).ToArray();
         var interfaceOnly = Generic("FBounded");
         interfaceOnly.TypeParams.Value[0].Constraints = new TypeNode[] {
             new TypeNode.Fqn("Bound", [new TypeNode.Tv("type", 0)]), ifaceBound,
@@ -150,6 +158,8 @@ static partial class FBoundStarProjectionErasure
             "ordinary carrier projection or exact linkage slot changed");
 
         ProjectMaterializedTypesSource(new[] { fixture }, context);
+        Need(methodCall.TypeArgs.Value.SequenceEqual(new TypeNode[] { rootBound, new TypeNode.Fqn("Both") }),
+            "each method witness must come from the actual and constraint at its own physical ordinal");
         Need(physicalCall.Sig.Value[0] == exact && physicalCall.CalleeParams.Value[0] == exact
             && physicalCall.Ret.Value == exact && exactCast.Type.Value == exact && local.Sty.Value == View("Bound")
             && ReferenceEquals(physicalCall.Args.Value[0], exactCast) && ReferenceEquals(exactCast.E.Value, local),
