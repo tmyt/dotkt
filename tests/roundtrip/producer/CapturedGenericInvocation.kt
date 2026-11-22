@@ -2,6 +2,7 @@
 package roundtrip.capturedgeneric
 
 import kotlin.coroutines.CoroutineContext
+import System.Collections.Generic.List as CsList
 
 object FirstContextKey : CoroutineContext.Key<FirstContextElement>
 class FirstContextElement : CoroutineContext.Element {
@@ -80,5 +81,15 @@ interface VariantKey<in A, B>
 object AnyTextKey : VariantKey<Any, String>
 fun <A, B> variantKeyTag(key: VariantKey<A, B>, values: MutableList<A>): Int = values.size
 fun readVariantKey(key: VariantKey<String, *>, values: MutableList<String>): Int = variantKeyTag(key, values)
+fun <T> repeatedKeyTag(key: VariantKey<T, T>): Int = 1
 fun <E : Element> echoCapturedKey(key: Key<E>): Key<E> = key
 fun readCapturedKeyResult(key: Key<*>): Key<*> = echoCapturedKey(key)
+
+open class NativeListRoot
+class NativeListLeaf<T>(val value: T) : NativeListRoot()
+fun <A : NativeListRoot> takeNativeHead(xs: CsList<A>): A {
+    val head = xs[0]
+    xs.RemoveAt(0)
+    return head
+}
+fun <A> clearNativeList(xs: CsList<A>) = xs.Clear()

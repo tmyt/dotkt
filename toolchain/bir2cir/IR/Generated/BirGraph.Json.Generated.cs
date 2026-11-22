@@ -232,7 +232,7 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TokenType == JsonTokenType.Null ? OptionalField<int>.Null : OptionalField<int>.Of(reader.GetInt32());
                     break;
-                case "slots":
+                case "ownerPositions":
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TokenType == JsonTokenType.Null ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => reader.GetInt32()));
                     break;
@@ -243,7 +243,7 @@ internal static partial class BirGraphJson
         return new CapturedGenericArgument
         {
             Argument = field0,
-            Slots = field1,
+            OwnerPositions = field1,
         };
     }
 

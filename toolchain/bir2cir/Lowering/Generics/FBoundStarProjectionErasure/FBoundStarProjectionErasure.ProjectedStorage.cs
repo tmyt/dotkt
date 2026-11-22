@@ -62,7 +62,8 @@ static partial class FBoundStarProjectionErasure
         HashSet<string> emittedTypes, ReferenceMetadataIndex references, bool referenceBuild,
         CapturedGenericInvocation.PreparedInvocation invocations)
     {
-        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations);
+        var storageOwners = new Dictionary<string, ProjectedStorageOwner>(StringComparer.Ordinal);
+        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
@@ -70,7 +71,7 @@ static partial class FBoundStarProjectionErasure
         // that entry's lowered formals, not the exact TypeDef: weakening an inner
         // type's captured bounds can legitimately remove its original rows.
         var frames = new Dictionary<string, BirTypeParameter[]>(StringComparer.Ordinal);
-        var storageOwners = carriers.ProjectedStorage.ToDictionary(p => p.Exact, p => {
+        foreach (var p in carriers.ProjectedStorage) {
             var id = p.Constructors.Values.First();
             var factory = declarations[p.Carrier].Single().type.Methods.Value.Single(m =>
                 m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == id);
@@ -80,8 +81,8 @@ static partial class FBoundStarProjectionErasure
             var slots = p.Slots.Select((slot, i) => slot with {
                 Bound = ProjectedClassStorageFrame.DeclaredFacet(frame[p.Entry.PrimaryArity + i])
             }).ToArray();
-            return p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame, p.Entry.Captured, slots) };
-        }, StringComparer.Ordinal);
+            storageOwners.Add(p.Exact, p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame, p.Entry.Captured, slots) });
+        }
         var implementations = new Dictionary<string, BirClassDefinition>(StringComparer.Ordinal);
         var innerFactories = new List<(ProjectedStorageOwner Plan, string Id, BirFunctionDeclaration Factory, int Prefix, int Original)>();
         foreach (var plan in storageOwners.Values)
@@ -157,15 +158,6 @@ static partial class FBoundStarProjectionErasure
             }
             foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             storage.Visit(node => {
-                // A locally bound constructor keeps its overload index when its
-                // declaring class is cloned. If a parameter comes from this
-                // split frame, close the destination implementation with its
-                // matching interface witnesses, not the weakened class slot.
-                if (node is BirNew creation && creation.LocalCtorIndex.HasValue
-                    && creation.Type.OrDefault() is TypeNode.Fqn { Args: { } arguments } selected
-                    && storageOwners.TryGetValue(selected.Name, out var destination)
-                    && callables.ForwardOwnerConstructor(destination.Entry, arguments, exactParameters, plan.Slots) is { } closed)
-                    creation.Type = new TypeNode.Fqn(destination.Implementation, closed);
                 // A self-receiver now belongs to the private implementation, not to
                 // an exact instantiation of the original Kotlin class. Other
                 // instances and unrelated calls keep their original physical owner.

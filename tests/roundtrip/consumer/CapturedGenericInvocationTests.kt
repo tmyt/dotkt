@@ -1,11 +1,17 @@
 package roundtriptests.capturedgeneric
 
 import NUnit.Framework.TestAttribute
+import System.Collections.Generic.List as CsList
 import kotlin.coroutines.CoroutineContext
 import roundtrip.capturedgeneric.*
 
 private fun readHere(context: CoroutineContext, element: CoroutineContext.Element): CoroutineContext.Element? = context[element.key]
 private fun lookupHere(context: Lookup, element: Element): Element? = context.lookup(element.key)
+private fun takeProjected(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = takeNativeHead(xs)
+private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
+private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
+private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
+    GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
 
 private class EvaluationOrder {
     var order = ""
@@ -20,6 +26,21 @@ private class ThrowingElement : CoroutineContext.Element {
 }
 
 class CapturedGenericInvocationTests {
+    @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
+        check(countWithSpan(CsList<System.IO.Stream>()) == 0)
+    }
+    @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
+        val leaf = NativeListLeaf(42L)
+        val narrow = CsList<NativeListLeaf<Long>>()
+        narrow.Add(leaf)
+        check(takeProjected(narrow) === leaf)
+        check(narrow.Count == 0)
+
+        val broad = CsList<NativeListRoot>()
+        broad.Add(NativeListRoot())
+        clearProjected(broad)
+        check(broad.Count == 0)
+    }
     @TestAttribute fun stdlibCapturedKeyPreservesIdentity() {
         val first = FirstContextElement()
         val second = SecondContextElement()
@@ -98,6 +119,7 @@ class CapturedGenericInvocationTests {
     @TestAttribute fun declaredVariantSlotsRetainAuthoredArguments() {
         val key: VariantKey<String, *> = AnyTextKey
         check(readVariantKey(key, mutableListOf("authored-string")) == 1)
+        check(readRepeated(AnyTextKey) == 1)
     }
     @TestAttribute fun capturedGenericResultPreservesCarrierAndIdentity() {
         check(readCapturedKeyResult(FirstKey) === FirstKey)

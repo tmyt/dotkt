@@ -46,13 +46,16 @@ static partial class CapturedGenericInvocation
 
         CapturedGenericArgument[] Capture(IBirExpression[] arguments, TypeNode[] signature)
         {
+            // Use-site projections hide the invariant owner's actual argument:
+            // neither an out bound nor an in bound is the CLR construction.
+            static bool NeedsCapture(TypeNode type) => type is TypeNode.Star or TypeNode.Projection;
             var captures = new List<CapturedGenericArgument>();
             for (var index = 0; index < arguments.Length && index < signature.Length; index++)
             {
                 if (CaptureOwner(signature[index]) is not { Args: { } formalArgs } formal
                     || !formalArgs.Any(type => type is TypeNode.Tv { Scope: "method" })
                     || CaptureOwner(BirNodeType.Of(arguments[index] as BirGraphNode)) is not { Args: { } actualArgs } actual
-                    || !actualArgs.Any(type => type is TypeNode.Star)) continue;
+                    || !actualArgs.Any(NeedsCapture)) continue;
                 var formalOwner = OwnerIdentity(formal.Name);
                 if (OwnerIdentity(actual.Name) != formalOwner)
                 {
@@ -70,12 +73,11 @@ static partial class CapturedGenericInvocation
                 var frame = !local && refs.NullableTypeFrames.TryGetValue(formal.Name, out var referencedFrame)
                     ? referencedFrame : null;
                 if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
-                var slots = formalArgs.Select((type, slot) => type is TypeNode.Tv { Scope: "method" }
-                        && actualArgs[slot] is TypeNode.Star
-                        && parameters[frame?.SourcePosition(slot) ?? slot].Variance.OrDefault() is not ("in" or "out")
-                        ? ((TypeNode.Tv)type).I : -1)
-                    .Where(slot => slot >= 0).Distinct().ToArray();
-                if (slots.Length != 0) captures.Add(new CapturedGenericArgument { Argument = index, Slots = slots });
+                var positions = Enumerable.Range(0, formalArgs.Length).Where(slot =>
+                        formalArgs[slot] is TypeNode.Tv { Scope: "method" }
+                        && NeedsCapture(actualArgs[slot])
+                        && parameters[frame?.SourcePosition(slot) ?? slot].Variance.OrDefault() is not ("in" or "out")).ToArray();
+                if (positions.Length != 0) captures.Add(new CapturedGenericArgument { Argument = index, OwnerPositions = positions });
             }
             return captures.ToArray();
         }
@@ -137,10 +139,10 @@ static partial class CapturedGenericInvocation
         var instanceResult = (BirCallInstance)((BirExpressionStatement)body[1]).Expr.Value;
         var arguments = captured._capturedGenericArgument.Value;
         if (arguments.Length != 2 || arguments[0].Argument.Value != 0 || arguments[1].Argument.Value != 1
-            || !arguments[0].Slots.Value.SequenceEqual(new[] { 1 }) || !arguments[1].Slots.Value.SequenceEqual(new[] { 7 })
+            || !arguments[0].OwnerPositions.Value.SequenceEqual(new[] { 0, 2 }) || !arguments[1].OwnerPositions.Value.SequenceEqual(new[] { 1 })
             || captured._capturedGenericTarget.Value != "selected-declaration"
             || captured._capturedGenericResult.Value != new TypeNode.Tv("method", 3)
-            || !instanceResult._capturedGenericArgument.Value[1].Slots.Value.SequenceEqual(new[] { 7 })
+            || !instanceResult._capturedGenericArgument.Value[1].OwnerPositions.Value.SequenceEqual(new[] { 1 })
             || instanceResult._capturedGenericTarget.Value != "selected-declaration"
             || ((BirCallStatic)((BirExpressionStatement)body[2]).Expr.Value)._capturedGenericArgument.IsPresent
             || ((BirCallStatic)((BirExpressionStatement)body[3]).Expr.Value)._capturedGenericArgument.IsPresent
@@ -163,7 +165,7 @@ static partial class CapturedGenericInvocation
         } } } };
         BirCallStatic Imported(BirFileDeclaration file) => (BirCallStatic)((BirExpressionStatement)
             PreserveSourceFacts(new[] { file }, references).Single().Methods.Value[0].Body.Value[0]).Expr.Value;
-        if (!Imported(externalInput)._capturedGenericArgument.Value.Single().Slots.Value.SequenceEqual(new[] { 1 })
+        if (!Imported(externalInput)._capturedGenericArgument.Value.Single().OwnerPositions.Value.SequenceEqual(new[] { 0 })
             || Imported(externalInput with { Types = new IBirTypeDeclaration[] {
                 new BirInterfaceDefinition { Name = "external.Invariant", Kind = "interface" },
             } })._capturedGenericArgument.IsPresent)

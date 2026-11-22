@@ -356,14 +356,22 @@ static partial class CapturedGenericInvocation
                 var index = entry.Argument.Value;
                 if (CaptureOwner(SignatureValueTypes.Of(witnesses[index])) is not { Args: { } parts } owner)
                     throw new InvalidOperationException("Captured argument has no declaration-owned construction witness");
-                var head = new TypeNode.Fqn(definitions.ContainsKey(owner.Name) ? owner.Name : PhysicalName(owner, refs));
-                foreach (var logical in entry.Slots.Value)
+                var localOwner = definitions.GetValueOrDefault(owner.Name);
+                var head = new TypeNode.Fqn(localOwner != null ? owner.Name : PhysicalName(owner, refs));
+                var ownerFrame = localOwner != null
+                    ? NullableRepresentationViews.TypeFacts((BirGraphValue)localOwner.Type)?.NullableFrame
+                    : refs.NullableTypeFrames.GetValueOrDefault(owner.Name);
+                foreach (var position in entry.OwnerPositions.Value)
                 {
-                    var slot = frame?.SourcePosition(logical) ?? logical;
-                    var nullable = frame?.NullableIndices.Contains(logical) == true ? frame.NullableVariable(new TypeNode.Tv("method", logical)).I : -1;
-                    for (int pos = 0; pos < parts.Length; pos++)
-                        if (parts[pos] is TypeNode.Tv { Scope: "method" } t && t.I == slot)
-                            rows.Add(new(index, head, pos, slot, nullable));
+                    // Other occurrences of this method variable need not be invariant.
+                    // Only the projected owner position supplies the runtime witness.
+                    var pos = ownerFrame?.SourcePosition(position) ?? position;
+                    if (parts[pos] is not TypeNode.Tv { Scope: "method" } variable) continue;
+                    var logical = frame == null ? variable.I : frame.SourceIndex(variable.I);
+                    if (logical is not int sourceSlot) continue;
+                    var nullable = frame?.NullableIndices.Contains(sourceSlot) == true
+                        ? frame.NullableVariable(new TypeNode.Tv("method", sourceSlot)).I : -1;
+                    rows.Add(new(index, head, pos, variable.I, nullable));
                 }
             }
             return rows.ToArray();
@@ -402,10 +410,17 @@ static partial class CapturedGenericInvocation
             if (captureIndices.Any(index => index < 0 || index >= arguments.Length) || declarationParameters.Length != arguments.Length)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
             // This value transport does not change managed-address storage.
-            // Leave other transports on their existing physical path; a compiler
-            // limitation here must not introduce a new refusal.
-            if (declarationParameters.Any(HasAddress) || HasAddress(declaredReturn)
-                || declarationParameters.Any(type => ByRefLike(type, refs)) || ByRefLike(declaredReturn, refs)) return call.Node;
+            // Check the actual call signature: a bare native method variable can
+            // close over a Span, which cannot be put in the reflection argument array.
+            bool RequiresTypedTransport(TypeNode formal)
+            {
+                var type = formal is TypeNode.Tv
+                    ? FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(formal, owner.Args ?? [], call.TypeArguments.Value)
+                    : formal;
+                return HasAddress(type) || ByRefLike(type, refs) || type is TypeNode.Tv v &&
+                    (v.Scope == "method" ? methodFrame : ownerFrame)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct");
+            }
+            if (declarationParameters.Any(RequiresTypedTransport) || RequiresTypedTransport(declaredReturn)) return call.Node;
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.

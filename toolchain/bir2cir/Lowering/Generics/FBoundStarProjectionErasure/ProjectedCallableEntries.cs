@@ -19,6 +19,7 @@ sealed class ProjectedCallableEntries
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
     readonly ReferenceMetadataIndex references;
+    readonly IReadOnlyDictionary<string, FBoundStarProjectionErasure.ProjectedStorageOwner> storageOwners;
     readonly Lazy<IReadOnlyDictionary<string, SupertypeGraph.Def>> classHierarchy;
     readonly bool referenceBuild;
     readonly CapturedGenericInvocation.PreparedInvocation invocations;
@@ -31,10 +32,12 @@ sealed class ProjectedCallableEntries
           !references.TryDeclarationIdentity(EntryId(id), out _, out _, out _, out _);
 
     internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild,
-        CapturedGenericInvocation.PreparedInvocation invocations)
+        CapturedGenericInvocation.PreparedInvocation invocations,
+        IReadOnlyDictionary<string, FBoundStarProjectionErasure.ProjectedStorageOwner> storageOwners)
     {
         this.references = references;
         this.invocations = invocations;
+        this.storageOwners = storageOwners;
         classHierarchy = new(() => SupertypeGraph.CollectSource(files));
         this.referenceBuild = referenceBuild;
         classes = files.SelectMany(f => f.Types.OrEmpty()).OfType<BirClassDefinition>()
@@ -312,13 +315,23 @@ sealed class ProjectedCallableEntries
             if (node is IBirExecutablePayload or BirMemberReference) return node;
             if (node is BirFunctionDeclaration method) {
                 var entry = MethodEntry(method);
-                methodScope = entry != null ? new(entry.Original, entry.Plan.Facets) : new(method.TypeParams.OrEmpty(), []);
+                methodScope = entry != null ? new(entry.Plan.Parameters[..entry.Plan.PrimaryArity], entry.Plan.Facets,
+                    entry.Representations) : new(method.TypeParams.OrEmpty(), []);
                 locations = entry?.Plan.AddressOperands is { Length: > 0 } positions ? positions.ToDictionary(
                     i => method.Params.Value[i].Name.Value, i => ((TypeNode.ByRef)method.Params.Value[i].Type.Value).Of) : null;
             }
             node.VisitChildSlots(slot => slot.Replace(Rewrite(slot.Value, methodScope, locations)));
-            if (node is BirNew construction && ReferencedConstruction(construction, ownerScope, methodScope) is { } factory)
-                return factory;
+            if (node is BirNew construction)
+            {
+                if (ReferencedConstruction(construction, ownerScope, methodScope) is { } factory) return factory;
+                // Cloning the local class preserves the selected constructor's index.
+                // Close its declaring type in the same lexical frame as an imported factory.
+                if (construction.LocalCtorIndex.HasValue &&
+                    construction.Type.OrDefault() is TypeNode.Fqn { Args: { } arguments } selected &&
+                    storageOwners.TryGetValue(selected.Name, out var destination) &&
+                    ForwardConstructor(destination.Entry, arguments, ownerScope, methodScope) is { } closed)
+                    construction.Type = new TypeNode.Fqn(destination.Implementation, closed);
+            }
             if (node is BirNewClosure or BirNewSam)
                 ProjectClosureCreation(node, ownerScope, methodScope, allocate, generated);
             if (Bind(node, ownerScope, methodScope, locations != null)) return node;
@@ -393,10 +406,6 @@ sealed class ProjectedCallableEntries
             evidence.FirstOrDefault(e => ProjectedConstructorPlan.Proves(e.Slot.Bound, bound, classHierarchy.Value, references)).Variable;
     }
 
-    internal TypeNode[] ForwardOwnerConstructor(ProjectedConstructorPlan plan, TypeNode[] actual,
-        BirTypeParameter[] parameters, ProjectedClassStorageFrame.InterfaceSlot[] slots)
-        => ForwardConstructor(plan, actual, new(parameters, slots), default);
-
     TypeNode[] ForwardConstructor(ProjectedConstructorPlan plan, TypeNode[] actual, Scope owner, Scope method)
     {
         if (!plan.Facets.Any(f => actual[f.Primary] is TypeNode.Tv tv &&
@@ -409,7 +418,21 @@ sealed class ProjectedCallableEntries
             var slots = scope.Slots ?? [];
             var sameValue = slots.Select((slot, i) => (slot, i))
                 .Where(row => row.slot.OwnerIndex == v.I && row.slot.NativeArgument).ToArray();
-            if (sameValue.Length == 0) return Proof(v, required, owner, method) ?? v;
+            if (sameValue.Length == 0)
+            {
+                // A method's interface facets can be independent. Its physical storage
+                // parameter, when present, can prove the native conjunction on one type.
+                if (scope.Representations is { } frame)
+                foreach (var source in frame.StorageIndices)
+                {
+                    if (frame.SourcePosition(source) != v.I) continue;
+                    var storage = frame.Variable(new TypeNode.Tv(v.Scope, source), NullableRepresentationFrame.Role.Storage);
+                    var bounds = scope.Parameters[storage.I].Constraints.OrEmpty();
+                    if (f.Constraints.All(c => bounds.Any(b => ProjectedConstructorPlan.Proves(b,
+                        SupertypeGraph.SubstOwnerTvs(c, actual), classHierarchy.Value, references)))) return storage;
+                }
+                return Proof(v, required, owner, method) ?? v;
+            }
             // All native uses of this source argument share one CLR value witness.
             // The open caller formal must prove the callee's whole conjunction.
             foreach (var constraint in f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)))
