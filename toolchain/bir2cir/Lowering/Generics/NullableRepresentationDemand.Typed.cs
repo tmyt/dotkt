@@ -66,6 +66,21 @@ static partial class NullableRepresentationDemand
             owners.Add(new SourceOwnerDemand(view, new(), new(), methods));
         }
         var declarations = owners.Where(owner => owner.IsTypeDeclaration).ToDictionary(owner => owner.View.Name, StringComparer.Ordinal);
+        // A native interface has one physical argument for this source variable.
+        // Publish the joint storage demand on the implementing declaration so an
+        // open construction can forward it even when the caller has no value operand.
+        if (policy != null)
+            foreach (var owner in declarations.Values)
+                foreach (var iface in owner.View.Interfaces.OfType<TypeNode.Fqn>())
+                {
+                    if (policy.OwnsValueSlots(iface.Name) || !policy.HasNativeConstraint(iface)) continue;
+                    foreach (var tv in (iface.Args ?? []).OfType<TypeNode.Tv>().Where(v => v.Scope == "type"))
+                    {
+                        var bounds = owner.View.Parameters.Value[tv.I].Constraints.OrEmpty().OfType<TypeNode.Fqn>()
+                            .Select(policy.StorageConstraint).Where(bound => bound != null).ToArray();
+                        if (policy.HasJointStorageBounds(bounds)) owner.Signature.Add(tv, RepresentationRole.Storage);
+                    }
+                }
         foreach (var owner in owners)
         {
             var captured = owner.View.CaptureCount;

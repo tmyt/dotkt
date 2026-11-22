@@ -157,8 +157,10 @@ class ConstrainedNullableBoundTests {
         fun callBase(left: ClientItem<Long>, right: ClientItem<Long>) = super.selectMarked(left, right)
         fun callProjectedBase(left: ClientItem<*>, right: ClientItem<*>) = super.selectMarked(left, right)
     }
-    private class MethodSlot<A> where A : PendingItems.Item, A : Mark {
+    private class Selection<A> where A : PendingItems.Item, A : Mark {
         fun choose(left: A, right: A) = pickMarked(left, right, false)
+    }
+    private class MethodSlot<A> where A : PendingItems.Item, A : Mark {
         fun newSlot() = MarkedItemSlot<A>()
         fun fromClosures(selector: MarkedSelector, x: A) = selector.identity<A>()(selector.later(x)()())
         fun pick(selector: MarkedSelector, first: A, last: A): A = selector.selectMarked(first, last)
@@ -166,7 +168,7 @@ class ConstrainedNullableBoundTests {
         fun absent(): A? = absentMarked<A>()
     }
     private fun <A> chooseThroughSlot(left: A, right: A): A where A : PendingItems.Item, A : Mark =
-        MethodSlot<A>().choose(left, right)
+        Selection<A>().choose(left, right)
     private open class MarkedStream<T> : MemoryStream(), IProjectedMark
     private class LocationCaller<C>(private val marker: C) {
         fun <M> checkLocations(first: MarkedStream<*>, next: MarkedStream<*>, second: MarkedStream<*>,
@@ -290,6 +292,14 @@ class ConstrainedNullableBoundTests {
     private class JoinedForward<T> where T : Base, T : ChildMark, T : IMarker<String> {
         fun factory() = JoinedFactory<T>()
     }
+    private class JointSelection<A> : RoundtripDependentNative.IJoined<A>
+        where A : Base, A : IMark<String>, A : IMarker<String> {
+        fun select(value: A) = value
+    }
+    private fun <A> selectJoined(value: A): A where A : Base, A : IMark<String>, A : IMarker<String> =
+        JointSelection<A>().select(value)
+    private fun <A> makeJoined(): Any where A : Base, A : IMark<String>, A : IMarker<String> =
+        JointSelection<A>()
 
     @TestAttribute
     fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
@@ -307,6 +317,8 @@ class ConstrainedNullableBoundTests {
         val joined = JoinedForward<Child<*>>().factory().create()
         joined.item = value
         check(joined.item === value)
+        check(selectJoined<Child<*>>(value) === value)
+        check(makeJoined<Child<*>>() is RoundtripDependentNative.IJoined<*>)
     }
 
     private fun checkFixedVirtualDispatch() {
@@ -356,7 +368,7 @@ class ConstrainedNullableBoundTests {
         check(concrete.value === text)
         val slot = MarkedItemSlot<ClientItem<*>>()
         val methods = MethodSlot<ClientItem<*>>()
-        check(chooseThroughSlot(number, number) === number)
+        check(chooseThroughSlot(ClientItem(0L), number) === number)
         check(chooseThroughSlot<ClientItem<*>>(number, text) === text)
         val imported = methods.newSlot()
         imported.item = text
