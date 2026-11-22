@@ -9,6 +9,22 @@ static partial class FunctionValueRepresentation
     const string CreateView = "dotktCreateFunctionView";
     static readonly TypeNode Int = new TypeNode.Fqn("kotlin.Int");
 
+    internal static BirCallStatic RuntimeViewCall(IBirExpression boxed, int? arity, bool bindExternal = false)
+    {
+        var owner = new TypeNode.Fqn(FunctionRuntime);
+        var method = arity.HasValue ? "kotlinFunctionView" : "kotlinFunctionObject";
+        var obj = new TypeNode.Fqn("System.Object");
+        var integer = new TypeNode.Fqn("System.Int32");
+        TypeNode[] signature = arity.HasValue ? [obj, integer] : [obj];
+        var args = new List<IBirExpression> { boxed };
+        if (arity.HasValue) args.Add(new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(arity.Value) });
+        var call = new BirCallStatic { Owner = owner, Method = method, Sig = signature, Args = args.ToArray(), Ret = obj };
+        if (bindExternal) call.MemberRef = new BirMemberReference { Kind = "method",
+            Assembly = "DotKt.Stdlib", DeclaringType = owner, Name = method, GenericArity = 0,
+            CallingConvention = "static", ParameterTypes = signature, ReturnType = obj };
+        return call;
+    }
+
     sealed record InvokeSlot(TypeNode.Fn Function, TypeNode Owner, string Name, TypeNode[] Parameters,
         TypeNode Return, OptionalField<string> DeclarationId);
 

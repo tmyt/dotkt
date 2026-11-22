@@ -424,19 +424,7 @@ static class TypedPhysicalValueCoercion
     }
 
     static BirCallStatic RuntimeFunctionCall(BirGraphValue operand, int? arity, Index index)
-    {
-        var owner = new TypeNode.Fqn(FunctionValueRepresentation.FunctionRuntime);
-        var method = arity.HasValue ? "kotlinFunctionView" : "kotlinFunctionObject";
-        var integer = new TypeNode.Fqn("System.Int32");
-        TypeNode[] signature = arity.HasValue ? [Object, integer] : [Object];
-        var args = new List<IBirExpression> { Cast(operand, Object) };
-        if (arity.HasValue) args.Add(new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(arity.Value) });
-        var call = new BirCallStatic { Owner = owner, Method = method, Sig = signature, Args = args.ToArray(), Ret = Object };
-        if (!index.LocalFunctionRuntime) call.MemberRef = new BirMemberReference { Kind = "method",
-            Assembly = "DotKt.Stdlib", DeclaringType = owner, Name = method, GenericArity = 0,
-            CallingConvention = "static", ParameterTypes = signature, ReturnType = Object };
-        return call;
-    }
+        => FunctionValueRepresentation.RuntimeViewCall(Cast(operand, Object), arity, bindExternal: !index.LocalFunctionRuntime);
 
     internal static void AllocateNativeLocals(IEnumerable<BirGraphValue> body, BirParameter[] parameters,
         List<IBirStatement> prologue, BirTemporaryNames arrayNames = null,

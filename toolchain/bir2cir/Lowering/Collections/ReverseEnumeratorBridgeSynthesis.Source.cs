@@ -84,24 +84,26 @@ static partial class ReverseEnumeratorBridgeSynthesis
         IBirExpression Wrapped(string member, TypeNode result) => KotlinIteratorPhysicalProtocol.CallSource(
             refs, Field("_it"), member, sourceElement, result);
         var boolean = new TypeNode.Fqn("System.Boolean");
+        var rawElement = new TypeNode.Fqn("System.Object");
         var moveNext = SourceMethod("MoveNext", "public", boolean, new IBirStatement[] {
             new BirIf { Branches = new[] { new BirBranch {
                 Cond = E(Wrapped("hasNext", boolean)), Body = new IBirStatement[] {
                     new BirSetField { OwnerType = Self(), Recv = E(new BirThis()), Name = "_cur",
-                        Value = E(Wrapped("next", targetElement)) },
+                        Value = E(FunctionValueRepresentation.RuntimeViewCall(Wrapped("next", rawElement), arity: null)) },
                     SourceReturn(new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) }),
                 },
             } } },
             SourceReturn(new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(false) }),
         });
         moveNext.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerator), "MoveNext", boolean) };
-        var current = SourceMethod("get_Current", "public", targetElement, new IBirStatement[] { SourceReturn(Field("_cur")) });
+        var current = SourceMethod("get_Current", "public", targetElement, new IBirStatement[] {
+            SourceReturn(new BirCast { Type = targetElement, E = E(Field("_cur")) }) });
         current.SpecialName = true;
         current.ClrInterfaceImpls = new[] { SourceDescriptor(Constructed(IEnumeratorT, targetElement), "get_Current", targetElement) };
-        var rawCurrent = SourceMethod(NonGenericCurrentName, "private", new TypeNode.Fqn("System.Object"),
+        var rawCurrent = SourceMethod(NonGenericCurrentName, "private", rawElement,
             new IBirStatement[] { SourceReturn(Field("_cur")) });
         rawCurrent.SpecialName = true; rawCurrent.Generated = true;
-        rawCurrent.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerator), "get_Current", new TypeNode.Fqn("System.Object")) };
+        rawCurrent.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerator), "get_Current", rawElement) };
         var reset = SourceMethod("Reset", "public", new TypeNode.Fqn("void"), new IBirStatement[] {
             new BirThrow { Value = E(new BirNew { Type = new TypeNode.Fqn("System.NotSupportedException"),
                 ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() }) },
@@ -116,7 +118,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             Interfaces = new TypeNode[] { Constructed(IEnumeratorT, targetElement), new TypeNode.Fqn(IEnumerator), new TypeNode.Fqn(IDisposable) },
             Fields = new[] {
                 new BirFieldDeclaration { Name = "_it", Type = BirGraphValue.CopyType(wrapped), Vis = "private", InitOnly = true },
-                new BirFieldDeclaration { Name = "_cur", Type = targetElement, Vis = "private" },
+                new BirFieldDeclaration { Name = "_cur", Type = rawElement, Vis = "private" },
             },
             Ctors = new[] { new BirConstructor {
                 Params = new[] { new BirParameter { Name = "source", Type = BirGraphValue.CopyType(wrapped) } },
