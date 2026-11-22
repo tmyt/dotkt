@@ -33,10 +33,8 @@ static partial class DefaultArgSplice
         $"{arguments} argument(s) for {parameters} parameter(s), so the omitted slot is not identifiable; " +
         "pass the argument explicitly";
 
-    static string AmbiguousDefault(string label, int arity, bool constructorDelegation = false) => constructorDelegation
-        ? $"bir2cir: cannot fill an omitted default argument of '{label}' constructor (arity {arity}) — " +
-          "that arity is carried by several constructors whose defaults disagree; pass the argument explicitly"
-        : $"bir2cir: cannot fill an omitted default argument of '{label}' (arity {arity}) — that name+arity is " +
+    static string AmbiguousDefault(string label, int arity) =>
+          $"bir2cir: cannot fill an omitted default argument of '{label}' (arity {arity}) — that name+arity is " +
           "carried by several referenced declarations whose defaults disagree; pass the argument explicitly";
 
     static string UnrepresentableDefault(string context, string label, int position, string[] names)

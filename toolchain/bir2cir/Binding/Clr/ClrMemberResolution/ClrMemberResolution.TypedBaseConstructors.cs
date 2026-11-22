@@ -28,10 +28,13 @@ static partial class ClrMemberResolution
                     .Where(candidate => candidate.GetParameters().Length == signature.Count).ToList();
                 var winner = ctor.DelegationDeclarationId.HasValue
                     ? refs.SelectConstructorDeclaration(candidates, ctor.DelegationDeclarationId.Value)
+                    : ctor.DelegationNativeKey.HasValue ? refs.SelectedNativeBaseConstructor(open, ctor.DelegationNativeKey.Value)
                     : ClrDeclarationMatching.PickDeclaredConstructor(refs, candidates, signature,
                         $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(signature)})");
                 ctor.BaseCtorRef = BirMemberReference.FromPhysical(MemberRefOf(localTypes, refs, winner,
                     MemberRefNode.Kinds.Ctor, open, baseFqn.Args));
+                if (ctor.DelegationNativeKey.HasValue)
+                    ctor.DelegationSig = ctor.BaseCtorRef.Value.ParameterTypes.Value;
                 var parameters = winner.GetParameters();
                 for (var index = 0; index < parameters.Length; index++)
                 {
@@ -39,6 +42,7 @@ static partial class ClrMemberResolution
                     MarkDelegateSlot((BirGraphValue)arguments[index], SubstituteMethodTypeArgs(slot, []), refs, localTypes);
                 }
                 ctor.DelegationDeclarationId = default;
+                ctor.DelegationNativeKey = default;
             }
         }
     }

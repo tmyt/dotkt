@@ -1571,7 +1571,7 @@ internal object BirMessagePack {
 
     private fun writeBirConstructor(value: BirConstructor, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.delegationSig == null) 0 else 1) + (if (value.thisArgs == BirField.Absent) 0 else 1) + (if (value.delegationBindings == null) 0 else 1) + (if (value.delegationOuterSlot == null) 0 else 1) + (if (value.delegationDeclarationId == null) 0 else 1) + (if (value.declarationId == null) 0 else 1) + (if (value.declarationSourceName == null) 0 else 1) + (if (value.vis == null) 0 else 1) + (if (value.attrs == null) 0 else 1) + (if (value.primary == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.delegationSig == null) 0 else 1) + (if (value.thisArgs == BirField.Absent) 0 else 1) + (if (value.delegationBindings == null) 0 else 1) + (if (value.delegationOuterSlot == null) 0 else 1) + (if (value.delegationDeclarationId == null) 0 else 1) + (if (value.delegationNativeKey == null) 0 else 1) + (if (value.declarationId == null) 0 else 1) + (if (value.declarationSourceName == null) 0 else 1) + (if (value.vis == null) 0 else 1) + (if (value.attrs == null) 0 else 1) + (if (value.primary == null) 0 else 1))
         packer.packString("params")
         checkDepth(depth + 1)
         packer.packArrayHeader(value.params.size)
@@ -1624,6 +1624,10 @@ internal object BirMessagePack {
         }
         value.delegationDeclarationId?.let { child ->
             packer.packString("delegationDeclarationId")
+            MessagePackText.write(packer, child)
+        }
+        value.delegationNativeKey?.let { child ->
+            packer.packString("delegationNativeKey")
             MessagePackText.write(packer, child)
         }
         value.declarationId?.let { child ->

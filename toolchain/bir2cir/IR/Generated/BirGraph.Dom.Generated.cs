@@ -1919,6 +1919,7 @@ internal static class BirGraphDom
                 case "delegationBindings": break;
                 case "delegationOuterSlot": break;
                 case "delegationDeclarationId": break;
+                case "delegationNativeKey": break;
                 case "declarationId": break;
                 case "declarationSourceName": break;
                 case "vis": break;
@@ -1943,6 +1944,7 @@ internal static class BirGraphDom
             DelegationBindings = Field<BirCallBinding[]>(fields, "delegationBindings", value => ((JsonArray)value!).Select(item0 => ReadBirCallBinding(item0!)).ToArray()),
             DelegationOuterSlot = Field<int>(fields, "delegationOuterSlot", value => value!.GetValue<int>()),
             DelegationDeclarationId = Field<string>(fields, "delegationDeclarationId", value => value!.GetValue<string>()),
+            DelegationNativeKey = Field<string>(fields, "delegationNativeKey", value => value!.GetValue<string>()),
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
             DeclarationSourceName = Field<string>(fields, "declarationSourceName", value => value!.GetValue<string>()),
             Vis = Field<string>(fields, "vis", value => value!.GetValue<string>()),

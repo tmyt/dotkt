@@ -1,6 +1,7 @@
 namespace UncarryableOptionalDelegation;
 
-public class Base
+public class Base<T> where T : struct
 {
-    public Base([System.Runtime.InteropServices.Optional] object value) { }
+    public Base(T? input, [System.Runtime.InteropServices.Optional] object value) { }
+    private Base(T input, object value = null) { }
 }

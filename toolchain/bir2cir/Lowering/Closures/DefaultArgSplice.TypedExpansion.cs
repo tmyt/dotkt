@@ -28,7 +28,7 @@ static partial class DefaultArgSplice
             foreach (var constructor in constructors)
             {
                 Delegation(constructor.BaseArgs.OrDefault(), (baseType as TypeNode.Fqn)?.Name,
-                    refs.SourceDeclarationArguments(baseType), constructor, name);
+                    refs.SourceDeclarationArguments(baseType), constructor, name, baseType as TypeNode.Fqn);
                 Delegation(constructor.ThisArgs.OrDefault(), name,
                     refs.SourceDeclarationArguments(baseType), constructor, name);
             }
@@ -113,20 +113,16 @@ static partial class DefaultArgSplice
                 case BirCallInstance value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; break;
             }
         }
-        void Delegation(IBirExpression[] arguments, string calledOwner, TypeNode[] application, BirConstructor constructor, string semantic)
+        void Delegation(IBirExpression[] arguments, string calledOwner, TypeNode[] application, BirConstructor constructor,
+            string semantic, TypeNode.Fqn baseOwner = null)
         {
             var bindings = constructor.DelegationBindings.OrDefault();
             if (arguments == null || calledOwner == null || bindings == null || !arguments.OfType<BirBindingReference>().Any(read =>
                 bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
             var selected = constructor.DelegationDeclarationId.OrDefault();
             var defaults = selected != null ? refs.KotlinDefaultValuesForDeclarationIdentity(selected)
-                : refs.KotlinDefaultValuesFor(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length);
-            if (defaults == null)
-            {
-                if (selected == null && refs.KotlinDefaultsAmbiguous(calledOwner, ReferenceMetadataReader.CtorKeyName, arguments.Length))
-                    throw new InvalidOperationException(AmbiguousDefault(calledOwner, arguments.Length, constructorDelegation: true));
-                return;
-            }
+                : refs.DefaultValuesForNativeBaseConstructor(baseOwner, constructor.DelegationNativeKey.OrDefault());
+            if (defaults == null) return;
             Fill(arguments.ToList(), bindings, arguments.Length, defaults, null, null, arguments.FirstOrDefault(), semantic, null, application,
                 calledOwner + " constructor");
         }
