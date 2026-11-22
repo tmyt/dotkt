@@ -24,6 +24,8 @@ public sealed class NativeResultProbe
         return values;
     }
     public object Read(int index) => backing.GetValue(index);
+    public static void Replace<T>(ref T location, T value) where T : System.IO.MemoryStream, IProjectedMark =>
+        location = value;
     public static int Size<T>(System.Span<T> values) => values.Length;
     public void WriteSecond<T>(int before, System.Span<T> values, int after, T replacement)
         where T : System.IO.MemoryStream, IProjectedMark

@@ -16,6 +16,7 @@ static partial class CapturedGenericInvocation
         internal BirGraphValue Replacement;
         TypeNode liftedResult;
         BirTypeParameter[] liftedFrame;
+        readonly HashSet<string> exactLocals = new(StringComparer.Ordinal) { location.Name.Value };
         TypeNode Element => ((TypeNode.ByRef)liftedResult).Of;
         internal TypeNode InInvoke(TypeNode type) => Map(type, v => new TypeNode.Tv("method",
             v.Scope == "type" ? v.I : ownerFrame.Length + v.I));
@@ -65,10 +66,39 @@ static partial class CapturedGenericInvocation
 
         TypeNode[] Signature() => new[] { liftedResult }.Concat(free.Values.Select(Reference)).ToArray();
 
-        internal BirFunctionDeclaration Finish()
+        internal BirFunctionDeclaration Finish(Func<Invocation, BirFunctionDeclaration> localConsumer, ReferenceMetadataIndex refs)
         {
             var body = enclosing.Body.Value;
-            var suffix = body.Skip(position+1).Select(stmt => (IBirStatement)Rewrite((BirGraphValue)stmt)).ToArray();
+            // A local copy of the span still has the producer's exact type.
+            // Use all definitions of each slot: spelling the same projected
+            // type on two independent initializers is not a witness.
+            if (liftedResult is not TypeNode.ByRef)
+            {
+                var inputs = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                void Collect(BirGraphValue node)
+                {
+                    var (name, value) = node switch {
+                        BirVariable v => (v.Name.OrDefault(), v.Init.OrDefault()),
+                        BirSetLocal v => (v.Name.OrDefault(), v.Value.OrDefault()),
+                        _ => ((string)null, null),
+                    };
+                    if (name != null && value != null)
+                    {
+                        if (!inputs.TryGetValue(name, out var defs)) inputs.Add(name, defs = []);
+                        defs.Add((value as BirLocal)?.Name.OrDefault());
+                    }
+                    if (node is not (IBirExecutablePayload or BirMemberReference))
+                        node.VisitCurrentFrameSlots(s => Collect(s.Value));
+                }
+                foreach (var stmt in body[(position+1)..]) Collect((BirGraphValue)stmt);
+                bool changed;
+                do {
+                    changed = false;
+                    foreach (var (name, defs) in inputs)
+                        if (defs.All(exactLocals.Contains)) changed |= exactLocals.Add(name);
+                } while (changed);
+            }
+            var suffix = body.Skip(position+1).Select(stmt => (IBirStatement)Rewrite((BirGraphValue)stmt, localConsumer, refs)).ToArray();
             enclosing.Body = body.Take(position).Concat(Body(Replacement, IsVoid(enclosing.Ret.Value), false)).ToArray();
             var frame = enclosing.TypeParams.OrEmpty().Select(p => (BirTypeParameter)p.DeepClone())
                 .Concat(liftedFrame).ToArray();
@@ -78,17 +108,30 @@ static partial class CapturedGenericInvocation
             return method;
         }
 
-        BirGraphValue Rewrite(BirGraphValue node)
+        BirGraphValue Rewrite(BirGraphValue node, Func<Invocation, BirFunctionDeclaration> localConsumer, ReferenceMetadataIndex refs)
         {
             if (node is IBirExecutablePayload or BirMemberReference) return node;
+            // For a ref formal the load is an lvalue, not a Kotlin value
+            // read. Give the operand its exact pointee before recursively
+            // adapting ordinary reads to their Kotlin view.
+            if (liftedResult is TypeNode.ByRef && Invocation.Admits(node))
+            {
+                var call = new Invocation(node);
+                if (ResultConsumer(call, localConsumer) is { } selected && call.Arguments.OrDefault() is { } values)
+                    for (int i = 0; i < values.Length; i++)
+                        if (SignatureValueTypes.Of(selected.Parameters[i]) is TypeNode.ByRef &&
+                            values[i] is BirByRefLoad read && read.Local.OrDefault() == location.Name.Value)
+                            values[i] = read with { Local = default, Ptr = new BirLocal { Name = location.Name }, Elem = Element };
+            }
             if (node is BirByRefOf { Inner.HasValue: true } address && address.Inner.Value is BirLocal loc &&
                 free.ContainsKey(loc.Name.Value)) return new BirLocal { Name = loc.Name };
-            node.VisitCurrentFrameSlots(s => s.Replace(Rewrite(s.Value)));
+            node.VisitCurrentFrameSlots(s => s.Replace(Rewrite(s.Value, localConsumer, refs)));
             var name = location.Name.Value;
-            if (liftedResult is not TypeNode.ByRef && Invocation.Admits(node))
-                node = BindLocalResultConsumer(new Invocation(node), name, liftedResult);
+            if (Invocation.Admits(node))
+                node = BindLocalResultConsumer(new Invocation(node), exactLocals, liftedResult, localConsumer, refs);
             return node switch {
-                BirLocal local when local.Name.OrDefault() == name => local with { Sty = liftedResult },
+                BirVariable variable when exactLocals.Contains(variable.Name.OrDefault()) => variable with { Type = liftedResult },
+                BirLocal local when exactLocals.Contains(local.Name.OrDefault()) => local with { Sty = liftedResult },
                 BirByRefLoad read when read.Local.OrDefault() == name =>
                     Cast(read.Elem.Value, read with { Local = default, Ptr = new BirLocal { Name = name }, Elem = Element }),
                 BirByRefStore write when write.Local.OrDefault() == name =>
@@ -118,7 +161,7 @@ static partial class CapturedGenericInvocation
                 if (node is BirLabel l) labels[l.Id.Value] = at;
                 node.VisitCurrentFrameSlots(child => Scan(child.Value, at, outside));
             }
-            for (int i = 0; i < statements.Length; i++) Scan((BirGraphValue)statements[i], i, i < start);
+            for (int i = 0; i < statements.Length; i++) Scan((BirGraphValue)statements[i], i, i <= start);
             int end = statements.Length;
             while (true)
             {
@@ -130,14 +173,27 @@ static partial class CapturedGenericInvocation
             }
         }
 
-        internal static bool InCurrentPass(BirGraphValue p, bool finishFixed) =>
-            Invocation.Admits(p) && new Invocation(p).TypeArguments.OrDefault() is { } args &&
-            (finishFixed || !args.Any(t => t is TypeNode.Tv));
+        internal static bool InCurrentPass(BirGraphValue p, bool finishFixed)
+        {
+            if (!Invocation.Admits(p) || !p.MethodWitnessFacts.HasValue) return false;
+            var call = SelectedInvocation(new Invocation(p), out _);
+            return call.Member?.ReturnType.OrDefault() is { } ret &&
+                ContainsCapturedSlot(ret, p.MethodWitnessFacts.Value.Select(w => w.Argument.Value).ToArray()) &&
+                call.TypeArguments.OrDefault() is { } args && (finishFixed || !args.Any(t => t is TypeNode.Tv));
+        }
 
         internal static BirGraphValue ProducerOf(IBirStatement statement, ReferenceMetadataIndex refs, bool finishFixed) =>
             statement is BirVariable { Type.HasValue: true, Init.HasValue: true } v &&
             (v.Init.Value is BirByRefOf r ? r.Inner.OrDefault() : v.Init.Value) is BirGraphValue { MethodWitnessFacts.HasValue: true } p &&
             InCurrentPass(p, finishFixed) && (v.Type.Value is TypeNode.ByRef || ByRefLike(v.Type.Value, refs)) ? p : null;
+
+        internal static int BlockProducer(BirValueBlock block, ReferenceMetadataIndex refs, bool finishFixed)
+        {
+            if (!block.Result.HasValue || !block.Stmts.HasValue) return -1;
+            var statements = block.Stmts.Value;
+            var first = Array.FindIndex(statements, s => ProducerOf(s, refs, finishFixed) != null);
+            return first >= 0 ? first : InCurrentPass((BirGraphValue)block.Result.Value, finishFixed) ? statements.Length : -1;
+        }
 
         internal static LiveResultUse Find(BirFunctionDeclaration method, string ownerName, BirTypeParameter[] ownerFrame, bool valueOwner,
             ReferenceMetadataIndex refs,

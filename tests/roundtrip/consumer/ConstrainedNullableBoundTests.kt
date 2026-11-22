@@ -181,7 +181,7 @@ class ConstrainedNullableBoundTests {
             var otherLive by byref(other.Location<MarkedStream<*>>(second))
             check(live === first && otherLive === second)
             otherLive = otherNext
-            live = next
+            NativeResultProbe.Replace<MarkedStream<*>>(byref(live), next)
             check(probe.Read(0) === next && other.Read(0) === otherNext)
             check(marker == expected)
             return result
@@ -191,10 +191,24 @@ class ConstrainedNullableBoundTests {
     fun projectedNativeSpanRetainsItsElementTypeAcrossTheConsumer() {
         check(checkProjectedSpan(MarkedStream<Int>(), MarkedStream<Int>(), false) == 3)
         check(checkProjectedSpan(MarkedStream<Int>(), MarkedStream<Int>(), true) == 2)
+        check(lengthThroughBlock(MarkedStream<Int>(), false) == 2)
+        check(lengthThroughBlock(MarkedStream<Int>(), true) == 19)
+    }
+    private fun <T> spanLength(values: kotlin.clr.Span<T>): Int = NativeResultProbe.Size(values)
+    private fun lengthThroughBlock(stream: MarkedStream<*>, stop: Boolean): Int {
+        val saved = run {
+            val s = NativeResultProbe().Slice(stream)
+            if (stop) return 19
+            s
+        }
+        return spanLength(saved)
     }
     private fun checkProjectedSpan(stream: MarkedStream<*>, replacement: MarkedStream<*>, stop: Boolean): Int {
         val probe = NativeResultProbe()
         check(NativeResultProbe.Size(probe.Slice<MarkedStream<*>>(stream)) == 2)
+        val saved = probe.Slice<MarkedStream<*>>(stream)
+        val alias = saved
+        check(spanLength(alias) == 2)
         var step = 0
         probe.WriteSecond(++step, probe.Slice<MarkedStream<*>>(stream.also { check(++step == 2) }),
             if (stop) return step else ++step, replacement)
