@@ -37,7 +37,7 @@ static partial class FBoundStarProjectionErasure
         foreach (var parameter in slot.TypeParams.OrEmpty())
             parameter.RewriteOwnTypeFieldsInPlace((_, _, type) => ReindexSourceReferenceVariables(type, mapping));
         var name = owner.ErasedName + "$ref$" + Convert.ToHexString(Encoding.UTF8.GetBytes(slot.Name.OrDefault()));
-        var allocated = context.Demand.AllocateReferenceContractName(name);
+        var allocated = context.Demand.AllocateTypeName(name);
         var definition = new BirInterfaceDefinition {
             Name = allocated, Kind = "interface", Generated = true, TypeParams = parameters,
             ManagedReferenceContract = new BirManagedReferenceContract {

@@ -63,7 +63,7 @@ static partial class FBoundStarProjectionErasure
             }
         }
 
-        internal string AllocateReferenceContractName(string name)
+        internal string AllocateTypeName(string name)
         {
             var allocated = name;
             for (var suffix = 1; !usedNames.Add(allocated); suffix++) allocated = name + "$" + suffix;

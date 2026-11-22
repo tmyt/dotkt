@@ -66,10 +66,15 @@ class RuntimeTypesVisibilityOwner {
     private fun makeLeaf(): Leaf<*> = Leaf<Int>()
     fun hasPrivateMarker(): Boolean {
         val value: Any = makeLeaf()
-        return value is PrivateNestedInterface && Middle.Reader().read(value)
+        return value is PrivateNestedInterface && Middle.Reader().read(value) && Middle<Int>().innerMarker()
     }
     class Middle<T> {
-        class Reader { fun read(value: Any) = (value as Leaf<*>).read() }
+        class Reader { fun read(value: Any) = (value as RuntimeTypesVisibilityOwner.Leaf<*>).read() }
+        private inner class Leaf<U> : PrivateNestedInterface
+        internal fun innerMarker(): Boolean {
+            val value: Leaf<*> = Leaf<String>()
+            return (value as Any) is PrivateNestedInterface
+        }
     }
     internal interface InternalNestedInterface
     protected interface ProtectedNestedInterface

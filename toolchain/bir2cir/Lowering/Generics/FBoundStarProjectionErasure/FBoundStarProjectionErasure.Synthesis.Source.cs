@@ -117,9 +117,9 @@ static partial class FBoundStarProjectionErasure
                 }
             }
         }
+        var scope = context.ErasedEnclosingScope(root, definition);
         var erased = new BirInterfaceDefinition {
             Name = owner.ErasedName, Kind = "interface", Generated = true,
-            SemanticOwner = definition.SemanticOwner, NestedIn = definition.NestedIn,
             KotlinType = new TypeNode.Fqn(owner.Name, Enumerable.Range(0, owner.Arity)
                 .Select(_ => (TypeNode)new TypeNode.Star()).ToArray()),
             Base = OptionalField<TypeNode>.Null, Interfaces = inherited.ToArray(),
@@ -132,7 +132,8 @@ static partial class FBoundStarProjectionErasure
         definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
         erased.Attrs = new[] { ClassifierIdentity() };
         RegisterProjectedStorage(owner, definition, erased, context);
-        if (PublishedApiTypeVisibilityLowering.ResolveVisibility(definition) is { } visibility) erased.Vis = visibility;
+        if (scope != null) erased.NestedIn = scope;
+        if (CarrierRealizationContext.VisibilityInScope(definition, scope) is { } visibility) erased.Vis = visibility;
         context.AttachType(root, erased);
         foreach (var slot in methods)
         {
