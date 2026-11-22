@@ -115,7 +115,7 @@ sealed partial class NullableWitnessDemand
         metadata.KotlinDefaultsByDeclarationId["external-inner"] = new Dictionary<int, IBirExpression> { [0] = innerCarrier };
         metadata.KotlinDefaultsByDeclarationId["external-outer"] = new Dictionary<int, IBirExpression> { [0] = outerCarrier };
         metadata.KotlinDefaultsByDeclarationId["external-constant"] = new Dictionary<int, IBirExpression> { [0] = False() };
-        metadata.KotlinDefaults[new("external.Base", ReferenceMetadataReader.CtorKeyName, 2)] =
+        metadata.KotlinDefaultsByDeclarationId["external-base-constructor"] =
             new Dictionary<int, IBirExpression> { [1] = ownerDefault };
         var refs = ReferenceMetadataIndex.DefaultDemandTestIndex(metadata);
         var callerVariable = new TypeNode.Tv("method", 1);
@@ -140,6 +140,7 @@ sealed partial class NullableWitnessDemand
             Body = new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(expression) } },
         };
         var delegation = new BirConstructor {
+            DelegationDeclarationId = "external-base-constructor",
             Params = Array.Empty<BirParameter>(), Body = Array.Empty<IBirStatement>(),
             BaseArgs = new IBirExpression[] { Read("first", boolean), Read("second", boolean) },
             DelegationBindings = new[] {
