@@ -92,6 +92,7 @@ static partial class NullableRepresentationMaterialization
             if (node is BirCallInline inline) inline.Ga = calledFrame.PhysicalArity;
         }
         var snapshot = NullableRepresentationViews.ReturnFacts(node);
+        var locations = NullableRepresentationDemand.IndexedLocations(node);
         if (node is BirArraySet set && NullableRepresentationDemand.UnstampedOpenElement(set) is { } inferred)
             set.Elem = inferred;
         node.RewriteRepresentationParametersInPlace((role, parameters) => {
@@ -137,6 +138,8 @@ static partial class NullableRepresentationMaterialization
             if (role == BirRepresentationRole.InheritedImplementation) RewriteImplementation((BirInheritedImplementation)child, declarationMapping(child), mapping);
             else Rewrite(child, mapping, methods, declarationMapping, position);
         });
+        if (locations != null)
+            foreach (var (read, component) in locations) read.Elem = mapping.ElementArgument(component);
         if (closedDispatch != null) { receivers.DispatchTypeArgs = closedDispatch; receivers.DispatchOwnerTypeArgs = closedDispatchOwner; }
         if (closedArguments != null) node.ApplicationTypeArguments = closedArguments;
         if (capturedFrame != null)

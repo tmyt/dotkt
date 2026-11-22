@@ -1514,10 +1514,13 @@ static class ReferenceMetadataReader
         }
     }
 
-    internal static int[] ProjectedMethodFacetSources(MethodBase declaration) =>
-        CarrierJsonOf(declaration.GetCustomAttributesData(), declaration.DeclaringType.Assembly,
-            RoundtripMetadata.AKProjectedMethod)?["facets"] is JsonArray rows ? rows.Select(row => (int)row).ToArray()
-            : throw new InvalidDataException($"Missing projected method mapping on {declaration}");
+    internal static ProjectedMethodPlan ReadProjectedMethodPlan(MethodBase declaration, BirTypeParameter[] physical)
+    {
+        var payload = CarrierJsonOf(declaration.GetCustomAttributesData(), declaration.DeclaringType.Assembly,
+            RoundtripMetadata.AKProjectedMethod) ?? throw new InvalidDataException($"Missing projected method mapping on {declaration}");
+        int[] Positions(string name) => ((JsonArray)payload[name]).Select(row => (int)row).ToArray();
+        return new(physical, Positions("facets"), Positions("addresses"));
+    }
 
     internal static ProjectedConstructorPlan ReadConstructorPlan(MethodBase declaration, MethodBase factory,
         Func<TypeNode, TypeNode> physical, bool nativeNames)

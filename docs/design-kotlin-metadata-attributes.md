@@ -188,7 +188,9 @@ constraint rows; their order is not a contract. This does not add a source const
 
 A projected generic method carries `KotlinProjectedMethod` on its physical MethodDef. Its
 MessagePack record's `facets` array identifies the primary CLR method parameter for each appended interface
-witness, in projected-entry order. Its declaring owner and method keep separate binders. The
+witness, in projected-entry order. The following location slots are identified by `addresses`,
+the zero-based operand indices whose actual managed pointees supply the invariant CLR arguments.
+These slots describe storage, not class or interface proofs. Its declaring owner and method keep separate binders. The
 mapping comes from the selected reference declaration; the constraints come from the shipped
 projected MethodDef. The consumer does not reconstruct extra slots from the exact forwarder.
 

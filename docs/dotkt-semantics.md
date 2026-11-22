@@ -133,7 +133,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   export succeed. Once CLR code can retain the vector, subsequent Kotlin writes must fit its actual component
   type. Passing `byref(a[i])` gives CLR the real address of that element: it must hold a representable
   value, and later writes to that slot must remain representable. This does not publish the other
-  elements. Passing a jagged vector also publishes its rows. If any array operand fails its check,
+  elements. A Kotlin-defined `ClrRef<T>` parameter is also a real CLR managed reference. When taking an
+  array element's address, its element representation is independent of any class or interface bound used
+  to call the generic method. An unchecked array cast does not change the allocation's component or grant
+  a writable reference of a different type. Passing a jagged vector also publishes its rows. If any array operand fails its check,
   none of that call's new locations are published. A CLR-created vector enforces its component rule
   from the start. An output-only `out` argument replacing an array variable does not publish its previous vector.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
