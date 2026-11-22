@@ -30,6 +30,15 @@ class ResultSource {
 
 class ConcreteMarkedItem : ResultSource.Tagged<String>()
 
+class NativeFacetHolder<T> where T : RoundtripDependentNative.Base, T : RoundtripDependentNative.Family.IMark<String> {
+    var item: T? = null
+}
+
+class CapturedBoundOwner<X> {
+    inner class Entry<T>(val item: T) where T : RoundtripDependentNative.Base, T : RoundtripDependentNative.Family.IMark<X>
+}
+fun exposeCapturedBound(entry: CapturedBoundOwner<*>.Entry<*>): Any = entry
+
 class ItemSlot<A : PendingItems.Item> {
     var item: A? = null
 }

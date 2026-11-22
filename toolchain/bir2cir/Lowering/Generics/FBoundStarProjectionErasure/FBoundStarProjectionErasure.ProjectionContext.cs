@@ -236,6 +236,9 @@ static partial class FBoundStarProjectionErasure
             return parameters;
         }
 
+        TypeNode ConstraintKey(TypeNode bound) => bound is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
+            ? References.WitnessConstraintKey(bound) : bound;
+
         string BoundKind(TypeNode.Fqn bound)
         {
             if (Preparation.SourceSupertypes.TryGetValue(bound.Name, out var def)) return def.Kind;
@@ -364,7 +367,7 @@ static partial class FBoundStarProjectionErasure
                 return SupertypeGraph.Reaches(candidate, facet, synthesizedHierarchy, References) ? actual : bound;
             }
             if (plan == null || unproven || required.Any(r => !plan.Facets.Any(s =>
-                s.Primary == r.OwnerIndex && SupertypeGraph.SubstOwnerTvs(s.Bound, primary) == r.Bound))) return null;
+                s.Primary == r.OwnerIndex && ConstraintKey(SupertypeGraph.SubstOwnerTvs(s.Bound, primary)) == ConstraintKey(r.Bound)))) return null;
             var arguments = plan.Close(primary, FacetArgument);
             if (required.Count == 0 && !plan.Facets.Select((slot, i) => (slot, witness: arguments[primary.Length + i]))
                 .Any(row => ContainsExistentialProjection(application.Arguments[row.slot.Primary]) &&
@@ -429,8 +432,7 @@ static partial class FBoundStarProjectionErasure
                 .Select(r => (r.Index, Bound: StripSourceNullability(selected.CloseBound(r.Bound, closeArgument)))).Distinct().ToArray();
             var bounds = declared.Select(r => r.Bound).Distinct().ToArray();
             if (bounds.Length == 0) return null;
-            TypeNode Identity(TypeNode type) => type is TypeNode.Fqn f && !Preparation.SourceSupertypes.ContainsKey(f.Name)
-                ? References.PhysicalConstraintType(type) : type;
+            TypeNode Identity(TypeNode type) => ConstraintKey(type);
             if (!bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class")) return null;
 
             // A nominal Kotlin value interface cannot witness a CLR class bound. Use a real

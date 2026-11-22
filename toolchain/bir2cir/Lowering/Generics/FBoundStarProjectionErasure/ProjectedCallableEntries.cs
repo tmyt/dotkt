@@ -286,15 +286,24 @@ sealed class ProjectedCallableEntries
         return i < 0 ? null : new TypeNode.Tv(v.Scope, scope.Parameters.Length + i);
     }
 
+    internal TypeNode[] ForwardOwnerConstructor(ProjectedConstructorPlan plan, TypeNode[] actual,
+        BirTypeParameter[] parameters, ProjectedClassStorageFrame.InterfaceSlot[] slots)
+        => ForwardConstructor(plan, actual, new(parameters, slots), default);
+
+    TypeNode[] ForwardConstructor(ProjectedConstructorPlan plan, TypeNode[] actual, Scope owner, Scope method)
+    {
+        if (!plan.Facets.Any(f => actual[f.Primary] is TypeNode.Tv tv &&
+                (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
+        return plan.Close(actual, (f, required) => Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary]);
+    }
+
     BirCallStatic ReferencedConstruction(BirNew creation, Scope owner, Scope method)
     {
         if (creation.ReferencedProjectedFactoryId is not { } id ||
             creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual }) return null;
         var selected = references.SelectedPhysicalMethod(id);
         var plan = references.ConstructorPlan(id, nativeNames: true) ?? throw new InvalidOperationException($"No projected constructor for '{id}'");
-        if (!plan.Facets.Any(f => actual[f.Primary] is TypeNode.Tv tv &&
-                (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
-        var arguments = plan.Close(actual, (f, required) => Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary]);
+        if (ForwardConstructor(plan, actual, owner, method) is not { } arguments) return null;
         var target = ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, null);
         var signature = target.ParameterTypes.Select(t =>
             FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(t, [], arguments)).ToArray();
