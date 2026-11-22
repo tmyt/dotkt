@@ -30,6 +30,7 @@ import RoundtripDependentNative.Family.IMark
 import roundtrip.constrainedbound.MarkedChoice
 import roundtrip.constrainedbound.MarkedWriter
 import roundtrip.constrainedbound.absentMarked
+import roundtrip.constrainedbound.pickMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
 import roundtrip.constrainedbound.JointOuter
@@ -157,12 +158,15 @@ class ConstrainedNullableBoundTests {
         fun callProjectedBase(left: ClientItem<*>, right: ClientItem<*>) = super.selectMarked(left, right)
     }
     private class MethodSlot<A> where A : PendingItems.Item, A : Mark {
+        fun choose(left: A, right: A) = pickMarked(left, right, false)
         fun newSlot() = MarkedItemSlot<A>()
         fun fromClosures(selector: MarkedSelector, x: A) = selector.identity<A>()(selector.later(x)()())
         fun pick(selector: MarkedSelector, first: A, last: A): A = selector.selectMarked(first, last)
         fun fromInterface(selector: MarkedChoice, first: A, last: A): A = selector.selectMarked(first, last)
         fun absent(): A? = absentMarked<A>()
     }
+    private fun <A> chooseThroughSlot(left: A, right: A): A where A : PendingItems.Item, A : Mark =
+        MethodSlot<A>().choose(left, right)
     private open class MarkedStream<T> : MemoryStream(), IProjectedMark
     private class LocationCaller<C>(private val marker: C) {
         fun <M> checkLocations(first: MarkedStream<*>, next: MarkedStream<*>, second: MarkedStream<*>,
@@ -352,6 +356,8 @@ class ConstrainedNullableBoundTests {
         check(concrete.value === text)
         val slot = MarkedItemSlot<ClientItem<*>>()
         val methods = MethodSlot<ClientItem<*>>()
+        check(chooseThroughSlot(number, number) === number)
+        check(chooseThroughSlot<ClientItem<*>>(number, text) === text)
         val imported = methods.newSlot()
         imported.item = text
         check(imported.item === text)
