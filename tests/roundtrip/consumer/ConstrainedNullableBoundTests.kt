@@ -14,6 +14,7 @@ import roundtrip.constrainedbound.MarkedItemSlot
 import roundtrip.constrainedbound.MarkedSelector
 import roundtrip.constrainedbound.ConcreteMarkedItem
 import roundtrip.constrainedbound.NativeFacetHolder
+import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
 import RoundtripDependentNative.Family.IMark
 import roundtrip.constrainedbound.MarkedChoice
@@ -155,6 +156,8 @@ class ConstrainedNullableBoundTests {
         imported.item = value
         direct.item = value
         check(local.item === value && imported.item === value && direct.item === value)
+        val outer = CapturedBoundOwner<String>()
+        check(outer.Entry<Child<*>>(value).item === value)
     }
 
     @TestAttribute

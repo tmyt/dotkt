@@ -16,6 +16,12 @@ static partial class FBoundStarProjectionErasure
         var captured = inner.OuterCount;
         var full = layout.Declare();
         var indices = layout.Constructor(captured).InnerSlots();
+        // The erased outer has no !i for an enclosing type parameter. An
+        // instance slot weakened to object could not call the constrained
+        // static factory. The ordinary bottom-specialized entry still exists.
+        var capturedSlots = Enumerable.Range(0, full.Length).Except(indices).ToHashSet();
+        if (indices.Any(i => full[i].Constraints.OrEmpty().Any(c =>
+                ContainsInnerDependency(c, captured, capturedSlots)))) return;
         TypeNode ForSlot(TypeNode t) => EraseOwnerTv(CapturedGenericInvocation.Map(t, tv => tv.Scope == "type" &&
             Array.IndexOf(indices, tv.I) is var i && i >= 0 ? new TypeNode.Tv("method", i) : tv), context.Owners, context.References);
         var frame = indices.Select(i => CapturedGenericInvocation.CloneParameter(full[i], ForSlot)).ToArray();
@@ -55,7 +61,7 @@ static partial class FBoundStarProjectionErasure
         } };
         if (!referenceBuild)
         {
-            var indices = ProjectedConstructorPlan.From(original, prefix, inner.Slots).InnerSlots();
+            var indices = inner.Entry.InnerSlots();
             var types = Enumerable.Range(0, original + inner.Slots.Length).Select(i => {
                 if (Array.IndexOf(indices, i) is var methodIndex && methodIndex >= 0)
                     return (TypeNode)new TypeNode.Tv("method", methodIndex);

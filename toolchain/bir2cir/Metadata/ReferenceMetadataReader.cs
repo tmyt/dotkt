@@ -1534,7 +1534,10 @@ static class ReferenceMetadataReader
                     return (native, nativeNames ? native : GenericConstraintType(c, false));
                 }), physical);
         }).ToArray();
-        return new(primary, captured, facets);
+        var frame = formals.Take(primary).Select(p => CapturedGenericInvocation.CloneParameter(
+            GenericParamDeclaration(p, native: nativeNames), t => CapturedGenericInvocation.Map(t,
+                tv => tv.Scope == "method" ? new TypeNode.Tv("type", tv.I) : tv))).ToArray();
+        return ProjectedConstructorPlan.Bind(frame, captured, facets);
     }
 
     static BirTypeParameter[] SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,

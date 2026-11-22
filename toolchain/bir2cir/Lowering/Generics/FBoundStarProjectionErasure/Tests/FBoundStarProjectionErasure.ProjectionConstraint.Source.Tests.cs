@@ -133,7 +133,7 @@ static partial class FBoundStarProjectionErasure
         var layout = projection.StorageFrame("Intersection");
         var namedFacet = new TypeNode.Fqn("Facet", [new TypeNode.Tv("type", 1)]);
         var physicalFacet = new TypeNode.Fqn("Facet", [new TypeNode.Tv("method", 1)]);
-        var published = new ProjectedConstructorPlan(2, 1, [
+        var published = ProjectedConstructorPlan.Bind([new(), new()], 1, [
             ProjectedConstructorPlan.BindFacet(1, namedFacet, false,
                 [(ifaceBound, ifaceBound), (physicalFacet, physicalFacet)], t => t),
         ]);

@@ -1,11 +1,24 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // The static factory's primary formals have the exact owner's physical order.
 // Facets follow in entry order; their bounds are expressed in that owner binder.
-sealed record ProjectedConstructorPlan(int PrimaryArity, int Captured, ProjectedConstructorPlan.Facet[] Facets)
+sealed record ProjectedConstructorPlan(BirTypeParameter[] WitnessParameters, int Captured, ProjectedConstructorPlan.Facet[] Facets)
 {
     internal sealed record Facet(int Primary, TypeNode Bound, bool NativeArgument);
+    internal int PrimaryArity => WitnessParameters.Length;
+
+    internal static ProjectedConstructorPlan Bind(BirTypeParameter[] primary, int captured, Facet[] facets)
+    {
+        var primaries = primary.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+        foreach (var group in facets.GroupBy(f => f.Primary))
+        {
+            var p = primaries[group.Key];
+            p.Constraints = p.Constraints.OrEmpty().Concat(group.Select(f => f.Bound)).Distinct().ToArray();
+        }
+        return new(primaries, captured, facets);
+    }
 
     // The stored relation names a bound in the owner's binder; actual rows
     // belong to the selected static MethodDef. Their ordering is immaterial.
@@ -19,8 +32,8 @@ sealed record ProjectedConstructorPlan(int PrimaryArity, int Captured, Projected
         return new(primary, InOwner(matched.View), native);
     }
 
-    internal static ProjectedConstructorPlan From(int primary, int captured, ProjectedClassStorageFrame.InterfaceSlot[] facets) =>
-        new(primary, captured, facets.Select(f => new Facet(f.OwnerIndex, f.Bound, f.NativeArgument)).ToArray());
+    internal static ProjectedConstructorPlan From(BirTypeParameter[] primary, int captured, ProjectedClassStorageFrame.InterfaceSlot[] facets) =>
+        Bind(primary, captured, facets.Select(f => new Facet(f.OwnerIndex, f.Bound, f.NativeArgument)).ToArray());
 
     internal int[] InnerSlots() => Enumerable.Range(Captured, PrimaryArity - Captured)
         .Concat(Facets.Select((f, i) => (f, i)).Where(row => row.f.Primary >= Captured)

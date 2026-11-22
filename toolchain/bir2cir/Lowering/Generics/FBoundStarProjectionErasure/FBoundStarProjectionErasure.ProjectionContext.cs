@@ -313,6 +313,10 @@ static partial class FBoundStarProjectionErasure
         internal TypeNode[] ProjectedConstructorArguments(PhysicalWitnessApplication application, ProjectedConstructorPlan plan)
         {
             var owner = application.Owner;
+            // Construction invokes the factory, not the exact TypeDef. In particular,
+            // a captured inner type's exact declaration may have weakened constraints.
+            if (plan != null) application = new(WitnessBinder.Owner, owner, null, null,
+                application.Layout, plan.WitnessParameters, application.Arguments);
             var fixedSlots = NativeSupertypeConstraints(owner.Name, application.Arguments.Length).Fixed
                 .Where(r => BoundKind(r.Bound) == "interface").ToArray();
             if (plan == null && fixedSlots.Length == 0) return null;

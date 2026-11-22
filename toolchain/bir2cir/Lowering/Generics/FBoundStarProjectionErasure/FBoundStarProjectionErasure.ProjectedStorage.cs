@@ -79,7 +79,7 @@ static partial class FBoundStarProjectionErasure
             var slots = p.Slots.Select((slot, i) => slot with {
                 Bound = ProjectedClassStorageFrame.DeclaredFacet(frame[p.Entry.PrimaryArity + i])
             }).ToArray();
-            return p with { Slots = slots, Entry = ProjectedConstructorPlan.From(p.Entry.PrimaryArity, p.Entry.Captured, slots) };
+            return p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame[..p.Entry.PrimaryArity], p.Entry.Captured, slots) };
         }, StringComparer.Ordinal);
         var implementations = new Dictionary<string, BirClassDefinition>(StringComparer.Ordinal);
         var innerFactories = new List<(ProjectedStorageOwner Plan, string Id, BirFunctionDeclaration Factory, int Prefix, int Original)>();
@@ -186,7 +186,7 @@ static partial class FBoundStarProjectionErasure
                 var factory = carrier.Methods.Value.Single(m =>
                     m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == factoryId);
                 RoundtripMetadata.StampProjectedConstructor(factory, plan.Entry);
-                if (plan.Outer != null)
+                if (plan.Outer != null && carriers.ProjectedInnerFactories.Contains(ProjectedInnerFactoryId(id)))
                     innerFactories.Add((plan,id,factory,prefix,exactParameters.Length));
                 if (referenceBuild) continue;
                 var constructed = Instance("method");

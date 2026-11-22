@@ -35,7 +35,8 @@ sealed class ProjectedClassStorageFrame
     // Declare puts the designated bound first in the producer's own BIR
     // parameter. This position is never used to interpret CLR metadata rows.
     internal static TypeNode DeclaredFacet(BirTypeParameter generated) => generated.Constraints.Value[0];
-    internal ProjectedConstructorPlan Constructor(int captured) => ProjectedConstructorPlan.From(original.Length, captured, Interfaces);
+    internal ProjectedConstructorPlan Constructor(int captured) =>
+        ProjectedConstructorPlan.From(Declare()[..original.Length], captured, Interfaces);
 
     internal ProjectedClassStorageFrame WithNativeArguments(HashSet<int> indices) =>
         new(original, Interfaces.Select(s => s with { NativeArgument = indices.Contains(s.OwnerIndex) }).ToArray());
