@@ -9,6 +9,8 @@ import roundtrip.annotationproperties.producedArrays
 import roundtrip.annotationproperties.ImportedTags
 import roundtrip.annotationproperties.ImportedTypes
 import roundtrip.annotationproperties.CallbackMarker
+import roundtrip.annotationproperties.outerLayout
+import roundtrip.annotationproperties.innerLayout
 import roundtrip.annotationproperties.PreviewApi
 import roundtrip.annotationproperties.PreviewMarker
 import roundtrip.annotationproperties.PreviewWarning
@@ -39,6 +41,9 @@ class AnnotationPropertyRoundtripTests {
 
     @TestAttribute
     fun importedAnnotationRetainsItsTargetsAndOptInRequirement() {
+        outerLayout {
+            innerLayout { assertEquals("text!", with(this@outerLayout) { "text".decorate() }) }
+        }
         val callback: @CallbackMarker () -> Int = { 17 }
         assertEquals(17, invokeMarked(callback))
         assertEquals("preview", PreviewImpl().name())

@@ -412,11 +412,12 @@ internal static partial class BirGraphJson
         OptionalField<BirRefTypeDeclaration[]> field6 = default;
         OptionalField<SourceTypeAlias[]> field7 = default;
         OptionalField<SourceCallable[]> field8 = default;
-        OptionalField<bool> field9 = default;
-        OptionalField<BirAttribute[]> field10 = default;
+        OptionalField<SourceDslScope[]> field9 = default;
+        OptionalField<bool> field10 = default;
         OptionalField<BirAttribute[]> field11 = default;
-        OptionalField<PhysicalMemberTable> field12 = default;
-        OptionalField<BirDeclarationPosition> field13 = default;
+        OptionalField<BirAttribute[]> field12 = default;
+        OptionalField<PhysicalMemberTable> field13 = default;
+        OptionalField<BirDeclarationPosition> field14 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -460,25 +461,29 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceCallable[]>.Null : OptionalField<SourceCallable[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => SourceMetadataJson.ReadCallable(ref reader)));
                     break;
-                case "roundtripMetadataPending":
+                case "dslScopes":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<SourceDslScope[]>.Null : OptionalField<SourceDslScope[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => SourceMetadataJson.ReadDslScope(ref reader)));
+                    break;
+                case "roundtripMetadataPending":
+                    Seen(ref seen, 1UL << 10);
+                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
                 case "assemblyAttrs":
-                    Seen(ref seen, 1UL << 10);
-                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
-                    break;
-                case "attrs":
                     Seen(ref seen, 1UL << 11);
                     field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
                     break;
-                case "wellKnownRefs":
+                case "attrs":
                     Seen(ref seen, 1UL << 12);
-                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<PhysicalMemberTable>.Null : OptionalField<PhysicalMemberTable>.Of(PhysicalMemberTable.Read(ref reader));
+                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
+                    break;
+                case "wellKnownRefs":
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<PhysicalMemberTable>.Null : OptionalField<PhysicalMemberTable>.Of(PhysicalMemberTable.Read(ref reader));
                     break;
                 case "pos":
-                    Seen(ref seen, 1UL << 13);
-                    field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
+                    Seen(ref seen, 1UL << 14);
+                    field14 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -495,11 +500,12 @@ internal static partial class BirGraphJson
             RefTypes = field6,
             TypeAliases = field7,
             SourceCallables = field8,
-            RoundtripMetadataPending = field9,
-            AssemblyAttrs = field10,
-            Attrs = field11,
-            WellKnownRefs = field12,
-            Pos = field13,
+            DslScopes = field9,
+            RoundtripMetadataPending = field10,
+            AssemblyAttrs = field11,
+            Attrs = field12,
+            WellKnownRefs = field13,
+            Pos = field14,
         };
     }
 

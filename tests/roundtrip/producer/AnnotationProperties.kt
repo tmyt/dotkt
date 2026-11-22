@@ -6,6 +6,14 @@ annotation class ImportedArrays(val names: Array<String>, val counts: IntArray)
 annotation class ImportedTags(vararg val tags: String)
 annotation class ImportedTypes(val nested: ImportedLabel, val kind: DeprecationLevel)
 
+private class ScopeTags { @DslMarker annotation class LayoutScope(val label: ImportedLabel) }
+@DslMarker @Retention(AnnotationRetention.SOURCE) annotation class SourceOnlyLayout
+@SourceOnlyLayout
+@ScopeTags.LayoutScope(ImportedLabel("outer")) object OuterLayout { fun String.decorate() = this + "!" }
+@ScopeTags.LayoutScope(ImportedLabel("inner")) object InnerLayout
+fun outerLayout(body: OuterLayout.() -> Unit) = OuterLayout.body()
+fun innerLayout(body: InnerLayout.() -> Unit) = InnerLayout.body()
+
 @Target(AnnotationTarget.TYPE, AnnotationTarget.TYPE_PARAMETER, AnnotationTarget.FUNCTION)
 annotation class CallbackMarker
 

@@ -163,7 +163,7 @@ sealed partial class TypedCirProjection
 
     internal CirFileDeclaration ProjectCirFileDeclaration(BirFileDeclaration value)
     {
-        if (value.RefTypes.IsPresent || value.RoundtripMetadataPending.IsPresent || value.SourceCallables.IsPresent || value.TypeAliases.IsPresent)
+        if (value.DslScopes.IsPresent || value.RefTypes.IsPresent || value.RoundtripMetadataPending.IsPresent || value.SourceCallables.IsPresent || value.TypeAliases.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirFileDeclaration");
         return new CirFileDeclaration
         {

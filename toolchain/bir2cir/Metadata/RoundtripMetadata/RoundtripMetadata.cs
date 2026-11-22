@@ -76,6 +76,7 @@ static partial class RoundtripMetadata
     const string AKTypeVisibility = Ns + "KotlinTypeVisibilityAttribute";
     const string AKTypeAlias    = Ns + "KotlinTypeAliasAttribute";
     const string AKSourceCallable = Ns + "KotlinSourceCallableAttribute";
+    const string AKDslScope = Ns + "KotlinDslScopeAttribute";
     const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
     const string AKTypeParameterBounds = Ns + "KotlinTypeParameterBoundsAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
@@ -222,6 +223,7 @@ static partial class RoundtripMetadata
         {
             AssemblySourceAttribute(AKTypeAlias),
             AssemblySourceAttribute(AKSourceCallable),
+            AssemblySourceAttribute(AKDslScope),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
             AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
@@ -268,7 +270,7 @@ static partial class RoundtripMetadata
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
-        if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias),
+        if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias), AssemblySourceAttribute(AKDslScope),
             AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKData, Ctor()),

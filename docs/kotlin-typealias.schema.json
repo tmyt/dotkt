@@ -17,6 +17,12 @@
     "annotations": {"$ref": "#/$defs/annotations"}
   },
   "$defs": {
+    "dslScope": {
+      "x-dotkt-model": {"name": "SourceDslScope", "interfaces": ["BirValue"], "jsonWriter": "SourceMetadataJson.write"},
+      "type": "object", "additionalProperties": false, "required": ["classifier", "annotations"],
+      "properties": {"classifier": {"$ref": "#/$defs/classifier"}, "annotations": {"$ref": "#/$defs/annotations"},
+        "markerDependencyVisibility": {"enum": ["public", "protected", "internal", "private", "private_to_this", "local"]}}
+    },
     "callable": {
       "x-dotkt-model": {"name": "SourceCallable", "interfaces": ["BirValue"], "jsonWriter": "SourceMetadataJson.write"},
       "type": "object", "additionalProperties": false,

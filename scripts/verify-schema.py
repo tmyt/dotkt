@@ -1420,7 +1420,7 @@ class V:
                         self.err(f, p, "defaultBir must be a source default with an argument index and body")
                 if key == "classifier" and o.get("t") == "fqn":
                     continue  # type_node validated the complete Kotlin ClassId object
-                if key in ("typeAliases", "sourceCallables"):
+                if key in ("typeAliases", "sourceCallables", "dslScopes"):
                     if path != "" or not f.endswith(".bir.json"):
                         self.err(f, p, f"{key} are a BIR root declaration fact and must be consumed before CIR")
                     validate_source_declarations(key, val, p, lambda where, message: self.err(f, where, message))

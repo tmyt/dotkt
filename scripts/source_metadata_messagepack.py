@@ -11,13 +11,17 @@ def outputs(root, named, definitions, variants, parameters, cs_type, cs_name, kt
           "    public static void Write(ref MessagePackWriter writer, SourceTypeAlias value, int depth) => WriteSourceTypeAlias(ref writer, value, depth);",
           "    public static SourceCallable ReadCallable(ref MessagePackReader reader) => ReadSourceCallable(ref reader);",
           "    public static void Write(ref MessagePackWriter writer, SourceCallable value) => WriteSourceCallable(ref writer, value, 0);",
-          "    public static void Write(ref MessagePackWriter writer, SourceCallable value, int depth) => WriteSourceCallable(ref writer, value, depth);", ""]
+          "    public static void Write(ref MessagePackWriter writer, SourceCallable value, int depth) => WriteSourceCallable(ref writer, value, depth);",
+          "    public static SourceDslScope ReadDslScope(ref MessagePackReader reader) => ReadSourceDslScope(ref reader);",
+          "    public static void Write(ref MessagePackWriter writer, SourceDslScope value) => WriteSourceDslScope(ref writer, value, 0);",
+          "    public static void Write(ref MessagePackWriter writer, SourceDslScope value, int depth) => WriteSourceDslScope(ref writer, value, depth);", ""]
     kt = [header, "package kotc.bir", "", "import org.msgpack.core.MessagePack", "import org.msgpack.core.MessagePacker", "",
           "internal object SourceMetadataMessagePack {",
           "    fun encode(value: SourceTypeAlias): ByteArray = MessagePack.newDefaultBufferPacker().use { packer ->",
           "        write(value, packer)", "        packer.toByteArray()", "    }",
           "    fun write(value: SourceTypeAlias, packer: MessagePacker, depth: Int = 0) = writeSourceTypeAlias(value, packer, depth)",
           "    fun write(value: SourceCallable, packer: MessagePacker, depth: Int = 0) = writeSourceCallable(value, packer, depth)",
+          "    fun write(value: SourceDslScope, packer: MessagePacker, depth: Int = 0) = writeSourceDslScope(value, packer, depth)",
           "    private fun checkDepth(depth: Int) { require(depth < 1024) { \"BIR nesting exceeds 1024\" } }", ""]
 
     def target(shape):

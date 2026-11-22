@@ -749,7 +749,8 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  DEFAULT WITNESS CONTRACT FAIL — see build/nunit-$name.default-witness-contract.log"
 			tail -25 "$ROOT/build/nunit-$name.default-witness-contract.log"; rc=1
 		fi
-		if bash "$ROOT/tests/roundtrip/run-import-negative.sh" "$producer_klib" \
+		if dotnet "$METADATA_INSPECTOR_DLL" --dsl-marker-values "$producer_klib" && \
+			bash "$ROOT/tests/roundtrip/run-import-negative.sh" "$producer_klib" \
 			>"$ROOT/build/nunit-$name.import-negative.log" 2>&1; then
 			echo "  imported reified declarations and annotation targets enforce frontend restrictions"
 		else
