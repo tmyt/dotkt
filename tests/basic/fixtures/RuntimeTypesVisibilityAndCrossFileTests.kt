@@ -62,6 +62,12 @@ private fun runtimeTypesVisibilityViews(
 
 class RuntimeTypesVisibilityOwner {
     private interface PrivateNestedInterface
+    private class Leaf<T> : PrivateNestedInterface
+    private fun makeLeaf(): Leaf<*> = Leaf<Int>()
+    fun hasPrivateMarker(): Boolean {
+        val value: Any = makeLeaf()
+        return value is PrivateNestedInterface
+    }
     internal interface InternalNestedInterface
     protected interface ProtectedNestedInterface
     interface PublicNestedInterface
@@ -441,6 +447,7 @@ class StarProjectionAndVisibilityTests {
         assertTrue(Type.GetType("RuntimeTypesPublishedObject")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedEnum")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPublishedRichEnum")!!.IsPublic)
+        assertTrue(RuntimeTypesVisibilityOwner().hasPrivateMarker())
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PrivateNestedInterface")!!.IsNestedPrivate)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+InternalNestedInterface")!!.IsNestedAssembly)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+ProtectedNestedInterface")!!.IsNestedFamily)

@@ -119,6 +119,7 @@ static partial class FBoundStarProjectionErasure
         }
         var erased = new BirInterfaceDefinition {
             Name = owner.ErasedName, Kind = "interface", Generated = true,
+            SemanticOwner = definition.SemanticOwner, NestedIn = definition.NestedIn,
             KotlinType = new TypeNode.Fqn(owner.Name, Enumerable.Range(0, owner.Arity)
                 .Select(_ => (TypeNode)new TypeNode.Star()).ToArray()),
             Base = OptionalField<TypeNode>.Null, Interfaces = inherited.ToArray(),
