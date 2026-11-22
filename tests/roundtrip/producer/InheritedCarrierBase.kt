@@ -3,11 +3,13 @@ package inheritedcarrier
 interface RunnableContract { fun run(): Int }
 interface NameContract<T> { fun name(): T }
 abstract class Root : RunnableContract {
+    var tag: Int = 42
     override fun run(): Int = 43
 }
 abstract class Middle : Root(), NameContract<String> {
     override fun name(): String = "referenced"
 }
+class TaggedLeaf<T>(val item: T) : Middle()
 
 open class GenericBase<T>(private val item: T) : NameContract<T> {
     override fun name(): T = item

@@ -1,6 +1,7 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import inheritedcarrier.Middle
+import inheritedcarrier.TaggedLeaf
 import inheritedcarrier.RunnableContract
 import inheritedcarrier.NameContract
 import inheritedcarrier.GenericBase
@@ -28,6 +29,11 @@ private fun <T> referencedCarrierUnit(value: ReferencedCarrierUnit<T>): Int = re
 class InheritedCarrierRoundtripTests {
     @TestAttribute
     fun genericBasesPreserveClosedInterfacesAndAncestorCarriers() {
+        val exact = TaggedLeaf("item")
+        val projected: TaggedLeaf<*> = exact
+        assertEquals(42, projected.tag)
+        projected.tag = 57
+        assertEquals(57, exact.tag)
         val direct: ReferencedCarrierDirect<Any> = ReferencedCarrierDirect(7)
         val indirect: ReferencedCarrierIndirect<Any> = ReferencedCarrierIndirect("text")
         assertEquals("direct", referencedCarrierDirect(direct))

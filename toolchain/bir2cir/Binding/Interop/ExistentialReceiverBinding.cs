@@ -118,6 +118,16 @@ static partial class ExistentialReceiverBinding
                     SignatureParameters: erasedSignature);
                 return true;
             }
+            // A non-generic base has no carrier of its own. Its declaration
+            // can still have a published slot on the receiver's carrier.
+            if (selectedId != null && semanticOwner.Name != sourceOwner &&
+                refs.TryInheritedStarSlot(referencedReceiver.Name, selectedId, ga, pc, out declaringOwner, out var inherited, out _))
+            {
+                slot = new Member(inherited.Name, sourceMethod, accessorKind, inherited.ParamTypeNodes,
+                    inherited.SuspendReturnType ?? inherited.ReturnTypeNode, ga, inherited.DeclarationId,
+                    SignatureParameters: inherited.SignatureParameters);
+                return true;
+            }
             return false;
         }
 
