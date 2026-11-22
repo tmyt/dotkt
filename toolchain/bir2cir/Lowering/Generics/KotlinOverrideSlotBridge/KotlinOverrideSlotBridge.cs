@@ -151,7 +151,7 @@ static partial class KotlinOverrideSlotBridge
     {
         if (declared.Equals(slot)
             || BirTypeLowering.SamePhysicalSlotType(slot, declared, refs?.Aliases, isValue,
-                refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames)) return Fit.Same;
+                refs?.PhysicalTypeNames, returnPosition, nullableFrames: refs?.NullableTypeFrames, slotOwners: refs)) return Fit.Same;
         // A plain CLR generic declaration's nullable annotation does not change its metadata signature: C# `T?`
         // on `I<T>.Put(T?)`, constructed as `I<int>`, is the BARE `int` slot. Its Kotlin projection is still the
         // truthful `Int?`, whose declaration lowers to `Nullable<int>`. This is a bridgeable outer seam just like
