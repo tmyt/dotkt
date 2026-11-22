@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Keep a native call's hidden element type when Kotlin uses its projected live reference or passes its span to a matching native consumer.
+
 - Enforce Kotlin DSL receiver restrictions across referenced DotKt libraries as well as within a single module.
 - Fix a runtime type-load failure in lambdas that capture a type parameter bounded by a CLR class such as `System.IO.Stream` (#1820).
 - Preserve writes through `byref` when calling a Kotlin generic method with a star-projected type satisfying both class and interface bounds.
