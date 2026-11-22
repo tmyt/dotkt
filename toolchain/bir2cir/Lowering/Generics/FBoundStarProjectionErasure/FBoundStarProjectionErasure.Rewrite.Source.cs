@@ -306,6 +306,8 @@ static partial class FBoundStarProjectionErasure
         // binding selects a body. These types travel with lexical frame rewrites.
         if (proof?.Required.Length > 0)
         {
+            if (ProjectedCallableEntries.HasFixedAbi(selected?.Source as BirFunctionDeclaration, identity, state.References))
+                return projected;
             if (call is BirCallStatic or BirCallInstance or BirNewDelegate or BirNewBoundDelegate or BirConstrainedCall)
                 call.MethodWitnessFacts = call.MethodWitnessFacts.OrEmpty().Where(w => w.Argument.Value != index)
                     .Append(new BirMethodWitness { Argument = index, Primary = proof.Class,

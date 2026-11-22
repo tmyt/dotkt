@@ -106,8 +106,8 @@
       "type": "object", "x-dotkt-model": { "name": "BirMethodWitness", "domain": "birLoweringValues" },
       "properties": {
         "argument": { "type": "integer" },
-        "primary": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical" },
-        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" }, "x-dotkt-frame-role": "Lexical" }
+        "primary": { "$ref": "#/$defs/type", "x-dotkt-frame-role": "Lexical", "x-dotkt-physical-role": "GenericArgument" },
+        "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" }, "x-dotkt-frame-role": "Lexical", "x-dotkt-physical-role": "GenericArgument" }
       },
       "required": ["argument", "primary", "interfaces"], "additionalProperties": false
     },

@@ -16,6 +16,26 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
 
     internal BirTypeParameter[] CloneParameters() => Parameters.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
 
+    internal TypeNode[] ForwardTo(ProjectedMethodPlan target, Func<TypeNode,TypeNode> physicalKey)
+    {
+        var primary = PrimaryArity;
+        if (primary != target.PrimaryArity) throw new InvalidOperationException("Projected override primary frames disagree");
+        var slots = target.Facets.Select(t => Array.FindIndex(Facets,
+            s => s.OwnerIndex == t.OwnerIndex && physicalKey(s.Bound) == physicalKey(t.Bound))).ToArray();
+        if (slots.Any(s => s < 0)) throw new InvalidOperationException("Projected override lacks an inherited witness");
+        if (slots.Length == Facets.Length && slots.Select((s, i) => s == i).All(s => s)) return null;
+        return Enumerable.Range(0, primary).Concat(slots.Select(s => primary + s))
+            .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+    }
+
+    internal ProjectedMethodPlan OnOwner(TypeNode[] arguments)
+    {
+        var parameters = CloneParameters();
+        foreach (var p in parameters)
+            if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
+        return new(parameters, FacetSources);
+    }
+
     internal sealed record Application(bool Projected, TypeNode[] Arguments);
 
     internal Application Close(TypeNode[] actual, TypeNode[] ownerArgs, BirMethodWitness[] candidates,

@@ -8,6 +8,8 @@ static partial class FBoundStarProjectionErasure
         string semanticOwner, CarrierRealizationContext context)
     {
         var slot = new BirFunctionDeclaration {
+            ExistentialCallable = ExistentialCallableRole.Slot,
+            HasNativeOverrideSlot = method.HasNativeOverrideSlot || method.RequiresClrOverride.OrDefault(),
             Name = replacement ?? method.Name.OrDefault(), Static = false, Override = false,
             Virtual = true, Abstract = true, ObjectOverride = false, Vis = "public",
             Params = EraseParamsSource(method.Params.OrDefault(), method.Name.OrDefault() ?? "<unnamed>", context),
@@ -74,6 +76,8 @@ static partial class FBoundStarProjectionErasure
         if (method.Mods.OrDefault()?.Suspend.OrDefault() == true) call.SuspendCall = true;
         var result = BirGraphValue.CopyType(EraseOwnerTv(originalRet, context.Owners, context.References));
         var bridge = new BirFunctionDeclaration {
+            ExistentialCallable = ExistentialCallableRole.Forwarder,
+            HasNativeOverrideSlot = method.HasNativeOverrideSlot || method.RequiresClrOverride.OrDefault(),
             Name = bridgeName ?? StarMethodNameSource(context.Definition(owner), method),
             Static = false, Override = false, Virtual = true, Abstract = false, ObjectOverride = false,
             Vis = "private", Params = parameters, Ret = result,

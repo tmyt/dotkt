@@ -12,6 +12,9 @@ import roundtrip.constrainedbound.ResultSource.Tagged
 import roundtrip.constrainedbound.RelatedItemSlot
 import roundtrip.constrainedbound.MarkedItemSlot
 import roundtrip.constrainedbound.MarkedSelector
+import roundtrip.constrainedbound.OwnerSelector
+import roundtrip.constrainedbound.OwnerTag
+import roundtrip.constrainedbound.OtherSelector
 import roundtrip.constrainedbound.ConcreteMarkedItem
 import roundtrip.constrainedbound.NativeFacetHolder
 import roundtrip.constrainedbound.JoinedFactory
@@ -68,6 +71,11 @@ private class ScopedBoundConsumer : ScopedBoundOwner() {
 }
 
 class ConstrainedNullableBoundTests {
+    private class TaggedItem<T>(val payload: T) : PendingItems.Item(), OwnerTag<String>, Mark
+    private class LastTagged : OwnerSelector<String>(), OtherSelector<String> {
+        override fun <A> select(left: A, right: A): A where A : PendingItems.Item, A : OwnerTag<String>, A : Mark = right
+        fun fromBase(a: TaggedItem<*>, b: TaggedItem<*>) = super.select(a, b)
+    }
     private class ClientItem<T>(val payload: T) : PendingItems.Item(), Mark
     private class FirstSelector : MarkedSelector() {
         override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : Mark = left
@@ -94,6 +102,8 @@ class ConstrainedNullableBoundTests {
         fun tag() = NativeTag<A>()
     }
     private class PartialStream<X,Y> : SharedNativeStream<X>()
+    private class IntStream<T> : SharedNativeStream<Int>(), Mark
+    private fun <A> fromIntStream(value: A): A where A : SharedNativeStream<Int>, A : Mark = value
     private class RichStream<T> : MemoryStream(), IRichProjectedMark
     private class LinkedSlot<A, B : A> where A : MemoryStream, A : IProjectedMark { var value: B? = null }
     private class RichMethodSlot<A> where A : MemoryStream, A : IRichProjectedMark {
@@ -193,6 +203,14 @@ class ConstrainedNullableBoundTests {
         val select: (ClientItem<*>, ClientItem<*>) -> ClientItem<*> = selector::selectMarked
         check(select(text, number) === text)
         check(FirstSelector().callProjectedBase(number, text) === text)
+        val firstTag = TaggedItem(1)
+        val lastTag = TaggedItem("last")
+        val tagged = LastTagged()
+        val typedOwner: OwnerSelector<String> = tagged
+        check(typedOwner.select<TaggedItem<*>>(firstTag, lastTag) === lastTag)
+        val otherOwner: OtherSelector<String> = tagged
+        check(otherOwner.select<TaggedItem<*>>(firstTag, lastTag) === lastTag)
+        check(tagged.fromBase(firstTag, lastTag) === firstTag)
         val foreign = ForeignFirstSelector()
         check(methods.fromInterface(foreign, text, number) === text)
         val exactItem = ConcreteMarkedItem()
@@ -243,6 +261,8 @@ class ConstrainedNullableBoundTests {
         check(linked.value === second)
         val partial = PartialStream<String, Int>()
         check(NativeBaseSlot<PartialStream<String, *>, MarkedStream<*>>().roundtrip(partial) === partial)
+        val localStream = IntStream<String>()
+        check(fromIntStream<IntStream<*>>(localStream) === localStream)
         val rich = RichMethodSlot<RichStream<*>>()
         val value = RichStream<Long>()
         check(rich.choose(value, value) === value && rich.witness() == "IRichProjectedMark")

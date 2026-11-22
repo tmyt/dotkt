@@ -56,9 +56,14 @@ static partial class CapturedGenericInvocation
         if (missing.Length == 0) return call;
         // A different parameter can force this storage class to split. Preserve
         // each authored native argument whose own primary still proves its facets.
-        var facets = (from i in missing
+        var proofs = (from i in missing
             from evidence in CallableWitnessScope.For(arguments[i], ownerScope, methodScope)
-            select (Slot: i, evidence.Slot.Bound)).ToArray();
+            select (Index: i, Evidence: evidence)).ToArray();
+        // Prefer the declared interface. A single actual witness may also
+        // discharge a conjunction that none of the declared facets proves alone.
+        var facets = proofs.Select(p => (Slot: p.Index, Bound: p.Evidence.Slot.Bound))
+            .Concat(proofs.Select(p => (Slot: p.Index, Bound: (TypeNode)p.Evidence.Variable)))
+            .Distinct().ToArray();
         var formal = selected.GetParameters();
         bool typed = (receiver != null && selected.DeclaringType.IsValueType)
             || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType);

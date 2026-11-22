@@ -428,9 +428,7 @@ static partial class FBoundStarProjectionErasure
                 var actual = NativeArgument(slot.Primary);
                 if (slot.NativeArgument) return actual;
                 if (actual is not TypeNode.Fqn candidate || bound is not TypeNode.Fqn facet) return bound;
-                synthesizedHierarchy ??= SupertypeGraph.CollectSource(Preparation.Bindings.SourceRoots
-                    .Select(r => (BirFileDeclaration)r.Source));
-                return SupertypeGraph.Reaches(candidate, facet, synthesizedHierarchy, References) ? actual : bound;
+                return HasPhysicalSupertype(candidate, facet) ? actual : bound;
             }
             if (plan == null || unproven || required.Any(r => !plan.Facets.Any(s =>
                 s.Primary == r.OwnerIndex && ConstraintKey(SupertypeGraph.SubstOwnerTvs(s.Bound, primary)) == ConstraintKey(r.Bound)))) return null;
@@ -455,6 +453,13 @@ static partial class FBoundStarProjectionErasure
             var method = slot.Entry.LocalMethod;
             return SharedClassWitness(slot, closeArgument, method == null ? null
                 : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(method, i, bound)), allowIntersection: true);
+        }
+
+        bool HasPhysicalSupertype(TypeNode.Fqn candidate, TypeNode.Fqn required)
+        {
+            synthesizedHierarchy ??= SupertypeGraph.CollectSource(Preparation.Bindings.SourceRoots
+                .Select(r => (BirFileDeclaration)r.Source));
+            return SupertypeGraph.Reaches(candidate, required, synthesizedHierarchy, References);
         }
 
         StorageWitness SharedClassWitness(WitnessSlot selected,
@@ -522,8 +527,9 @@ static partial class FBoundStarProjectionErasure
                 // The value, not its common base, must implement each additional interface.
                 // Only a projected implementation with independent slots may use this proof.
                 if (allowIntersection && split == null && missing.All(bound => bound is TypeNode.Fqn required
-                    && !ContainsExistentialProjection(required) && supers.Any(edge => edge.isInterface
-                        && Identity(edge.spec) == Identity(required))))
+                    && !ContainsExistentialProjection(required) && (supers.Any(edge => edge.isInterface
+                        && Identity(edge.spec) == Identity(required)) || TryExistentialCarrier(application.Name, out var carrier)
+                        && HasPhysicalSupertype(new TypeNode.Fqn(carrier), required))))
                     split = new(ancestor, declared.Where(r => missing.Contains(r.Bound))
                         .Select(r => (r.Index, (TypeNode.Fqn)r.Bound)).ToArray());
             }

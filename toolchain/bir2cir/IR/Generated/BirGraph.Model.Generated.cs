@@ -414,8 +414,8 @@ internal sealed record BirMethodWitness : BirGraphValue
         Func<string, BirPhysicalTypeRole, TypeNode[], TypeNode[]> vector,
         Action<string, BirPhysicalTypeRole, BirGraphSlot> child)
     {
-        if (Primary.HasValue) Primary = OptionalField<TypeNode>.Of(type("primary", BirPhysicalTypeRole.Structural, Primary.Value));
-        if (Interfaces.HasValue) Interfaces = OptionalField<TypeNode[]>.Of(vector("interfaces", BirPhysicalTypeRole.Interfaces, Interfaces.Value));
+        if (Primary.HasValue) Primary = OptionalField<TypeNode>.Of(type("primary", BirPhysicalTypeRole.GenericArgument, Primary.Value));
+        if (Interfaces.HasValue) Interfaces = OptionalField<TypeNode[]>.Of(vector("interfaces", BirPhysicalTypeRole.GenericArgument, Interfaces.Value));
     }
     public override void VisitStringFields(Action<string> visit)
     {
@@ -11159,6 +11159,7 @@ internal sealed record BirDeclarationPosition : BirGraphValue
 internal sealed record BirFunctionDeclaration : BirGraphValue
 {
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
+    internal ExistentialCallableRole ExistentialCallable { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }
     internal bool SourceCallableVirtual { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }
