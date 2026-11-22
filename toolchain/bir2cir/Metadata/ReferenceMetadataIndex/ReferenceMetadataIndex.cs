@@ -2337,7 +2337,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return bindings;
     }
 
-    internal string RecordedPhysicalTypeName(string sourceName) => PhysicalTypeNames.GetValueOrDefault(sourceName, sourceName);
+    internal string RecordedPhysicalTypeName(string sourceName) => !IsLocalEmittedType(sourceName)
+        && _physicalTypeBySemanticName.TryGetValue(sourceName, out var physical) ? physical : sourceName;
 
     // Kotlin inner applications arrive in BIR as [own..., outer...]. Trusted DotKt metadata supplies the number of
     // semantic outer slots for referenced declarations; TypeOwnershipLowering alone projects them to CLR's flattened
