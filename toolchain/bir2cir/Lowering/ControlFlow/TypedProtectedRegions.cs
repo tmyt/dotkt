@@ -46,7 +46,7 @@ static class TypedProtectedRegions
     }
 
     internal static BirGraphSlot[] Statements(IBirStatement[] nodes) => Slots(nodes);
-    static BirGraphSlot[] Expressions(IBirExpression[] nodes) => Slots(nodes);
+    internal static BirGraphSlot[] Expressions(IBirExpression[] nodes) => Slots(nodes);
     static BirGraphSlot[] Slots<T>(T[] nodes) where T : class
     {
         var result = new BirGraphSlot[nodes.Length];
@@ -84,17 +84,17 @@ static class TypedProtectedRegions
         foreach (var part in parts) DropLabels(part.Value);
     }
 
-    internal static List<Edge> Edges(IReadOnlyList<BirGraphSlot> parts)
+    internal static List<Edge> Edges(IReadOnlyList<BirGraphSlot> parts, bool externalOnly = false)
     {
         var labels = new Dictionary<int, IBirStatement[][]>();
         var edges = new List<Edge>();
-        foreach (var part in parts) Visit(part, [], new(), labels, null);
-        foreach (var part in parts) Visit(part, [], new(), labels, edges);
+        foreach (var part in parts) Visit(part, [], new(), labels, null, externalOnly);
+        foreach (var part in parts) Visit(part, [], new(), labels, edges, externalOnly);
         return edges;
     }
 
     static void Visit(BirGraphSlot slot, IBirStatement[][] region, List<Loop> loops,
-        Dictionary<int, IBirStatement[][]> labels, List<Edge> edges)
+        Dictionary<int, IBirStatement[][]> labels, List<Edge> edges, bool externalOnly)
     {
         var node = slot.Value;
         if (node is BirLabel labelNode && edges == null) labels.Add(labelNode.Id.Value, region);
@@ -104,16 +104,19 @@ static class TypedProtectedRegions
             int? loopId = null;
             switch (node)
             {
-                case BirGoto jump: target = labels[jump.Id.Value]; break;
-                case BirBranchIf jump: target = labels[jump.Id.Value]; break;
+                case BirGoto jump: target = externalOnly ? labels.GetValueOrDefault(jump.Id.Value) : labels[jump.Id.Value]; break;
+                case BirBranchIf jump: target = externalOnly ? labels.GetValueOrDefault(jump.Id.Value) : labels[jump.Id.Value]; break;
                 case BirBreak jump: SelectLoop(jump.Label.OrDefault()); break;
                 case BirContinue jump: SelectLoop(jump.Label.OrDefault()); break;
-                case BirReturn or BirReturnExpression: target = []; break;
+                case BirReturn or BirReturnExpression: target = externalOnly ? null : []; break;
             }
-            if (target != null) edges.Add(new(slot, region, target, loopId));
+            if (externalOnly ? target == null && node is (BirGoto or BirBranchIf or BirBreak or BirContinue or BirReturn or BirReturnExpression) :
+                target != null) edges.Add(new(slot, region, target, loopId));
             void SelectLoop(string label)
             {
-                var loop = loops.Last(loop => label == null || loop.Label == label);
+                var loop = externalOnly ? loops.LastOrDefault(loop => label == null || loop.Label == label) :
+                    loops.Last(loop => label == null || loop.Label == label);
+                if (loop == null) return;
                 target = loop.Region;
                 loopId = loop.Id;
             }
@@ -127,22 +130,22 @@ static class TypedProtectedRegions
         }
         if (Shape(node) is { } shape)
         {
-            var id = edges == null ? Interlocked.Increment(ref _loopId) : shape.Id;
-            if (edges == null) shape.SetId(id);
+            var id = edges == null && !externalOnly ? Interlocked.Increment(ref _loopId) : shape.Id;
+            if (edges == null && !externalOnly) shape.SetId(id);
             var bodyNodes = new HashSet<BirGraphValue>(shape.Body.Cast<BirGraphValue>(), ReferenceEqualityComparer.Instance);
-            node.VisitChildSlots(child => { if (!bodyNodes.Contains(child.Value)) Visit(child, region, loops, labels, edges); });
+            node.VisitChildSlots(child => { if (!bodyNodes.Contains(child.Value)) Visit(child, region, loops, labels, edges, externalOnly); });
             loops.Add(new(shape.Label, region, id));
-            foreach (var child in Statements(shape.Body)) Visit(child, region, loops, labels, edges);
+            foreach (var child in Statements(shape.Body)) Visit(child, region, loops, labels, edges, externalOnly);
             loops.RemoveAt(loops.Count - 1);
             return;
         }
-        node.VisitCurrentFrameSlots(child => Visit(child, region, loops, labels, edges));
+        node.VisitCurrentFrameSlots(child => Visit(child, region, loops, labels, edges, externalOnly));
 
         void InRegion(OptionalField<IBirStatement[]> body)
         {
             if (!body.HasValue) return;
             var path = region.Append(body.Value).ToArray();
-            foreach (var child in Statements(body.Value)) Visit(child, path, loops, labels, edges);
+            foreach (var child in Statements(body.Value)) Visit(child, path, loops, labels, edges, externalOnly);
         }
     }
 

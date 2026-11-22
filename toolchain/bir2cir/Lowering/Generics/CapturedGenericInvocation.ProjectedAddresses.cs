@@ -33,7 +33,7 @@ static partial class CapturedGenericInvocation
     static BirGraphValue ProjectAddressCall(Invocation site, AddressTarget selected, TypeNode.Fqn owner,
         (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
         LexicalTarget lexical, BirCallStatic access, TypeNode[] closureArguments, Dictionary<int, TypeNode> fixedAddresses = null,
-        CaptureRow[] captures = null, TypeNode capturedResult = null)
+        CaptureRow[] captures = null, TypeNode capturedResult = null, LiveResultUse resultUse = null)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
@@ -114,9 +114,22 @@ static partial class CapturedGenericInvocation
         var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(selected.Result);
         var result = capturedResult ?? CallerFrame(nativeResult);
         var forwardResult = AdapterFrame(nativeResult);
-        var unit = IsVoid(nativeResult);
-        var (contractResult, implResult) = unit ? (result, result) : BoundarySlot(result, forwardResult,
-            selected.TypedResult);
+        Func<IBirExpression, IBirExpression[], IBirExpression> consume = null;
+        var environment = new List<IBirExpression>();
+        bool consumed = false;
+        if (selected.TypedResult && resultUse != null && resultUse.TryClose(forwardResult, adapterFrame, refs, out var ordinary, out consume))
+        {
+            result = ordinary; consumed = true;
+            foreach (var (environmentType, value) in resultUse.Environment)
+            {
+                environment.Add(Local(signature.Count));
+                var declared = resultUse.InInvoke(environmentType);
+                signature.Add(declared); implSignature.Add(declared); operands.Add(value);
+            }
+        }
+        var unit = IsVoid(consumed ? result : nativeResult);
+        var (contractResult, implResult) = consumed ? (resultUse.InInvoke(result), resultUse.InInvoke(result))
+            : unit ? (result, result) : BoundarySlot(result, forwardResult, selected.TypedResult);
         TypeNode.Fqn Contract(List<TypeNode> frame) => new(contractName, frame.Count == 0 ? null : frame.ToArray());
         var callerContract = Contract(contractArgs);
         BirGraphValue forward = lexical == null ? site.Forward(adapterOwner, authored.Length, selectedSignature, forwardResult, site.Member == null) :
@@ -148,20 +161,22 @@ static partial class CapturedGenericInvocation
         }
         BirFunctionDeclaration Method(List<TypeNode> parameters, TypeNode ret, bool abstractMethod, IBirStatement[] body) => new() {
             Name = "Invoke", Static = false, Vis = "public", Abstract = abstractMethod, Virtual = true, Override = false,
-            TypeParams = Array.Empty<BirTypeParameter>(), Ret = ret, Body = body, Attrs = Array.Empty<BirAttribute>(),
+            TypeParams = consumed ? resultUse.InvokeFrame : [], Ret = ret, Body = body, Attrs = Array.Empty<BirAttribute>(),
             Params = parameters.Select((p,i) => new BirParameter { Name = "p"+i, Type = p }).ToArray(),
         };
         generated.Add(new BirInterfaceDefinition {
             Name = contractName, Kind = "interface", Generated = true, Vis = "internal",
+            NestedIn = consumed ? resultUse.LexicalOwner : default(OptionalField<string>),
             TypeParams = contractArgs.Select((_, i) => new BirTypeParameter { Name = "P"+i, SpecialConstraints = new[]{"allowsRefStruct"} }).ToArray(),
             Interfaces = Array.Empty<TypeNode>(), Fields = Array.Empty<BirFieldDeclaration>(), Ctors = Array.Empty<BirConstructor>(),
             Methods = new[]{ Method(signature, contractResult, true, []) }, Attrs = Array.Empty<BirAttribute>(),
         });
-        var invocation = (IBirExpression)forward;
+        var invocation = consumed ? consume((IBirExpression)forward, environment.ToArray()) : (IBirExpression)forward;
         IBirStatement[] body = unit ? [new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(invocation) }, new BirReturn()]
             : [new BirReturn { Value = OptionalField<IBirExpression>.Of(implResult == Object ? Cast(Object, invocation) : invocation) }];
         generated.Add(new BirClassDefinition {
             Name = adapterName, Kind = "class", Generated = true, Vis = "internal", TypeParams = adapterFrame,
+            NestedIn = consumed ? resultUse.LexicalOwner : default(OptionalField<string>),
             Interfaces = new TypeNode[]{Contract(implementationArgs)}, Fields = Array.Empty<BirFieldDeclaration>(), Attrs = Array.Empty<BirAttribute>(),
             Ctors = new[]{new BirConstructor { Vis = "public", Params = Array.Empty<BirParameter>(), BaseArgs = OptionalField<IBirExpression[]>.Null,
                 Body = Array.Empty<IBirStatement>() }}, Methods = new[]{Method(implSignature, implResult, false, body)},
@@ -184,11 +199,14 @@ static partial class CapturedGenericInvocation
                 NewArray(Type, closureArguments.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
                 NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))),
                 NewArray(Object, witnesses), NewArray(Type, invariantTypes), CaptureOwners(captures), CaptureCoordinates(captures) } };
-        var closedResult = SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());
+        var closedResult = consumed ? result : SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());
         var invoke = new BirCallInstance { OwnerType = callerContract, Method = "Invoke", Virtual = true, Recv = Cast(callerContract, create),
             Sig = signature.ToArray(), Ret = closedResult, CalleeRet = contractResult, Args = operands.ToArray() };
+        if (consumed && resultUse.InvokeArguments is { Length: > 0 } frame) invoke.TypeArgs = frame;
         ForeignStarProjectionBinding.RequireRuntimeFallback();
-        return new BirValueBlock { Type = result, Stmts = statements.ToArray(),
+        var block = new BirValueBlock { Type = result, Stmts = statements.ToArray(),
             Result = OptionalField<IBirExpression>.Of(closedResult.Equals(result) ? invoke : Cast(result, invoke)) };
+        if (consumed) resultUse.Replacement = block;
+        return block;
     }
 }

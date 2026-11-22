@@ -12,6 +12,8 @@ static partial class CapturedGenericInvocation
         readonly bool flattenMissingOwners;
         readonly Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType;
         internal bool HasDeferredFixedCalls { get; private set; }
+        readonly Dictionary<BirGraphValue, (CallableWitnessScope Owner, CallableWitnessScope Method)> resultScopes =
+            new(ReferenceEqualityComparer.Instance);
         readonly Func<TypeNode, TypeNode.Fqn> captureConstruction;
 
         internal PreparedInvocation(Dictionary<string, List<MethodBinding>> declarations,
@@ -24,6 +26,7 @@ static partial class CapturedGenericInvocation
             bool finishFixedCalls = false)
         {
             var generated = new List<IBirTypeDeclaration>();
+            var liveResults = new Dictionary<BirGraphValue, LiveResultUse>(ReferenceEqualityComparer.Instance);
             BirGraphValue root = file;
             Walk(new BirGraphSlot(() => root, replacement => root = replacement), [], [], file.FileClass.OrDefault(), new());
             if (!ReferenceEquals(root, file)) throw new InvalidOperationException("Captured invocation replaced an owning file");
@@ -34,15 +37,24 @@ static partial class CapturedGenericInvocation
             }
 
             void Walk(BirGraphSlot slot, BirTypeParameter[] ownerFrame, BirTypeParameter[] methodFrame,
-                string lexicalOwner, Dictionary<string, TypeNode> incoming)
+                string lexicalOwner, Dictionary<string, TypeNode> incoming, TypeNode lexicalReturn = null, bool resultFrame = false)
             {
                 var node = slot.Value;
                 if (node == null || node is IBirExecutablePayload) return;
+                liveResults.TryGetValue(node, out var resultUse);
+                if (ResultExpression(node, methodFrame, lexicalReturn, refs, finishFixedCalls, LocalConsumer, out var relay) is { } region)
+                {
+                    BirGraphValue regionRoot = region;
+                    Walk(new BirGraphSlot(() => regionRoot, value => regionRoot = value), ownerFrame, methodFrame, lexicalOwner, incoming, resultFrame: true);
+                    slot.Replace(ExpressionBody(region, relay));
+                    return;
+                }
                 if (node is IBirTypeDeclaration owner && owner.Kind.OrDefault() is "class" or "interface" or "struct")
                 { ownerFrame = TypeParameterFrame.CloneDeclarations(owner); lexicalOwner = owner.Name.OrDefault(); }
                 if (node is BirFunctionDeclaration { Params.HasValue: true, Body.HasValue: true } function)
-                    methodFrame = function.TypeParams.OrEmpty();
-                else if (node is BirConstructor { Params.HasValue: true, Body.HasValue: true }) methodFrame = [];
+                { methodFrame = function.TypeParams.OrEmpty(); lexicalReturn = function.Ret.OrDefault(); }
+                else if (node is BirConstructor { Params.HasValue: true, Body.HasValue: true })
+                { methodFrame = []; lexicalReturn = new TypeNode.Fqn("void"); }
                 var scope = incoming;
                 var parameters = node switch {
                     BirFunctionDeclaration method => method.Params.OrEmpty(), BirConstructor ctor => ctor.Params.OrEmpty(),
@@ -54,6 +66,77 @@ static partial class CapturedGenericInvocation
                     foreach (var parameter in parameters)
                         if (parameter.Name.HasValue && parameter.Type.HasValue) scope[parameter.Name.Value] = parameter.Type.Value;
                 }
+                if (!resultFrame && node is (BirFunctionDeclaration or BirConstructor or BirBlock or BirBranch or BirValueBlock or BirCatch or BirTry or BirFor or BirForArray or
+                    BirForRange or BirForEach or BirRepeat or BirWhile))
+                    node.VisitSourceChildren((_, _, _) => {}, nested => {
+                        if (nested.ReplaceStatements == null) return;
+                        var statements = nested.Statements;
+                        // An inline block used as a local initializer belongs
+                        // to this same Kotlin frame. Keep its consumer in the
+                        // producer's region, rather than exporting the span.
+                        List<IBirStatement> flat = null;
+                        for (int i = 0; i < statements.Length; i++)
+                        {
+                            var stmt = statements[i];
+                            if (stmt is BirVariable { Init.HasValue: true, Type.HasValue: true } v &&
+                                v.Init.Value is BirValueBlock b && ByRefLike(v.Type.Value, refs) &&
+                                LiveResultUse.BlockProducer(b, refs, finishFixedCalls) >= 0)
+                            {
+                                flat ??= new(statements[..i]);
+                                flat.AddRange(b.Stmts.Value);
+                                v.Init = b.Result;
+                            }
+                            flat?.Add(stmt);
+                        }
+                        if (flat != null) nested.ReplaceStatements(statements = flat.ToArray());
+                        var first = Array.FindIndex(statements, s => LiveResultUse.ProducerOf(s, refs, finishFixedCalls) != null);
+                        if (first < 0) return;
+                        int end = LiveResultUse.SingleEntryEnd(statements, first);
+                        // Ordinary tail returns can return directly through
+                        // the adapter. Only a jump back into the caller needs
+                        // the same transfer envelope as a nested statement.
+                        if (node is BirFunctionDeclaration && end == statements.Length &&
+                            TypedProtectedRegions.Edges(TypedProtectedRegions.Statements(statements[(first+1)..]), externalOnly: true)
+                                .All(e => e.Slot.Value is BirReturn or BirReturnExpression)) return;
+                        var before = statements[..first];
+                        var prefix = new List<IBirStatement> { statements[first] };
+                        var rest = statements[(first+1)..end];
+                        var parts = TypedProtectedRegions.Statements(rest).AsEnumerable();
+                        var output = end == statements.Length ? nested.Result : null;
+                        if (output is { } resultSlot) parts = parts.Append(resultSlot);
+                        var inner = BodyScope(node, scope);
+                        foreach (var s in before) Declare((BirGraphValue)s, inner);
+                        var ret = output != null && node is BirValueBlock vb ? vb.Type.OrDefault() ??
+                            physicalType(output.Value.Value, inner) : new TypeNode.Fqn("void");
+                        var exits = ResultReturn.Extract(parts.ToArray(), lexicalReturn, ret, prefix);
+                        prefix.AddRange(rest);
+                        var value = output?.Value as IBirExpression ??
+                            new BirConstant { Type = ret, Value = new BirLiteral.NullLiteral() };
+                        var fn = ResultFrame(prefix, value, ret, methodFrame, exits);
+                        BirGraphValue owned = fn;
+                        Walk(new BirGraphSlot(() => owned, replacement => owned = replacement), ownerFrame, methodFrame, lexicalOwner, inner, resultFrame: true);
+                        var lowered = ExpressionBody(fn, exits);
+                        if (output is { } tail)
+                        {
+                            nested.ReplaceStatements([..before, ..lowered.Stmts.Value]);
+                            tail.Replace((BirGraphValue)lowered.Result.Value);
+                        }
+                        else nested.ReplaceStatements([..before, new BirExpressionStatement { Expr = lowered }, ..statements[end..]]);
+                    });
+                LiveResultUse live = null;
+                IBirTypeDeclaration host = null;
+                if (node is BirFunctionDeclaration enclosing && lexicalOwner != null &&
+                    (lexicalOwner == file.FileClass.OrDefault() || (host = definitions.GetValueOrDefault(lexicalOwner)?.Type) != null))
+                {
+                    string AllocateHelper() {
+                        var methods = (host != null ? host.Methods : file.Methods).OrEmpty();
+                        string name;
+                        do name = "dotkt$consumeResult$" + _next++; while (methods.Any(m => m.Name.OrDefault() == name));
+                        return name;
+                    }
+                    live = LiveResultUse.Find(enclosing, lexicalOwner, ownerFrame, host?.Kind.OrDefault() == "struct", refs, scope, AllocateHelper, finishFixedCalls);
+                    if (live != null) liveResults.Add(live.Producer, live);
+                }
                 if (node is BirValueBlock block)
                 {
                     var inner = new Dictionary<string, TypeNode>(scope, StringComparer.Ordinal);
@@ -62,12 +145,12 @@ static partial class CapturedGenericInvocation
                     {
                         var position = index;
                         Walk(new BirGraphSlot(() => (BirGraphValue)statements[position], value => statements[position] = (IBirStatement)value),
-                            ownerFrame, methodFrame, lexicalOwner, inner);
+                            ownerFrame, methodFrame, lexicalOwner, inner, lexicalReturn);
                         Declare(statements[position] as BirGraphValue, inner);
                     }
                     if (block.Result.HasValue)
                         Walk(new BirGraphSlot(() => (BirGraphValue)block.Result.Value,
-                            value => block.Result = OptionalField<IBirExpression>.Of((IBirExpression)value)), ownerFrame, methodFrame, lexicalOwner, inner);
+                            value => block.Result = OptionalField<IBirExpression>.Of((IBirExpression)value)), ownerFrame, methodFrame, lexicalOwner, inner, lexicalReturn);
                 }
                 else
                 {
@@ -78,17 +161,35 @@ static partial class CapturedGenericInvocation
                     var scopes = new Dictionary<string, Dictionary<string, TypeNode>>(StringComparer.Ordinal);
                     foreach (var (field, child) in children)
                     {
-                        if (!scopes.TryGetValue(field, out var inner)) scopes[field] = inner = new(scope, StringComparer.Ordinal);
-                        Walk(child, ownerFrame, methodFrame, lexicalOwner, inner);
+                        // The rest of this body belongs to the lexical continuation.
+                        // Its captures must open there, in the extended method frame.
+                        if (live?.Replacement != null && field == "body") continue;
+                        if (!scopes.TryGetValue(field, out var inner)) scopes[field] = inner = field == "body" ?
+                            BodyScope(node, scope) : new(scope, StringComparer.Ordinal);
+                        Walk(child, ownerFrame, methodFrame, lexicalOwner, inner, lexicalReturn);
                         Declare(child.Value, inner);
                     }
                 }
-                if (node.MethodWitnessFacts.HasValue && Invocation.Admits(node) &&
-                    FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated,
-                        deferVariableArguments: !finishFixedCalls) is { } fixedCall)
+                if (live != null)
                 {
-                    slot.Replace(fixedCall);
-                    return;
+                    liveResults.Remove(live.Producer);
+                    if (live.Replacement != null)
+                    {
+                        var helper = live.Finish(LocalConsumer, refs);
+                        BirGraphValue helperRoot = helper;
+                        Walk(new BirGraphSlot(() => helperRoot, value => helperRoot = value),
+                            ownerFrame, [], lexicalOwner, new());
+                        if (host != null) host.Methods = host.Methods.OrEmpty().Append(helper).ToArray();
+                        else file.Methods = file.Methods.OrEmpty().Append(helper).ToArray();
+                    }
+                }
+                if (node.MethodWitnessFacts.HasValue && Invocation.Admits(node))
+                {
+                    resultScopes.Remove(node, out var projectedScope);
+                    if (FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated,
+                        deferVariableArguments: !finishFixedCalls, classScope: projectedScope.Owner,
+                        methodScope: projectedScope.Method, resultUse: resultUse) is { } fixedCall)
+                    { slot.Replace(fixedCall); return; }
                 }
                 if (finishFixedCalls) return;
                 var capture = TakeCaptureFacts(node);
@@ -100,10 +201,16 @@ static partial class CapturedGenericInvocation
             }
         }
 
+        BirFunctionDeclaration LocalConsumer(Invocation site) =>
+            (site.Node.SelectedGenericCallable ?? site.Node.DeclarationIdentityFact.OrDefault()) is string id &&
+            site.Owner is TypeNode.Fqn owner && declarations.TryGetValue(id, out var matches)
+                ? matches.SingleOrDefault(m => m.Owner == owner.Name && m.Method.Name.OrDefault() == site.Method)?.Method : null;
+
         internal BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
             HashSet<string> emitted, List<IBirTypeDeclaration> generated, bool deferVariableArguments = false,
             CallableWitnessScope classScope = default, CallableWitnessScope methodScope = default,
-            Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null)
+            Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null, LiveResultUse resultUse = null,
+            bool projectingBody = false)
         {
             var occurrence = call.Node;
             call = SelectedInvocation(call, out var access);
@@ -113,6 +220,17 @@ static partial class CapturedGenericInvocation
                 ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method)?.Method : null;
             if (!(id == null && call.Member != null) && call.Node is not (BirGenericInstance or BirGenericStatic) &&
                 !ProjectedCallableEntries.HasFixedAbi(local, id, refs)) return null;
+            if (projectingBody && LiveResultUse.InCurrentPass(occurrence, true) &&
+                SignatureValueTypes.Of(call.Member.ReturnType.Value) is { } storage &&
+                (storage is TypeNode.ByRef || ByRefLike(storage, refs)))
+            {
+                // This walk owns the split frame but not the consuming
+                // expression. Keep its witnesses on the occurrence until
+                // both the producer and its consumer can be closed together.
+                HasDeferredFixedCalls = true;
+                resultScopes[occurrence] = (classScope, methodScope);
+                return occurrence;
+            }
             // A physical copy may split a second argument that still names a lexical
             // variable here. Keep the selected call until that copy has its own frame.
             if (deferVariableArguments && call.TypeArguments.Value.Any(t => t is TypeNode.Tv))
@@ -187,7 +305,7 @@ static partial class CapturedGenericInvocation
                 return name;
             }
             return typed || access != null ? ProjectAddressCall(call, target, owner, facets, refs, allocate ?? Allocate, generated, lexical, access, authored,
-                captures: rows, capturedResult: capturedResult)
+                captures: rows, capturedResult: capturedResult, resultUse: resultUse)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
                     lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs, rows);
         }
@@ -209,6 +327,20 @@ static partial class CapturedGenericInvocation
 
         static void Declare(BirGraphValue node, Dictionary<string, TypeNode> scope)
         { if (node is BirVariable { Name.HasValue: true, Type.HasValue: true } variable) scope[variable.Name.Value] = variable.Type.Value; }
+
+        static Dictionary<string, TypeNode> BodyScope(BirGraphValue owner, Dictionary<string, TypeNode> outer)
+        {
+            var inner = new Dictionary<string, TypeNode>(outer, StringComparer.Ordinal);
+            var (id, type) = owner switch {
+                BirCatch c => (c.Var.OrDefault(), c.ExcType.OrDefault()),
+                BirForArray f => (f.Var.OrDefault(), f.Elem.OrDefault()),
+                BirForEach f => (f.Var.OrDefault(), f.Elem.OrDefault()),
+                BirFor f => (f.Var.OrDefault(), Int), BirForRange f => (f.Var.OrDefault(), Int),
+                BirRepeat r => (r.Var.OrDefault(), Int), _ => (null, null),
+            };
+            if (id != null && type != null) inner[id] = type;
+            return inner;
+        }
 
         CaptureRow[] CaptureRows(CaptureFacts capture, TypeNode[] declarationParameters, ReferenceMetadataIndex refs)
         {

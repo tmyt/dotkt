@@ -8,6 +8,32 @@ public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public sealed class NativeResultProbe
+{
+    private System.Array backing;
+    public ref T Location<T>(T value) where T : System.IO.MemoryStream, IProjectedMark
+    {
+        T[] values = [value];
+        backing = values;
+        return ref values[0];
+    }
+    public System.Span<T> Slice<T>(T value) where T : System.IO.MemoryStream, IProjectedMark
+    {
+        T[] values = [value, default];
+        backing = values;
+        return values;
+    }
+    public object Read(int index) => backing.GetValue(index);
+    public static void Replace<T>(ref T location, T value) where T : System.IO.MemoryStream, IProjectedMark =>
+        location = value;
+    public static int Size<T>(System.Span<T> values) => values.Length;
+    public void WriteSecond<T>(int before, System.Span<T> values, int after, T replacement)
+        where T : System.IO.MemoryStream, IProjectedMark
+    {
+        if (before != 1 || after != 3) throw new System.InvalidOperationException("Unexpected operand order");
+        values[1] = replacement;
+    }
+}
 public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMark
 {
     public T FromNative(T item) => item;

@@ -57,6 +57,7 @@ import GenericValueInterop.ForeignFirstSelector
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
 import GenericValueInterop.NativeBoxApi
+import GenericValueInterop.NativeResultProbe
 import System.IO.MemoryStream
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
@@ -117,6 +118,8 @@ class ConstrainedNullableBoundTests {
 
     @TestAttribute
     fun projectedManagedReferencesPreserveLocationsThroughDispatch() {
+        check(LocationCaller("marker").checkLocations(MarkedStream<Int>(), MarkedStream<Int>(),
+            MarkedStream<String>(), MarkedStream<String>(), "marker", 42) == 42)
         val first = ClientItem(1)
         val second = ClientItem("two")
         val cell = Cell(first)
@@ -161,6 +164,57 @@ class ConstrainedNullableBoundTests {
         fun absent(): A? = absentMarked<A>()
     }
     private open class MarkedStream<T> : MemoryStream(), IProjectedMark
+    private class LocationCaller<C>(private val marker: C) {
+        fun <M> checkLocations(first: MarkedStream<*>, next: MarkedStream<*>, second: MarkedStream<*>,
+                               otherNext: MarkedStream<*>, expected: C, result: M): M {
+            val probe = NativeResultProbe()
+            val other = NativeResultProbe()
+            var visits = 0
+            while (visits < 3) {
+                var current by byref(probe.Location<MarkedStream<*>>(first))
+                if (++visits == 1) continue
+                current = next
+                if (probe.Read(0) === next) break
+            }
+            check(visits == 2)
+            var live by byref(probe.Location<MarkedStream<*>>(first))
+            var otherLive by byref(other.Location<MarkedStream<*>>(second))
+            check(live === first && otherLive === second)
+            otherLive = otherNext
+            NativeResultProbe.Replace<MarkedStream<*>>(byref(live), next)
+            check(probe.Read(0) === next && other.Read(0) === otherNext)
+            check(marker == expected)
+            return result
+        }
+    }
+    @TestAttribute
+    fun projectedNativeSpanRetainsItsElementTypeAcrossTheConsumer() {
+        check(checkProjectedSpan(MarkedStream<Int>(), MarkedStream<Int>(), false) == 3)
+        check(checkProjectedSpan(MarkedStream<Int>(), MarkedStream<Int>(), true) == 2)
+        check(lengthThroughBlock(MarkedStream<Int>(), false) == 2)
+        check(lengthThroughBlock(MarkedStream<Int>(), true) == 19)
+    }
+    private fun <T> spanLength(values: kotlin.clr.Span<T>): Int = NativeResultProbe.Size(values)
+    private fun lengthThroughBlock(stream: MarkedStream<*>, stop: Boolean): Int {
+        val saved = run {
+            val s = NativeResultProbe().Slice(stream)
+            if (stop) return 19
+            s
+        }
+        return spanLength(saved)
+    }
+    private fun checkProjectedSpan(stream: MarkedStream<*>, replacement: MarkedStream<*>, stop: Boolean): Int {
+        val probe = NativeResultProbe()
+        check(NativeResultProbe.Size(probe.Slice<MarkedStream<*>>(stream)) == 2)
+        val saved = probe.Slice<MarkedStream<*>>(stream)
+        val alias = saved
+        check(spanLength(alias) == 2)
+        var step = 0
+        probe.WriteSecond(++step, probe.Slice<MarkedStream<*>>(stream.also { check(++step == 2) }),
+            if (stop) return step else ++step, replacement)
+        check(probe.Read(1) === replacement)
+        return step
+    }
     private class LongStream : MarkedStream<Long>()
     private class NativeRecord<A>(var item: A) : IMarkedRecord<A> where A : MemoryStream, A : IProjectedMark {
         override fun Read(): A = item
