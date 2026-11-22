@@ -7,8 +7,9 @@ using DotKt.Cir;
 // method variables in members never need to be renumbered.
 sealed class ProjectedClassStorageFrame
 {
+    internal record WitnessSlot(int OwnerIndex, TypeNode Bound, bool NativeArgument);
     internal sealed record InterfaceSlot(int OwnerIndex, int BoundIndex, TypeNode Bound, TypeNode[] PrimaryBounds = null,
-        bool NativeArgument = false);
+        bool NativeArgument = false) : WitnessSlot(OwnerIndex, Bound, NativeArgument);
     internal readonly InterfaceSlot[] Interfaces;
     readonly BirTypeParameter[] original;
     internal int PrimaryArity => original.Length;

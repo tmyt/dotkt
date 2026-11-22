@@ -49,6 +49,11 @@ internal abstract record BirGraphValue
         get => default;
         set => throw new InvalidOperationException("This graph occurrence has no application type arguments");
     }
+    internal virtual OptionalField<BirMethodWitness[]> MethodWitnessFacts
+    {
+        get => default;
+        set => throw new InvalidOperationException("Not a generic method application");
+    }
     public virtual OptionalField<TypeNode> SuspendFunctionTypeFact
     {
         get => default;

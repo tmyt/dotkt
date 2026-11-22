@@ -973,6 +973,7 @@ static class ReferenceMetadataReader
             KotlinInnerConstructorFactoryAttr,
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(RoundtripMetadata.AKProjectedConstructor, HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(RoundtripMetadata.AKProjectedMethod, HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
             KotlinDeclarationIdentityAttr,
             HandleKind.MethodDefinition);
@@ -1512,6 +1513,11 @@ static class ReferenceMetadataReader
             throw new InvalidDataException($"malformed trusted {attrFullName} carrier", ex);
         }
     }
+
+    internal static int[] ProjectedMethodFacetSources(MethodBase declaration) =>
+        CarrierJsonOf(declaration.GetCustomAttributesData(), declaration.DeclaringType.Assembly,
+            RoundtripMetadata.AKProjectedMethod)?["facets"] is JsonArray rows ? rows.Select(row => (int)row).ToArray()
+            : throw new InvalidDataException($"Missing projected method mapping on {declaration}");
 
     internal static ProjectedConstructorPlan ReadConstructorPlan(MethodBase declaration, MethodBase factory,
         Func<TypeNode, TypeNode> physical, bool nativeNames)

@@ -72,6 +72,7 @@ class ConstrainedNullableBoundTests {
     private class FirstSelector : MarkedSelector() {
         override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : Mark = left
         fun callBase(left: ClientItem<Long>, right: ClientItem<Long>) = super.selectMarked(left, right)
+        fun callProjectedBase(left: ClientItem<*>, right: ClientItem<*>) = super.selectMarked(left, right)
     }
     private class MethodSlot<A> where A : PendingItems.Item, A : Mark {
         fun newSlot() = MarkedItemSlot<A>()
@@ -185,6 +186,13 @@ class ConstrainedNullableBoundTests {
         check(methods.pick(FirstSelector(), number, text) === number)
         check(methods.fromInterface(FirstSelector(), text, number) === text)
         check(FirstSelector().callBase(ClientItem(1L), number) === number)
+        val selector: MarkedSelector = FirstSelector()
+        val choice: MarkedChoice = selector
+        check(selector.selectMarked<ClientItem<*>>(number, text) === number)
+        check(choice.selectMarked<ClientItem<*>>(text, number) === text)
+        val select: (ClientItem<*>, ClientItem<*>) -> ClientItem<*> = selector::selectMarked
+        check(select(text, number) === text)
+        check(FirstSelector().callProjectedBase(number, text) === text)
         val foreign = ForeignFirstSelector()
         check(methods.fromInterface(foreign, text, number) === text)
         val exactItem = ConcreteMarkedItem()

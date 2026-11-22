@@ -476,6 +476,8 @@ def outputs(root, definitions):
             model += ["    }"]
         if "dotktDelegateSlot" in shape["properties"]:
             model += ["    public override bool HasDeclaredDelegateSlot => DotktDelegateSlot.IsPresent;"]
+        if "projectedMethodWitnesses" in shape["properties"]:
+            model += ["    internal override OptionalField<BirMethodWitness[]> MethodWitnessFacts { get => ProjectedMethodWitnesses; set => ProjectedMethodWitnesses = value; }"]
         if "typeArgs" in shape["properties"] and cs(shape["properties"]["typeArgs"]) == "TypeNode[]":
             model += ["    public override OptionalField<TypeNode[]> ApplicationTypeArguments { get => TypeArgs; set => TypeArgs = value; }"]
         for field, api in [("suspendFnTypePre", "SuspendFunctionTypeFact"), ("retSuspendFnTypePre", "SuspendFunctionReturnFact"),

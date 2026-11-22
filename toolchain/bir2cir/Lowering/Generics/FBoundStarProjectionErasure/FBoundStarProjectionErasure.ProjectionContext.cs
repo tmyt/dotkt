@@ -450,12 +450,11 @@ static partial class FBoundStarProjectionErasure
                 allowIntersection: allowIntersection, acceptsPrimary: acceptsPrimary);
         }
 
-        internal TypeNode MethodClassWitness(WitnessSlot slot, TypeNode projected,
-            Func<int, TypeNode> closeArgument)
+        internal StorageWitness MethodClassWitness(WitnessSlot slot, Func<int, TypeNode> closeArgument)
         {
             var method = slot.Entry.LocalMethod;
             return SharedClassWitness(slot, closeArgument, method == null ? null
-                : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(method, i, bound)))?.Class ?? projected;
+                : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(method, i, bound)), allowIntersection: true);
         }
 
         StorageWitness SharedClassWitness(WitnessSlot selected,

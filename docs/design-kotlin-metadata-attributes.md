@@ -186,6 +186,12 @@ requirement of each extra slot. The reference assembly retains this relation. Th
 the factory by declaration identity and matches the named bound against its shipped MethodDef's
 constraint rows; their order is not a contract. This does not add a source constructor to the KLIB.
 
+A projected generic method carries `KotlinProjectedMethod` on its physical MethodDef. Its
+MessagePack record's `facets` array identifies the primary CLR method parameter for each appended interface
+witness, in projected-entry order. Its declaring owner and method keep separate binders. The
+mapping comes from the selected reference declaration; the constraints come from the shipped
+projected MethodDef. The consumer does not reconstruct extra slots from the exact forwarder.
+
 The declaration-signature allocator additionally records `signatureAllocation: true` on the existing
 `KotlinDeclarationIdentity` payload for declarations whose physical parameter identity it allocated. Absence is
 the current unallocated form. Full reference metadata and minimal runtime linkage retain this physical obligation;

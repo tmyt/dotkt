@@ -43,6 +43,14 @@ static partial class RoundtripMetadata
     internal static void StampPropertyStorage(BirFunctionDeclaration getter, string owner, string field)
         => getter.Attrs = getter.Attrs.OrEmpty().Append(PlacementCarrier(AKPropertyStorage, PropertyStorageContent(owner, field))).ToArray();
 
+    internal static void StampProjectedMethod(BirFunctionDeclaration method, ProjectedMethodPlan plan)
+        => method.Attrs = method.Attrs.OrEmpty().Append(PlacementCarrier(AKProjectedMethod,
+            BirCarrier.EncodeMetadata(plan.FacetSources, static (ref MessagePackWriter writer, int[] sources) => {
+                writer.WriteMapHeader(1); writer.Write("facets");
+                writer.WriteArrayHeader(sources.Length);
+                foreach (var source in sources) writer.Write(source);
+            }))).ToArray();
+
     internal static void StampProjectedConstructor(BirFunctionDeclaration factory, ProjectedConstructorPlan plan)
         => factory.Attrs = factory.Attrs.OrEmpty().Append(PlacementCarrier(AKProjectedConstructor,
             BirCarrier.EncodeMetadata(plan, static (ref MessagePackWriter writer, ProjectedConstructorPlan p) => {

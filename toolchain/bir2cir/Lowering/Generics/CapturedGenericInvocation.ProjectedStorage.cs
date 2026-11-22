@@ -7,7 +7,7 @@ static partial class CapturedGenericInvocation
     sealed record LexicalTarget(TypeNode.Fqn Owner, BirTypeParameter[] OwnerFrame, BirFunctionDeclaration Method);
 
     internal static BirGraphValue ProjectStorageCall(BirGraphValue call,
-        ProjectedClassStorageFrame.InterfaceSlot[] ownerSlots, ProjectedClassStorageFrame.InterfaceSlot[] methodSlots,
+        CallableWitnessScope ownerScope, CallableWitnessScope methodScope,
         ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated, IBirTypeDeclaration lexical,
         List<BirFunctionDeclaration> lexicalMethods)
     {
@@ -30,9 +30,8 @@ static partial class CapturedGenericInvocation
         var (member, arguments, values, receiver) = (site.Member, site.TypeArguments.OrDefault(),
             site.Arguments.OrDefault(), site.Receiver);
         if (member?.DeclaringType.OrDefault() is not TypeNode.Fqn owner || arguments == null || values == null) return call;
-        ProjectedClassStorageFrame.InterfaceSlot[] Slots(TypeNode.Tv v) => v.Scope == "method" ? methodSlots : ownerSlots;
         var candidates = arguments.Select((argument, index) => (argument, index))
-            .Where(row => row.argument is TypeNode.Tv variable && Slots(variable).Any(slot => slot.OwnerIndex == variable.I))
+            .Where(row => CallableWitnessScope.For(row.argument, ownerScope, methodScope).Any())
             .ToArray();
         if (candidates.Length == 0 || !refs.TryResolveStaticMemberSignature(owner.Name, member.Name.Value, arguments.Length,
             receiver == null, member.ParameterTypes.Value, owner.Args, out _, out var selected, out var declaringOwner)) return call;
@@ -58,10 +57,8 @@ static partial class CapturedGenericInvocation
         // A different parameter can force this storage class to split. Preserve
         // each authored native argument whose own primary still proves its facets.
         var facets = (from i in missing
-            let variable = (TypeNode.Tv)arguments[i]
-            from facet in Slots(variable)
-            where facet.OwnerIndex == variable.I
-            select (Slot: i, facet.Bound)).ToArray();
+            from evidence in CallableWitnessScope.For(arguments[i], ownerScope, methodScope)
+            select (Slot: i, evidence.Slot.Bound)).ToArray();
         var formal = selected.GetParameters();
         bool typed = (receiver != null && selected.DeclaringType.IsValueType)
             || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType);
