@@ -153,6 +153,9 @@ static partial class UnsafeAccessorLowering
         if ((frame?.Length ?? 0) != arity) throw new InvalidOperationException(
             $"Kotlin super call '{targetOwner.Name}.{edge.Method}' has {arity} method arguments but {frame?.Length ?? 0} declaration parameters");
         var key = publishedIdentity ?? $"{host.Name}|super|{targetOwner.Name}|{edge.Method}|{arity}|" + string.Join(";", signature.Select(SourceTypeKey)) + "|" + SourceTypeKey(result);
+        // A nested super call goes through a method on the enclosing receiver.
+        // Its private body is projectable; its call to the base must stay nonvirtual.
+        var localEntry = publishedIdentity == null && arity != 0 ? DeclarationIdentityBinding.PhysicalOnlyId(key, "super-forwarder") : null;
         if (!context.Accessors.TryGetValue(key, out var definition))
         {
             var name = publishedIdentity == null ? SuperForwarderName(edge.Method) : "dotkt$inlineSuper$" + publishedIdentity;
@@ -184,12 +187,14 @@ static partial class UnsafeAccessorLowering
                 instance.MemberRef = member;
             }
             if (publishedIdentity == null) DropSourceMemberFacts((BirGraphValue)targetCall);
+            if (localEntry != null) ((BirGraphValue)targetCall).MethodWitnessFacts = default;
             var forwarder = new BirFunctionDeclaration {
                 Name = name, Generated = true, Static = false, Override = false, Virtual = false,
                 Abstract = false, ObjectOverride = false, Vis = "private", Params = parameters,
                 Ret = CopySourceType(result), Body = SourceReturningBody(targetCall, result), Attrs = Array.Empty<BirAttribute>(),
             };
             if (frame != null) forwarder.TypeParams = frame;
+            if (localEntry != null) forwarder.LocalBodyEntry = (localEntry, null);
             if (publishedIdentity != null) forwarder.DeclarationId = publishedIdentity;
             if (suspends)
             {
@@ -208,6 +213,11 @@ static partial class UnsafeAccessorLowering
             Ret = CopySourceType(callResult), Sty = CopySourceType(callResult),
         };
         if (edge.TypeArgs.HasValue) replacement.TypeArgs = CopySourceTypes(edge.TypeArgs.Value);
+        if (localEntry != null)
+        {
+            replacement.SelectedGenericCallable = localEntry;
+            replacement.MethodWitnessFacts = node.MethodWitnessFacts;
+        }
         if (publishedIdentity != null)
         {
             replacement.DeclarationId = publishedIdentity;

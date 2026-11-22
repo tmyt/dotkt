@@ -10,7 +10,22 @@ import kotlin.clr.byref
 import roundtrip.clrrefparameters.ReferenceBox
 
 class NativeChoice<T>(val value: T) : Base(), IMarker<String>
-class LastNativeChoice : Selector() {
+open class LastNativeChoice : Selector() {
+    override fun <X,Y> Capture(value: X, key: RoundtripDependentNative.IKey<Y>): RoundtripDependentNative.IKey<Y>
+        where X : Base, X : IMarker<String> = key
+    override fun <X,Y> Capture(value: X, key: RoundtripDependentNative.IKey<Y>, visits: ClrRef<Int>): RoundtripDependentNative.IKey<Y>
+        where X : Base, X : IMarker<String> {
+        visits.value += 2
+        return key
+    }
+    override fun <X,Y> Pair(first: X, second: Y): Y
+        where X : Base, X : IMarker<String>, Y : Base, Y : IMarker<String> = second
+    protected override fun <T> Visit(item: T, count: ClrRef<Int>): T where T : Base, T : IMarker<String> {
+        var visits = count.value
+        val result = super.Visit<T>(item, byref(visits))
+        count.value = visits
+        return result
+    }
     override fun <T> Choose(first: T, last: T): T where T : Base, T : IMarker<String> = last
     override fun <T> Choose(first: T, last: T, visits: ClrRef<Int>): T where T : Base, T : IMarker<String> {
         visits.value += 2
@@ -27,6 +42,8 @@ class LastNativeChoice : Selector() {
     }
 }
 fun localNativeChoice(s: LastNativeChoice, a: NativeChoice<*>, b: NativeChoice<*>) = s.Choose<NativeChoice<*>>(a, b)
+fun <S : LastNativeChoice> localBoundedNativeChoice(s: S, a: NativeChoice<*>, b: NativeChoice<*>) =
+    s.Choose<NativeChoice<*>>(a, b)
 
 interface UsableBound { val name: String }
 internal interface HiddenBound : UsableBound

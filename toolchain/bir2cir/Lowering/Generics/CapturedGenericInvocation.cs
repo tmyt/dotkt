@@ -179,7 +179,7 @@ static partial class CapturedGenericInvocation
     static bool IsObject(TypeNode type) => type is TypeNode.Fqn { Name: "object" or "System.Object" } || type is TypeNode.Nullable n && IsObject(n.Of);
     static bool HasAddress(TypeNode type) => type is TypeNode.ByRef or TypeNode.Ptr || type is TypeNode.Mod m && HasAddress(m.Of);
     static bool ByRefLike(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Fqn f && refs.IsByRefLikeFqn(f);
-    static bool ContainsCapturedSlot(TypeNode type, IReadOnlyList<int> slots)
+    static bool ContainsCapturedSlot(TypeNode type, IReadOnlyCollection<int> slots)
     {
         var contains = false;
         Map(type, variable => {

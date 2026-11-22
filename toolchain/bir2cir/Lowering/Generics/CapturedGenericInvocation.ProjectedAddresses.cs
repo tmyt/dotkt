@@ -32,7 +32,8 @@ static partial class CapturedGenericInvocation
     // operands: those keep their original storage across the entire call.
     static BirGraphValue ProjectAddressCall(Invocation site, AddressTarget selected, TypeNode.Fqn owner,
         (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
-        LexicalTarget lexical, BirCallStatic access, TypeNode[] closureArguments, Dictionary<int, TypeNode> fixedAddresses = null)
+        LexicalTarget lexical, BirCallStatic access, TypeNode[] closureArguments, Dictionary<int, TypeNode> fixedAddresses = null,
+        CaptureRow[] captures = null, TypeNode capturedResult = null)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
@@ -111,7 +112,7 @@ static partial class CapturedGenericInvocation
             Operand(site.Arguments.Value[i], caller, AdapterFrame(selectedSignature[i]), selected.TypedParameters[i], false);
         }
         var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(selected.Result);
-        var result = CallerFrame(nativeResult);
+        var result = capturedResult ?? CallerFrame(nativeResult);
         var forwardResult = AdapterFrame(nativeResult);
         var unit = IsVoid(nativeResult);
         var (contractResult, implResult) = unit ? (result, result) : BoundarySlot(result, forwardResult,
@@ -170,7 +171,8 @@ static partial class CapturedGenericInvocation
         var any = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
         TypeNode[] lookup = [type, type, new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"),
             new TypeNode.Array(new TypeNode.Fqn("kotlin.String")), new TypeNode.Array(type), new TypeNode.Fqn("kotlin.IntArray"),
-            new TypeNode.Array(type), new TypeNode.Array(any), new TypeNode.Array(new TypeNode.Nullable(type))];
+            new TypeNode.Array(type), new TypeNode.Array(any), new TypeNode.Array(new TypeNode.Nullable(type)),
+            new TypeNode.Nullable(new TypeNode.Array(type)), new TypeNode.Nullable(new TypeNode.Fqn("kotlin.IntArray"))];
         if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, helperName, 0, true, lookup, null, out _, out var helper, out var declaring))
             throw new InvalidOperationException($"Projected address call has no runtime binding for '{helperName}'");
         var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, helper, "method", declaring, null));
@@ -181,7 +183,7 @@ static partial class CapturedGenericInvocation
                 NewArray(String, selected.Keys.Select(p => (IBirExpression)Text(p))),
                 NewArray(Type, closureArguments.Select(t => (IBirExpression)ClassRef(t))), NewArray(Int, facets.Select(f => (IBirExpression)Number(f.Slot))),
                 NewArray(Type, facets.Select(f => (IBirExpression)ClassRef(f.Bound))),
-                NewArray(Object, witnesses), NewArray(Type, invariantTypes) } };
+                NewArray(Object, witnesses), NewArray(Type, invariantTypes), CaptureOwners(captures), CaptureCoordinates(captures) } };
         var closedResult = SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());
         var invoke = new BirCallInstance { OwnerType = callerContract, Method = "Invoke", Virtual = true, Recv = Cast(callerContract, create),
             Sig = signature.ToArray(), Ret = closedResult, CalleeRet = contractResult, Args = operands.ToArray() };

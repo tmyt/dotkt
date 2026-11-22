@@ -21,6 +21,7 @@ sealed class ProjectedCallableEntries
     readonly ReferenceMetadataIndex references;
     readonly Lazy<IReadOnlyDictionary<string, SupertypeGraph.Def>> classHierarchy;
     readonly bool referenceBuild;
+    readonly CapturedGenericInvocation.PreparedInvocation invocations;
 
     static string EntryId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-call");
 
@@ -29,9 +30,11 @@ sealed class ProjectedCallableEntries
         : references.TryDeclarationIdentity(id, out _, out _, out _, out _) &&
           !references.TryDeclarationIdentity(EntryId(id), out _, out _, out _, out _);
 
-    internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild)
+    internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild,
+        CapturedGenericInvocation.PreparedInvocation invocations)
     {
         this.references = references;
+        this.invocations = invocations;
         classHierarchy = new(() => SupertypeGraph.CollectSource(files));
         this.referenceBuild = referenceBuild;
         classes = files.SelectMany(f => f.Types.OrEmpty()).OfType<BirClassDefinition>()
@@ -319,6 +322,10 @@ sealed class ProjectedCallableEntries
             if (node is BirNewClosure or BirNewSam)
                 ProjectClosureCreation(node, ownerScope, methodScope, allocate, generated);
             if (Bind(node, ownerScope, methodScope, locations != null)) return node;
+            if (node.MethodWitnessFacts.HasValue && CapturedGenericInvocation.Invocation.Admits(node) &&
+                invocations.FixedIntersection(new(node), owner?.Name.Value, owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(),
+                    references, null, generated, classScope: ownerScope, methodScope: methodScope,
+                    allocate: allocate, lexicalDefinition: owner) is { } fixedCall) return fixedCall;
             return CapturedGenericInvocation.ProjectStorageCall(node, ownerScope, methodScope, references, allocate, generated, owner, helpers, locations);
         }
         Rewrite(root, default, null);

@@ -11,14 +11,17 @@ static partial class CapturedGenericInvocation
         readonly Dictionary<string, string> metadataNames = new(StringComparer.Ordinal);
         readonly bool flattenMissingOwners;
         readonly Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType;
+        internal bool HasDeferredFixedCalls { get; private set; }
+        readonly Func<TypeNode, TypeNode.Fqn> captureConstruction;
 
         internal PreparedInvocation(Dictionary<string, List<MethodBinding>> declarations,
             Dictionary<string, ContainerBinding> definitions, bool flatten,
-            Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType)
-        { this.declarations = declarations; this.definitions = definitions; flattenMissingOwners = flatten; this.physicalType = physicalType; }
+            Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType, Func<TypeNode, TypeNode.Fqn> captureConstruction)
+        { this.declarations = declarations; this.definitions = definitions; flattenMissingOwners = flatten; this.physicalType = physicalType;
+            this.captureConstruction = captureConstruction; }
 
         internal void Apply(BirFileDeclaration file, ReferenceMetadataIndex refs, HashSet<string> emittedLocalTypes,
-            Func<TypeNode, TypeNode.Fqn> captureConstruction = null)
+            bool finishFixedCalls = false)
         {
             var generated = new List<IBirTypeDeclaration>();
             BirGraphValue root = file;
@@ -81,29 +84,42 @@ static partial class CapturedGenericInvocation
                     }
                 }
                 if (node.MethodWitnessFacts.HasValue && Invocation.Admits(node) &&
-                    FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated) is { } fixedCall)
+                    FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated,
+                        deferVariableArguments: !finishFixedCalls) is { } fixedCall)
                 {
                     slot.Replace(fixedCall);
                     return;
                 }
+                if (finishFixedCalls) return;
                 var capture = TakeCaptureFacts(node);
                 if (capture?.Arguments.HasValue != true || !Invocation.Admits(node)) return;
                 var call = new Invocation(node);
                 if (!call.TypeArguments.HasValue || !call.Arguments.HasValue) return;
                 var result = capture.Result ?? BirNodeType.Of(node as BirGraphNode);
-                slot.Replace(Expand(call, capture, result, ownerFrame, methodFrame, lexicalOwner, scope, refs, emittedLocalTypes, generated, captureConstruction));
+                slot.Replace(Expand(call, capture, result, ownerFrame, methodFrame, lexicalOwner, scope, refs, emittedLocalTypes, generated));
             }
         }
 
-        BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
-            HashSet<string> emitted, List<IBirTypeDeclaration> generated)
+        internal BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
+            HashSet<string> emitted, List<IBirTypeDeclaration> generated, bool deferVariableArguments = false,
+            CallableWitnessScope classScope = default, CallableWitnessScope methodScope = default,
+            Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null)
         {
+            var occurrence = call.Node;
+            call = SelectedInvocation(call, out var access);
             var id = call.Node.SelectedGenericCallable;
             var owner = (TypeNode.Fqn)(call.Member?.DeclaringType.OrDefault() ?? call.Owner);
             var local = id != null && declarations.TryGetValue(id, out var bindings)
                 ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method)?.Method : null;
             if (!(id == null && call.Member != null) && call.Node is not (BirGenericInstance or BirGenericStatic) &&
                 !ProjectedCallableEntries.HasFixedAbi(local, id, refs)) return null;
+            // A physical copy may split a second argument that still names a lexical
+            // variable here. Keep the selected call until that copy has its own frame.
+            if (deferVariableArguments && call.TypeArguments.Value.Any(t => t is TypeNode.Tv))
+            {
+                HasDeferredFixedCalls = true;
+                return occurrence;
+            }
             var member = call.Member;
             if (local == null && member == null) throw new InvalidOperationException("Fixed invocation lacks its selected declaration");
             AddressTarget target;
@@ -134,20 +150,34 @@ static partial class CapturedGenericInvocation
             var ret = target.Result;
             var actual = call.TypeArguments.Value;
             var authored = actual.ToArray();
-            var proofs = call.Node.MethodWitnessFacts.Value;
+            var proofs = occurrence.MethodWitnessFacts.Value;
             foreach (var proof in proofs) authored[proof.Argument.Value] = proof.Primary.Value;
-            var facets = proofs.SelectMany(p => p.Interfaces.Value.Select(bound => (p.Argument.Value, bound))).ToArray();
-            var result = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(ret, owner.Args ?? [], actual);
+            var lexicalSlots = LostLexicalSlots(Enumerable.Range(0, actual.Length)
+                .Where(i => CallableWitnessScope.For(actual[i], classScope, methodScope).Any()).ToArray(),
+                proofs.Select(p => p.Argument.Value),
+                i => target.MethodFrame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(t =>
+                    definitions.TryGetValue(t.Name, out var declaration) ? declaration.Type.Kind.OrDefault() == "interface" : refs.IsInterfaceType(t)),
+                (i, lost) => target.MethodFrame[i].Constraints.OrEmpty().Any(t => ContainsCapturedSlot(t, lost)));
+            var facets = proofs.SelectMany(p => p.Interfaces.Value.Select(bound => (p.Argument.Value, bound)))
+                .Concat(lexicalSlots.SelectMany(index => CallableWitnessScope.For(actual[index], classScope, methodScope).SelectMany(proof =>
+                        new (int, TypeNode)[] { (index, proof.Slot.Bound), (index, proof.Variable) })))
+                .Distinct().ToArray();
             var unit = IsVoid(ret);
             var typed = target.ValueOwner && call.Instance || target.TypedParameters.Contains(true) || target.TypedResult;
             LexicalTarget lexical = null;
-            call.Node.MethodWitnessFacts = default;
-            if (call.Super || typed && lexicalAccess)
+            var capture = TakeCaptureFacts(occurrence);
+            var rows = capture?.Arguments.HasValue == true ? CaptureRows(capture, signature, refs) : [];
+            // IKey<capture> is not IKey<object>. Keep the projected result
+            // that belongs to this expression, not the fallback MethodSpec.
+            var capturedResult = rows.Length == 0 ? null : capture.Result ?? BirNodeType.Of(occurrence as BirGraphNode);
+            var result = capturedResult ?? FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(ret, owner.Args ?? [], actual);
+            occurrence.MethodWitnessFacts = default;
+            if (access == null && (call.Super || typed && lexicalAccess))
             {
                 var formals = signature.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? [])).ToArray();
                 var returns = SupertypeGraph.SubstOwnerTvs(ret, owner.Args ?? []);
                 var thunk = LexicalForwarder(call, owner, lexicalOwner, target.MethodFrame.Select(p => CloneParameter(p,
-                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null, typed);
+                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null, typed, lexicalDefinition);
                 lexical = new(new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
                     .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, thunk);
             }
@@ -156,15 +186,16 @@ static partial class CapturedGenericInvocation
                 do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
                 return name;
             }
-            return typed ? ProjectAddressCall(call, target, owner, facets, refs, Allocate, generated, lexical, null, authored)
+            return typed || access != null ? ProjectAddressCall(call, target, owner, facets, refs, allocate ?? Allocate, generated, lexical, access, authored,
+                captures: rows, capturedResult: capturedResult)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
-                    lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs);
+                    lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs, rows);
         }
 
         BirFunctionDeclaration LexicalForwarder(Invocation call, TypeNode.Fqn target, string lexicalOwner, BirTypeParameter[] frame,
-            TypeNode[] parameters, TypeNode result, bool local, bool adapterAccess = false)
+            TypeNode[] parameters, TypeNode result, bool local, bool adapterAccess = false, IBirTypeDeclaration host = null)
         {
-            var definition = definitions[lexicalOwner].Type;
+            var definition = host ?? definitions[lexicalOwner].Type;
             string name;
             do { name = "dotkt$capturedSuper$" + _next++; }
             while (definition.Methods.OrEmpty().Any(method => method.Name.OrDefault() == name));
@@ -179,13 +210,38 @@ static partial class CapturedGenericInvocation
         static void Declare(BirGraphValue node, Dictionary<string, TypeNode> scope)
         { if (node is BirVariable { Name.HasValue: true, Type.HasValue: true } variable) scope[variable.Name.Value] = variable.Type.Value; }
 
+        CaptureRow[] CaptureRows(CaptureFacts capture, TypeNode[] declarationParameters, ReferenceMetadataIndex refs)
+        {
+            var witnesses = capture.Target != null && _parameterWitnesses.TryGetValue(capture.Target, out var source)
+                ? source.Select(t => BirTypeLowering.LowerPhysicalType(captureConstruction?.Invoke(t) ?? t,
+                    refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
+                : refs.CapturedParameterWitnesses(capture.Target, declarationParameters, captureConstruction);
+            var frame = capture.Target != null && _methodWitnessFrames.TryGetValue(capture.Target, out var localFrame)
+                ? localFrame : refs.NullableMethodFrame(capture.Target);
+            var rows = new List<CaptureRow>();
+            foreach (var entry in capture.Arguments.Value)
+            {
+                var index = entry.Argument.Value;
+                if (CaptureOwner(SignatureValueTypes.Of(witnesses[index])) is not { Args: { } parts } owner)
+                    throw new InvalidOperationException("Captured argument has no declaration-owned construction witness");
+                var head = new TypeNode.Fqn(definitions.ContainsKey(owner.Name) ? owner.Name : PhysicalName(owner, refs));
+                foreach (var logical in entry.Slots.Value)
+                {
+                    var slot = frame?.SourcePosition(logical) ?? logical;
+                    var nullable = frame?.NullableIndices.Contains(logical) == true ? frame.NullableVariable(new TypeNode.Tv("method", logical)).I : -1;
+                    for (int pos = 0; pos < parts.Length; pos++)
+                        if (parts[pos] is TypeNode.Tv { Scope: "method" } t && t.I == slot)
+                            rows.Add(new(index, head, pos, slot, nullable));
+                }
+            }
+            return rows.ToArray();
+        }
+
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,
             BirTypeParameter[] ownerFrame, BirTypeParameter[] methodFrame, string lexicalOwner,
-            Dictionary<string, TypeNode> scope, ReferenceMetadataIndex refs, HashSet<string> emitted, List<IBirTypeDeclaration> generated,
-            Func<TypeNode, TypeNode.Fqn> captureConstruction)
+            Dictionary<string, TypeNode> scope, ReferenceMetadataIndex refs, HashSet<string> emitted, List<IBirTypeDeclaration> generated)
         {
             var captureIndices = capture.Arguments.Value.Select(value => value.Argument.Value).ToArray();
-            var captureSlots = capture.Arguments.Value.SelectMany(value => value.Slots.Value).Distinct().ToArray();
             var arguments = call.Arguments.Value;
             var selectedFrame = call.SelectedFrame;
             var local = call.Member == null;
@@ -211,15 +267,6 @@ static partial class CapturedGenericInvocation
                 declaredReturn = SignatureValueTypes.Of(call.Member.ReturnType.OrDefault());
             }
             if (selectedFrame == null) throw new InvalidOperationException("Captured invocation has no selected generic frame");
-            var parameterWitnesses = capture.Target != null && _parameterWitnesses.TryGetValue(capture.Target, out var witnesses)
-                ? witnesses.Select(type => BirTypeLowering.LowerPhysicalType(captureConstruction?.Invoke(type) ?? type,
-                    refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
-                : refs.CapturedParameterWitnesses(capture.Target, declarationParameters, captureConstruction);
-            var witnessFrame = capture.Target != null && _methodWitnessFrames.TryGetValue(capture.Target, out var frame) ? frame : refs.NullableMethodFrame(capture.Target);
-            var nullableSlots = captureSlots.Where(index => witnessFrame?.NullableIndices.Contains(index) == true)
-                .ToDictionary(index => witnessFrame.SourcePosition(index),
-                    index => witnessFrame.NullableVariable(new TypeNode.Tv("method", index)).I);
-            captureSlots = captureSlots.Select(index => witnessFrame?.SourcePosition(index) ?? index).ToArray();
             if (captureIndices.Any(index => index < 0 || index >= arguments.Length) || declarationParameters.Length != arguments.Length)
                 throw new InvalidOperationException("Captured invocation argument does not match selected declaration");
             // This value transport does not change managed-address storage.
@@ -230,7 +277,8 @@ static partial class CapturedGenericInvocation
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.
-            var closedSlots = captureSlots.Concat(nullableSlots.Values).ToArray();
+            var rows = CaptureRows(capture, declarationParameters, refs);
+            var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
             if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, closedSlots))) return call.Node;
 
             if (call.Super)
@@ -242,7 +290,6 @@ static partial class CapturedGenericInvocation
                     ? owner.Args?[variable.I] ?? throw new InvalidOperationException("Captured super invocation has no base frame") : variable);
                 var superFrame = selectedFrame.Select(parameter => CloneParameter(parameter, CloseSuper)).ToArray();
                 var superParameters = declarationParameters.Select(CloseSuper).ToArray();
-                parameterWitnesses = parameterWitnesses.Select(CloseSuper).ToArray();
                 var superReturn = CloseSuper(declaredReturn);
                 var superName = LexicalForwarder(call, owner, lexicalOwner, superFrame, superParameters, superReturn, local).Name.Value;
                 owner = new TypeNode.Fqn(lexicalOwner, ownerFrame.Length == 0 ? null
@@ -262,19 +309,6 @@ static partial class CapturedGenericInvocation
             var liftedOwner = (TypeNode.Fqn)LiftCaller(owner);
             TypeNode CloseDeclaration(TypeNode type) => Map(type, variable => variable.Scope == "type"
                 ? liftedOwner.Args?[variable.I] ?? throw new InvalidOperationException("Captured invocation has no owner frame") : variable);
-            var witnessArguments = new List<int>(); var witnessOwners = new List<TypeNode>();
-            var witnessPositions = new List<int>(); var witnessSlots = new List<int>();
-            foreach (var argument in captureIndices)
-            {
-                if (argument >= parameterWitnesses.Length || CaptureOwner(SignatureValueTypes.Of(CloseDeclaration(parameterWitnesses[argument]))) is not { Args: { } parts } witness)
-                    throw new InvalidOperationException("Captured argument has no declaration-owned construction witness");
-                for (var position = 0; position < parts.Length; position++)
-                    if (parts[position] is TypeNode.Tv { Scope: "method" } variable && captureSlots.Contains(variable.I))
-                    {
-                        witnessArguments.Add(argument); witnessOwners.Add(new TypeNode.Fqn(definitions.ContainsKey(witness.Name) ? witness.Name : PhysicalName(witness, refs)));
-                        witnessPositions.Add(position); witnessSlots.Add(variable.I);
-                    }
-            }
             var fullFrame = selectedFrame.Select(parameter => CloneParameter(parameter, CloseDeclaration))
                 .Concat(ownerFrame.Concat(methodFrame).Select(parameter => CloneParameter(parameter, LiftCaller))).ToArray();
             for (var index = 0; index < fullFrame.Length; index++) { fullFrame[index].Name = "__captured" + index; fullFrame[index].Variance = default; }
@@ -313,9 +347,9 @@ static partial class CapturedGenericInvocation
             var runtimeMethod = returnsVoid && receiverPlan == null ? "starProjectionInvokeCapturedHelperUnit" : "starProjectionInvokeCapturedHelper";
             var runtimeArguments = new IBirExpression[] { ClassRef(new TypeNode.Fqn(name)), Number(0), Text("Invoke"),
                 NewArray(String, parameterTypes.Select(type => (IBirExpression)Text(RuntimeKey(type, refs)))), NewArray(Type, fallback.Select(type => (IBirExpression)ClassRef(type))),
-                NewArray(Int, witnessArguments.Select(index => (IBirExpression)Number(index + (call.Instance ? 1 : 0)))), NewArray(Type, witnessOwners.Select(type => (IBirExpression)ClassRef(type))),
-                NewArray(Int, witnessPositions.Select(index => (IBirExpression)Number(index))), NewArray(Int, witnessSlots.Select(index => (IBirExpression)Number(index))),
-                NewArray(Int, witnessSlots.Select(index => (IBirExpression)Number(nullableSlots.GetValueOrDefault(index, -1)))), NewArray(Object, values) };
+                NewArray(Int, rows.Select(r => Number(r.Argument + (call.Instance ? 1 : 0)))), NewArray(Type, rows.Select(r => ClassRef(r.Owner))),
+                NewArray(Int, rows.Select(r => Number(r.Position))), NewArray(Int, rows.Select(r => Number(r.Slot))),
+                NewArray(Int, rows.Select(r => Number(r.Nullable))), NewArray(Object, values) };
             var runtimeCall = RuntimeCall(runtimeMethod, runtimeArguments, returnsVoid && receiverPlan == null, refs);
             ForeignStarProjectionBinding.RequireRuntimeFallback();
             var invocation = receiverPlan == null ? runtimeCall : CapturedValueReceiverInvocation.Invoke(receiverPlan, call.Receiver, runtimeCall, name, RuntimeSignature.Length - 1);

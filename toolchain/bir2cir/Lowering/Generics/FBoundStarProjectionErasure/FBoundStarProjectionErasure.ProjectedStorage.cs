@@ -59,9 +59,10 @@ static partial class FBoundStarProjectionErasure
     }
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
-        HashSet<string> emittedTypes, ReferenceMetadataIndex references, bool referenceBuild)
+        HashSet<string> emittedTypes, ReferenceMetadataIndex references, bool referenceBuild,
+        CapturedGenericInvocation.PreparedInvocation invocations)
     {
-        var callables = new ProjectedCallableEntries(documents, references, referenceBuild);
+        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
