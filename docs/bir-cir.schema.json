@@ -370,7 +370,8 @@
         "functionCallSignature": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
         "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" },
-        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }
+        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "projectedAddressOperands": { "type": "array", "items": { "type": "integer" } }
       } },
       "properties": {
         "companionCall": { "type": "boolean" },
@@ -403,7 +404,8 @@
         "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } },
         "_capturedGenericResult": { "$ref": "#/$defs/type" }, "_capturedGenericTarget": { "type": "string" },
-        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } }
+        "reflectedArguments": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
+        "projectedAddressOperands": { "type": "array", "items": { "type": "integer" } }
       } },
       "properties": {
         "companionCall": { "type": "boolean" },
@@ -2234,7 +2236,8 @@
         "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" }, "suspendCall": { "type": "boolean" },
         "_capturedGenericArgument": { "type": "array", "items": { "$ref": "#/$defs/capturedGenericArgument" } }, "_capturedGenericResult": { "$ref": "#/$defs/type" },
         "_foreignDeclarationSignature": { "$ref": "#/$defs/sourceTypeVectorText" },
-        "resolvedMemberReturn": { "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ResolvedDeclaration", "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } }
+        "resolvedMemberReturn": { "x-dotkt-representation-role": "Foreign", "x-dotkt-frame-role": "ResolvedDeclaration", "$ref": "#/$defs/type" }, "_resolvedMethodTypeParams": { "x-dotkt-frame-role": "ResolvedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
+        "projectedAddressOperands": { "type": "array", "items": { "type": "integer" } }
       }, "sourceProperties": { "declarationId": { "type": "string" }, "virtual": { "type": "boolean" }, "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } } } },
       "properties": {
         "k": { "const": "constrainedCall" }, "method": { "type": "string" }, "iface": { "$ref": "#/$defs/type" }, "recvType": { "$ref": "#/$defs/type" },

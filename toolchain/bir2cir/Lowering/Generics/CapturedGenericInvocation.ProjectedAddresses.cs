@@ -32,7 +32,7 @@ static partial class CapturedGenericInvocation
     // operands: those keep their original storage across the entire call.
     static BirGraphValue ProjectAddressCall(Invocation site, AddressTarget selected, TypeNode.Fqn owner,
         (int Slot, TypeNode Bound)[] facets, ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated,
-        LexicalTarget lexical, BirCallStatic access, TypeNode[] closureArguments)
+        LexicalTarget lexical, BirCallStatic access, TypeNode[] closureArguments, Dictionary<int, TypeNode> fixedAddresses = null)
     {
         var contractName = allocate("addressCall");
         var adapterName = allocate("addressAdapter");
@@ -95,9 +95,21 @@ static partial class CapturedGenericInvocation
         }
         var selectedSignature = lexical?.Method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() ??
             selected.Signature.Select(SignatureValueTypes.Of).ToArray();
+        if (fixedAddresses != null)
+        {
+            closureArguments = closureArguments.ToArray();
+            foreach (var (i, storage) in fixedAddresses)
+            {
+                var pointee = ((TypeNode.ByRef)SignatureValueTypes.Of(selected.Signature[i])).Of;
+                closureArguments[((TypeNode.Tv)pointee).I] = storage;
+            }
+        }
         for (var i = 0; i < selectedSignature.Length; i++)
-            Operand(site.Arguments.Value[i], CallerFrame(selectedSignature[i]), AdapterFrame(selectedSignature[i]),
-                selected.TypedParameters[i], false);
+        {
+            var caller = fixedAddresses?.GetValueOrDefault(i) is { } location
+                ? new TypeNode.ByRef(location) : CallerFrame(selectedSignature[i]);
+            Operand(site.Arguments.Value[i], caller, AdapterFrame(selectedSignature[i]), selected.TypedParameters[i], false);
+        }
         var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(selected.Result);
         var result = CallerFrame(nativeResult);
         var forwardResult = AdapterFrame(nativeResult);

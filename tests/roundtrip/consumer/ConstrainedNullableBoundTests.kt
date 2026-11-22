@@ -3,6 +3,7 @@
 // substituted slot. The Any? twin proves an ordinary reference already inhabiting object is left untouched.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
+import roundtrip.clrrefparameters.ReferenceBox
 import roundtrip.constrainedbound.ReferencedAnyBoundSink
 import roundtrip.constrainedbound.ReferencedBoundSink
 import roundtrip.constrainedbound.ReferencedIntBoundSink
@@ -26,6 +27,7 @@ import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
 import RoundtripDependentNative.Family.IMark
 import roundtrip.constrainedbound.MarkedChoice
+import roundtrip.constrainedbound.MarkedWriter
 import roundtrip.constrainedbound.absentMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
@@ -80,6 +82,51 @@ class ConstrainedNullableBoundTests {
         fun fromBase(a: TaggedItem<*>, b: TaggedItem<*>) = super.select(a, b)
     }
     private class ClientItem<T>(val payload: T) : PendingItems.Item(), Mark
+    private class Cell(@kotlin.clr.ClrField var item: ClientItem<*>)
+    private fun <A> swapLocations(a: ClrRef<A>, b: ClrRef<A>) where A : PendingItems.Item, A : Mark =
+        roundtrip.clrrefparameters.swapReferenced(a, b)
+    private class ClientWriter : MarkedWriter() {
+        var calls = 0
+        override fun <A> write(left: ClrRef<A>, right: ClrRef<A>, value: A, fail: Boolean): A
+            where A : PendingItems.Item, A : Mark {
+            calls++
+            return super.write(left, right, value, fail)
+        }
+    }
+
+    @TestAttribute
+    fun projectedManagedReferencesPreserveLocationsThroughDispatch() {
+        val first = ClientItem(1)
+        val second = ClientItem("two")
+        val cell = Cell(first)
+        val client = ClientWriter()
+        val writer: MarkedWriter = client
+        check(writer.write<ClientItem<*>>(byref(cell.item), byref(cell.item), second, false) === second)
+        check(cell.item === second)
+        var local: ClientItem<*> = second
+        try {
+            writer.write<ClientItem<*>>(byref(local), byref(cell.item), first, true)
+            error("did not throw")
+        } catch (e: IllegalStateException) {
+            check(e.message == "after write")
+        }
+        check(local === first && cell.item === second && client.calls == 2)
+        val elements = arrayOf<ClientItem<*>>(first, first)
+        check(writer.writeElement(elements, 1, second) === second)
+        check(elements[0] === first && elements[1] === second && client.calls == 3)
+        val other = Cell(first)
+        swapLocations<ClientItem<*>>(byref(cell.item), byref(other.item))
+        check(cell.item === first && other.item === second)
+        val before = ReferenceBox<ClientItem<*>>(first)
+        val after = ReferenceBox<ClientItem<*>>(second)
+        var nested = before
+        check(writer.exchange<ClientItem<*>>(byref(nested)) { after } === before && nested === after)
+        val concrete = ConcreteMarkedItem()
+        var span = System.Span<ConcreteMarkedItem>(arrayOf(concrete, concrete))
+        var shorter = System.Span<ConcreteMarkedItem>(arrayOf(concrete))
+        check(writer.replaceSpan<ConcreteMarkedItem, ClientItem<*>>(byref(span), byref(shorter), second) == 2)
+        check(span.Length == 1)
+    }
     private class FirstSelector : MarkedSelector() {
         override fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : Mark = left
         fun callBase(left: ClientItem<Long>, right: ClientItem<Long>) = super.selectMarked(left, right)

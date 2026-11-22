@@ -39,6 +39,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                 BirCallInstance call => new BirConstrainedCall {
                     Method = call.Method, Recv = call.Recv, Args = call.Args, Sig = call.Sig,
                     ProjectedMethodWitnesses = call.ProjectedMethodWitnesses, SelectedGenericCallable = call.SelectedGenericCallable,
+                    ProjectedAddressOperands = call.ProjectedAddressOperands,
                     TypeArgs = call.TypeArgs, ArgTypes = call.ArgTypes, MemberRef = call.MemberRef,
                     Ret = call.Ret.HasValue ? call.Ret : call.DynRet.HasValue ? call.DynRet : call.Ret,
                     Sty = call.Sty, DeclarationId = call.DeclarationId,

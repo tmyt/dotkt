@@ -870,6 +870,7 @@ internal static class BirGraphDom
                 case "_capturedGenericResult": break;
                 case "_capturedGenericTarget": break;
                 case "reflectedArguments": break;
+                case "projectedAddressOperands": break;
                 case "calleeRet": break;
                 case "calleeParams": break;
                 case "memberRef": break;
@@ -930,6 +931,7 @@ internal static class BirGraphDom
             _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _capturedGenericTarget = Field<string>(fields, "_capturedGenericTarget", value => value!.GetValue<string>()),
             ReflectedArguments = Field<IBirExpression[]>(fields, "reflectedArguments", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+            ProjectedAddressOperands = Field<int[]>(fields, "projectedAddressOperands", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             CalleeRet = Field<TypeNode>(fields, "calleeRet", value => TypeNode.Read(value) ?? throw new FormatException()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
@@ -998,6 +1000,7 @@ internal static class BirGraphDom
                 case "_capturedGenericResult": break;
                 case "_capturedGenericTarget": break;
                 case "reflectedArguments": break;
+                case "projectedAddressOperands": break;
                 case "calleeRet": break;
                 case "calleeParams": break;
                 case "memberRef": break;
@@ -1061,6 +1064,7 @@ internal static class BirGraphDom
             _capturedGenericResult = Field<TypeNode>(fields, "_capturedGenericResult", value => TypeNode.Read(value) ?? throw new FormatException()),
             _capturedGenericTarget = Field<string>(fields, "_capturedGenericTarget", value => value!.GetValue<string>()),
             ReflectedArguments = Field<IBirExpression[]>(fields, "reflectedArguments", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
+            ProjectedAddressOperands = Field<int[]>(fields, "projectedAddressOperands", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             CalleeRet = Field<TypeNode>(fields, "calleeRet", value => TypeNode.Read(value) ?? throw new FormatException()),
             CalleeParams = Field<TypeNode[]>(fields, "calleeParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
@@ -4588,6 +4592,7 @@ internal static class BirGraphDom
                 case "_foreignDeclarationSignature": break;
                 case "resolvedMemberReturn": break;
                 case "_resolvedMethodTypeParams": break;
+                case "projectedAddressOperands": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirConstrainedCall at {source.GetPath()}");
             }
         return new BirConstrainedCall
@@ -4632,6 +4637,7 @@ internal static class BirGraphDom
             _foreignDeclarationSignature = Field<SourceTypeVector>(fields, "_foreignDeclarationSignature", value => SourceTypeVector.ReadFrozenText(value!.GetValue<string>())),
             ResolvedMemberReturn = Field<TypeNode>(fields, "resolvedMemberReturn", value => TypeNode.Read(value) ?? throw new FormatException()),
             _resolvedMethodTypeParams = Field<BirTypeParameter[]>(fields, "_resolvedMethodTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),
+            ProjectedAddressOperands = Field<int[]>(fields, "projectedAddressOperands", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
         };
     }
 

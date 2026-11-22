@@ -4,15 +4,57 @@ using DotKt.Cir;
 
 // Physical method formals remain in their own binder (!!i). An enclosing !i
 // in a constraint must still be substituted from the selected declaring owner.
-sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSources)
+sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSources, int[] AddressOperands)
 {
-    internal int PrimaryArity => Parameters.Length - FacetSources.Length;
+    internal int PrimaryArity => Parameters.Length - FacetSources.Length - AddressOperands.Length;
     internal ProjectedClassStorageFrame.WitnessSlot[] Facets { get; } = FacetSources.Select((source, i) =>
         new ProjectedClassStorageFrame.WitnessSlot(source,
-            Parameters[Parameters.Length - FacetSources.Length + i].Constraints.OrEmpty().Single(), false)).ToArray();
+            Parameters[Parameters.Length - FacetSources.Length - AddressOperands.Length + i].Constraints.OrEmpty().Single(), false)).ToArray();
 
-    internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame) =>
-        new(frame.Declare(), frame.Interfaces.Select(slot => slot.OwnerIndex).ToArray());
+    internal static bool HasMethodLocation(BirParameter parameter, ReferenceMetadataIndex references)
+    {
+        if (parameter.Type.OrDefault() is not TypeNode.ByRef reference) return false;
+        // A managed ref to a stack-only CLR construction has a nominal, invariant
+        // pointee. Keep that construction in the signature and method body: it
+        // cannot be transported as an opaque, potentially boxed Kotlin value.
+        if (reference.Of is TypeNode.Fqn f && references.IsByRefLikeFqn(f)) return false;
+        bool dependsOnMethod = false;
+        BirGraphNameFields.VisitTypeNodes(reference.Of, t => dependsOnMethod |= t is TypeNode.Tv { Scope: "method" });
+        return dependsOnMethod;
+    }
+
+    internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands, ReferenceMetadataIndex references)
+    {
+        var formals = frame.Declare().ToList();
+        var facets = frame.Interfaces.Select(slot => slot.OwnerIndex).ToArray();
+        var addresses = new List<int>();
+        for (int i = 0; i < operands.Length; i++)
+        {
+            if (!HasMethodLocation(operands[i], references)) continue;
+            addresses.Add(i);
+            formals.Add(new BirTypeParameter { Name = "$location$" + i });
+        }
+        return new(formals.ToArray(), facets, addresses.ToArray());
+    }
+
+    internal void ApplyAddressFormals(BirParameter[] parameters)
+    {
+        for (int i = 0; i < AddressOperands.Length; i++)
+            parameters[AddressOperands[i]].Type = AddressFormal(i);
+    }
+
+    TypeNode AddressFormal(int i) => new TypeNode.ByRef(new TypeNode.Tv("method", PrimaryArity + Facets.Length + i));
+
+    internal TypeNode[] SelectedSignature(TypeNode[] exact)
+    {
+        var selected = exact.ToArray();
+        for (int i = 0; i < AddressOperands.Length; i++) selected[AddressOperands[i]] = AddressFormal(i);
+        return selected;
+    }
+
+    internal TypeNode[] AddressArguments(TypeNode[] exact, TypeNode[] owner, TypeNode[] actual) =>
+        AddressOperands.Select(i => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(
+            ((TypeNode.ByRef)SignatureValueTypes.Of(exact[i])).Of, owner, actual)).ToArray();
 
     internal BirTypeParameter[] CloneParameters() => Parameters.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
 
@@ -23,8 +65,11 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
         var slots = target.Facets.Select(t => Array.FindIndex(Facets,
             s => s.OwnerIndex == t.OwnerIndex && physicalKey(s.Bound) == physicalKey(t.Bound))).ToArray();
         if (slots.Any(s => s < 0)) throw new InvalidOperationException("Projected override lacks an inherited witness");
-        if (slots.Length == Facets.Length && slots.Select((s, i) => s == i).All(s => s)) return null;
-        return Enumerable.Range(0, primary).Concat(slots.Select(s => primary + s))
+        var locations = target.AddressOperands.Select(i => Array.IndexOf(AddressOperands, i)).ToArray();
+        if (locations.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks an inherited address");
+        if (slots.Length == Facets.Length && slots.Select((s, i) => s == i).All(s => s)
+            && target.AddressOperands.SequenceEqual(AddressOperands)) return null;
+        return Enumerable.Range(0, primary).Concat(slots.Select(s => primary + s)).Concat(locations.Select(i => primary + Facets.Length + i))
             .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
     }
 
@@ -33,13 +78,13 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
         var parameters = CloneParameters();
         foreach (var p in parameters)
             if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
-        return new(parameters, FacetSources);
+        return new(parameters, FacetSources, AddressOperands);
     }
 
     internal sealed record Application(bool Projected, TypeNode[] Arguments);
 
     internal Application Close(TypeNode[] actual, TypeNode[] ownerArgs, BirMethodWitness[] candidates,
-        BirTypeParameter[] original, NullableRepresentationFrame representations, bool nonvirtualBase,
+        BirTypeParameter[] original, NullableRepresentationFrame representations, bool requireProjectedEntry,
         Func<TypeNode, TypeNode, TypeNode> lexicalProof, Func<TypeNode, TypeNode, bool> declares,
         Func<TypeNode, TypeNode, bool> proves)
     {
@@ -71,7 +116,7 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
                 else if (!declares(actual[i], bound) && declares(actual[source], bound)) arguments[i] = actual[source];
             }
         var proofs = Facets.Select(Facet).ToArray();
-        return proofs.All(p => p == null) && !nonvirtualBase ? new(false, arguments) :
+        return proofs.All(p => p == null) && !requireProjectedEntry ? new(false, arguments) :
             new(true, arguments.Concat(proofs.Select((p, i) => p ?? actual[FacetSources[i]])).ToArray());
     }
 }

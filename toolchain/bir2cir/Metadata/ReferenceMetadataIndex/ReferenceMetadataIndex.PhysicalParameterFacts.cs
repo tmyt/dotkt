@@ -10,7 +10,7 @@ sealed partial class ReferenceMetadataIndex
         if (SelectedReferenceMethod(id) is not { } declaration) return null;
         var parameters = PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true)
             ?? throw new InvalidOperationException($"No shipped projected method '{id}'");
-        return new(parameters, ProjectedMethodFacetSources(declaration));
+        return ReadProjectedMethodPlan(declaration, parameters);
     }
     internal TypeNode WitnessConstraintKey(TypeNode type) =>
         ClrMemberResolution.MethodImplComparisonType(PhysicalConstraintType(type), this);
