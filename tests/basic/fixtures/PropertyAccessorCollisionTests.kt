@@ -100,12 +100,12 @@ private interface ExplicitNamedDefaultMethodSlot {
     @kotlin.clr.ClrName("explicitNamedDefaultMethod")
     fun sourceNamedDefaultMethod(): Int = 86
     @kotlin.clr.ClrName("explicitNamedDefaultMethod")
-    fun sourceNamedDefaultMethod(f: String.() -> Int): Int = "x".f() + 1
+    fun sourceNamedDefaultMethod(f: String.(Int) -> Int): Int = "xx".f(3) + 1
 }
 
 private open class ExplicitNamedDefaultMethodCollisionBase {
     fun explicitNamedDefaultMethod(): Int = 87
-    open fun explicitNamedDefaultMethod(f: (String) -> Int): Int = f("x") + 2
+    open fun explicitNamedDefaultMethod(f: (String, Int) -> Int): Int = f("xx", 3) + 2
 }
 
 private class ExplicitNamedDefaultMethodCollision :
@@ -212,8 +212,8 @@ class PropertyAccessorCollisionTests {
         val explicitDefaultCollision = ExplicitNamedDefaultMethodCollision()
         assertEquals(86, (explicitDefaultCollision as ExplicitNamedDefaultMethodSlot).sourceNamedDefaultMethod())
         assertEquals(87, explicitDefaultCollision.explicitNamedDefaultMethod())
-        assertEquals(2, (explicitDefaultCollision as ExplicitNamedDefaultMethodSlot).sourceNamedDefaultMethod { length })
-        assertEquals(3, explicitDefaultCollision.explicitNamedDefaultMethod { it.length })
+        assertEquals(6, (explicitDefaultCollision as ExplicitNamedDefaultMethodSlot).sourceNamedDefaultMethod { length + it })
+        assertEquals(7, explicitDefaultCollision.explicitNamedDefaultMethod { s, n -> s.length + n })
         val explicitGenericDefault: ExplicitNamedGenericDefaultSlot<*> = ExplicitNamedGenericDefault()
         assertEquals(88, explicitGenericDefault.sourceNamedGenericDefault())
 

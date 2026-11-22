@@ -502,15 +502,20 @@ static partial class BirTypeLowering
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
         IReadOnlySet<string> localTypeNames = null,
         IReadOnlyDictionary<string, NullableRepresentationFrame> nullableFrames = null,
-        bool leftReturnsValue = false)
+        bool leftReturnsValue = false, ReferenceMetadataIndex slotOwners = null)
     {
         TypeNode LowerSlot(TypeNode type, bool returnsValue = false) => returnPosition && !returnsValue
             && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
                 ? VoidType
-                : CanonicalPhysicalSlotType(LowerPhysicalType(
+                : LowerPhysicalType(
                     type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames,
-                    nullableFrames: nullableFrames));
-        return LowerSlot(left, leftReturnsValue).Equals(LowerSlot(right));
+                    nullableFrames: nullableFrames);
+        var a = LowerSlot(left, leftReturnsValue);
+        var b = LowerSlot(right);
+        if (a == b) return true;
+        TypeNode Key(TypeNode t) => slotOwners == null ? CanonicalPhysicalSlotType(t)
+            : ClrMemberResolution.MethodImplComparisonType(t, slotOwners);
+        return Key(a) == Key(b);
     }
 
     internal static void SelfTestSlotReturns()
@@ -643,11 +648,10 @@ static partial class BirTypeLowering
             Ret = CanonicalPhysicalSlotType(pointer.Ret),
             Params = pointer.Params.Select(CanonicalPhysicalSlotType).ToArray(),
         },
-        // A named CLR delegate takes its Kotlin receiver as argument zero, including inside a modopt.
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
             CanonicalPhysicalSlotType(fn.Ret),
-            (fn.Clr == null ? fn.Params : fn.DelegateParams).Select(CanonicalPhysicalSlotType).ToArray(),
-            fn.Clr == null && fn.Recv != null ? CanonicalPhysicalSlotType(fn.Recv) : null, fn.Clr,
+            fn.Params.Select(CanonicalPhysicalSlotType).ToArray(),
+            fn.Recv == null ? null : CanonicalPhysicalSlotType(fn.Recv), fn.Clr,
             fn.Ctx?.Select(CanonicalPhysicalSlotType).ToArray()),
         _ => type,
     };
