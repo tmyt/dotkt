@@ -292,7 +292,7 @@ class ConstrainedNullableBoundTests {
     private class JoinedForward<T> where T : Base, T : ChildMark, T : IMarker<String> {
         fun factory() = JoinedFactory<T>()
     }
-    private class JointSelection<A> : RoundtripDependentNative.IJoined<A>
+    private class JointSelection<A> : RoundtripDependentNative.IKey<RoundtripDependentNative.IJoined<A>>
         where A : Base, A : IMark<String>, A : IMarker<String> {
         fun select(value: A) = value
     }
@@ -318,7 +318,7 @@ class ConstrainedNullableBoundTests {
         joined.item = value
         check(joined.item === value)
         check(selectJoined<Child<*>>(value) === value)
-        check(makeJoined<Child<*>>() is RoundtripDependentNative.IJoined<*>)
+        check(makeJoined<Child<*>>() is RoundtripDependentNative.IKey<*>)
     }
 
     private fun checkFixedVirtualDispatch() {

@@ -74,12 +74,16 @@ static partial class NullableRepresentationDemand
                 foreach (var iface in owner.View.Interfaces.OfType<TypeNode.Fqn>())
                 {
                     if (policy.OwnsValueSlots(iface.Name) || !policy.HasNativeConstraint(iface)) continue;
-                    foreach (var tv in (iface.Args ?? []).OfType<TypeNode.Tv>().Where(v => v.Scope == "type"))
-                    {
-                        var bounds = owner.View.Parameters.Value[tv.I].Constraints.OrEmpty().OfType<TypeNode.Fqn>()
-                            .Select(policy.StorageConstraint).Where(bound => bound != null).ToArray();
-                        if (policy.HasJointStorageBounds(bounds)) owner.Signature.Add(tv, RepresentationRole.Storage);
-                    }
+                    BirGraphNameFields.VisitTypeNodes(iface, node => {
+                        if (node is not TypeNode.Fqn { Args: { Length: > 0 } args } application ||
+                            policy.OwnsValueSlots(application.Name) || !policy.HasNativeConstraint(application)) return;
+                        foreach (var tv in args.OfType<TypeNode.Tv>().Where(v => v.Scope == "type"))
+                        {
+                            var bounds = owner.View.Parameters.Value[tv.I].Constraints.OrEmpty().OfType<TypeNode.Fqn>()
+                                .Select(policy.StorageConstraint).Where(bound => bound != null).ToArray();
+                            if (policy.HasJointStorageBounds(bounds)) owner.Signature.Add(tv, RepresentationRole.Storage);
+                        }
+                    });
                 }
         foreach (var owner in owners)
         {
