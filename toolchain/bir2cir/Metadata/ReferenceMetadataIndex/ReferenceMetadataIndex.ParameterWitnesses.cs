@@ -34,7 +34,8 @@ sealed partial class ReferenceMetadataIndex
             if (captureConstruction?.Invoke(source) is { } marker)
                 return BirTypeLowering.LowerPhysicalType(types.Slot(marker), Aliases, IsValueType, PhysicalTypeNames, typeArg: false);
             if (Core(type) is not TypeNode.Fqn actual || Core(source) is not TypeNode.Fqn logical) return type;
-            var carrierValue = TryExistentialPhysicalOwner(logical.Name, out var carrier) && actual.Name == carrier;
+            var carrierValue = TryExistentialPhysicalOwner(logical.Name, out var carrier)
+                && (actual.Name == carrier || actual.Name == RecordedPhysicalTypeName(carrier));
             // Opaque transport does not erase the producer's declared alias construction.
             var opaqueAliasValue = actual.Name is "object" or "System.Object"
                 && AliasVarianceRepresentation.RequiresErasure(logical, this);
