@@ -4,7 +4,8 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
 var tool = Assembly.LoadFrom(args[0]);
-var identity = tool.GetType("RawSignatureTypeProvider", true)!
+var identity = tool.GetType("DotKt.Toolchain.RawSignatureTypeProvider`1", true)!
+    .MakeGenericType(tool.GetType("GenericContext", true)!)
     .GetMethod("ScopedReferenceIdentity", BindingFlags.Static | BindingFlags.NonPublic)!;
 string Key(int major, byte tokenByte, string ns, string name, string parent = null,
     AssemblyFlags flags = 0)
