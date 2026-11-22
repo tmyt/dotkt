@@ -228,12 +228,13 @@ static partial class NullableRepresentationMaterialization
         var declaredType = TestType("ImportedStore", TestType("kotlin.String"));
         var owned = new BirCallStatic { Sig = new TypeNode[] { declaredType } };
         var foreign = (BirCallStatic)owned.DeepClone();
-        Rewrite(owned, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => mapping);
-        Rewrite(foreign, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => null);
+        static void NoCapture(BirTypeParameter _, TypeNode.Tv __) => throw new Exception("Unexpected capture in descriptor");
+        Rewrite(owned, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => mapping, NoCapture);
+        Rewrite(foreign, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => null, NoCapture);
         var ownedConstructor = new BirConstructor { DelegationSig = new TypeNode[] { declaredType } };
         var foreignConstructor = (BirConstructor)ownedConstructor.DeepClone();
-        Rewrite(ownedConstructor, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => mapping);
-        Rewrite(foreignConstructor, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => null);
+        Rewrite(ownedConstructor, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => mapping, NoCapture);
+        Rewrite(foreignConstructor, mapping, new Dictionary<string, NullableRepresentationFrame>(), _ => null, NoCapture);
         TestRequire(owned.Sig.Value[0] is TypeNode.Fqn { Args.Length: 2 } && foreign.Sig.Value[0] is TypeNode.Fqn { Args.Length: 1 }
             && ownedConstructor.DelegationSig.Value[0] is TypeNode.Fqn { Args.Length: 2 }
             && foreignConstructor.DelegationSig.Value[0] is TypeNode.Fqn { Args.Length: 1 },
