@@ -4568,16 +4568,17 @@ internal static partial class BirGraphJson
         OptionalField<string> field7 = default;
         OptionalField<string> field8 = default;
         OptionalField<string> field9 = default;
-        OptionalField<BirAttribute[]> field10 = default;
-        OptionalField<IBirStatement[]> field11 = default;
-        OptionalField<bool> field12 = default;
+        OptionalField<string> field10 = default;
+        OptionalField<BirAttribute[]> field11 = default;
+        OptionalField<IBirStatement[]> field12 = default;
         OptionalField<bool> field13 = default;
         OptionalField<bool> field14 = default;
-        OptionalField<BirRoundtripDeclarationIdentity> field15 = default;
-        OptionalField<BirMemberReference> field16 = default;
-        OptionalField<int> field17 = default;
-        OptionalField<IBirStatement[]> field18 = default;
-        OptionalField<BirDeclarationPosition> field19 = default;
+        OptionalField<bool> field15 = default;
+        OptionalField<BirRoundtripDeclarationIdentity> field16 = default;
+        OptionalField<BirMemberReference> field17 = default;
+        OptionalField<int> field18 = default;
+        OptionalField<IBirStatement[]> field19 = default;
+        OptionalField<BirDeclarationPosition> field20 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -4613,57 +4614,61 @@ internal static partial class BirGraphJson
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "declarationId":
+                case "delegationNativeKey":
                     Seen(ref seen, 1UL << 7);
                     field7 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "declarationSourceName":
+                case "declarationId":
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "vis":
+                case "declarationSourceName":
                     Seen(ref seen, 1UL << 9);
                     field9 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
                     break;
-                case "attrs":
+                case "vis":
                     Seen(ref seen, 1UL << 10);
-                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
+                    field10 = reader.TokenType == JsonTokenType.Null ? OptionalField<string>.Null : OptionalField<string>.Of(ReadString(ref reader));
+                    break;
+                case "attrs":
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
                     break;
                 case "body":
-                    Seen(ref seen, 1UL << 11);
-                    field11 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "primary":
-                    Seen(ref seen, 1UL << 12);
-                    field12 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
-                    break;
-                case "declarationSignatureAllocation":
                     Seen(ref seen, 1UL << 13);
                     field13 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "roundtripMetadataPending":
+                case "declarationSignatureAllocation":
                     Seen(ref seen, 1UL << 14);
                     field14 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
                     break;
-                case "roundtripDeclarationIdentity":
+                case "roundtripMetadataPending":
                     Seen(ref seen, 1UL << 15);
-                    field15 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
+                    field15 = reader.TokenType == JsonTokenType.Null ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.GetBoolean());
+                    break;
+                case "roundtripDeclarationIdentity":
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirRoundtripDeclarationIdentity>.Null : OptionalField<BirRoundtripDeclarationIdentity>.Of(ReadBirRoundtripDeclarationIdentity(ref reader));
                     break;
                 case "baseCtorRef":
-                    Seen(ref seen, 1UL << 16);
-                    field16 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "localCtorIndex":
-                    Seen(ref seen, 1UL << 17);
-                    field17 = reader.TokenType == JsonTokenType.Null ? OptionalField<int>.Null : OptionalField<int>.Of(reader.GetInt32());
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TokenType == JsonTokenType.Null ? OptionalField<int>.Null : OptionalField<int>.Of(reader.GetInt32());
                     break;
                 case "preStmts":
-                    Seen(ref seen, 1UL << 18);
-                    field18 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
+                    Seen(ref seen, 1UL << 19);
+                    field19 = reader.TokenType == JsonTokenType.Null ? OptionalField<IBirStatement[]>.Null : OptionalField<IBirStatement[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirStatement(ref reader)));
                     break;
                 case "pos":
-                    Seen(ref seen, 1UL << 19);
-                    field19 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
+                    Seen(ref seen, 1UL << 20);
+                    field20 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirDeclarationPosition>.Null : OptionalField<BirDeclarationPosition>.Of(ReadBirDeclarationPosition(ref reader));
                     break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
@@ -4678,19 +4683,20 @@ internal static partial class BirGraphJson
             DelegationBindings = field4,
             DelegationOuterSlot = field5,
             DelegationDeclarationId = field6,
-            DeclarationId = field7,
-            DeclarationSourceName = field8,
-            Vis = field9,
-            Attrs = field10,
-            Body = field11,
-            Primary = field12,
-            DeclarationSignatureAllocation = field13,
-            RoundtripMetadataPending = field14,
-            RoundtripDeclarationIdentity = field15,
-            BaseCtorRef = field16,
-            LocalCtorIndex = field17,
-            PreStmts = field18,
-            Pos = field19,
+            DelegationNativeKey = field7,
+            DeclarationId = field8,
+            DeclarationSourceName = field9,
+            Vis = field10,
+            Attrs = field11,
+            Body = field12,
+            Primary = field13,
+            DeclarationSignatureAllocation = field14,
+            RoundtripMetadataPending = field15,
+            RoundtripDeclarationIdentity = field16,
+            BaseCtorRef = field17,
+            LocalCtorIndex = field18,
+            PreStmts = field19,
+            Pos = field20,
         };
     }
 

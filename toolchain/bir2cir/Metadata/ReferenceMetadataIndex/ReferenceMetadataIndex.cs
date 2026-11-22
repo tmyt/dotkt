@@ -917,14 +917,19 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     public Dictionary<int, IBirExpression> KotlinDefaultValuesForDeclarationIdentity(string id) =>
         _executablePayloads.DefaultValuesByIdentity(id);
 
-    internal Dictionary<int, IBirExpression> DefaultValuesForNativeBaseConstructor(TypeNode.Fqn owner, TypeNode[] signature)
+    readonly Dictionary<Type, Dictionary<string, ConstructorInfo>> _nativeBaseConstructors = new();
+
+    internal ConstructorInfo SelectedNativeBaseConstructor(Type open, string key)
     {
-        if (owner == null || signature == null || ClrMemberResolution.ResolveOwnerType(owner, this) is not { } open) return null;
-        var declaration = signature.Select(slot => ClrDeclarationMatching.CanonicalNativeFormalType(this, slot)).ToArray();
-        var candidates = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var selected = ClrDeclarationMatching.PickDeclaredConstructor(this, candidates, declaration, $"base constructor on '{owner.Name}'");
-        return CallableDefaultsOf(selected, _universe.CoreType);
+        if (!_nativeBaseConstructors.TryGetValue(open, out var declarations))
+            _nativeBaseConstructors.Add(open, declarations = ReferenceMetadataReader.NativeConstructorDeclarations(open));
+        return declarations.TryGetValue(key, out var declaration) ? declaration
+            : throw new InvalidOperationException($"bir2cir: selected native constructor is missing from '{open.FullName}'");
     }
+
+    internal Dictionary<int, IBirExpression> DefaultValuesForNativeBaseConstructor(TypeNode.Fqn owner, string key) =>
+        key == null || owner == null ? null : CallableDefaultsOf(
+            SelectedNativeBaseConstructor(ClrMemberResolution.ResolveOwnerType(owner, this), key), _universe.CoreType);
 
     // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
     // from that MethodDef. A call through a derived receiver names the derived type but can select a base declaration;

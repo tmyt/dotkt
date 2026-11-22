@@ -12125,6 +12125,7 @@ internal sealed record BirConstructor : BirGraphValue
     public OptionalField<BirCallBinding[]> DelegationBindings { get; set; }
     public OptionalField<int> DelegationOuterSlot { get; set; }
     public OptionalField<string> DelegationDeclarationId { get; set; }
+    public OptionalField<string> DelegationNativeKey { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
     public OptionalField<string> DeclarationSourceName { get; set; }
     public OptionalField<string> Vis { get; set; }
@@ -12185,6 +12186,7 @@ internal sealed record BirConstructor : BirGraphValue
     {
         if (DelegationSig.HasValue) { foreach (var item0 in DelegationSig.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (DelegationDeclarationId.HasValue) { visit((string)DelegationDeclarationId.Value); }
+        if (DelegationNativeKey.HasValue) { visit((string)DelegationNativeKey.Value); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
         if (DeclarationSourceName.HasValue) { visit((string)DeclarationSourceName.Value); }
         if (Vis.HasValue) { visit((string)Vis.Value); }
@@ -12398,6 +12400,7 @@ internal sealed record BirConstructor : BirGraphValue
             && EqualField(DelegationBindings, value.DelegationBindings, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(DelegationOuterSlot, value.DelegationOuterSlot, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(DelegationDeclarationId, value.DelegationDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(DelegationNativeKey, value.DelegationNativeKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(DeclarationId, value.DeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(DeclarationSourceName, value.DeclarationSourceName, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Vis, value.Vis, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -12421,6 +12424,7 @@ internal sealed record BirConstructor : BirGraphValue
         WriteOptional(writer, "delegationBindings", DelegationBindings, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "delegationOuterSlot", DelegationOuterSlot, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "delegationDeclarationId", DelegationDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "delegationNativeKey", DelegationNativeKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "declarationSourceName", DeclarationSourceName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "vis", Vis, (writer, value) => { writer.WriteStringValue(value); });
@@ -12446,6 +12450,7 @@ internal sealed record BirConstructor : BirGraphValue
         if (DelegationBindings.IsPresent) result["delegationBindings"] = DelegationBindings.IsNull ? null : new JsonArray(DelegationBindings.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (DelegationOuterSlot.IsPresent) result["delegationOuterSlot"] = DelegationOuterSlot.IsNull ? null : JsonValue.Create(DelegationOuterSlot.Value);
         if (DelegationDeclarationId.IsPresent) result["delegationDeclarationId"] = DelegationDeclarationId.IsNull ? null : JsonValue.Create(DelegationDeclarationId.Value);
+        if (DelegationNativeKey.IsPresent) result["delegationNativeKey"] = DelegationNativeKey.IsNull ? null : JsonValue.Create(DelegationNativeKey.Value);
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
         if (DeclarationSourceName.IsPresent) result["declarationSourceName"] = DeclarationSourceName.IsNull ? null : JsonValue.Create(DeclarationSourceName.Value);
         if (Vis.IsPresent) result["vis"] = Vis.IsNull ? null : JsonValue.Create(Vis.Value);

@@ -121,7 +121,7 @@ static partial class DefaultArgSplice
                 bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
             var selected = constructor.DelegationDeclarationId.OrDefault();
             var defaults = selected != null ? refs.KotlinDefaultValuesForDeclarationIdentity(selected)
-                : refs.DefaultValuesForNativeBaseConstructor(baseOwner, constructor.DelegationSig.OrDefault());
+                : refs.DefaultValuesForNativeBaseConstructor(baseOwner, constructor.DelegationNativeKey.OrDefault());
             if (defaults == null) return;
             Fill(arguments.ToList(), bindings, arguments.Length, defaults, null, null, arguments.FirstOrDefault(), semantic, null, application,
                 calledOwner + " constructor");

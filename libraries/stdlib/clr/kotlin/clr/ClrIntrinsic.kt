@@ -13,7 +13,7 @@ package kotlin.clr
 // declaration identity is a separate compiler fact carried by KotlinDeclarationIdentity below.
 // sourceView names a Kotlin protocol view for assignability, not extra native members or implementation obligations.
 // The frontend consumes only that source identity; physicalOwner remains a representation fact for bir2cir.
-@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY, AnnotationTarget.CONSTRUCTOR)
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrExternal(
     val owner: String,
@@ -30,6 +30,8 @@ public annotation class ClrExternal(
     val operatorRole: String = "",
     // Bit i marks a value operand passed to the paired predicates' readonly reference slot.
     val readonlyOperands: Int = 0,
+    // Exact open native declaration for a constructor with CLR optional parameters.
+    val constructorKey: String = "",
 )
 
 // A projected event declaration, as distinct from an ordinary property storing a ClrEvent value. dll2klib owns

@@ -11,6 +11,7 @@ import InheritedOptionalDefaults.KeyModifiers
 import InheritedOptionalDefaults.NavigationMethod
 import InheritedOptionalDefaults.NullableValueDefaults
 import InheritedOptionalDefaults.OptionalKey
+import InheritedOptionalDefaults.NullableKeyBase
 import InheritedOptionalDefaults.OverloadedDefaultBase
 import InheritedOptionalDefaults.PrimitiveOptionalDefaults
 import InheritedOptionalDefaults.StaticEnumDefaults
@@ -23,11 +24,13 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 class InheritedOptionalArgumentTests {
     private class IntChild : OverloadedDefaultBase(OptionalKey<Int>())
     private class TextChild : OverloadedDefaultBase(OptionalKey<String>())
+    private class TypedKeyChild : NullableKeyBase<String>(typed = null)
 
     @TestAttribute
     fun baseConstructorDefaultsFollowTheSelectedConstructedParameter() {
         assertEquals(3, IntChild().Result)
         assertEquals(8, TextChild().Result)
+        assertEquals("typed:3", TypedKeyChild().Result)
     }
 
     @TestAttribute

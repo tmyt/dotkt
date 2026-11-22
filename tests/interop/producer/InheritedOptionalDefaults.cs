@@ -195,3 +195,11 @@ public class OverloadedDefaultBase
     public OverloadedDefaultBase(OptionalKey<int> key, int value = 3) => Result = value;
     public OverloadedDefaultBase(OptionalKey<string> key, int value = 8) => Result = value;
 }
+
+#nullable enable
+public class NullableKeyBase<T> where T : class
+{
+    public string Result { get; }
+    protected NullableKeyBase(OptionalKey<T?>? typed, int value = 3) => Result = $"typed:{value}";
+    protected NullableKeyBase(OptionalKey<object>? boxed, int value = 8) => Result = $"boxed:{value}";
+}
