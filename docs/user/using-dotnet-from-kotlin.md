@@ -158,10 +158,25 @@ import System.Runtime.InteropServices.DllImportAttribute
 external fun add(left: Int, right: Int): Int
 ```
 
-The initial supported signature subset is blittable primitives and enums, `IntPtr`/`UIntPtr`, and `ClrRef<T>`
-parameters. Strings, booleans, custom marshalling, generic or instance imports, and other non-blittable shapes are not
-silently guessed: the compiler reports them as unsupported. Native library packaging and runtime lookup follow the
-ordinary .NET platform rules and remain the application's responsibility.
+The supported signature subset includes blittable primitives and enums, `IntPtr`/`UIntPtr`, and `ClrRef<T>`
+of those types. A read-only, by-value `String` or `String?` parameter can use the .NET runtime's standard
+null-terminated string marshalling. Use `CharSet.Unicode` for UTF-16 (for example, a Win32 `…W` entry point).
+`CharSet.Ansi` uses the effective ANSI code page on Windows and UTF-8 on Unix; it is not a portable UTF-8
+declaration. For a native API that explicitly takes UTF-8, annotate the parameter:
+
+```kotlin
+import System.Runtime.InteropServices.DllImportAttribute
+import System.Runtime.InteropServices.MarshalAsAttribute
+import System.Runtime.InteropServices.UnmanagedType
+
+@DllImportAttribute("native_text", EntryPoint = "utf8_length", ExactSpelling = true)
+external fun utf8Length(@MarshalAsAttribute(UnmanagedType.LPUTF8Str) text: String): Int
+```
+
+The supported explicit string formats are `LPStr`, `LPWStr`, `LPTStr`, and `LPUTF8Str`. The native code
+must not write through the pointer or retain it beyond the call. String returns, `ref/out` strings, writable buffers,
+custom marshalling, booleans, and generic or instance imports are not supported. Native library packaging and runtime
+lookup follow the ordinary .NET platform rules and remain the application's responsibility.
 
 ## 6. Nullable value types, .NET enums, operators, extension methods
 

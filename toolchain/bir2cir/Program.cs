@@ -611,7 +611,7 @@ sealed class Pipeline
         var localStatics = LocalStaticOwnerBinding.Collect(captured);
         var localReferenceTypes = AnySlotRebind.CollectLocalTypes(captured);
         var genericDowncastHierarchy = GenericDowncastRealignment.Collect(captured);
-        var iterableHierarchy = SupertypeGraph.CollectSource(captured);
+        var sourceHierarchy = SupertypeGraph.CollectSource(captured);
         var syntheticTypes = captured.Select(source =>
             NullableTvErasureCallRealign.CaptureNewSyntheticTypes(source, nullableDeclarations)).ToArray();
         for (var sourceIndexInModule = 0; sourceIndexInModule < captured.Length; sourceIndexInModule++)
@@ -624,7 +624,7 @@ sealed class Pipeline
             if (!referenceBuild)
             {
                 ValueSlotNullableWrite.Apply(source, refs, isValueFqn);
-                ValueElementIterableCoercion.Apply(source, isValueFqn, iterableHierarchy, refs);
+                ValueElementIterableCoercion.Apply(source, isValueFqn, sourceHierarchy, refs);
             }
             ArrayNullableElemCanonicalization.Apply(source, isValueFqn);
             NullableIsInstMatch.Apply(source);
@@ -1020,7 +1020,7 @@ sealed class Pipeline
             MemberCallSubstitution.CollectLocalPropertyAccessors(captured),
             new SourceModuleIndex(captured, refs.Aliases));
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(captured,
-            carrierRealization.Declarations.PhysicalDeclarationSources);
+            carrierRealization.Declarations.PhysicalDeclarationSources, sourceHierarchy);
         if (!referenceBuild) CollectionBclSlotSynthesis.RecordContracts(captured, refs);
         for (var sourcePosition = 0; sourcePosition < captured.Length; sourcePosition++)
         {

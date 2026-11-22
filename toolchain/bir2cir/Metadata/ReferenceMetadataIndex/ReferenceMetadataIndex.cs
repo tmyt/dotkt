@@ -2107,6 +2107,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     public bool TryExistentialSemanticOwner(string physicalOwner, out string semanticOwner) =>
         _existentialSemanticByPhysicalOwner.TryGetValue(
             StripGenericArity(DottedFqn(BareOwnerFqn(physicalOwner))), out semanticOwner);
+
+    internal TypeNode.Fqn ExistentialSourceType(string carrier) =>
+        IsExistentialPhysicalOwner(carrier) && ResolveRefType(carrier, 0) is {} declaration
+            ? KotlinTypeOf(declaration.GetCustomAttributesData(), declaration.Assembly) as TypeNode.Fqn : null;
     public bool TryKotlinRichEnumStaticApis(string ownerFqn, out string values, out string valueOf)
     {
         if (TryKotlinRichEnum(ownerFqn, out var metadata))
