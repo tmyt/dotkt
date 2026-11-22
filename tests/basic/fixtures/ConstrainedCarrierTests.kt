@@ -121,6 +121,10 @@ private fun <R : CarrierBase> forwardCarrier(r: R): R = retainOwnerBoundTag(r)
 private fun <R : CarrierBase> R.carrierId(): Int = id
 private fun <R : CarrierBase> captureCarrier(r: R): () -> Int = { r.id }
 private fun <T> openCarrier(value: T): T = preserveCarrier(CarrierPayload(value)).payload
+private fun <V : System.IO.Stream> captureNativeStorage(factory: () -> V): Any {
+    val capture = { CarrierPayload(factory()) }
+    return capture().payload
+}
 
 class ConstrainedCarrierTests {
     @TestAttribute
@@ -130,6 +134,8 @@ class ConstrainedCarrierTests {
         check(forwardCarrier(payload) === payload)
         assertEquals(7, payload.carrierId())
         assertEquals(7, captureCarrier(payload)())
+        val stream = System.IO.MemoryStream()
+        check(captureNativeStorage { stream } === stream)
         assertEquals("open", openCarrier("open"))
         val tagged = OwnerBoundTagged()
         assertEquals(tagged, OwnerBoundTaggedSink<OwnerBoundTag>().retain(tagged))

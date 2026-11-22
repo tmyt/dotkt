@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Fix a runtime type-load failure in lambdas that capture a type parameter bounded by a CLR class such as `System.IO.Stream`.
 - Preserve writes through `byref` when calling a Kotlin generic method with a star-projected type satisfying both class and interface bounds.
 
 ## 0.9.31 (2026-11-22)
