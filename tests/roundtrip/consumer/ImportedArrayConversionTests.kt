@@ -5,6 +5,7 @@ import roundtrip.arrayconversion.importedOrEmpty
 import roundtrip.arrayconversion.importedTypedArray
 import roundtrip.arrayconversion.importedNullableTypedArray
 import roundtrip.higherorder.Box
+import roundtrip.functionvariance.NominalTwice
 
 class ImportedArrayConversionTests {
     @TestAttribute
@@ -40,10 +41,15 @@ class ImportedArrayConversionTests {
         check(objects.size == 2 && objects[0] == 7 && objects[1] == null)
         val number = Box(42)
         @Suppress("UNCHECKED_CAST") val erased = number as Box<String>
-        val mixed = LibraryArrayCollection(listOf(erased, erased))
+        val text = Box("second")
+        val mixed = LibraryArrayCollection(listOf(erased, text))
         val destination = arrayOf<Any?>(null, null)
-        check(mixed.into(destination) === destination && destination[0] === number && destination[1] === number)
+        check(mixed.into(destination) === destination && destination[0] === number && destination[1] === text)
         check(mixed.iteratorCalls == 1)
+        val twice = NominalTwice()
+        val callbacks = ArrayList<(Int) -> Int>()
+        callbacks.add(twice)
+        check(LibraryArrayCollection(callbacks).into(destination)[0] === twice)
         val nullable = LibraryArrayCollection(listOf<Int?>(null, 7))
         val boxed = importedTypedArray(nullable)
         check(boxed[0] == null && boxed[1] == 7 && nullable.iteratorCalls == 1)

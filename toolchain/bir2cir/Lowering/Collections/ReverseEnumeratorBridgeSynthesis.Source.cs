@@ -89,7 +89,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             new BirIf { Branches = new[] { new BirBranch {
                 Cond = E(Wrapped("hasNext", boolean)), Body = new IBirStatement[] {
                     new BirSetField { OwnerType = Self(), Recv = E(new BirThis()), Name = "_cur",
-                        Value = E(Wrapped("next", rawElement)) },
+                        Value = E(FunctionValueRepresentation.RuntimeViewCall(Wrapped("next", rawElement), arity: null)) },
                     SourceReturn(new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) }),
                 },
             } } },
