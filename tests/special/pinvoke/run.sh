@@ -24,6 +24,20 @@ if [[ -d "$CACHE" ]]; then
 	find "$CACHE" -mindepth 1 -maxdepth 1 -type d -iname 'dotkt.*' -exec rm -rf -- {} +
 fi
 
+# Exec must report the compiler error at quiet verbosity even when its source
+# location is longer than MSBuild's diagnostic-header scan.
+diagnostic_dir="$OUT/diagnostic"
+while (( ${#diagnostic_dir} < 400 )); do diagnostic_dir+="/long-source-directory"; done
+mkdir -p "$diagnostic_dir"
+diagnostic_source="$diagnostic_dir/UnsupportedCallback.kt"
+cp "$ROOT/tests/special/pinvoke/UnsupportedCallback.kt" "$diagnostic_source"
+if dotnet build "$ROOT/tests/special/pinvoke/diagnostic/PInvokeDiagnostic.ktproj" \
+    -p:DiagnosticSource="$diagnostic_source" --no-incremental -v:q --nologo >"$OUT/diagnostic.log" 2>&1; then
+    die "unsupported P/Invoke unexpectedly compiled"
+fi
+grep -F "error DOTKTPINVOKE001: P/Invoke 'unsupportedCallback' does not support parameter 'callback' of type 'fnptr(System.Int32[,]) -> System.Int32'" "$OUT/diagnostic.log" | \
+    grep -F "$diagnostic_source(7," >/dev/null || { cat "$OUT/diagnostic.log"; die "quiet build lost compiler diagnostic or source"; }
+
 cc -shared -fPIC "$ROOT/tests/special/pinvoke/native/probe.c" \
 	-o "$OUT/native/libdotkt_pinvoke_probe.so"
 dotnet build "$ROOT/tests/special/pinvoke/inspector/PInvokeInspector.csproj" \

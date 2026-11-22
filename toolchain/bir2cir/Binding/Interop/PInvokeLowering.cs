@@ -56,9 +56,27 @@ static partial class PInvokeLowering
         throw Error(method, $"{position} must be a resolved CLR enum constant");
     }
 
-    static InvalidOperationException Error(BirFunctionDeclaration method, string message) =>
-        new($"{FieldLegality.PosPrefix(method.Pos.OrDefault()?.F.OrDefault(),
-            method.Pos.HasValue && method.Pos.Value.L.HasValue ? method.Pos.Value.L.Value : (int?)null)}P/Invoke {message}");
+    // Keep source diagnostics recognizable as errors to MSBuild Exec, even at quiet verbosity.
+    internal sealed class DiagnosticException(BirDeclarationPosition position, string message)
+        : Exception("P/Invoke " + message)
+    {
+        public string Format()
+        {
+            var path = position?.F.OrDefault();
+            var origin = string.IsNullOrEmpty(path) ? "bir2cir" : path;
+            if (!string.IsNullOrEmpty(path) && position.L.OrDefault() is var line and > 0)
+                origin += position.C.OrDefault() is var column and > 0 ? $"({line},{column})" : $"({line})";
+            const string header = ": error DOTKTPINVOKE001:";
+            // MSBuild Exec parses the first 400 characters for the diagnostic header.
+            // Only a drive-letter prefix may contain a colon in its origin.
+            int drive = path is { Length: >= 2 } && char.IsAsciiLetter(path[0]) && path[1] == ':' ? 2 : 0;
+            return origin.Length + header.Length > 400 || (path?.IndexOf(':', drive) ?? -1) >= 0
+                ? $"bir2cir{header} {Message} ({origin})"
+                : $"{origin}{header} {Message}";
+        }
+    }
+
+    static DiagnosticException Error(BirFunctionDeclaration method, string message) => new(method.Pos.OrDefault(), message);
 
     static void ApplyMethod(BirFunctionDeclaration method, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
     {
@@ -188,18 +206,19 @@ static partial class PInvokeLowering
         if (returnType is not TypeNode.Fqn { Name: "System.Void" or "void" or "kotlin.Unit" } &&
             !SupportedScalar(returnType, refs, localEnums))
             throw Error(method,
-                $"'{name}' return type is outside the supported blittable primitive, enum, IntPtr, and UIntPtr subset");
+                $"'{name}' does not support return type '{FieldLegality.Render(returnType)}'. " +
+                "Use a supported blittable primitive, enum, IntPtr, or UIntPtr; marshalling is not supported.");
 
         foreach (var parameter in method.Params.OrEmpty())
         {
             if (!parameter.Type.HasValue)
                 throw Error(method, $"'{name}' has a parameter with no type");
             var type = parameter.Type.Value;
-            if (type is TypeNode.ByRef byRef) type = byRef.Of;
-            if (!SupportedScalar(type, refs, localEnums))
+            if (!SupportedScalar(type is TypeNode.ByRef byRef ? byRef.Of : type, refs, localEnums))
                 throw Error(method,
-                    $"'{name}' parameter '{parameter.Name.OrDefault() ?? "<unnamed>"}' is outside " +
-                    "the supported blittable primitive, enum, IntPtr, UIntPtr, and ClrRef subset");
+                    $"'{name}' does not support parameter '{parameter.Name.OrDefault() ?? "<unnamed>"}' " +
+                    $"of type '{FieldLegality.Render(type)}'. Use a supported blittable primitive, enum, IntPtr, " +
+                    "UIntPtr, or ClrRef of one of those types; marshalling is not supported.");
         }
     }
 

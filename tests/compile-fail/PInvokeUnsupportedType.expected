@@ -1,1 +1,3 @@
-outside the supported blittable primitive, enum, IntPtr, UIntPtr, and ClrRef subset
+PInvokeUnsupportedType.kt(4,
+error DOTKTPINVOKE001: P/Invoke 'unsupportedPInvoke' does not support parameter 'value' of type 'System.String'
+marshalling is not supported

@@ -1,1 +1,1 @@
-return type is outside the supported blittable primitive, enum, IntPtr, and UIntPtr subset
+error DOTKTPINVOKE001: P/Invoke 'unsupportedBoolean' does not support return type 'System.Boolean'
