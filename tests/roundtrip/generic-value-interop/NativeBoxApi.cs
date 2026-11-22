@@ -72,12 +72,17 @@ public interface NativeBoxReceiver
 }
 
 public sealed class NativeBoxContainer<T>(T value) { public T Value { get; } = value; }
-public sealed class NativeBoxArrayLease(Box<string, string>[] values)
+public class NativeBoxArrayLease(Box<string, string>[] values)
 {
     public object ArrayIdentity => values;
     public Box<string, string> First { get => values[0]; set => values[0] = value; }
 }
 public class NativeVectorBase(Derived<string>[] values) { public int Count => values.Length; }
+public class NativeCallbackBase(DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+    object, object, object, object, object, object, object, object, object, object, object, object> callback)
+{
+    public object Read() => callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+}
 public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactory();
 public interface NativeBoxCreator { Box<string, string> Create(); }
 public interface NativeBoxArraySource { Box<string, string>[] Read(); }

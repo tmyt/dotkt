@@ -33,8 +33,8 @@ static partial class ClrMemberResolution
                         $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(signature)})");
                 ctor.BaseCtorRef = BirMemberReference.FromPhysical(MemberRefOf(localTypes, refs, winner,
                     MemberRefNode.Kinds.Ctor, open, baseFqn.Args));
-                if (ctor.DelegationNativeKey.HasValue)
-                    ctor.DelegationSig = ctor.BaseCtorRef.Value.ParameterTypes.Value;
+                // BaseCtorRef owns the physical slots. Keep the selected Kotlin
+                // signature for conversions such as a function object to a delegate.
                 var parameters = winner.GetParameters();
                 for (var index = 0; index < parameters.Length; index++)
                 {

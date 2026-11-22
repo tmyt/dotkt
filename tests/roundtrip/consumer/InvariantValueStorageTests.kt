@@ -17,6 +17,7 @@ private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String
     return items[0]
 }
 private class DelegatedVector : GenericValueInterop.NativeVectorBase(arrayOf(roundtrip.genericvalueinterop.Derived<String>()))
+private class DelegatedBoxVector(value: Box<String>) : GenericValueInterop.NativeBoxArrayLease(arrayOf(value))
 private class LocalStoredBox<T>(val value: T)
 private open class PlainArrayBase
 private class ProjectedArrayChild<T>(val value: T) : PlainArrayBase()
@@ -146,6 +147,8 @@ class InvariantValueStorageTests {
     @TestAttribute
     fun nativeMethodWitnessesAndGenericReferencesKeepExactLocations() {
         check(DelegatedVector().Count == 1)
+        val element = Box("one")
+        check(DelegatedBoxVector(element).First === element)
         val empty: Array<Box<String>> = System.Array.Empty<Box<String>>()
         check(empty.size == 0)
         check(NativeBoxApi.IsNativeBoxMatrix(System.Array.Empty<Array<Box<String>>>()))

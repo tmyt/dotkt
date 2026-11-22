@@ -66,8 +66,10 @@ no equivalent and a later layer cannot recover the fact unambiguously.
 ## Inputs and outputs
 
 The production input set is `@(ReferencePathWithRefAssemblies)`, resolved by
-MSBuild. `@(ReferencePath)` is used only as a compatibility fallback when the
-former item set is unavailable.
+MSBuild. If that item set is unavailable, the SDK uses `@(ReferencePath)`.
+The same compile references feed KLIB projection and CLR binding: a reference
+and its implementation can encode a type through different forwarding assemblies.
+Runtime assets remain separate.
 
 For every input:
 

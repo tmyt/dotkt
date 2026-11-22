@@ -30,7 +30,7 @@ public annotation class ClrExternal(
     val operatorRole: String = "",
     // Bit i marks a value operand passed to the paired predicates' readonly reference slot.
     val readonlyOperands: Int = 0,
-    // Exact open native declaration for a constructor with CLR optional parameters.
+    // Exact open native constructor declaration, independent of its Kotlin parameter projection.
     val constructorKey: String = "",
 )
 

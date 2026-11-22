@@ -125,6 +125,8 @@ if cmp -s "$ref" "$impl"; then
     exit 1
 fi
 grep -Fxq "$ref" "$ws/kotlin/obj/Debug/net10.0/dotkt-reference-klibs.rsp"
+awk '$0 == "--compile-refs" { getline; print; exit }' "$ws/kotlin/obj/Debug/net10.0/dotkt-bir2cir.rsp" \
+    | tr -d '"' | tr ';' '\n' | grep -Fx "$ref" >/dev/null
 dotnet "$ws/kotlin/bin/Debug/net10.0/Consumer.dll"
 
 # The compiler command must reference the ref image, while both consumers copy the implementation.

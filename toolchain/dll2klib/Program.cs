@@ -2503,8 +2503,10 @@ internal sealed partial class AssemblyScanner : IDisposable
                 };
                 if (declarationIdentity is { } constructorIdentity)
                     constructor.ConstructorAnnotation.Add(KotlinDeclarationIdentityAnnotation(names, constructorIdentity.Id, ""));
-                else if (parameters.Any(parameter => (parameter.Flags & 2) != 0))
+                else
                 {
+                    // Even a required parameter may project only the Kotlin arguments of a physical CLR type.
+                    // Carry the selected constructor rather than using that projection for overload resolution again.
                     var native = ClrExternalAnnotation(names, handle);
                     AddStringAnnotationArgument(native, names, "constructorKey", RawSignatureTypeProvider.ConstructorKey(_md, methodHandle));
                     constructor.ConstructorAnnotation.Add(native);
