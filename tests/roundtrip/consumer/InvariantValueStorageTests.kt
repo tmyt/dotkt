@@ -103,6 +103,11 @@ class InvariantValueStorageTests {
         check(elements[0] === UniversalStoredView && elements[0].code(42) == 7)
         val pair = storedPair()
         check(pair.first === UniversalStoredView && pair.first.code(42) == 7 && pair.second == 1)
+        val bag = mutableListOf<Any>()
+        val readFirst = NativeBoxApi.RetainBagReader(bag)
+        val box = Box("after publication")
+        bag.add(arrayOf(box))
+        check(readFirst() === box)
     }
 
     @TestAttribute

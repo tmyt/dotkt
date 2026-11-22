@@ -2877,6 +2877,12 @@ What this is observable as, beyond the boxing already listed above:
   array storage; this does not change ordinary projected array slots on an annotated Kotlin method.
   A collection factory's native container element, key or value argument is such a witness too;
   storing an open array in that container checks its exact array shape at the insertion edge.
+- **Sharing a mutable collection does not freeze or recursively validate its contents.** If CLR code retains
+  a Kotlin `MutableList<Any>` and Kotlin later adds a representable array, a CLR reader using `IList` and
+  `System.Array.GetValue` observes the same reference elements. That reader has not requested a typed `T[]`.
+  If an unchecked Kotlin write put a value in the array that its native element type cannot represent, the
+  indirect read is not guaranteed to recover that value or to throw at a particular point. This does not
+  change Kotlin-only reads and writes or the exact checks at direct typed CLR boundaries.
 
 An array element is therefore not a special case but the most visible instance of the general rule, and a generic
 that carries an element from an array into a collection stays consistent: `fun f(xs: Array<Int?>): List<Int?> =

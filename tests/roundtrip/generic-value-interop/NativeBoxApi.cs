@@ -90,6 +90,11 @@ public static class NativeBoxApi
     public static Box<string, string> Echo(Box<string, string> value) => value;
     public static Box<string, string>[] EchoBoxes(Box<string, string>[] values) => values;
     public static NativeBoxArrayLease RetainBoxes(Box<string, string>[] values) => new(values);
+    public static System.Func<object> RetainBagReader(object bag)
+    {
+        var retained = (System.Collections.IList)bag;
+        return () => ((System.Array)retained[0]).GetValue(0);
+    }
     public static bool FirstMissing(ref Box<string, string>[] values) => values[0] is null;
     public static void ResetBoxes(out Box<string, string>[] values) => values = [new("reset")];
     public static int CountBoth(Box<string, string>[] first, Box<string, string>[] second) => first.Length + second.Length;
