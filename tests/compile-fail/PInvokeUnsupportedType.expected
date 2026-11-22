@@ -1,1 +1,1 @@
-outside the supported blittable primitive, enum, IntPtr, UIntPtr, and ClrRef subset
+return type is outside the supported blittable primitive, enum, IntPtr, and UIntPtr subset

@@ -10,5 +10,8 @@ fun main() {
     check(auto(9) == 9)
     check(observedLastError(1234) == 1234)
     check(modeEcho(Mode.One) == Mode.One)
+    check(checkUtf16("日😀") == 1)
+    check(checkUtf16(null) == -1)
+    check(checkUtf8("日😀") == 1)
     println("P/Invoke direct + dll2klib round-trip: OK")
 }

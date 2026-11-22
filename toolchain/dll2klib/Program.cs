@@ -2210,6 +2210,11 @@ internal sealed partial class AssemblyScanner : IDisposable
             throw new InvalidDataException(
                 $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': target is not an enum");
         var isAnnotation = IsAttributeType(handle);
+        // Kotlin annotation applications use one primary constructor. The CLR's MarshalAs pseudo-attribute
+        // defines the enum as its source-facing form; the Int16 overload is for type-library import.
+        var isSystemMarshalAs = isAnnotation && metadataName == "MarshalAsAttribute" &&
+            metadataNamespace == "System.Runtime.InteropServices" &&
+            AssemblySimpleName(_md) is "System.Runtime.InteropServices" or "System.Private.CoreLib" or "mscorlib";
         var isClrExceptionRoot =
             metadataNamespace == "System" &&
             metadataName == "Exception";
@@ -2484,7 +2489,10 @@ internal sealed partial class AssemblyScanner : IDisposable
                 var constructor = new Constructor
                 {
                     Flags = CallableVisibility(methodHandle, Flags.Constructor(method.Attributes,
-                        primary: isAnnotation || declarationIdentity?.ConstructorPrimary == true)),
+                        primary: isAnnotation && (!isSystemMarshalAs ||
+                            parameters is [var value] && value.Type.HasClassName &&
+                            names.ClassName(value.Type.ClassName) == "System.Runtime.InteropServices.UnmanagedType") ||
+                            declarationIdentity?.ConstructorPrimary == true)),
                     ValueParameter = { parameters },
                 };
                 if (declarationIdentity is { } constructorIdentity)

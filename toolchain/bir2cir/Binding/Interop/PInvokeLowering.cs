@@ -10,6 +10,8 @@ using DotKt.Cir;
 static partial class PInvokeLowering
 {
     const string DllImport = "System.Runtime.InteropServices.DllImportAttribute";
+    const string MarshalAs = "System.Runtime.InteropServices.MarshalAsAttribute";
+    const string Out = "System.Runtime.InteropServices.OutAttribute";
 
     static readonly HashSet<string> ScalarTypes = new(StringComparer.Ordinal)
     {
@@ -195,6 +197,11 @@ static partial class PInvokeLowering
             if (!parameter.Type.HasValue)
                 throw Error(method, $"'{name}' has a parameter with no type");
             var type = parameter.Type.Value;
+            if (type is TypeNode.Fqn { Name: "System.String", Args: null })
+            {
+                ValidateStringInput(method, name, parameter);
+                continue;
+            }
             if (type is TypeNode.ByRef byRef) type = byRef.Of;
             if (!SupportedScalar(type, refs, localEnums))
                 throw Error(method,
@@ -202,6 +209,38 @@ static partial class PInvokeLowering
                     "the supported blittable primitive, enum, IntPtr, UIntPtr, and ClrRef subset");
         }
     }
+
+    static void ValidateStringInput(BirFunctionDeclaration method, string name, BirParameter parameter)
+    {
+        var label = $"'{name}' string parameter '{parameter.Name.OrDefault() ?? "<unnamed>"}'";
+        var attributes = parameter.Attrs.OrEmpty();
+        if (attributes.Any(attr => attr.Attr.OrDefault() is TypeNode.Fqn { Name: Out }))
+            throw Error(method, $"{label} must be input-only; use a native buffer for writable output");
+
+        // With no override the runtime uses the already emitted DllImport CharSet.
+        var marshal = attributes.Where(attr => attr.Attr.OrDefault() is TypeNode.Fqn { Name: MarshalAs }).ToArray();
+        if (marshal.Length == 0) return;
+        if (marshal.Length != 1 || !marshal[0].AttrExternal.OrDefault() ||
+            marshal[0].MemberRef.OrDefault()?.DeclaringType.OrDefault() is not TypeNode.Fqn { Name: MarshalAs } ||
+            marshal[0].NamedArgs.OrEmpty().Length != 0 ||
+            marshal[0].Args.OrEmpty() is not [var value] ||
+            MarshalAsValue(method, value) is not (
+                (int)System.Runtime.InteropServices.UnmanagedType.LPStr or
+                (int)System.Runtime.InteropServices.UnmanagedType.LPWStr or
+                (int)System.Runtime.InteropServices.UnmanagedType.LPTStr or
+                (int)System.Runtime.InteropServices.UnmanagedType.LPUTF8Str))
+            throw Error(method, $"{label} supports only MarshalAs(LPStr, LPWStr, LPTStr, or LPUTF8Str)");
+    }
+
+    static int? MarshalAsValue(BirFunctionDeclaration method, IBirAttributeValue value) => value switch
+    {
+        BirEnumValue { Type.HasValue: true } e when
+            e.Type.Value is TypeNode.Fqn { Name: "System.Runtime.InteropServices.UnmanagedType" } =>
+            EnumConstant(method, e, "MarshalAs value"),
+        BirConstant { Value.HasValue: true } c when c.Value.Value is BirLiteral.IntegerLiteral
+            { Value: >= short.MinValue and <= short.MaxValue } literal => (int)literal.Value,
+        _ => null,
+    };
 
     static bool SupportedScalar(
         TypeNode type,

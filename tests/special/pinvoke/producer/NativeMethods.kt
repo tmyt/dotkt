@@ -2,6 +2,8 @@ import System.Runtime.InteropServices.CallingConvention
 import System.Runtime.InteropServices.CharSet
 import System.Runtime.InteropServices.DllImportAttribute
 import System.Runtime.InteropServices.Marshal
+import System.Runtime.InteropServices.MarshalAsAttribute
+import System.Runtime.InteropServices.UnmanagedType
 import System.IntPtr
 import System.UIntPtr
 import kotlin.clr.ClrRef
@@ -50,6 +52,15 @@ external fun echoIntPtr(value: IntPtr): IntPtr
 
 @DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "uintptr_identity")
 external fun echoUIntPtr(value: UIntPtr): UIntPtr
+
+@DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "check_utf16",
+    CharSet = CharSet.Unicode, ExactSpelling = true)
+external fun checkUtf16(value: String?): Int
+
+// The explicit parameter encoding must override the import's Unicode default.
+@DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "check_utf8",
+    CharSet = CharSet.Unicode, ExactSpelling = true)
+external fun checkUtf8(@MarshalAsAttribute(UnmanagedType.LPUTF8Str) value: String): Int
 
 fun observedLastError(value: Int): Int {
     check(setError(value) == -1)
