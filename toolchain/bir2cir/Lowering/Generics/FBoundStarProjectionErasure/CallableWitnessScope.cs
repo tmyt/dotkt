@@ -3,7 +3,8 @@ using DotKt.Bir.Lowering;
 
 // A lexical !i and !!i never refer to the same binder. Keep the producer's
 // ordering: each appended formal is evidence for a particular ordinary slot.
-readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Slots)
+readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Slots,
+    NullableRepresentationFrame Representations = null)
 {
     internal static IEnumerable<(ProjectedClassStorageFrame.WitnessSlot Slot, TypeNode.Tv Variable)> For(
         TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
