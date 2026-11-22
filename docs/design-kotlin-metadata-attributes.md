@@ -179,6 +179,13 @@ ordinary type carries nothing at all. dll2klib reads these facts back (`RestoreE
 the single base edge by its declaration role; `interfaces` corrects projected edges by Kotlin classifier identity;
 `bounds` is applied to the type parameter at that index. Physical representation arity does not select source facts.
 
+The static factory for a projected Kotlin constructor carries `KotlinProjectedConstructor`.
+Its metadata records the number of primary CLR slots, the captured outer prefix, and, in factory
+slot order, the primary slot, required interface bound (in the owner's binder), and native-argument
+requirement of each extra slot. The reference assembly retains this relation. The consumer selects
+the factory by declaration identity and matches the named bound against its shipped MethodDef's
+constraint rows; their order is not a contract. This does not add a source constructor to the KLIB.
+
 The declaration-signature allocator additionally records `signatureAllocation: true` on the existing
 `KotlinDeclarationIdentity` payload for declarations whose physical parameter identity it allocated. Absence is
 the current unallocated form. Full reference metadata and minimal runtime linkage retain this physical obligation;

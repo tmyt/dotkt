@@ -43,6 +43,20 @@ static partial class RoundtripMetadata
     internal static void StampPropertyStorage(BirFunctionDeclaration getter, string owner, string field)
         => getter.Attrs = getter.Attrs.OrEmpty().Append(PlacementCarrier(AKPropertyStorage, PropertyStorageContent(owner, field))).ToArray();
 
+    internal static void StampProjectedConstructor(BirFunctionDeclaration factory, ProjectedConstructorPlan plan)
+        => factory.Attrs = factory.Attrs.OrEmpty().Append(PlacementCarrier(AKProjectedConstructor,
+            BirCarrier.EncodeMetadata(plan, static (ref MessagePackWriter writer, ProjectedConstructorPlan p) => {
+                writer.WriteMapHeader(3);
+                writer.Write("primary"); writer.Write(p.PrimaryArity);
+                writer.Write("captured"); writer.Write(p.Captured);
+                writer.Write("facets"); writer.WriteArrayHeader(p.Facets.Length);
+                foreach (var f in p.Facets)
+                {
+                    writer.WriteArrayHeader(3); writer.Write(f.Primary);
+                    TypeNodeMessagePack.Write(ref writer, f.Bound); writer.Write(f.NativeArgument);
+                }
+            }))).ToArray();
+
     internal static void StampExtensionCore(BirFunctionDeclaration wrapper, string core)
         => wrapper.Attrs = wrapper.Attrs.OrEmpty().Append(PlacementCarrier(AKExtensionCore, ExtensionCoreContent(core))).ToArray();
 

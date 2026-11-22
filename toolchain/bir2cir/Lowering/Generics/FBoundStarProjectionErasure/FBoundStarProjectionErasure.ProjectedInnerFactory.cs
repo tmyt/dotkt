@@ -7,10 +7,6 @@ static partial class FBoundStarProjectionErasure
     static string ProjectedInnerFactoryId(string constructorId) =>
         DeclarationIdentityBinding.PhysicalOnlyId(constructorId, DeclarationIdentityBinding.ProjectedInnerConstructorRole);
 
-    static int[] InnerMethodFrame(int original, int captured, ProjectedClassStorageFrame.InterfaceSlot[] facets) =>
-        Enumerable.Range(captured, original - captured).Concat(facets.Select((f,i) => (f,i))
-            .Where(row => row.f.OwnerIndex >= captured).Select(row => original + row.i)).ToArray();
-
     // The outer object, not the caller, owns its captured CLR type arguments.
     // Expose only the inner frame on its virtual constructor slot.
     static void RegisterProjectedInnerFactory(Owner outer, Owner inner, BirConstructor ctor, SourceInnerFactory ordinary,
@@ -19,7 +15,7 @@ static partial class FBoundStarProjectionErasure
         if (context.Projection.StorageFrame(inner.Name) is not { } layout) return;
         var captured = inner.OuterCount;
         var full = layout.Declare();
-        var indices = InnerMethodFrame(full.Length - layout.Interfaces.Length, captured, layout.Interfaces);
+        var indices = layout.Constructor(captured).InnerSlots();
         TypeNode ForSlot(TypeNode t) => EraseOwnerTv(CapturedGenericInvocation.Map(t, tv => tv.Scope == "type" &&
             Array.IndexOf(indices, tv.I) is var i && i >= 0 ? new TypeNode.Tv("method", i) : tv), context.Owners, context.References);
         var frame = indices.Select(i => CapturedGenericInvocation.CloneParameter(full[i], ForSlot)).ToArray();
@@ -59,14 +55,14 @@ static partial class FBoundStarProjectionErasure
         } };
         if (!referenceBuild)
         {
-            var indices = InnerMethodFrame(original, prefix, inner.Slots);
+            var indices = ProjectedConstructorPlan.From(original, prefix, inner.Slots).InnerSlots();
             var types = Enumerable.Range(0, original + inner.Slots.Length).Select(i => {
                 if (Array.IndexOf(indices, i) is var methodIndex && methodIndex >= 0)
                     return (TypeNode)new TypeNode.Tv("method", methodIndex);
                 if (i < prefix) return new TypeNode.Tv("type", i);
                 var facet = inner.Slots[i - original];
                 var split = projectedOuter == null ? -1 : Array.FindIndex(projectedOuter.Slots,
-                    s => s.OwnerIndex == facet.OwnerIndex && s.BoundIndex == facet.BoundIndex);
+                    s => s.OwnerIndex == facet.OwnerIndex && s.Bound.Equals(facet.Bound));
                 return new TypeNode.Tv("type", split < 0 ? facet.OwnerIndex : prefix + split);
             }).ToArray();
             var signature = factory.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray();

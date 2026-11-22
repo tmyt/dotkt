@@ -26,6 +26,7 @@ static partial class FBoundStarProjectionErasure
         if (constructors.Length == 0) return;
         var used = carrier.Methods.OrEmpty().Select(method => method.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
         var ids = new Dictionary<string, string>(StringComparer.Ordinal);
+        var entry = frame.Constructor(owner.OuterCount);
         int next = 0;
         foreach (var constructor in constructors)
         {
@@ -34,7 +35,7 @@ static partial class FBoundStarProjectionErasure
             string name;
             do name = "$projectedCtor$" + next++; while (!used.Add(name));
             ids.Add(id, factoryId);
-            context.Declarations.ProjectedConstructors.Add(factoryId, (owner.ErasedName, name));
+            context.Declarations.ProjectedConstructors.Add(factoryId, (owner.ErasedName, name, entry));
             var generic = frame.Declare();
             var methodFrame = Enumerable.Range(0, generic.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
             TypeNode InMethod(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, methodFrame);
@@ -69,6 +70,11 @@ static partial class FBoundStarProjectionErasure
             var parameters = TypeParameterFrame.Declarations(declarations[p.Exact].Single().type).ToArray();
             return p with { Slots = p.Slots.Select(slot => slot with {
                 Bound = parameters[slot.OwnerIndex].Constraints.Value[slot.BoundIndex] }).ToArray() };
+        }, StringComparer.Ordinal);
+        var entries = storageOwners.Values.ToDictionary(p => p.Exact, p => {
+            var type = declarations[p.Exact].Single().type;
+            return ProjectedConstructorPlan.From(TypeParameterFrame.Declarations(type).Count(),
+                type.CapturedTypeParams.OrEmpty().Length, p.Slots);
         }, StringComparer.Ordinal);
         var implementations = new Dictionary<string, BirClassDefinition>(StringComparer.Ordinal);
         var innerFactories = new List<(ProjectedStorageOwner Plan, string Id, BirFunctionDeclaration Factory, int Prefix, int Original)>();
@@ -154,9 +160,8 @@ static partial class FBoundStarProjectionErasure
                     && storageOwners.TryGetValue(selected.Name, out var destination))
                 {
                     bool forwarded = false;
-                    var witnesses = destination.Slots.Select(required => {
-                        var bound = SupertypeGraph.SubstOwnerTvs(required.Bound, arguments);
-                        if (arguments[required.OwnerIndex] is TypeNode.Tv { Scope: "type" } source)
+                    var closed = entries[selected.Name].Close(arguments, (required, bound) => {
+                        if (arguments[required.Primary] is TypeNode.Tv { Scope: "type" } source)
                         {
                             var slot = Array.FindIndex(plan.Slots, available => available.OwnerIndex == source.I
                                 && available.Bound.Equals(bound));
@@ -166,9 +171,9 @@ static partial class FBoundStarProjectionErasure
                                 return (TypeNode)new TypeNode.Tv("type", fullFrame.Length - plan.Slots.Length + slot);
                             }
                         }
-                        return required.NativeArgument ? arguments[required.OwnerIndex] : bound;
-                    }).ToArray();
-                    if (forwarded) creation.Type = new TypeNode.Fqn(destination.Implementation, arguments.Concat(witnesses).ToArray());
+                        return required.NativeArgument ? arguments[required.Primary] : bound;
+                    });
+                    if (forwarded) creation.Type = new TypeNode.Fqn(destination.Implementation, closed);
                 }
                 // A self-receiver now belongs to the private implementation, not to
                 // an exact instantiation of the original Kotlin class. Other
@@ -190,6 +195,7 @@ static partial class FBoundStarProjectionErasure
                 constructor.Vis = "internal";
                 var factory = carrier.Methods.Value.Single(m =>
                     m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() == factoryId);
+                RoundtripMetadata.StampProjectedConstructor(factory, entries[plan.Exact]);
                 if (plan.Outer != null)
                     innerFactories.Add((plan,id,factory,prefix,exactParameters.Length));
                 if (referenceBuild) continue;

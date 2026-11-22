@@ -39,7 +39,7 @@ static partial class FBoundStarProjectionErasure
 
     internal sealed class SourceCarrierDeclarations
     {
-        internal Dictionary<string, (string Owner, string Name)> ProjectedConstructors { get; } = new(StringComparer.Ordinal);
+        internal Dictionary<string, (string Owner, string Name, ProjectedConstructorPlan Plan)> ProjectedConstructors { get; } = new(StringComparer.Ordinal);
         internal Dictionary<string, (string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Result)> ProjectedInnerFactories { get; } = new(StringComparer.Ordinal);
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceSlot>> slots = new();
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceInnerFactory>> factories = new();

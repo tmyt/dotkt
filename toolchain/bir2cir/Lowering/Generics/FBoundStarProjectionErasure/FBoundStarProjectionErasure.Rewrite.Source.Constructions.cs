@@ -136,24 +136,25 @@ static partial class FBoundStarProjectionErasure
             // Binding clears the source ctor ID before physical method/class clones
             // exist. Keep its producer-selected factory for calls forwarding a TV.
             if (owner.Args.Any(a => a is TypeNode.Tv) && construction.ConstructorDeclarationId.OrDefault() is string ctor &&
-                state.References.TryDeclarationIdentity(StorageFactoryId(ctor), out _, out _, out _, out _) &&
-                state.Projection.StorageFrame(owner.Name) is { } layout)
-                construction.ReferencedProjectedFactory = (StorageFactoryId(ctor), layout.Interfaces.Select(s => s.OwnerIndex).ToArray());
+                state.References.TryDeclarationIdentity(StorageFactoryId(ctor), out _, out _, out _, out _))
+                construction.ReferencedProjectedFactoryId = StorageFactoryId(ctor);
             return BindOuter();
         }
         var signature = construction.MemberSignature.Value;
-        if (construction.ConstructorDeclarationId.OrDefault() is string id &&
-            state.Projection.ProjectedConstructorArguments(state.Projection.SelectPhysicalClassApplication(owner)) is { } physicalArguments)
+        var id = construction.ConstructorDeclarationId.OrDefault();
+        var factoryId = id == null ? null : StorageFactoryId(id);
+        var factory = factoryId == null ? default : state.Declarations.ProjectedConstructors.GetValueOrDefault(factoryId);
+        if (factoryId != null && factory.Plan == null &&
+            state.References.TryDeclarationIdentity(factoryId, out var name, out var carrier, out _, out _))
+            factory = (carrier, name, state.References.ConstructorPlan(factoryId, nativeNames: false));
+        if (id != null && state.Projection.ProjectedConstructorArguments(
+            state.Projection.SelectPhysicalClassApplication(owner), factory.Plan) is { } physicalArguments)
         {
             var innerFactoryId = ProjectedInnerFactoryId(id);
             if (state.Declarations.ProjectedInnerFactories.TryGetValue(innerFactoryId, out var innerFactory) ||
                 state.References.TryPhysicalInstanceFactory(innerFactoryId, out innerFactory))
             {
-                var captured = state.Owners.TryGetValue(owner.Name, out var inner) ? inner.OuterCount
-                    : state.References.TryInnerSemanticOwner(owner.Name, out var outerName)
-                        ? state.References.PhysicalOwnerTypeParametersInPhysicalFrame(outerName).Length
-                        : throw new InvalidOperationException("Projected inner factory has no enclosing declaration");
-                var methodArgsOnly = InnerMethodFrame(owner.Args.Length, captured, state.Projection.StorageFrame(owner.Name).Interfaces)
+                var methodArgsOnly = factory.Plan.InnerSlots()
                     .Select(i => physicalArguments[i]).ToArray();
                 var virtualCall = new BirCallInstance {
                     OwnerType = new TypeNode.Fqn(innerFactory.Owner), Method = innerFactory.Name, DeclarationId = innerFactoryId,
@@ -163,13 +164,6 @@ static partial class FBoundStarProjectionErasure
                 };
                 state.MethodWitnesses.Add(virtualCall, methodArgsOnly.Select((type, index) => (type, index)).ToDictionary(row => row.index, row => row.type));
                 return virtualCall;
-            }
-            var factoryId = StorageFactoryId(id);
-            if (!state.Declarations.ProjectedConstructors.TryGetValue(factoryId, out var factory))
-            {
-                if (!state.References.TryDeclarationIdentity(factoryId, out var name, out var carrier, out _, out _))
-                    throw new InvalidOperationException($"Projected constructor '{id}' has no physical factory");
-                factory = (carrier, name);
             }
             var methodArgs = Enumerable.Range(0, physicalArguments.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
             var call = new BirCallStatic {

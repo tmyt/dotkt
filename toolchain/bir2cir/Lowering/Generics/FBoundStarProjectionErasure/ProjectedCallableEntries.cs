@@ -288,19 +288,13 @@ sealed class ProjectedCallableEntries
 
     BirCallStatic ReferencedConstruction(BirNew creation, Scope owner, Scope method)
     {
-        if (creation.ReferencedProjectedFactory is not { } factory ||
-            creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual } ||
-            !factory.ProofOwners.Any(i => actual[i] is TypeNode.Tv tv &&
+        if (creation.ReferencedProjectedFactoryId is not { } id ||
+            creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual }) return null;
+        var selected = references.SelectedPhysicalMethod(id);
+        var plan = references.ConstructorPlan(id, nativeNames: true) ?? throw new InvalidOperationException($"No projected constructor for '{id}'");
+        if (!plan.Facets.Any(f => actual[f.Primary] is TypeNode.Tv tv &&
                 (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
-        var selected = references.SelectedPhysicalMethod(factory.Id);
-        var formals = references.PhysicalMethodTypeParametersInPhysicalFrame(factory.Id, nativeNames: true);
-        if (selected == null || formals?.Length != actual.Length + factory.ProofOwners.Length)
-            throw new InvalidOperationException($"Selected projected constructor factory '{factory.Id}' has no matching physical frame");
-        var arguments = actual.Concat(factory.ProofOwners.Select((source, i) => {
-            var required = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(
-                formals[actual.Length + i].Constraints.Value[0], [], actual);
-            return Proof(actual[source], required, owner, method) ?? actual[source];
-        })).ToArray();
+        var arguments = plan.Close(actual, (f, required) => Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary]);
         var target = ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, null);
         var signature = target.ParameterTypes.Select(t =>
             FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(t, [], arguments)).ToArray();

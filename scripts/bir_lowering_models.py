@@ -412,7 +412,7 @@ def outputs(root, definitions):
         if name in {"BirCallStatic", "BirCallInstance", "BirConstrainedCall", "BirNewDelegate", "BirNewBoundDelegate"}:
             model += ["    internal override string? SelectedGenericCallable { get; set; }"]
         if name == "BirNew":
-            model += ["    internal (string Id, int[] ProofOwners)? ReferencedProjectedFactory { get; set; }"]
+            model += ["    internal string? ReferencedProjectedFactoryId { get; set; }"]
         if name == "BirCallStatic":
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":

@@ -972,6 +972,7 @@ static class ReferenceMetadataReader
         attrs.ValidateCarrierTargets(
             KotlinInnerConstructorFactoryAttr,
             HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(RoundtripMetadata.AKProjectedConstructor, HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
             KotlinDeclarationIdentityAttr,
             HandleKind.MethodDefinition);
@@ -1510,6 +1511,30 @@ static class ReferenceMetadataReader
         {
             throw new InvalidDataException($"malformed trusted {attrFullName} carrier", ex);
         }
+    }
+
+    internal static ProjectedConstructorPlan ReadConstructorPlan(MethodBase declaration, MethodBase factory,
+        Func<TypeNode, TypeNode> physical, bool nativeNames)
+    {
+        var payload = CarrierJsonOf(declaration.GetCustomAttributesData(), declaration.DeclaringType.Assembly,
+            RoundtripMetadata.AKProjectedConstructor) ?? throw new InvalidDataException($"Missing constructor plan on {factory}");
+        var primary = (int)payload["primary"];
+        var captured = (int)payload["captured"];
+        var rows = (JsonArray)payload["facets"];
+        var formals = factory.GetGenericArguments();
+        if (primary < captured || captured < 0 || primary + rows.Count != formals.Length)
+            throw new InvalidDataException($"Invalid constructor frame on {factory}");
+        var facets = rows.Select((row, i) => {
+            int source = (int)row[0];
+            var bound = TypeNode.Read(row[1]);
+            if ((uint)source >= (uint)primary) throw new InvalidDataException($"Invalid constructor slot on {factory}");
+            return ProjectedConstructorPlan.BindFacet(source, bound, (bool)row[2],
+                formals[primary + i].GetGenericParameterConstraints().Select(c => {
+                    var native = GenericConstraintType(c, true);
+                    return (native, nativeNames ? native : GenericConstraintType(c, false));
+                }), physical);
+        }).ToArray();
+        return new(primary, captured, facets);
     }
 
     static BirTypeParameter[] SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,
@@ -3100,13 +3125,18 @@ static class ReferenceMetadataReader
 
     internal static BirTypeParameter GenericParamSourceDeclaration(Type gp) => GenericParamDeclaration(gp, native: false);
 
+    static TypeNode GenericConstraintType(Type constraint, bool native)
+    {
+        var node = DeclarationTypeNode(constraint, nominalDelegates: native, preserveNestedIdentity: native, nativeNames: native);
+        return native || node == null ? node : NormalizeNestedNames(node);
+    }
+
     internal static BirTypeParameter GenericParamDeclaration(Type gp, bool native)
     {
         var declaration = new BirTypeParameter { Name = gp.Name };
         var constraints = new List<TypeNode>();
         foreach (var constraint in gp.GetGenericParameterConstraints())
-            if (DeclarationTypeNode(constraint, nominalDelegates: native, preserveNestedIdentity: native, nativeNames: native) is TypeNode node)
-                constraints.Add(native ? node : NormalizeNestedNames(node));
+            if (GenericConstraintType(constraint, native) is { } node) constraints.Add(node);
         if (constraints.Count != 0) declaration.Constraints = constraints.ToArray();
 
         var special = new List<string>();

@@ -244,13 +244,10 @@ static partial class FBoundStarProjectionErasure
             return native?.IsInterface == true ? "interface" : native?.IsClass == true ? "class" : null;
         }
 
-        internal ProjectedClassStorageFrame StorageFrame(string owner) => StorageFrame(owner, out _);
-
         internal sealed record FixedSupertypeConstraint(int Index, TypeNode.Fqn Bound, string Owner);
 
-        ProjectedClassStorageFrame StorageFrame(string owner, out FixedSupertypeConstraint[] fixedSlots)
+        internal ProjectedClassStorageFrame StorageFrame(string owner)
         {
-            fixedSlots = [];
             if (ConstraintParameters(owner) is not { Length: > 0 } parameters) return null;
             Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var declaration);
             var frame = ProjectedClassStorageFrame.Plan(parameters, (index, bound) => {
@@ -264,13 +261,24 @@ static partial class FBoundStarProjectionErasure
                 return (type, BoundKind(type));
             });
             if (frame == null) return null;
+            var (required, nativeArguments) = NativeSupertypeConstraints(owner, parameters.Length);
+            bool Required(ProjectedClassStorageFrame.InterfaceSlot slot, FixedSupertypeConstraint r) =>
+                r.Index == slot.OwnerIndex && slot.Bound is TypeNode.Fqn face && (r.Bound == face ||
+                    SupertypeGraph.Reaches(face, r.Bound, Preparation.SourceSupertypes, References));
+            if (nativeArguments.Count != 0) frame = frame.WithNativeArguments(nativeArguments);
+            return required.Length == 0 ? frame : frame.ForBase(s => required.Where(r => Required(s, r))
+                .Select(r => (TypeNode)r.Bound).Distinct().ToArray());
+        }
+
+        (FixedSupertypeConstraint[] Fixed, HashSet<int> Native) NativeSupertypeConstraints(string owner, int arity)
+        {
             // A derived TypeDef must be legal for *all* its instantiations, even
             // if no one constructs its projected form. A constraint used by its
             // exact base construction cannot be moved onto another CLR slot.
             IEnumerable<(TypeNode.Fqn spec, bool isInterface)> parents =
                 Preparation.SourceSupertypes.TryGetValue(owner, out var def)
                 ? def.Interfaces.Select(f => (f, true)).Append((def.Base, false))
-                : References.ReferencedSupertypes(new TypeNode.Fqn(owner, Enumerable.Range(0, parameters.Length)
+                : References.ReferencedSupertypes(new TypeNode.Fqn(owner, Enumerable.Range(0, arity)
                     .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()));
             var required = new List<FixedSupertypeConstraint>();
             var nativeArguments = new HashSet<int>();
@@ -296,26 +304,15 @@ static partial class FBoundStarProjectionErasure
                     }
                 });
             }
-            bool Required(ProjectedClassStorageFrame.InterfaceSlot slot, FixedSupertypeConstraint r) =>
-                r.Index == slot.OwnerIndex && slot.Bound is TypeNode.Fqn face && (r.Bound == face ||
-                    SupertypeGraph.Reaches(face, r.Bound, Preparation.SourceSupertypes, References));
-            fixedSlots = required.Where(r => frame.Interfaces.Any(s => Required(s, r))).Distinct().ToArray();
-            if (nativeArguments.Count != 0) frame = frame.WithNativeArguments(nativeArguments);
-            return fixedSlots.Length == 0 ? frame : frame.ForBase(s => required.Where(r => Required(s, r))
-                .Select(r => (TypeNode)r.Bound).Distinct().ToArray());
+            return (required.Distinct().ToArray(), nativeArguments);
         }
 
-        internal TypeNode[] ProjectedConstructorArguments(PhysicalWitnessApplication application)
-        {
-            var layout = StorageFrame(application.Owner.Name, out var fixedSlots);
-            return layout == null && fixedSlots.Length == 0 ? null :
-                ProjectedConstructorArguments(application, layout, fixedSlots);
-        }
-
-        internal TypeNode[] ProjectedConstructorArguments(PhysicalWitnessApplication application, ProjectedClassStorageFrame layout,
-            FixedSupertypeConstraint[] fixedSlots = null)
+        internal TypeNode[] ProjectedConstructorArguments(PhysicalWitnessApplication application, ProjectedConstructorPlan plan)
         {
             var owner = application.Owner;
+            var fixedSlots = NativeSupertypeConstraints(owner.Name, application.Arguments.Length).Fixed
+                .Where(r => BoundKind(r.Bound) == "interface").ToArray();
+            if (plan == null && fixedSlots.Length == 0) return null;
             var primary = ((TypeNode.Fqn)Rewrite(owner, preserveConstructedHead: true)).Args;
             var visited = new bool[primary.Length];
             var required = new List<(int OwnerIndex, TypeNode.Fqn Bound)>();
@@ -340,7 +337,7 @@ static partial class FBoundStarProjectionErasure
                         primary[i] = proof.Class;
                         required.AddRange(proof.Required);
                     }
-                    else if (layout?.Interfaces.Any(slot => slot.OwnerIndex == i) == true)
+                    else if (plan?.Facets.Any(slot => slot.Primary == i) == true)
                         unproven = true;
                 }
                 return primary[i];
@@ -357,21 +354,21 @@ static partial class FBoundStarProjectionErasure
             // more specific proof solely because that caller has no native face
             // of its own. Ask the actual synthesized carrier (or referenced DLL),
             // not the source class whose interfaces it might not represent.
-            TypeNode FacetArgument(ProjectedClassStorageFrame.InterfaceSlot slot, TypeNode bound)
+            TypeNode FacetArgument(ProjectedConstructorPlan.Facet slot, TypeNode bound)
             {
-                var actual = NativeArgument(slot.OwnerIndex);
+                var actual = NativeArgument(slot.Primary);
                 if (slot.NativeArgument) return actual;
                 if (actual is not TypeNode.Fqn candidate || bound is not TypeNode.Fqn facet) return bound;
                 synthesizedHierarchy ??= SupertypeGraph.CollectSource(Preparation.Bindings.SourceRoots
                     .Select(r => (BirFileDeclaration)r.Source));
                 return SupertypeGraph.Reaches(candidate, facet, synthesizedHierarchy, References) ? actual : bound;
             }
-            if (layout == null || unproven || required.Any(r => !layout.Interfaces.Any(s =>
-                s.OwnerIndex == r.OwnerIndex && SupertypeGraph.SubstOwnerTvs(s.Bound, primary) == r.Bound))) return null;
-            var arguments = layout.Close(primary, FacetArgument);
-            if (required.Count == 0 && !layout.Interfaces.Select((slot, i) => (slot, witness: arguments[primary.Length + i]))
-                .Any(row => ContainsExistentialProjection(application.Arguments[row.slot.OwnerIndex]) &&
-                    row.witness == NativeArgument(row.slot.OwnerIndex) && row.witness != primary[row.slot.OwnerIndex])) return null;
+            if (plan == null || unproven || required.Any(r => !plan.Facets.Any(s =>
+                s.Primary == r.OwnerIndex && SupertypeGraph.SubstOwnerTvs(s.Bound, primary) == r.Bound))) return null;
+            var arguments = plan.Close(primary, FacetArgument);
+            if (required.Count == 0 && !plan.Facets.Select((slot, i) => (slot, witness: arguments[primary.Length + i]))
+                .Any(row => ContainsExistentialProjection(application.Arguments[row.slot.Primary]) &&
+                    row.witness == NativeArgument(row.slot.Primary) && row.witness != primary[row.slot.Primary])) return null;
             return arguments;
         }
 

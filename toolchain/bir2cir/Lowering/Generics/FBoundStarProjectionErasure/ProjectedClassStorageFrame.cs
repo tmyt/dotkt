@@ -32,6 +32,7 @@ sealed class ProjectedClassStorageFrame
     }
 
     internal BirTypeParameter[] Declare() => Declare(original, Interfaces);
+    internal ProjectedConstructorPlan Constructor(int captured) => ProjectedConstructorPlan.From(original.Length, captured, Interfaces);
 
     internal ProjectedClassStorageFrame WithNativeArguments(HashSet<int> indices) =>
         new(original, Interfaces.Select(s => s with { NativeArgument = indices.Contains(s.OwnerIndex) }).ToArray());
@@ -50,7 +51,7 @@ sealed class ProjectedClassStorageFrame
         {
             var bound = original[slot.OwnerIndex].Constraints.Value[slot.BoundIndex];
             // One native argument must prove all of its interface constraints at
-            // once. Keep its selected facet first for calls forwarding this slot.
+            // once. Consumers select the published facet, not the first CLR constraint.
             var bounds = new[] { bound }.Concat(slots.Where(s => slot.NativeArgument && s.OwnerIndex == slot.OwnerIndex)
                 .Select(s => original[s.OwnerIndex].Constraints.Value[s.BoundIndex])).Distinct();
             parameters.Add(new BirTypeParameter { Name = "$interface$" + parameters.Count,
@@ -66,6 +67,4 @@ sealed class ProjectedClassStorageFrame
         return parameters.ToArray();
     }
 
-    internal TypeNode[] Close(TypeNode[] primaryArguments, Func<InterfaceSlot, TypeNode, TypeNode> proof) =>
-        primaryArguments.Concat(Interfaces.Select(slot => proof(slot, SupertypeGraph.SubstOwnerTvs(slot.Bound, primaryArguments)))).ToArray();
 }
