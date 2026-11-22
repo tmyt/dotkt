@@ -643,10 +643,11 @@ static partial class BirTypeLowering
             Ret = CanonicalPhysicalSlotType(pointer.Ret),
             Params = pointer.Params.Select(CanonicalPhysicalSlotType).ToArray(),
         },
+        // A named CLR delegate takes its Kotlin receiver as argument zero, including inside a modopt.
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
             CanonicalPhysicalSlotType(fn.Ret),
-            fn.Params.Select(CanonicalPhysicalSlotType).ToArray(),
-            fn.Recv == null ? null : CanonicalPhysicalSlotType(fn.Recv), fn.Clr,
+            (fn.Clr == null ? fn.Params : fn.DelegateParams).Select(CanonicalPhysicalSlotType).ToArray(),
+            fn.Clr == null && fn.Recv != null ? CanonicalPhysicalSlotType(fn.Recv) : null, fn.Clr,
             fn.Ctx?.Select(CanonicalPhysicalSlotType).ToArray()),
         _ => type,
     };

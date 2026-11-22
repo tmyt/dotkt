@@ -195,8 +195,8 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual(360,
             (renamedDefault as ReferencedRenamedDefaultMethodSlot).compareTo(renamedDefault))
         ClassicAssert.AreEqual(361, renamedDefault.CompareTo(renamedDefault))
-        ClassicAssert.AreEqual(8, (renamedDefault as ReferencedRenamedDefaultMethodSlot).callback { 7 })
-        ClassicAssert.AreEqual(9, renamedDefault.Clash { 7 })
+        ClassicAssert.AreEqual(2, (renamedDefault as ReferencedRenamedDefaultMethodSlot).callback { it.length })
+        ClassicAssert.AreEqual(3, renamedDefault.Clash { length })
 
         val nullableOverloads: ReferencedNullableOverloadSlot<Int> = ReferencedNullableOverloadImplementation()
         ClassicAssert.AreEqual(43, nullableOverloads.choose(41, "ab"))

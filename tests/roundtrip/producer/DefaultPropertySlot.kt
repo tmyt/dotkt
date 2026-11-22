@@ -38,10 +38,10 @@ interface ReferencedEmptyDefaultSlot : IEmptyDefaultSlot {
 interface ReferencedRenamedDefaultMethodSlot : Comparable<ReferencedRenamedDefaultMethodSlot> {
     override fun compareTo(other: ReferencedRenamedDefaultMethodSlot): Int = 360
     @kotlin.clr.ClrName("Clash")
-    fun callback(f: () -> Int): Int = f() + 1
+    fun callback(f: (String) -> Int): Int = f("x") + 1
 }
 
-open class ReferencedCallbackBase { fun Clash(f: () -> Int): Int = f() + 2 }
+open class ReferencedCallbackBase { fun Clash(f: String.() -> Int): Int = "x".f() + 2 }
 
 class ReferencedCompareMarker<T>(val value: T)
 
