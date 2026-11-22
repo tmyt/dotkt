@@ -457,7 +457,7 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
                     break;
-                case "slots":
+                case "ownerPositions":
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
@@ -468,14 +468,14 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         return new CapturedGenericArgument
         {
             Argument = field0,
-            Slots = field1,
+            OwnerPositions = field1,
         };
     }
 
     internal static void WriteCapturedGenericArgument(ref MessagePackWriter writer, CapturedGenericArgument value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Argument.IsPresent ? 1 : 0) + (value.Slots.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Argument.IsPresent ? 1 : 0) + (value.OwnerPositions.IsPresent ? 1 : 0));
         if (value.Argument.IsPresent)
         {
             writer.Write("argument");
@@ -485,15 +485,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 writer.Write(value.Argument.Value);
             }
         }
-        if (value.Slots.IsPresent)
+        if (value.OwnerPositions.IsPresent)
         {
-            writer.Write("slots");
-            if (value.Slots.IsNull) writer.WriteNil();
+            writer.Write("ownerPositions");
+            if (value.OwnerPositions.IsNull) writer.WriteNil();
             else
             {
                 CheckDepth(depth + 1);
-                writer.WriteArrayHeader(value.Slots.Value.Length);
-                foreach (var item0 in value.Slots.Value)
+                writer.WriteArrayHeader(value.OwnerPositions.Value.Length);
+                foreach (var item0 in value.OwnerPositions.Value)
                 {
                     writer.Write(item0);
                 }

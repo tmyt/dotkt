@@ -9,6 +9,9 @@ private fun readHere(context: CoroutineContext, element: CoroutineContext.Elemen
 private fun lookupHere(context: Lookup, element: Element): Element? = context.lookup(element.key)
 private fun takeProjected(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = takeNativeHead(xs)
 private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
+private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
+private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
+    GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
 
 private class EvaluationOrder {
     var order = ""
@@ -23,6 +26,9 @@ private class ThrowingElement : CoroutineContext.Element {
 }
 
 class CapturedGenericInvocationTests {
+    @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
+        check(countWithSpan(CsList<System.IO.Stream>()) == 0)
+    }
     @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
         val leaf = NativeListLeaf(42L)
         val narrow = CsList<NativeListLeaf<Long>>()
@@ -113,6 +119,7 @@ class CapturedGenericInvocationTests {
     @TestAttribute fun declaredVariantSlotsRetainAuthoredArguments() {
         val key: VariantKey<String, *> = AnyTextKey
         check(readVariantKey(key, mutableListOf("authored-string")) == 1)
+        check(readRepeated(AnyTextKey) == 1)
     }
     @TestAttribute fun capturedGenericResultPreservesCarrierAndIdentity() {
         check(readCapturedKeyResult(FirstKey) === FirstKey)

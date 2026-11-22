@@ -109,13 +109,13 @@ internal static class BirGraphDom
             switch (field.Key)
             {
                 case "argument": break;
-                case "slots": break;
+                case "ownerPositions": break;
                 default: throw new FormatException($"Unprojected {field.Key} on CapturedGenericArgument at {source.GetPath()}");
             }
         return new CapturedGenericArgument
         {
             Argument = Field<int>(fields, "argument", value => value!.GetValue<int>()),
-            Slots = Field<int[]>(fields, "slots", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+            OwnerPositions = Field<int[]>(fields, "ownerPositions", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
         };
     }
 

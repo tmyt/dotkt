@@ -81,6 +81,7 @@ interface VariantKey<in A, B>
 object AnyTextKey : VariantKey<Any, String>
 fun <A, B> variantKeyTag(key: VariantKey<A, B>, values: MutableList<A>): Int = values.size
 fun readVariantKey(key: VariantKey<String, *>, values: MutableList<String>): Int = variantKeyTag(key, values)
+fun <T> repeatedKeyTag(key: VariantKey<T, T>): Int = 1
 fun <E : Element> echoCapturedKey(key: Key<E>): Key<E> = key
 fun readCapturedKeyResult(key: Key<*>): Key<*> = echoCapturedKey(key)
 
