@@ -25,7 +25,12 @@ public sealed class NativeResultProbe
     }
     public object Read(int index) => backing.GetValue(index);
     public static int Size<T>(System.Span<T> values) => values.Length;
-    public static void FillSecond<T>(System.Span<T> values) => values[1] = values[0];
+    public void WriteSecond<T>(int before, System.Span<T> values, int after, T replacement)
+        where T : System.IO.MemoryStream, IProjectedMark
+    {
+        if (before != 1 || after != 3) throw new System.InvalidOperationException("Unexpected operand order");
+        values[1] = replacement;
+    }
 }
 public class NativeStreamBase<T> where T : System.IO.MemoryStream, IProjectedMark
 {
