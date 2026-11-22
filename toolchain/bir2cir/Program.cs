@@ -912,6 +912,7 @@ sealed class Pipeline
         // Once a slot is selected on the projected parent edge, its closed CLR signature
         // is fixed. Ordinary value positions in a new bridge body still undergo projection.
         var selectedSlotOwners = new HashSet<BirMethodImpl>(ReferenceEqualityComparer.Instance);
+        BirFileDeclaration nativeCursorHost = null;
         var bottomIterators = KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
             valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
@@ -920,7 +921,7 @@ sealed class Pipeline
                     suspendTransitions.PublishTypes(file, appended);
                 if (descriptor != null) currentDeclarations.GetSource(descriptor);
                 if (descriptor is BirMethodImpl slot) selectedSlotOwners.Add(slot);
-            });
+            }, referenceBuild ? null : file => nativeCursorHost ??= file);
         // Project star-bearing slots copied by final bridges through the same ABI.
         var finalCarrierTypes = FBoundStarProjectionErasure.RewriteLateTypesSource(
             captured, carrierRealization, aliasTransitions, selectedSlotOwners);
@@ -1156,6 +1157,13 @@ sealed class Pipeline
             foreach (var adapter in ReverseEnumeratorBridgeSynthesis.ApplyAll(captured, refs,
                          suspendTransitions.PublishMethods, suspendTransitions.PublishTypes, bottomIterators))
                 physicalPreparation.EmittedLocalTypes.Add(adapter.Name.Value);
+            if (nativeCursorHost != null)
+            {
+                var adapter = ReverseEnumeratorBridgeSynthesis.NativeCursorType();
+                nativeCursorHost.Types = nativeCursorHost.Types.OrEmpty().Append<IBirTypeDeclaration>(adapter).ToArray();
+                suspendTransitions.PublishTypes(nativeCursorHost, new IBirTypeDeclaration[] { adapter });
+                physicalPreparation.EmittedLocalTypes.Add(adapter.Name.Value);
+            }
         }
         refs.SetLocalEmittedTypes(inventory.EmittedTypeFqns.Concat(physicalPreparation.EmittedLocalTypes)
             .Except(physicalPreparation.ExternalCanonicalTypes, StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal));

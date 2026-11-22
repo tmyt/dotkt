@@ -18,13 +18,14 @@ static partial class ReverseEnumeratorBridgeSynthesis
         foreach (var root in roots)
             foreach (var type in root.Types.OrEmpty())
             {
-                if (type.Kind.OrDefault() != "class" || string.IsNullOrEmpty(type.Name.OrDefault())
+                if (type.Kind.OrDefault() is not ("class" or "interface") || string.IsNullOrEmpty(type.Name.OrDefault())
                     || !type.Methods.HasValue || !definitions.TryGetValue(type.Name.Value, out var definition)) continue;
                 if (Plan(definition, definitions, refs, declarations, bottom) is not { } plan)
                 {
                     if (NativeRawForwarder(type, definition, definitions, refs) is { } raw)
                     {
                         type.Methods = type.Methods.Value.Append(raw).ToArray();
+                        if (type.Kind.Value == "interface") raw.ClrInterfaceSlotBridge = true;
                         publishMethods(root, type, [raw]);
                     }
                     continue;
@@ -149,7 +150,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs)
     {
         if (refs == null) return null;
-        var slots = type.Methods.Value.SelectMany(m => m.ClrInterfaceImpls.OrEmpty())
+        var slots = type.Methods.Value.Where(m => !m.Abstract.OrDefault()).SelectMany(m => m.ClrInterfaceImpls.OrEmpty())
             .Where(d => d.Member.OrDefault() == GetEnumeratorName && d.Params.OrEmpty().Length == 0
                 && d.Arity.OrDefault() == 0).ToArray();
         if (slots.Any(d => d.Owner.OrDefault() is TypeNode.Fqn raw && Bare(raw.Name) == IEnumerable)) return null;
@@ -162,6 +163,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         if (definition.Base != null && SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = definition.Base }, definitions, refs)
             .Any(e => e.isInterface && PhysicalName(e.spec) is IEnumerable or IEnumerableT)) return null;
         if (type.Methods.Value.Any(m => m.Name.OrDefault() == GetEnumeratorName && !m.Static.OrDefault()
+            && (m.Virtual.OrDefault() || m.Override.OrDefault())
             && m.Vis.OrDefault() == "public" && m.Params.OrEmpty().Length == 0 && m.TypeParams.OrEmpty().Length == 0
             && m.Ret.OrDefault() is TypeNode.Fqn ret && PhysicalName(ret) == IEnumerator)) return null;
         return RawForwarder(generic[0].Owner.Value, GetEnumeratorName, generic[0].Ret.Value);

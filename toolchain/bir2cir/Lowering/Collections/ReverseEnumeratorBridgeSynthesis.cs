@@ -172,7 +172,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
     {
         var self = SelfOwner(cls.Name, cls.Arity) as TypeNode.Fqn;
-        if (DeclaredIterator(self, cls, defs, refs, inherited: false, declarations) is { } own) return own;
+        if (DeclaredIterator(self, cls, defs, refs, declarations) is { } own) return own;
 
         var current = cls.Base;
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -180,7 +180,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         {
             if (defs.TryGetValue(current.Name, out var localBase))
             {
-                if (DeclaredIterator(current, localBase, defs, refs, inherited: true, declarations) is { } inherited) return inherited;
+                if (DeclaredIterator(current, localBase, defs, refs, declarations) is { } inherited) return inherited;
                 var args = SupertypeGraph.EffectiveArgs(current, localBase.Arity);
                 if (args == null) return null;
                 current = localBase.Base == null
@@ -201,7 +201,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             .Select(reachable =>
             {
                 if (defs.TryGetValue(reachable.spec.Name, out var local))
-                    return DeclaredIterator(reachable.spec, local, defs, refs, inherited: true, declarations);
+                    return DeclaredIterator(reachable.spec, local, defs, refs, declarations);
                 return ReferencedIterator(reachable.spec, refs);
             })
             .Where(candidate => candidate != null)
@@ -221,13 +221,13 @@ static partial class ReverseEnumeratorBridgeSynthesis
     // DeclarationIdentityBinding may already have allocated a collision-free CLR MethodDef name. Its retained
     // source identity is authoritative for the Kotlin protocol; the physical name is only the call operand.
     static IteratorProvider DeclaredIterator(TypeNode.Fqn owner, SupertypeGraph.Def def,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs, bool inherited,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations)
     {
         var args = SupertypeGraph.EffectiveArgs(owner, def.Arity);
         if (args == null) return null;
         var candidates = IteratorDeclarations(def, declarations)
-            .Where(method => (!inherited || method.Visibility != "private")
+            .Where(method => method.Visibility != "private"
                 && method.SourceName == IteratorMember && !method.Static && method.Parameters == 0
                 && method.Arity == 0 && method.SemanticReturn != null)
             .Select(method => new IteratorProvider(owner, method.Name,
@@ -321,10 +321,12 @@ static partial class ReverseEnumeratorBridgeSynthesis
             : BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
                 refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
         var iteratorElement = PhysicalElement(IteratorElement(iteratorReturn, defs, refs));
-        TypeNode first = null;
+        TypeNode first = null, matching = null;
+        bool kotlinIteration = false;
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
             if (!isInterface) continue;
+            kotlinIteration |= spec.Name is "kotlin.collections.Iterable" or KotlinCollectionIdentitySynthesis.IterableIdentity;
             // Reference declarations carry CLR arity; alias bindings use the Kotlin declaration owner.
             var aliasOwner = Bare(spec.Name);
             var declaration = refs.Aliases.ContainsKey(aliasOwner) ? new TypeNode.Fqn(aliasOwner, spec.Args) : spec;
@@ -336,10 +338,12 @@ static partial class ReverseEnumeratorBridgeSynthesis
             // Referenced supertype metadata retains Kotlin arguments even though this pass authors CLR CIR.
             var physicalElement = PhysicalElement(args[0]);
             if (iteratorElement != null && SupertypeGraph.TypeKey(physicalElement) == SupertypeGraph.TypeKey(iteratorElement))
-                return physicalElement;
+                matching = physicalElement;
             first ??= physicalElement;
         }
-        return first;
+        // The same CLR face can come from ClrEnumerable. An unrelated iterator() helper
+        // does not implement a Kotlin iteration protocol merely because its name matches.
+        return kotlinIteration ? matching ?? first : null;
     }
 
     // The constructed self `Owner<!0,…,!n-1>` of a generic declaration, else the bare owner: a self-call must name

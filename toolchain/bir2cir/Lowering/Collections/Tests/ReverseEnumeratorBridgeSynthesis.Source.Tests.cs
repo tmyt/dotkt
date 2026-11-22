@@ -26,12 +26,12 @@ static partial class ReverseEnumeratorBridgeSynthesis
             Body = Array.Empty<IBirStatement>(), Vis = "public" };
         var bag = new BirClassDefinition { Kind = "class", Name = "Bag", CapturedTypeParams = new[] { new BirTypeParameter { Name = "Outer" } },
             TypeParams = new[] { new BirTypeParameter { Name = "Own" } },
-            Interfaces = new TypeNode[] { Constructed(IEnumerableT, ownerU) }, Methods = new[] { selectedIterator, occupied } };
+            Interfaces = new TypeNode[] { Constructed(IEnumerableT, ownerU), new TypeNode.Fqn(KotlinCollectionIdentitySynthesis.IterableIdentity) }, Methods = new[] { selectedIterator, occupied } };
         var defaultIterator = Iterator("defaultIterator", Constructed(KotlinIterator, ownerT));
         var defaultOwner = new BirInterfaceDefinition { Kind = "interface", Name = "IteratorDefault",
             TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Methods = new[] { defaultIterator } };
         var fromDefault = new BirClassDefinition { Kind = "class", Name = "DefaultBag",
-            Interfaces = new TypeNode[] { Constructed("IteratorDefault", text), Constructed(IEnumerableT, text) },
+            Interfaces = new TypeNode[] { Constructed("IteratorDefault", text), Constructed(IEnumerableT, text), new TypeNode.Fqn(KotlinCollectionIdentitySynthesis.IterableIdentity) },
             Methods = Array.Empty<BirFunctionDeclaration>() };
         var firstBridge = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { defaultOwner, bag } };
         var laterBridge = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { fromDefault } };
