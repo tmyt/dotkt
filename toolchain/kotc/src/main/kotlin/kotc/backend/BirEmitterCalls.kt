@@ -1777,19 +1777,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 				// A2 (#61 / step 3): a top-level extension property accessor is a static method receiving `__self`
 				// on the referenced file class (NOT a .NET property) -> emit the plain static call by identity carrying
 				// the accessor role; bir2cir finds no matching .NET property/field and applies the shared forward allocation.
-				if (callee === p.setter) {
-					val args = listOfNotNull(recv) + regularArgs(call)
-					return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "set",
-						sig = overloadSignature(callee), typeArgs = ta, argTypes = args.map { birType(it.type) },
-						ret = TypeNode.Fqn("kotlin.Unit"), args = args.map { expr(it) })
-				}
-				// The getter's args are the SAME projection every other call uses: `[__self?] + <positional args>` —
-				// the positional part is empty for a plain extension property and carries the `context(...)` arguments
-				// for a context property.
-				val getArgs = listOfNotNull(recv) + regularArgs(call)
-				return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "get",
-					sig = overloadSignature(callee), typeArgs = ta, argTypes = getArgs.map { birType(it.type) },
-					ret = birType(callee.returnType), args = getArgs.map { expr(it) })
+				val setter = callee === p.setter
+				// The accessor signature belongs to its declaration. Receiver, context and value
+				// expressions (and their instantiated types) belong to this call's lexical frame.
+				val operands = listOfNotNull(recv) + regularArgs(call)
+				return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(),
+					prop = if (setter) "set" else "get", sig = overloadSignature(callee), typeArgs = ta,
+					ret = birType(call.type),
+					args = operands.map { expr(it) })
 			}
 		}
 
