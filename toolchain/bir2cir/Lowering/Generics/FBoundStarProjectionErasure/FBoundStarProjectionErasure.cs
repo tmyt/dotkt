@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // CLR generics are reified and invariant, so a Kotlin star projection cannot be represented by substituting Any
 // (`G<*>` -> `G<object>`): a `G<Concrete>` value is not a `G<object>`. Give each used local generic a
@@ -144,15 +145,17 @@ static partial class FBoundStarProjectionErasure
     }
 
 
-    internal static bool IsSourceGeneric(string name, bool generated, bool alias, int ownTypeParameterCount)
-    {
-        // Lifted/local compiler artifacts are not part of the Kotlin ABI and cannot be named by a
-        // downstream star-projected use.  Attaching an existential interface to them also turns
-        // their implementation-detail type variables into public CLR MethodImpl signatures.
-        if (generated || alias
-            || BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(name)) return false;
-        return ownTypeParameterCount > 0;
-    }
+    // A named function-local class can be projected inside its declaring function,
+    // even though its lifted TypeDef is compiler-generated. Synthetic closure and
+    // anonymous-object frames are not source generic declarations.
+    internal static bool IsSourceGeneric(IBirTypeDeclaration type) =>
+        IsSourceGeneric(AliasDeclarationTransitions.ReadLogicalHeaderFacts(type));
+
+    static bool IsSourceGeneric(AliasDeclarationTransitions.LogicalHeaderFacts type) =>
+        type.TypeParams.OrEmpty().Length > 0
+        && (!type.Generated.OrDefault() || type.NamedLocal)
+        && !BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(type.Name.OrDefault())
+        && !type.Attrs.OrEmpty().Any(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" });
 
 
     static bool ContainsUseSiteProjection(TypeNode type) => type switch

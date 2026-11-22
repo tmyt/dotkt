@@ -128,8 +128,9 @@ static partial class FBoundStarProjectionErasure
         };
         // The physical generic and its existential interface denote one source classifier.
         // Give reflection the actual allocated token, not a convention for parsing CLR names.
-        BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, owner.Name, false);
-        definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
+        var localName = (definition as BirClassDefinition)?.LocalClassifierName.OrDefault();
+        BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, localName ?? owner.Name, localName != null);
+        if (localName == null) definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
         erased.Attrs = new[] { ClassifierIdentity() };
         RegisterProjectedStorage(owner, definition, erased, context);
         if (scope != null) erased.NestedIn = scope;

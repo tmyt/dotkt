@@ -10,6 +10,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Preserve interface default dispatch when an inherited class method takes the same callback with its receiver written as the first argument (#1799).
 
 - Preserve the element type and identity of a projected CLR list passed to an invariant generic parameter (#1802).
+- Preserve the original instance when Kotlin joins different type arguments of the same function-local class (#1785).
 - Keep a native call's hidden element type when Kotlin uses its projected live reference or passes its span to a matching native consumer.
 - Preserve erased Kotlin iterator elements when advancing a CLR enumerator; only reading the typed `Current` requires a matching CLR element.
 - Read omitted arguments in a Kotlin super-constructor call from the selected CLR constructor, even when its overloads differ only in a nested type argument.

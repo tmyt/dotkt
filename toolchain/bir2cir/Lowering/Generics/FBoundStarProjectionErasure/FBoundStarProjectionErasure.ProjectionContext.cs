@@ -82,9 +82,7 @@ static partial class FBoundStarProjectionErasure
         }
 
         static ProjectionDeclaration ReadSource(AliasDeclarationTransitions.LogicalHeaderFacts header) => new(
-            header.Kind.OrDefault(), IsSourceGeneric(header.Name.OrDefault(), header.Generated.OrDefault(),
-                header.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }),
-                header.TypeParams.OrEmpty().Length),
+            header.Kind.OrDefault(), IsSourceGeneric(header),
             header.TypeParams.HasValue ? header.TypeParams.Value.Select(parameter => parameter.Variance.OrDefault()).ToArray() : null,
             header.KotlinSupertypesPre.OrDefault()?.NullableFrame);
 

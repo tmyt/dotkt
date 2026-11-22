@@ -553,8 +553,7 @@ sealed class Pipeline
         // actual post-inline graph before closure ingredients become TypeDefs.
         foreach (var source in captured)
         {
-            var localClassifiers = KClassMemberBinding.BindLocalDeclarations(source);
-            if (!referenceBuild) KClassMemberBinding.Apply(source, refs, localClassifiers);
+            if (!referenceBuild) KClassMemberBinding.Apply(source, refs);
             valueRepresentations.BindOperations(source);
             ReifiedNullabilityWitnessLowering.Apply(source, nullableWitnessDemand, refs, valueRepresentations, RetireDeclaration, collectionInputs.Helpers, declarationParameters);
         }
@@ -1176,6 +1175,7 @@ sealed class Pipeline
             flattenMissingOwners: substituteStdlibBuild);
         foreach (var source in captured)
         {
+            KClassMemberBinding.BindLocalDeclarations(source, localExistentialOwners);
             RoundtripMetadata.PrepareMetadata(source, substituteStdlibBuild,
                 suspendTransitions.ReportMetadataIdentityTransfer);
             SuspendResidueLowering.DropModifier(source);
