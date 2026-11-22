@@ -131,7 +131,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         mixed.Methods = new[] { bottomMethod };
         var bottomRoot = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { mixed } };
         var bottomRoots = new[] { bottomRoot };
-        var slots = new Dictionary<string, BottomSlot>();
+        var slots = new Dictionary<string, SlotReservation>();
         Need(ReserveSlots(SupertypeGraph.CollectSource(bottomRoots)["Mixed"], SupertypeGraph.CollectSource(bottomRoots),
             refs, bottomRoot.Types.Value.ToDictionary(t => t.Name.Value), slots)?.Element == text,
             "bottom override reserved the delegated native element instead of the Kotlin iterable element");

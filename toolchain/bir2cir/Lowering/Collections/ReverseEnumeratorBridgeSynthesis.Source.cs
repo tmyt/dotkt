@@ -8,7 +8,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         ReferenceMetadataIndex refs,
         Action<BirFileDeclaration, IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> publishMethods,
         Action<BirFileDeclaration, IReadOnlyList<IBirTypeDeclaration>> publishTypes,
-        IReadOnlyDictionary<string, BottomSlot> bottom = null)
+        IReadOnlyDictionary<string, SlotReservation> reservations = null)
     {
         var definitions = SupertypeGraph.CollectSource(roots);
         var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -20,7 +20,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             {
                 if (type.Kind.OrDefault() is not ("class" or "interface") || string.IsNullOrEmpty(type.Name.OrDefault())
                     || !type.Methods.HasValue || !definitions.TryGetValue(type.Name.Value, out var definition)) continue;
-                if (Plan(definition, definitions, refs, declarations, bottom) is not { } plan)
+                if (Plan(definition, definitions, refs, declarations, reservations) is not { } plan)
                 {
                     if (NativeRawForwarder(type, definition, definitions, refs) is { } raw)
                     {

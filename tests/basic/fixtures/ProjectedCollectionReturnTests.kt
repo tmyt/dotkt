@@ -60,6 +60,9 @@ class ProjectedCollectionReturnTests {
         check(wideRaw.MoveNext() && wideRaw.Current == 7)
         val inherited = (InheritedNativeEnumerable() as Any as RawEnumerable).GetEnumerator()
         check(inherited.MoveNext() && inherited.Current == 11)
+        val sequence = object : Sequence<Int> { override fun iterator(): Iterator<Int> = listOf(13).iterator() }
+        val fromSequence = (sequence as Any as NativeEnumerable<Int>).GetEnumerator()
+        check((fromSequence as System.Collections.IEnumerator).MoveNext() && fromSequence.Current == 13)
         check(ProjectedConstructorReturn<Int>(listOf(7)).result == "list:1")
         check(ProjectedConstructorReturn<Int>(7 as Any).result == "any:7")
         check(ProjectedConstructorReturn<Int>(listOf(7), "delegate").result == "list:1")

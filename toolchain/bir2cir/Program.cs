@@ -913,7 +913,7 @@ sealed class Pipeline
         // is fixed. Ordinary value positions in a new bridge body still undergo projection.
         var selectedSlotOwners = new HashSet<BirMethodImpl>(ReferenceEqualityComparer.Instance);
         BirFileDeclaration nativeCursorHost = null;
-        var bottomIterators = KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
+        var iterationSlots = KotlinOverrideSlotBridge.ApplyAll(captured, isValueFqn, refs, inventory.EmittedTypeFqns,
             referenceBuild, genericRepresentations, sourceCovariantSlots, localExistentialOwners,
             valuePolicy.HasClassifier, (file, owner, method, descriptor) => {
                 if (method != null) suspendTransitions.PublishMethods(file, owner, new[] { method });
@@ -1155,7 +1155,7 @@ sealed class Pipeline
                          type => referencedValues.Rewrite(type), suspendTransitions.PublishTypes))
                 physicalPreparation.EmittedLocalTypes.Add(name);
             foreach (var adapter in ReverseEnumeratorBridgeSynthesis.ApplyAll(captured, refs,
-                         suspendTransitions.PublishMethods, suspendTransitions.PublishTypes, bottomIterators))
+                         suspendTransitions.PublishMethods, suspendTransitions.PublishTypes, iterationSlots))
                 physicalPreparation.EmittedLocalTypes.Add(adapter.Name.Value);
             if (nativeCursorHost != null)
             {

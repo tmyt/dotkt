@@ -71,6 +71,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
     // The comparison uses constructed physical signatures, not generated bridge names or method names alone.
     public sealed record SlotReservation(TypeNode Element)
     {
+        internal BottomSlot Bottom { get; init; }
         public bool Owns(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
             TypeNode result, Func<TypeNode, TypeNode> physical, ReferenceMetadataIndex refs)
         {
@@ -98,22 +99,28 @@ static partial class ReverseEnumeratorBridgeSynthesis
 
     internal static SlotReservation ReserveSlots(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, BottomSlot> bottom = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, SlotReservation> reservations = null)
     {
         if (Plan(def, defs, refs, declarations) is not { } plan) return null;
-        if (bottom != null && NodeType.IsNothing(plan.Iterator.SemanticReturn))
-            bottom[def.Name] = new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId, plan.Element);
-        return new SlotReservation(plan.Element);
+        var slot = new SlotReservation(plan.Element) {
+            Bottom = NodeType.IsNothing(plan.Iterator.SemanticReturn)
+                ? new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId) : null,
+        };
+        if (reservations != null) reservations[def.Name] = slot;
+        return slot;
     }
 
-    internal sealed record BottomSlot(string Owner, string Method, string DeclarationId, TypeNode Element);
+    internal sealed record BottomSlot(string Owner, string Method, string DeclarationId);
+
+    static bool KotlinIterationProtocol(string name) => Bare(name) is "kotlin.collections.Iterable" or "kotlin.sequences.Sequence";
 
     static (IteratorProvider Iterator, TypeNode Element)? Plan(SupertypeGraph.Def def,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IReadOnlyDictionary<string, BottomSlot> reserved = null)
+        IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IReadOnlyDictionary<string, SlotReservation> reserved = null)
     {
         if (def.Kind != "class") return null;
-        if (reserved != null && reserved.TryGetValue(def.Name, out var slot))
+        var reservation = reserved?.GetValueOrDefault(def.Name);
+        if (reservation?.Bottom is { } slot)
         {
             // Nothing and Nothing? can both have become System.Object. Bind the
             // reserved provider's current declaring type and physical return.
@@ -131,7 +138,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             }
             else ret = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
                 .Single(m => m.PhysicalName == slot.Method && m.Parameters.Length == 0).Return;
-            return (new IteratorProvider(owner, name, ret, new TypeNode.Fqn("kotlin.Nothing"), false), slot.Element);
+            return (new IteratorProvider(owner, name, ret, new TypeNode.Fqn("kotlin.Nothing"), false), reservation.Element);
         }
         if (FindIteratorProvider(def, defs, refs, declarations) is not { } iterator) return null;
         if (NodeType.IsNothing(iterator.SemanticReturn))
@@ -140,21 +147,21 @@ static partial class ReverseEnumeratorBridgeSynthesis
             // Bottom has no element argument. Select the actual Kotlin iterable
             // obligation, not an unrelated, co-implemented native enumerable.
             var edges = SupertypeGraph.Reachable(def, defs, refs).Where(edge => edge.isInterface).Select(edge => edge.spec);
-            var semantic = edges.FirstOrDefault(face => Bare(face.Name) == "kotlin.collections.Iterable" && face.Args is { Length: 1 });
+            var semantic = edges.FirstOrDefault(face => KotlinIterationProtocol(face.Name) && face.Args is { Length: 1 });
             if (semantic == null && declarations.TryGetValue(iterator.Owner.Name, out var source))
             {
                 var method = source.Methods.OrEmpty().Single(m =>
                     (iterator.DeclarationId != null ? m.DeclarationId.OrDefault() == iterator.DeclarationId : m.Name.OrDefault() == iterator.Name)
                     && m.Params.OrEmpty().Length == 0 && m.TypeParams.OrEmpty().Length == 0);
                 semantic = method.Overrides.OrEmpty().Select(edge => edge.Owner.OrDefault()).OfType<TypeNode.Fqn>()
-                    .FirstOrDefault(face => Bare(face.Name) is "kotlin.collections.Iterable" or IEnumerableT && face.Args is { Length: 1 });
+                    .FirstOrDefault(face => (KotlinIterationProtocol(face.Name) || Bare(face.Name) == IEnumerableT) && face.Args is { Length: 1 });
                 if (semantic != null) semantic = SupertypeGraph.SubstOwnerTvs(semantic, iterator.Owner.Args ?? []) as TypeNode.Fqn;
             }
             if (semantic == null) return null;
             return (iterator, BirTypeLowering.LowerPhysicalType(semantic.Args[0], refs.Aliases, refs.IsValueType,
                 refs.PhysicalTypeNames, typeArg: true, localTypeNames: defs.Keys.ToHashSet(StringComparer.Ordinal)));
         }
-        if (Element(def, defs, refs, iterator.SemanticReturn) is not { } element) return null;
+        if (Element(def, defs, refs, iterator.SemanticReturn, reservation != null) is not { } element) return null;
         return (iterator, element);
     }
 
@@ -314,7 +321,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
     // the constructed adapter and the wrapped iterator agree; otherwise the first reachable face decides, which is
     // the only element any slot on this type can be about.
     static TypeNode Element(SupertypeGraph.Def def, IReadOnlyDictionary<string, SupertypeGraph.Def> defs,
-        ReferenceMetadataIndex refs, TypeNode iteratorReturn)
+        ReferenceMetadataIndex refs, TypeNode iteratorReturn, bool kotlinIteration)
     {
         var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
         TypeNode PhysicalElement(TypeNode type) => type == null ? null
@@ -322,11 +329,10 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
         var iteratorElement = PhysicalElement(IteratorElement(iteratorReturn, defs, refs));
         TypeNode first = null, matching = null;
-        bool kotlinIteration = false;
         foreach (var (spec, isInterface) in SupertypeGraph.Reachable(def, defs, refs))
         {
             if (!isInterface) continue;
-            kotlinIteration |= spec.Name is "kotlin.collections.Iterable" or KotlinCollectionIdentitySynthesis.IterableIdentity;
+            kotlinIteration |= KotlinIterationProtocol(spec.Name) || spec.Name == KotlinCollectionIdentitySynthesis.IterableIdentity;
             // Reference declarations carry CLR arity; alias bindings use the Kotlin declaration owner.
             var aliasOwner = Bare(spec.Name);
             var declaration = refs.Aliases.ContainsKey(aliasOwner) ? new TypeNode.Fqn(aliasOwner, spec.Args) : spec;
