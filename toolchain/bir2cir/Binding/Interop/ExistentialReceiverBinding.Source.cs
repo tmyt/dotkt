@@ -5,9 +5,10 @@ using DotKt.Cir;
 static partial class ExistentialReceiverBinding
 {
     internal static Index Collect(IReadOnlyList<BirFileDeclaration> roots,
-        IReadOnlyDictionary<string, string> sourceDeclarations = null)
+        IReadOnlyDictionary<string, string> sourceDeclarations = null,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> sourceHierarchy = null)
     {
-        var index = new Index();
+        var index = new Index { SourceHierarchy = sourceHierarchy ?? SupertypeGraph.CollectSource(roots) };
         if (sourceDeclarations != null) index.SourceDeclarations = sourceDeclarations;
         foreach (var root in roots)
             foreach (var owner in root.Types.OrEmpty())
@@ -36,7 +37,7 @@ static partial class ExistentialReceiverBinding
                         identity == null ? null : index.SourceDeclarations.GetValueOrDefault(identity)));
                 }
                 index.Members[name] = members;
-                index.SemanticOwnerByPhysical[name] = semantic.Name;
+                index.SemanticOwnerByPhysical[name] = semantic;
                 index.Bases[name] = owner.Interfaces.OrEmpty().OfType<TypeNode.Fqn>().Select(parent => parent.Name).ToArray();
             }
         return index;
@@ -89,10 +90,25 @@ static partial class ExistentialReceiverBinding
                     Expression(conditional.Then, replacement => conditional.Then = replacement, result);
                     Expression(conditional.Else, replacement => conditional.Else = replacement, result);
                     return node;
+                case BirForEach loop:
+                    Expression(loop.Src, replacement => loop.Src = replacement);
+                    LoopBody(loop.Var, loop.Elem.OrDefault(), loop.Body);
+                    return node;
+                case BirRepeat repeat:
+                    Expression(repeat.Count, replacement => repeat.Count = replacement);
+                    LoopBody(repeat.Var, new TypeNode.Fqn("kotlin.Int"), repeat.Body);
+                    return node;
+            }
+            void LoopBody(OptionalField<string> variable, TypeNode element, OptionalField<IBirStatement[]> body)
+            {
+                if (!body.HasValue) return;
+                var scope = new Dictionary<string, TypeNode>(locals, StringComparer.Ordinal);
+                if (variable.HasValue) scope[variable.Value] = element;
+                Statements(body.Value, scope);
             }
             if (node is BirCallInstance or BirPropertyGet or BirPropertySet)
                 node = BindSourceCall(node, locals, index, refs, expected);
-            if (node is BirClosureDefinition or BirInlineLambda or BirNewClosure or BirNewDelegate or BirNewSuspendLambda or BirForEach or BirRepeat)
+            if (node is BirClosureDefinition or BirInlineLambda or BirNewClosure or BirNewDelegate or BirNewSuspendLambda)
                 return node;
             // Only actual executable children participate. Saved declarations,
             // selected foreign headers and opaque payloads are not source uses.
@@ -117,7 +133,7 @@ static partial class ExistentialReceiverBinding
                 set.PropertyName.OrDefault(), set.PropertyAccessor.OrDefault(), (string)null),
             _ => throw new InvalidOperationException("Unexpected existential receiver operation"),
         };
-        if (method == null || method.StartsWith("$star$", StringComparison.Ordinal)) return node;
+        if (method == null) return node;
         var property = KotlinPropertyAccessors.TryCallIdentity(name, kind,
             node is BirCallInstance ? method : null, prop, out var propertyName, out var accessor);
         if (!property && node is BirPropertyGet or BirPropertySet) return node;
@@ -130,7 +146,29 @@ static partial class ExistentialReceiverBinding
         if (signature?.Any(type => type == null) == true) signature = null;
         var selected = SelectSlot(index, refs, physicalReceiver, authoredOwner, property ? propertyName : method,
             accessor, count, methodArguments.Length, signature, node.DeclarationIdentityFact.OrDefault());
-        if (selected == null) return node;
+        if (selected == null)
+        {
+            // When the base and subclass come from different compilations there need not be a
+            // forwarding slot. The selected non-generic class is itself a valid receiver for
+            // every instantiation of the Kotlin subclass; never guess a closed generic owner.
+            if (receiver == null || !refs.TryDeclarationIdentity(node.DeclarationIdentityFact.OrDefault(),
+                    out _, out var declaring, out _, out _)) return node;
+            var target = new TypeNode.Fqn(declaring);
+            if (!refs.TryReferenceTypeShape(target, out var arity, out var shape, out _, out _)
+                || arity != 0 || shape != "class") return node;
+            var semantic = index.SemanticOwnerByPhysical.GetValueOrDefault(physicalReceiver.Name)
+                ?? refs.ExistentialSourceType(physicalReceiver.Name);
+            if (semantic == null || !SupertypeGraph.ReachesClassDeclaration(semantic, target, index.SourceHierarchy, refs))
+                return node;
+            var cast = new BirCast { Type = target, E = OptionalField<IBirExpression>.Of(receiver) };
+            switch (node)
+            {
+                case BirCallInstance call: call.Recv = cast; break;
+                case BirPropertyGet get: get.Recv = cast; break;
+                case BirPropertySet set: set.Recv = cast; break;
+            }
+            return node;
+        }
         BirCallInstance replacement;
         switch (node)
         {

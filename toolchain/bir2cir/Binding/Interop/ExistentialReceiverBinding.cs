@@ -18,10 +18,11 @@ static partial class ExistentialReceiverBinding
     public sealed class Index
     {
         internal readonly Dictionary<string, List<Member>> Members = new(StringComparer.Ordinal);
-        internal readonly Dictionary<string, string> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
+        internal readonly Dictionary<string, TypeNode.Fqn> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, string[]> Bases = new(StringComparer.Ordinal);
         internal readonly Dictionary<(string Owner, string Name), TypeNode> Fields = new();
         internal IReadOnlyDictionary<string, string> SourceDeclarations = new Dictionary<string, string>();
+        internal IReadOnlyDictionary<string, SupertypeGraph.Def> SourceHierarchy;
     }
 
     internal sealed record Member(string Name, string SourceName, string AccessorKind,

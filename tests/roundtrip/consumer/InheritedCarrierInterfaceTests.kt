@@ -26,14 +26,21 @@ private fun <T> referencedCarrierIndirect(value: ReferencedCarrierIndirect<T>): 
 private fun referencedCarrierUnitStamp(value: UnitContract<Unit>): Int = value.stamp()
 private fun <T> referencedCarrierUnit(value: ReferencedCarrierUnit<T>): Int = referencedCarrierUnitStamp(value)
 
+private fun writeCarrierTags(projected: TaggedLeaf<*>, values: System.Collections.Generic.IEnumerable<Int>) {
+    for (value in values) projected.tag = value
+}
+
 class InheritedCarrierRoundtripTests {
     @TestAttribute
     fun genericBasesPreserveClosedInterfacesAndAncestorCarriers() {
         val exact = TaggedLeaf("item")
         val projected: TaggedLeaf<*> = exact
         assertEquals(42, projected.tag)
-        projected.tag = 57
+        writeCarrierTags(projected, System.Linq.Enumerable.Range(56, 2))
         assertEquals(57, exact.tag)
+        val local: ReferencedCarrierTask<*> = ReferencedCarrierTask(1)
+        local.tag = 63
+        assertEquals(63, local.tag)
         val direct: ReferencedCarrierDirect<Any> = ReferencedCarrierDirect(7)
         val indirect: ReferencedCarrierIndirect<Any> = ReferencedCarrierIndirect("text")
         assertEquals("direct", referencedCarrierDirect(direct))

@@ -3,6 +3,7 @@ package inheritedcarrier
 interface RunnableContract { fun run(): Int }
 interface NameContract<T> { fun name(): T }
 abstract class Root : RunnableContract {
+    @get:kotlin.clr.ClrName("\$star\$read")
     var tag: Int = 42
     override fun run(): Int = 43
 }
