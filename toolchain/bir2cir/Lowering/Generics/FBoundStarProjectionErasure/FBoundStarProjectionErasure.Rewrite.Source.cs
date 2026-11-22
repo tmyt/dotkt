@@ -301,6 +301,8 @@ static partial class FBoundStarProjectionErasure
                 ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, c, state.References),
             BirGenericStatic c when c.ResolvedMemberParams.HasValue =>
                 ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, c, state.References),
+            BirCallInstance c when identity == null && c.MemberSignature.HasValue => c.MemberMethodTypeParams.OrDefault(),
+            BirCallStatic c when identity == null && c.MemberSignature.HasValue => c.MemberMethodTypeParams.OrDefault(),
             _ => null,
         };
         var methodApplication = state.Projection.SelectPhysicalMethodApplication(selected?.Source as BirFunctionDeclaration,

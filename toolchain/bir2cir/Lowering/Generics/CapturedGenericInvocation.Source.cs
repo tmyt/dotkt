@@ -81,7 +81,7 @@ static partial class CapturedGenericInvocation
                     }
                 }
                 if (node.MethodWitnessFacts.HasValue && Invocation.Admits(node) &&
-                    FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs) is { } fixedCall)
+                    FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated) is { } fixedCall)
                 {
                     slot.Replace(fixedCall);
                     return;
@@ -95,57 +95,85 @@ static partial class CapturedGenericInvocation
             }
         }
 
-        BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs)
+        BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
+            HashSet<string> emitted, List<IBirTypeDeclaration> generated)
         {
             var id = call.Node.SelectedGenericCallable;
             var owner = (TypeNode.Fqn)(call.Member?.DeclaringType.OrDefault() ?? call.Owner);
             var local = id != null && declarations.TryGetValue(id, out var bindings)
                 ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method)?.Method : null;
-            if (call.Node is not (BirGenericInstance or BirGenericStatic) &&
+            if (!(id == null && call.Member != null) && call.Node is not (BirGenericInstance or BirGenericStatic) &&
                 !ProjectedCallableEntries.HasFixedAbi(local, id, refs)) return null;
             var member = call.Member;
             if (local == null && member == null) throw new InvalidOperationException("Fixed invocation lacks its selected declaration");
-            var signature = member?.ParameterTypes.Value ?? local.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray();
-            var ret = member?.ReturnType.Value ?? local.Ret.Value;
-            if (signature.Append(ret).Any(t => HasAddress(t) || ByRefLike(t, refs)))
-                return null;
+            AddressTarget target;
+            bool lexicalAccess = false;
+            if (member != null)
+            {
+                if (!TrySelectedMethod(call, owner, refs, out var method))
+                    throw new InvalidOperationException("Fixed invocation lost its selected MethodDef");
+                target = AddressTarget.FromReference(method, member);
+                lexicalAccess = !method.IsPublic;
+            }
+            else
+            {
+                var definition = definitions[owner.Name].Type;
+                var ownerParameters = TypeParameterFrame.Declarations(definition).ToArray();
+                var methodParameters = local.TypeParams.OrEmpty();
+                bool Typed(TypeNode type) => SignatureValueTypes.Of(type) is TypeNode.Tv v
+                    ? (v.Scope == "method" ? methodParameters : ownerParameters)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct")
+                    : HasAddress(type) || ByRefLike(SignatureValueTypes.Of(type), refs);
+                var formals = local.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray();
+                // A local MethodDef has no token yet. Bind its complete physical
+                // descriptor. Zero is reserved for unique lexical thunks.
+                target = new(local.Name.Value, -1, formals.Select(t => RuntimeKey(SignatureValueTypes.Of(t), refs)).ToArray(),
+                    ownerParameters, methodParameters, definition.Kind.Value == "struct", formals,
+                    formals.Select(Typed).ToArray(), local.Ret.Value, Typed(local.Ret.Value));
+            }
+            var signature = target.Signature;
+            var ret = target.Result;
             var actual = call.TypeArguments.Value;
             var authored = actual.ToArray();
             var proofs = call.Node.MethodWitnessFacts.Value;
             foreach (var proof in proofs) authored[proof.Argument.Value] = proof.Primary.Value;
             var facets = proofs.SelectMany(p => p.Interfaces.Value.Select(bound => (p.Argument.Value, bound))).ToArray();
             var result = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(ret, owner.Args ?? [], actual);
-            var keys = signature.Select(t => RuntimeKey(t, refs)).ToArray();
             var unit = IsVoid(ret);
-            // The local MethodDef has no metadata token yet. The runtime binds
-            // its complete signature; zero is reserved for unique lexical thunks.
-            int token = -1;
-            var name = member?.Name.Value ?? local.Name.Value;
-            if (call.Super)
+            var typed = target.ValueOwner && call.Instance || target.TypedParameters.Contains(true) || target.TypedResult;
+            LexicalTarget lexical = null;
+            call.Node.MethodWitnessFacts = default;
+            if (call.Super || typed && lexicalAccess)
             {
-                var frame = local?.TypeParams.OrEmpty() ?? call.SelectedFrame;
-                call.Node.MethodWitnessFacts = default;
                 var formals = signature.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? [])).ToArray();
                 var returns = SupertypeGraph.SubstOwnerTvs(ret, owner.Args ?? []);
-                name = SuperForwarder(call, lexicalOwner, frame.Select(p => CloneParameter(p,
-                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null);
-                owner = new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
-                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
-                token = 0;
+                var thunk = LexicalForwarder(call, owner, lexicalOwner, target.MethodFrame.Select(p => CloneParameter(p,
+                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null, typed);
+                lexical = new(new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
+                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, thunk);
             }
-            return IntersectionCall(call, owner, token, name, keys, authored, facets, result, unit, refs);
+            string Allocate(string role) {
+                string name;
+                do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
+                return name;
+            }
+            return typed ? ProjectAddressCall(call, target, owner, facets, refs, Allocate, generated, lexical, null, authored)
+                : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
+                    lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs);
         }
 
-        string SuperForwarder(Invocation call, string lexicalOwner, BirTypeParameter[] frame, TypeNode[] parameters, TypeNode result, bool local)
+        BirFunctionDeclaration LexicalForwarder(Invocation call, TypeNode.Fqn target, string lexicalOwner, BirTypeParameter[] frame,
+            TypeNode[] parameters, TypeNode result, bool local, bool adapterAccess = false)
         {
             var definition = definitions[lexicalOwner].Type;
             string name;
             do { name = "dotkt$capturedSuper$" + _next++; }
             while (definition.Methods.OrEmpty().Any(method => method.Name.OrDefault() == name));
-            var forward = call.SuperForward(parameters, result, frame.Length, local);
-            definition.Methods = definition.Methods.OrEmpty().Append(Method(name, frame, parameters, result,
-                Body(forward, IsVoid(result), objectResult: false), isStatic: false, visibility: "private")).ToArray();
-            return name;
+            var forward = call.Instance ? call.SuperForward(parameters, result, frame.Length, local)
+                : call.Forward(target, frame.Length, parameters, result, local);
+            var method = Method(name, frame, parameters, result,
+                Body(forward, IsVoid(result), objectResult: false), isStatic: !call.Instance, visibility: adapterAccess ? "internal" : "private");
+            definition.Methods = definition.Methods.OrEmpty().Append(method).ToArray();
+            return method;
         }
 
         static void Declare(BirGraphValue node, Dictionary<string, TypeNode> scope)
@@ -216,7 +244,7 @@ static partial class CapturedGenericInvocation
                 var superParameters = declarationParameters.Select(CloseSuper).ToArray();
                 parameterWitnesses = parameterWitnesses.Select(CloseSuper).ToArray();
                 var superReturn = CloseSuper(declaredReturn);
-                var superName = SuperForwarder(call, lexicalOwner, superFrame, superParameters, superReturn, local);
+                var superName = LexicalForwarder(call, owner, lexicalOwner, superFrame, superParameters, superReturn, local).Name.Value;
                 owner = new TypeNode.Fqn(lexicalOwner, ownerFrame.Length == 0 ? null
                     : Enumerable.Range(0, ownerFrame.Length).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
                 declarationParameters = superParameters; declaredReturn = superReturn; selectedFrame = superFrame; local = true;
@@ -319,6 +347,7 @@ static partial class CapturedGenericInvocation
         }
 
         string RuntimeKey(TypeNode type, ReferenceMetadataIndex refs) => BirTypeLowering.CanonicalPhysicalSlotType(type) switch {
+            TypeNode.ByRef reference => "r[" + RuntimeKey(reference.Of, refs) + "]",
             TypeNode.Tv variable => (variable.Scope == "method" ? "m" : "t") + variable.I,
             TypeNode.Nullable nullable => nullable.Of is TypeNode.Fqn named && (definitions.TryGetValue(named.Name, out var local)
                 ? local.Type.Kind.OrDefault() is "struct" or "enum" : refs.IsValueType(named)) ? "g{System.Nullable`1}<" + RuntimeKey(nullable.Of, refs) + ">" : RuntimeKey(nullable.Of, refs),

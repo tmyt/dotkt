@@ -5,11 +5,25 @@ import System.Collections.Generic.List as ClrList
 import RoundtripDependentNative.Base
 import RoundtripDependentNative.IMarker
 import RoundtripDependentNative.Selector
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 
 class NativeChoice<T>(val value: T) : Base(), IMarker<String>
 class LastNativeChoice : Selector() {
     override fun <T> Choose(first: T, last: T): T where T : Base, T : IMarker<String> = last
+    override fun <T> Choose(first: T, last: T, visits: ClrRef<Int>): T where T : Base, T : IMarker<String> {
+        visits.value += 2
+        return last
+    }
     fun base(a: NativeChoice<*>, b: NativeChoice<*>) = super.Choose<NativeChoice<*>>(a, b)
+    fun baseRef(a: NativeChoice<*>, b: NativeChoice<*>): Boolean {
+        var visits = 0
+        return super.Choose<NativeChoice<*>>(a, b, byref(visits)) === a && visits == 1
+    }
+    fun visitOther(other: LastNativeChoice, a: NativeChoice<*>): Boolean {
+        var visits = 0
+        return other.Visit<NativeChoice<*>>(a, byref(visits)) === a && visits == 1
+    }
 }
 fun localNativeChoice(s: LastNativeChoice, a: NativeChoice<*>, b: NativeChoice<*>) = s.Choose<NativeChoice<*>>(a, b)
 

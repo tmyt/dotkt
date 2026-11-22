@@ -197,6 +197,12 @@ class ConstrainedNullableBoundTests {
         check(nativeChooser.Choose<NativeChoice<*>>(a, b) === b)
         check(localNativeChoice(chooser, a, b) === b)
         check(chooser.base(a, b) === a)
+        var visits = 0
+        check(chooser.Choose<NativeChoice<*>>(a, b, byref(visits)) === b && visits == 2)
+        check(nativeChooser.Choose<NativeChoice<*>>(a, b, byref(visits)) === b && visits == 4)
+        check(chooser.baseRef(a, b))
+        val other = LastNativeChoice()
+        check(chooser.visitOther(other, a) && chooser.Visits == 0 && other.Visits == 1)
     }
 
     @TestAttribute

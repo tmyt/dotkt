@@ -6,6 +6,17 @@ static partial class CapturedGenericInvocation
 {
     sealed record LexicalTarget(TypeNode.Fqn Owner, BirTypeParameter[] OwnerFrame, BirFunctionDeclaration Method);
 
+    static bool TrySelectedMethod(Invocation site, TypeNode.Fqn owner, ReferenceMetadataIndex refs,
+        out System.Reflection.MethodInfo selected)
+    {
+        var member = site.Member;
+        if (!refs.TryResolveStaticMemberSignature(owner.Name, member.Name.Value, site.TypeArguments.Value.Length,
+            !site.Instance, member.ParameterTypes.Value, owner.Args, out _, out selected, out var declaringOwner)) return false;
+        var resolved = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, selected, "method", declaringOwner, owner.Args));
+        if (!member.StructurallyEquals(resolved)) throw new InvalidOperationException("Projected generic call lost its selected MethodDef");
+        return true;
+    }
+
     internal static BirGraphValue ProjectStorageCall(BirGraphValue call,
         CallableWitnessScope ownerScope, CallableWitnessScope methodScope,
         ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated, IBirTypeDeclaration lexical,
@@ -33,10 +44,7 @@ static partial class CapturedGenericInvocation
         var candidates = arguments.Select((argument, index) => (argument, index))
             .Where(row => CallableWitnessScope.For(row.argument, ownerScope, methodScope).Any())
             .ToArray();
-        if (candidates.Length == 0 || !refs.TryResolveStaticMemberSignature(owner.Name, member.Name.Value, arguments.Length,
-            receiver == null, member.ParameterTypes.Value, owner.Args, out _, out var selected, out var declaringOwner)) return call;
-        var resolved = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, selected, "method", declaringOwner, owner.Args));
-        if (!member.StructurallyEquals(resolved)) throw new InvalidOperationException("Projected generic call lost its selected MethodDef");
+        if (candidates.Length == 0 || !TrySelectedMethod(site, owner, refs, out var selected)) return call;
         var generic = selected.GetGenericArguments();
         var lost = candidates.Where(row => generic[row.index].GetGenericParameterConstraints().Any(t => t.IsInterface))
             .Select(row => row.index).ToHashSet();
@@ -90,7 +98,8 @@ static partial class CapturedGenericInvocation
             lexicalTarget = new(new TypeNode.Fqn(lexical.Name.Value, Enumerable.Range(0, ownerFrame.Length)
                 .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, method);
         }
-        if (typed || access != null) return ProjectAddressCall(site, selected, owner, facets, refs, allocate, generated, lexicalTarget, access);
+        if (typed || access != null) return ProjectAddressCall(site, AddressTarget.FromReference(selected, member),
+            owner, facets, refs, allocate, generated, lexicalTarget, access, arguments);
 
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the
