@@ -114,8 +114,8 @@
     },
     "capturedGenericArgument": {
       "type": "object", "x-dotkt-model": { "name": "CapturedGenericArgument", "domain": "birLoweringValues" },
-      "properties": { "argument": { "type": "integer" }, "slots": { "type": "array", "items": { "type": "integer" } } },
-      "required": ["argument", "slots"], "additionalProperties": false
+      "properties": { "argument": { "type": "integer" }, "ownerPositions": { "type": "array", "items": { "type": "integer" } } },
+      "required": ["argument", "ownerPositions"], "additionalProperties": false
     },
     "birOpaqueBytes": {
       "type": "object", "x-dotkt-model": { "name": "BirOpaqueBytes", "domain": "birLoweringValues", "attributeValue": true },
