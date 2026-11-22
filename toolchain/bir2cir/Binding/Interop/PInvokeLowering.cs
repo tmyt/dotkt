@@ -218,7 +218,7 @@ static partial class PInvokeLowering
             var type = parameter.Type.Value;
             if (type is TypeNode.Fqn { Name: "System.String", Args: null })
             {
-                ValidateStringInput(method, name, parameter);
+                ValidateStringInput(method, name, parameter, refs);
                 continue;
             }
             if (!SupportedScalar(type is TypeNode.ByRef byRef ? byRef.Of : type, refs, localEnums))
@@ -229,18 +229,36 @@ static partial class PInvokeLowering
         }
     }
 
-    static void ValidateStringInput(BirFunctionDeclaration method, string name, BirParameter parameter)
+    static void ValidateStringInput(BirFunctionDeclaration method, string name, BirParameter parameter, ReferenceMetadataIndex refs)
     {
         var label = $"'{name}' string parameter '{parameter.Name.OrDefault() ?? "<unnamed>"}'";
         var attributes = parameter.Attrs.OrEmpty();
-        if (attributes.Any(attr => attr.Attr.OrDefault() is TypeNode.Fqn { Name: Out }))
+        // Reflection.Emit recognizes these pseudo-attributes by full name. Never let
+        // a lookalike turn into Param/FieldMarshal flags through ordinary emission.
+        BirMemberReference StandardCtor(BirAttribute attr, string fullName, string contract)
+        {
+            var member = attr.MemberRef.OrDefault();
+            var expected = refs.ResolveRefTypeIn(fullName, contract)
+                ?? refs.ResolveRefTypeIn(fullName, typeof(object).Assembly.GetName().Name);
+            if (!attr.AttrExternal.OrDefault() || member?.Kind.OrDefault() != "ctor" ||
+                member.DeclaringType.OrDefault() is not TypeNode.Fqn owner || owner.Name != fullName ||
+                expected == null || refs.ResolveRefTypeIn(fullName, member.Assembly.OrDefault()) != expected)
+                throw Error(method, $"{label} requires the standard CLR {fullName} constructor");
+            return member;
+        }
+        foreach (var attr in attributes.Where(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: Out }))
+        {
+            if (StandardCtor(attr, Out, "System.Runtime").ParameterTypes.OrEmpty().Length != 0)
+                throw Error(method, $"{label} requires the parameterless CLR OutAttribute constructor");
             throw Error(method, $"{label} must be input-only; use a native buffer for writable output");
+        }
 
         // With no override the runtime uses the already emitted DllImport CharSet.
         var marshal = attributes.Where(attr => attr.Attr.OrDefault() is TypeNode.Fqn { Name: MarshalAs }).ToArray();
         if (marshal.Length == 0) return;
-        if (marshal.Length != 1 || !marshal[0].AttrExternal.OrDefault() ||
-            marshal[0].MemberRef.OrDefault()?.DeclaringType.OrDefault() is not TypeNode.Fqn { Name: MarshalAs } ||
+        if (marshal.Length != 1 ||
+            StandardCtor(marshal[0], MarshalAs, "System.Runtime.InteropServices").ParameterTypes.OrEmpty() is not
+                [TypeNode.Fqn { Name: "System.Runtime.InteropServices.UnmanagedType" or "System.Int16" }] ||
             marshal[0].NamedArgs.OrEmpty().Length != 0 ||
             marshal[0].Args.OrEmpty() is not [var value] ||
             MarshalAsValue(method, value) is not (
