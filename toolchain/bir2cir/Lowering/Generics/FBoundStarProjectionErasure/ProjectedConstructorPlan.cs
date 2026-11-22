@@ -6,8 +6,18 @@ using DotKt.Cir;
 // Facets follow in entry order; their bounds are expressed in that owner binder.
 sealed record ProjectedConstructorPlan(BirTypeParameter[] WitnessParameters, int Captured, ProjectedConstructorPlan.Facet[] Facets)
 {
-    internal sealed record Facet(int Primary, TypeNode Bound, bool NativeArgument);
+    internal sealed record Facet(int Primary, TypeNode Bound, bool NativeArgument, TypeNode[] Constraints);
     internal int PrimaryArity => WitnessParameters.Length;
+
+    internal static bool Proves(TypeNode available, TypeNode required,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy, ReferenceMetadataIndex references)
+    {
+        if (available == required) return true;
+        if (available is not TypeNode.Fqn root || required is not TypeNode.Fqn target) return false;
+        TypeNode Identity(TypeNode.Fqn f) => hierarchy.ContainsKey(f.Name) ? f : references.WitnessConstraintKey(f);
+        var key = Identity(target);
+        return SupertypeGraph.ReachableFromClass(root, hierarchy, references).Any(edge => Identity(edge.spec) == key);
+    }
 
     internal static ProjectedConstructorPlan Bind(BirTypeParameter[] primary, int captured, Facet[] facets)
     {
@@ -28,12 +38,17 @@ sealed record ProjectedConstructorPlan(BirTypeParameter[] WitnessParameters, int
         var key = physical(bound);
         TypeNode InOwner(TypeNode t) => CapturedGenericInvocation.Map(t, tv =>
             tv.Scope == "method" ? new TypeNode.Tv("type", tv.I) : tv);
-        var matched = shippedRows.Single(row => physical(InOwner(row.Physical)).Equals(key));
-        return new(primary, InOwner(matched.View), native);
+        var rows = shippedRows.ToArray();
+        var matched = rows.Single(row => physical(InOwner(row.Physical)).Equals(key));
+        return new(primary, InOwner(matched.View), native, rows.Select(row => InOwner(row.View)).ToArray());
     }
 
-    internal static ProjectedConstructorPlan From(BirTypeParameter[] primary, int captured, ProjectedClassStorageFrame.InterfaceSlot[] facets) =>
-        Bind(primary, captured, facets.Select(f => new Facet(f.OwnerIndex, f.Bound, f.NativeArgument)).ToArray());
+    internal static ProjectedConstructorPlan From(BirTypeParameter[] full, int captured, ProjectedClassStorageFrame.InterfaceSlot[] facets)
+    {
+        var primary = full.Length - facets.Length;
+        return Bind(full[..primary], captured, facets.Select((f, i) => new Facet(f.OwnerIndex,
+            f.Bound, f.NativeArgument, full[primary + i].Constraints.OrEmpty())).ToArray());
+    }
 
     internal int[] InnerSlots() => Enumerable.Range(Captured, PrimaryArity - Captured)
         .Concat(Facets.Select((f, i) => (f, i)).Where(row => row.f.Primary >= Captured)

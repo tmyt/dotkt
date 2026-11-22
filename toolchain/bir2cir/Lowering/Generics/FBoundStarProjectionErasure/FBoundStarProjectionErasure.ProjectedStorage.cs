@@ -79,7 +79,7 @@ static partial class FBoundStarProjectionErasure
             var slots = p.Slots.Select((slot, i) => slot with {
                 Bound = ProjectedClassStorageFrame.DeclaredFacet(frame[p.Entry.PrimaryArity + i])
             }).ToArray();
-            return p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame[..p.Entry.PrimaryArity], p.Entry.Captured, slots) };
+            return p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame, p.Entry.Captured, slots) };
         }, StringComparer.Ordinal);
         var implementations = new Dictionary<string, BirClassDefinition>(StringComparer.Ordinal);
         var innerFactories = new List<(ProjectedStorageOwner Plan, string Id, BirFunctionDeclaration Factory, int Prefix, int Original)>();

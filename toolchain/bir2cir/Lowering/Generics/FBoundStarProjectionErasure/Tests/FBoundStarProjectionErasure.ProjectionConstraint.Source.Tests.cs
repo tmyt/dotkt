@@ -138,8 +138,9 @@ static partial class FBoundStarProjectionErasure
                 [(ifaceBound, ifaceBound), (physicalFacet, physicalFacet)], t => t),
         ]);
         Need(published.InnerSlots().SequenceEqual([1, 2]) &&
+            published.Facets[0].Constraints.SequenceEqual([ifaceBound, namedFacet]) &&
             published.Close([rootBound, independent], (_, b) => b).Last() == new TypeNode.Fqn("Facet", [independent]),
-            "the selected constructor facet binds a later constraint row in the shipped method binder");
+            "the selected constructor facet binds its named row without discarding the other shipped constraints");
         Need(projection.StorageFrame("FBounded") == null,
             "a source class bound already projected to a CLR interface does not require separate storage");
         TypeNode.Fqn Applied(string name) => new("Intersection", [new TypeNode.Fqn(name, [new TypeNode.Star()])]);

@@ -294,7 +294,22 @@ sealed class ProjectedCallableEntries
     {
         if (!plan.Facets.Any(f => actual[f.Primary] is TypeNode.Tv tv &&
                 (tv.Scope == "method" ? method : owner).Slots?.Any(s => s.OwnerIndex == tv.I) == true)) return null;
-        return plan.Close(actual, (f, required) => Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary]);
+        return plan.Close(actual, (f, required) =>
+        {
+            if (!f.NativeArgument || actual[f.Primary] is not TypeNode.Tv v)
+                return Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary];
+            var scope = v.Scope == "method" ? method : owner;
+            var slots = scope.Slots ?? [];
+            var sameValue = slots.Select((slot, i) => (slot, i))
+                .Where(row => row.slot.OwnerIndex == v.I && row.slot.NativeArgument).ToArray();
+            if (sameValue.Length == 0) return Proof(v, required, owner, method) ?? v;
+            // All native uses of this source argument share one CLR value witness.
+            // The open caller formal must prove the callee's whole conjunction.
+            foreach (var constraint in f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)))
+                if (!sameValue.Any(row => ProjectedConstructorPlan.Proves(row.slot.Bound, constraint, classHierarchy.Value, references)))
+                    throw new InvalidOperationException("Projected constructor argument lacks its declared native interface proof");
+            return new TypeNode.Tv(v.Scope, scope.Parameters.Length + sameValue[0].i);
+        });
     }
 
     BirCallStatic ReferencedConstruction(BirNew creation, Scope owner, Scope method)
