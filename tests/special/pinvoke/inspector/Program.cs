@@ -4,16 +4,18 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using DotKt.Klib.Metadata;
 
-if (args.Length is < 2 or > 4)
+if (args.Length is < 2 or > 5)
     throw new ArgumentException(
-        "usage: PInvokeInspector <producer.dll> <producer.klib> [csharp-producer.klib kotlin-consumer.dll]");
+        "usage: PInvokeInspector <producer.dll> <producer.klib> [csharp-producer.klib kotlin-consumer.dll producer-ref.dll]");
 
 if (args.Length >= 3)
     VerifyCSharpKlib(args[2]);
 VerifyDll(args[0]);
 VerifyKlib(args[1]);
-if (args.Length == 4)
+if (args.Length >= 4)
     VerifyProjectedAttributes(args[3]);
+if (args.Length == 5)
+    VerifyDll(args[4]);
 Console.WriteLine("P/Invoke MethodImport + dll2klib metadata: OK");
 
 static void VerifyDll(string path)
@@ -30,6 +32,8 @@ static void VerifyDll(string path)
         ["modeEcho"] = (0x0100, 0x0080),
         ["echoIntPtr"] = (0x0100, 0x0080),
         ["echoUIntPtr"] = (0x0100, 0x0080),
+        ["checkUtf16"] = (0x0105, 0x0080),
+        ["checkUtf8"] = (0x0105, 0x0080),
         ["companionAdd"] = (0x0100, 0x0080),
     };
     using var stream = File.OpenRead(path);
@@ -48,6 +52,17 @@ static void VerifyDll(string path)
         Require(method.RelativeVirtualAddress == 0, $"{name} unexpectedly has a managed method body");
         Require(metadata.GetString(metadata.GetModuleReference(import.Module).Name) == "dotkt_pinvoke_probe",
             $"{name} has the wrong native module");
+        if (name is "checkUtf16" or "checkUtf8")
+        {
+            var parameter = method.GetParameters().Select(metadata.GetParameter).Single(p => p.SequenceNumber == 1);
+            var descriptor = parameter.GetMarshallingDescriptor();
+            if (name == "checkUtf8")
+                Require((parameter.Attributes & ParameterAttributes.HasFieldMarshal) != 0 &&
+                        !descriptor.IsNil && metadata.GetBlobBytes(descriptor) is [0x30],
+                    "UTF-8 input lost its LPUTF8Str FieldMarshal");
+            else
+                Require(descriptor.IsNil, "UTF-16 input should use the method's CharSet, not a parameter override");
+        }
         actual[name] = ((int)import.Attributes, (int)method.ImplAttributes);
     }
     Require(actual.Count == expected.Count, $"expected {expected.Count} imports, found {actual.Count}");
@@ -70,7 +85,8 @@ static void VerifyKlib(string path)
         .Single(candidate => candidate.FqName == "");
 
     foreach (var name in new[]
-             { "add", "increment", "none", "ansi", "auto", "options", "setError", "modeEcho", "echoIntPtr", "echoUIntPtr" })
+             { "add", "increment", "none", "ansi", "auto", "options", "setError", "modeEcho", "echoIntPtr", "echoUIntPtr",
+               "checkUtf16", "checkUtf8" })
     {
         var function = fragment.Package.Function.Single(candidate => String(fragment, candidate.Name) == name);
         Require((function.Flags & (1 << 12)) != 0, $"{name} lost Kotlin IS_EXTERNAL");

@@ -1,0 +1,1 @@
+error DOTKTPINVOKE001: P/Invoke 'lookalike' string parameter 'text' requires the standard CLR System.Runtime.InteropServices.OutAttribute constructor
