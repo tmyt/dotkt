@@ -2372,6 +2372,11 @@ function variance therefore preserves the original function object's identity ac
 DLL boundaries. Metadata retains the source signature. Metadata-proven byref-like types cannot be boxed and retain
 their exact physical slots. A nominal CLR delegate crossing uses its own declared signature instead of this carrier.
 
+A C# slot can also use a wide `KFunc` or `KAction` with native value-type parameters. Passing a Kotlin
+function to that slot leaves the original Kotlin value unchanged. If the delegate is already assignable,
+the CLR receives the same reference (including null); otherwise it receives a delegate that converts the
+arguments and result. Separate conversions need not give C# reference-identical delegates.
+
 A Kotlin class may implement a function type directly or through an interface. At a function-typed
 boundary its delegate calls the selected `invoke` implementation. Converting the same instance
 again preserves identity, including when it is viewed as `Any`. Writing `instance::invoke`
