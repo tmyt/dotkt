@@ -1045,6 +1045,28 @@ static class ReferenceMetadataReader
         }
     }
 
+    internal sealed record NativeDefaultDeclaration(TypeNode.Fqn Owner, string Member, MethodSignature<TypeNode> Signature);
+
+    internal static NativeDefaultDeclaration[] NativeInterfaceDefaults(Type provider)
+    {
+        using var stream = File.OpenRead(provider.Module.FullyQualifiedName);
+        using var pe = new PEReader(stream);
+        var reader = pe.GetMetadataReader();
+        var definition = reader.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(provider.MetadataToken));
+        var result = new List<NativeDefaultDeclaration>();
+        foreach (var handle in definition.GetMethodImplementations())
+        {
+            var impl = reader.GetMethodImplementation(handle);
+            if (impl.MethodBody.Kind != HandleKind.MethodDefinition) continue;
+            var body = reader.GetMethodDefinition((MethodDefinitionHandle)impl.MethodBody);
+            if ((body.Attributes & (MethodAttributes.Abstract | MethodAttributes.Static)) != 0) continue;
+            if (TryMethodImplMember(reader, impl.MethodDeclaration, out var parent, out var member)
+                && NativeSignatureReader.Type(reader, parent) is TypeNode.Fqn owner)
+                result.Add(new(owner, member, NativeSignatureReader.Declaration(reader, impl.MethodDeclaration)));
+        }
+        return result.ToArray();
+    }
+
     internal static Dictionary<string, ConstructorInfo> NativeConstructorDeclarations(Type owner)
     {
         using var stream = File.OpenRead(owner.Module.FullyQualifiedName);
@@ -1056,12 +1078,11 @@ static class ReferenceMetadataReader
                     (MethodDefinitionHandle)MetadataTokens.Handle(constructor.MetadataToken)), StringComparer.Ordinal);
     }
 
-    static bool TryMethodImplDeclaration(MetadataReader reader, MethodImplOwnerTypeProvider provider,
-        EntityHandle declaration, out TypeNode.Fqn owner, out string member)
+    static bool TryMethodImplMember(MetadataReader reader, EntityHandle declaration,
+        out EntityHandle parent, out string member)
     {
-        owner = null;
+        parent = default;
         member = null;
-        EntityHandle parent;
         switch (declaration.Kind)
         {
             case HandleKind.MemberReference:
@@ -1081,6 +1102,14 @@ static class ReferenceMetadataReader
             default:
                 return false;
         }
+        return true;
+    }
+
+    static bool TryMethodImplDeclaration(MetadataReader reader, MethodImplOwnerTypeProvider provider,
+        EntityHandle declaration, out TypeNode.Fqn owner, out string member)
+    {
+        owner = null;
+        if (!TryMethodImplMember(reader, declaration, out var parent, out member)) return false;
         TypeNode decoded = parent.Kind switch
         {
             HandleKind.TypeDefinition => provider.GetTypeFromDefinition(

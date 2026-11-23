@@ -190,9 +190,9 @@ static partial class KotlinOverrideSlotBridge
             if (selectedBody != null && !slot.IsInterface) return;
             // A DIM supplies its own interface chain, but cannot supply a distinct
             // abstract slot declared on a sibling that the class also implements.
-            if (selectedBody?.IsDefault == true && (slot.HasDefault
-                || SupertypeGraph.Reaches(selectedBody.Owner, slot.SemanticSpec, defs, refs)
-                || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [selectedBody.Owner] },
+            if (selectedBody?.DefaultProvider is { } provider && (slot.HasDefault
+                || SupertypeGraph.Reaches(provider, slot.SemanticSpec, defs, refs)
+                || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [provider] },
                     slot.DescriptorSpec, defs, refs, isValue, context.LocalNames))) return;
             var reimplements = slot.IsInterface && definition.Kind == "class"
                 && (ReachesFromDeclaredInterface(definition, slot.SemanticSpec, defs, refs)

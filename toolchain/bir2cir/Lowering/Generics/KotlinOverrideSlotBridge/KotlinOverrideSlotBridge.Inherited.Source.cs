@@ -89,7 +89,7 @@ static partial class KotlinOverrideSlotBridge
 
     internal sealed record SelectedInheritedSourceMethod(TypeNode.Fqn Owner, SelectedMethodHeader Method,
         BirGraphValue Fact, IReadOnlyList<BirOverride> Overrides, bool IsDefault, TypeNode[] DeclarationSignature,
-        string DeclarationId, TypeNode[] QueryBounds, TypeNode[] SelectionParameters)
+        string DeclarationId, TypeNode[] QueryBounds, TypeNode[] SelectionParameters, TypeNode.Fqn DefaultProvider = null)
     {
         internal BirFunctionDeclaration Source => Method.Source;
     }
@@ -235,6 +235,7 @@ static partial class KotlinOverrideSlotBridge
                     if (refs == null) continue;
                     ReferencedMethodDeclaration source;
                     TypeNode logical = null;
+                    var callOwner = new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args);
                     if (suspendValues && fact.Header.Mods.OrDefault()?.Suspend.OrDefault() == true)
                     {
                         if (!refs.TrySelectedOverrideDeclarationByShape(spec.Name, member, accessor, arity, factParams, args,
@@ -257,7 +258,13 @@ static partial class KotlinOverrideSlotBridge
                             : refs.TrySelectedSourceMethodDeclaration(spec.Name, member, selectedArity,
                                 declarationParams, factReturn, args, semanticParameters, selectedArgs, out source,
                                 selectedDeclarationId: fact.DeclarationId);
-                        if (!found) continue;
+                        if (!found)
+                        {
+                            if (!defaults || accessor == null || selectedArity != 0 || fact.DeclarationId != null ||
+                                !refs.TryNativeDefaultAccessor(spec, member, accessor, declarationParams, factReturn,
+                                    out callOwner, out source)) continue;
+                            args = callOwner.Args ?? [];
+                        }
                     }
                     Publish(null, source.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                         SupertypeGraph.SubstOwnerTvs(logical != null ? source.Return : source.PhysicalReturn, args),
@@ -267,7 +274,7 @@ static partial class KotlinOverrideSlotBridge
                         !collectionQueries ? null : Enumerable.Range(0, source.PhysicalParameters.Length).Select(index =>
                             KotlinCollectionSlotSynthesis.IsErasedQueryParameter(fact.Header.Overrides.OrEmpty(), index)
                                 ? source.QueryParameterBound?.Invoke(index) : null).ToArray(), logical,
-                        new TypeNode.Fqn(refs.ExactReflectedOwner(spec.Name, args.Length), spec.Args), null,
+                        callOwner, null,
                         collectionQueries ? SupertypeGraph.SubstOwnerTvs(source.Return, args) : null,
                         defaults && accessor != null ? source.KotlinParameters : null);
                 }
@@ -310,7 +317,7 @@ static partial class KotlinOverrideSlotBridge
                         signature, declarationId, queryBounds?.Select(type => type == null ? null : SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                         physicalParams.Select((type, index) => kotlinParameters?[index] is {} semantic
                             ? SupertypeGraph.SubstOwnerTvs(semantic, refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(args) ?? args)
-                            : index < factParams.Length ? factParams[index] : type).ToArray()));
+                            : index < factParams.Length ? factParams[index] : type).ToArray(), defaults ? spec : null));
                 }
             }
         }
