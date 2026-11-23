@@ -4,8 +4,7 @@
 +"k":"var","name":"dotkt$collectionClassifier$value$0","type":{"t":"fqn","name":"System.Object"},"init":{"k":"local","name":"value"}
 +"method":"kotlinCollectionStorageMatches"
 +"method":"kotlinCollectionMatches"
-?any(.[] | .. | objects; ir_matches({"then":{"k":"cast","type":{"t":"fqn","name":"System.Object"},"e":{"k":"isInstRef","type":{"t":"fqn","name":"System.Object"},"e":{"k":"local","name":"dotkt$collectionClassifier$value$0"}}}}))
-?any(.[] | .. | objects; ir_matches({"else":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":{"a":"null"}}}))
+?any(.[] | .. | objects; ir_matches({"k":"cond","then":{"k":"isInstRef","type":{"t":"fqn","name":"System.Object"},"e":{"k":"local","name":"dotkt$collectionClassifier$value$0"}},"else":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":{"a":"null"}}}))
 +"retNullableFlags":[2]
 +"bytes":"gqF0qG51bGxhYmxlom9mg6F0o2ZxbqRuYW1lu2tvdGxpbi5jb2xsZWN0aW9ucy5JdGVyYWJsZaRhcmdzkYKhdKNmcW6kbmFtZa1rb3RsaW4uU3RyaW5n"
 -"method":"starProjectionSafeCast"
