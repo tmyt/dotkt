@@ -33,7 +33,7 @@ static partial class StringCharSequenceBridge
         CanRestoreMaterializedValue(source, target)
             ? MaterializedExecutable.NormalizeSource(SourceRestoreErasedCharSequence(value, target)) : null;
 
-    static bool CanRestoreMaterializedValue(TypeNode source, TypeNode target) =>
+    internal static bool CanRestoreMaterializedValue(TypeNode source, TypeNode target) =>
         source is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } && IsScalarCharSequence(target);
 
     static TypeNode.Fn UnwrapFn(TypeNode t) => t switch

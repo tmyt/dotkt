@@ -4,10 +4,18 @@ using DotKt.Cir;
 
 static partial class SuspendColdLowering
 {
-    static BirClassDefinition BuildRootContinuationSource(string tcsBcl)
+    const string TextRootFqn = "kotlin.coroutines.clr.internal.CharSequenceRootContinuation";
+
+    // A cold success has CLR type object on both completion paths. Materialize the
+    // selected destination view only after checking for suspension and failure.
+    static IBirExpression ProjectColdResult(IBirExpression value, TypeNode target) =>
+        IsAnyTn(target) ? value : StringCharSequenceBridge.RestoreMaterializedValue(value, AnyTn, target)
+            ?? new BirCast { Type = target, E = OptionalField<IBirExpression>.Of(value) };
+
+    static BirClassDefinition BuildRootContinuationSource(string tcsBcl, TypeNode projectedResult)
     {
-        var variable = new TypeNode.Tv("type", 0);
-        var root = new TypeNode.Fqn(RootContinuationFqn, new TypeNode[] { variable });
+        var variable = projectedResult ?? new TypeNode.Tv("type", 0);
+        var root = projectedResult != null ? new TypeNode.Fqn(TextRootFqn) : new TypeNode.Fqn(RootContinuationFqn, new TypeNode[] { variable });
         var tcs = new TypeNode.Fqn(tcsBcl, new TypeNode[] { variable });
         var result = new TypeNode.Fqn("kotlin.Result", new TypeNode[] { variable });
         var throwable = new TypeNode.Fqn("kotlin.Throwable");
@@ -30,9 +38,9 @@ static partial class SuspendColdLowering
             new BirBlock { Body = new IBirStatement[] {
                 Branch(new BirBinaryOperation { Op = "===", Lhs = Local(exceptionName),
                     Rhs = new BirConstant { Type = nullableThrowable, Value = new BirLiteral.NullLiteral() } }, failure),
-                Expr(SinkCall("TrySetResult", new TypeNode[] { variable }, new BirCast { Type = variable,
-                    E = new BirCallInstance { OwnerType = result, Virtual = false, Recv = Local("result"),
-                        Method = "value", Prop = "get", Args = Array.Empty<IBirExpression>(), Ret = AnyTn } })),
+                Expr(SinkCall("TrySetResult", new TypeNode[] { variable }, ProjectColdResult(
+                    new BirCallInstance { OwnerType = result, Virtual = false, Recv = Local("result"),
+                        Method = "value", Prop = "get", Args = Array.Empty<IBirExpression>(), Ret = AnyTn }, variable))),
                 new BirGoto { Id = done }, new BirLabel { Id = failure },
                 Branch(new BirIsInstance { Type = cancellation, E = Local(exceptionName) }, kotlinCancellation),
                 Expr(SinkCall("TrySetCanceled", new TypeNode[] { token }, new BirPropertyGet {
@@ -48,8 +56,8 @@ static partial class SuspendColdLowering
             } },
         };
         return new BirClassDefinition {
-            Name = RootContinuationFqn, Kind = "class", Abstract = false, Vis = "internal",
-            TypeParams = new[] { new BirTypeParameter { Name = "T" } }, Base = OptionalField<TypeNode>.Null,
+            Name = root.Name, Kind = "class", Abstract = false, Vis = "internal",
+            TypeParams = projectedResult != null ? Array.Empty<BirTypeParameter>() : new[] { new BirTypeParameter { Name = "T" } }, Base = OptionalField<TypeNode>.Null,
             Interfaces = new TypeNode[] { new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { variable }) },
             Fields = new[] { new BirFieldDeclaration { Name = fieldName, Type = tcs, Vis = "private", Attrs = Array.Empty<BirAttribute>() } },
             Ctors = new[] { new BirConstructor { Params = new[] { new BirParameter { Name = "tcs", Type = tcs } },
