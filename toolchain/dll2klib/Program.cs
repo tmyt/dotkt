@@ -1502,6 +1502,19 @@ internal sealed partial class AssemblyScanner : IDisposable
         int Depth,
         bool IsExplicit);
 
+    readonly Dictionary<TypeDefinitionHandle, IReadOnlySet<int>> _valueOwnerParameters = new();
+
+    IReadOnlySet<int>? ValueOwnerParameters(GenericContext context)
+    {
+        if (context.TypeParameterIds.Count == 0) return null;
+        if (!_valueOwnerParameters.TryGetValue(context.Type, out var ids))
+            _valueOwnerParameters[context.Type] = ids = context.TypeParameterIds
+                .Where(pair => (_md.GetGenericParameter(pair.Key).Attributes
+                    & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
+                .Select(pair => pair.Value).ToHashSet();
+        return ids;
+    }
+
     private readonly MetadataReader _md;
     private readonly string _definitionPath;
     private readonly MetadataAttributes _attrs;
@@ -2956,7 +2969,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             {
                 if (pair.Getter is { } indexerGetter)
                 {
-                    var function = InheritedFunction(indexerGetter, "get", kotlinFlags: 2, names: names);
+                    var function = InheritedFunction(indexerGetter, "get", kotlinFlags: 2, names: names, valueOwnerParameters: ValueOwnerParameters(typeContext));
                     if (indexerGetter.IsExplicit)
                     {
                         var shape = FunctionShapeKey(function, names);
@@ -2970,7 +2983,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 }
                 if (pair.Setter is { } indexerSetter)
                 {
-                    var function = InheritedFunction(indexerSetter, "set", kotlinFlags: 2, names: names);
+                    var function = InheritedFunction(indexerSetter, "set", kotlinFlags: 2, names: names, valueOwnerParameters: ValueOwnerParameters(typeContext));
                     if (indexerSetter.IsExplicit)
                     {
                         var shape = FunctionShapeKey(function, names);
@@ -3168,7 +3181,7 @@ internal sealed partial class AssemblyScanner : IDisposable
 
         foreach (var inherited in surfacedImplementations.Where(item => item.AccessorKind == 0))
         {
-            var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names);
+            var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names, valueOwnerParameters: ValueOwnerParameters(typeContext));
             if (inherited.IsExplicit)
             {
                 var shape = FunctionShapeKey(function, names);
@@ -3859,7 +3872,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         KType physical,
-        SignatureDecoder signatures)
+        SignatureDecoder signatures, IReadOnlySet<int>? valueOwnerParameters = null)
     {
         var returnHandle = method.GetParameters()
             .FirstOrDefault(handle => reader.GetParameter(handle).SequenceNumber == 0);
@@ -3870,7 +3883,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             physical,
             methodHandle,
             signatures,
-            flowContract: true);
+            flowContract: true, valueOwnerParameters: valueOwnerParameters);
     }
 
     private IEnumerable<ValueParameter> InheritedParameters(
@@ -3881,7 +3894,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         NameTable names,
         SignatureDecoder signatures,
         ImmutableArray<KType> substitutedDeclarationTypes = default,
-        ImmutableArray<SignatureDecoder> argumentSignatures = default)
+        ImmutableArray<SignatureDecoder> argumentSignatures = default, IReadOnlySet<int>? valueOwnerParameters = null)
     {
         var rows = method.GetParameters()
             .Select(handle => (Handle: handle, Row: reader.GetParameter(handle)))
@@ -3904,7 +3917,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                     Name = names.String($"arg{i}"),
                     Type = ProjectInheritedType(
                         reader, default, types[i], methodHandle, signatures,
-                        outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentDecoder),
+                        outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentDecoder, valueOwnerParameters: valueOwnerParameters),
                 };
                 continue;
             }
@@ -3912,7 +3925,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             var name = entry.Row.Name.IsNil ? $"arg{i}" : reader.GetString(entry.Row.Name);
             var type = ProjectInheritedType(
                 reader, entry.Handle, types[i], methodHandle, signatures,
-                outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentDecoder);
+                outerNullabilityOnly: outerNullabilityOnly, argumentSignatures: argumentDecoder, valueOwnerParameters: valueOwnerParameters);
             var value = new ValueParameter
             {
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
@@ -3934,7 +3947,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         string name,
         int kotlinFlags,
         NameTable names,
-        ImmutableArray<SignatureDecoder> argumentSignatures = default)
+        ImmutableArray<SignatureDecoder> argumentSignatures = default, IReadOnlySet<int>? valueOwnerParameters = null)
     {
         var reader = inherited.Reader;
         var declarationHandle = inherited.Declaration;
@@ -3966,7 +3979,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 ? SubstituteTypeParameters(
                     inherited.Signatures.FromTypeNode(suspendReturn), inherited.InterfaceArguments)
                 : ProjectInheritedReturn(
-                    reader, declarationHandle, declaration, returnType, inherited.Signatures),
+                    reader, declarationHandle, declaration, returnType, inherited.Signatures, valueOwnerParameters),
             ValueParameter = {
                 InheritedParameters(
                     reader,
@@ -3976,7 +3989,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                     names,
                     inherited.Signatures,
                     !argumentSignatures.IsDefault ? signature.ParameterTypes : default,
-                    argumentSignatures)
+                    argumentSignatures, valueOwnerParameters)
             },
         };
         AddInheritedMethodTypeParameters(
@@ -4006,7 +4019,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         bool flowContract = false,
         bool outerNullabilityOnly = false,
         SignatureDecoder? argumentSignatures = null,
-        bool preserveDecodedNullable = false)
+        bool preserveDecodedNullable = false, IReadOnlySet<int>? valueOwnerParameters = null)
     {
         var attrs = signatures.Attributes;
         TypeNode? exact = null;
@@ -4042,8 +4055,8 @@ internal sealed partial class AssemblyScanner : IDisposable
             "KotlinTypeAttribute" => result,
             "KotlinSuspendFunctionTypeAttribute" or "KotlinNullableGenericAttribute"
                 => signatures.ApplyOuterNullability(result, bytes, contextByte),
-            _ when outerNullabilityOnly => (argumentSignatures ?? signatures).ApplyOuterNullability(result, bytes, contextByte),
-            _ => signatures.ApplyNullability(result, bytes, contextByte, preserveDecodedNullable),
+            _ when outerNullabilityOnly => (argumentSignatures ?? signatures).ApplyOuterNullability(result, bytes, contextByte, valueOwnerParameters),
+            _ => signatures.ApplyNullability(result, bytes, contextByte, preserveDecodedNullable, exact is null ? valueOwnerParameters : null),
         };
         if (flowContract && attrs.Has(slot, MetadataAttributes.MaybeNull, requireTrust: false))
             result = signatures.AsPlatform(result);
@@ -7108,7 +7121,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 => signatures.ApplyOuterNullability(result, bytes, contextByte),
             // A collection-identity carrier was captured after reference
             // nullability stripping, so ordinary NRT metadata fills its tree.
-            _ => signatures.ApplyNullability(result, bytes, contextByte, physicalContext: exact is null ? context : null),
+            _ => signatures.ApplyNullability(result, bytes, contextByte, valueOwnerParameters: exact is null ? ValueOwnerParameters(context) : null),
         };
         if (flowContract && _attrs.Has(slot, MetadataAttributes.MaybeNull, requireTrust: false))
             result = signatures.AsPlatform(result);
@@ -8519,7 +8532,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
     // compiler flattened it in (see [ConsumesNullability] for which nodes hold a byte). A node that holds no byte still
     // has its arguments walked, because the flattening does: `Dictionary<int, string?>` is `[1, 2]`, not `[1]`.
     public KType ApplyNullability(KType source, byte[]? flags, byte context, bool preserveDecodedNullable = false,
-        GenericContext? physicalContext = null)
+        IReadOnlySet<int>? valueOwnerParameters = null)
     {
         var index = 0;
         return Walk(source);
@@ -8563,9 +8576,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
             if (nativeSignature && copy.HasTypeParameter) return AsNonNull(copy);
             // The raw slot already distinguishes T from Nullable<T>. NRT cannot
             // turn a struct-constrained owner parameter into a platform type.
-            if (copy.HasTypeParameter && physicalContext is not null && physicalContext.TypeParameterIds.Any(pair =>
-                    pair.Value == copy.TypeParameter && (_md.GetGenericParameter(pair.Key).Attributes
-                        & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0))
+            if (copy.HasTypeParameter && valueOwnerParameters?.Contains(copy.TypeParameter) == true)
                 return copy;
             // A VALUE type holds a byte position but never an annotation: its byte is always 0 (oblivious), and its
             // one nullable form is the structural `System.Nullable<T>` already folded in by the decoder. Reading the
@@ -8627,9 +8638,10 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
         return copy;
     }
 
-    public KType ApplyOuterNullability(KType source, byte[]? flags, byte context)
+    public KType ApplyOuterNullability(KType source, byte[]? flags, byte context, IReadOnlySet<int>? valueOwnerParameters = null)
     {
-        if (!ConsumesNullability(source) || IsValueType(source)) return source;
+        if (!ConsumesNullability(source) || IsValueType(source)
+            || source.HasTypeParameter && valueOwnerParameters?.Contains(source.TypeParameter) == true) return source;
         var value = flags is { Length: > 0 } ? flags[0] : context;
         return value switch
         {

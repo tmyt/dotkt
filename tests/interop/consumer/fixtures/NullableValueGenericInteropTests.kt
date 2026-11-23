@@ -72,13 +72,17 @@ class KotlinValueImageSibling : ValueImageBase(), KotlinBoolListSink {
 class NullableValueGenericInteropTests {
     @TestAttribute
     fun openNativeNullableValueSlotKeepsItsDeclaration() {
-        val slots = NvGen.ValueSlots<Int>()
-        val present: Int? = 7
-        assertEquals("missing", slots.Read(null))
+        val slots = NvGen.ValueSlots<Long>()
+        val present: Long? = 7L
+        assertEquals("nullable:missing", slots.Read(null as Long?))
         assertEquals("nullable:7", slots.Read(present))
-        assertEquals("plain:7", slots.Read(7))
+        assertEquals("plain:7", slots.Read(7L))
+        assertEquals("int", slots.Read(null as Int?))
+        assertNull(slots.Find(false, 8L))
+        assertEquals(8L, slots.Find(true, 8L))
         val refs = NvGen.ReferenceSlot<String>()
         check(refs.IsMissing(null) && !refs.IsMissing("present"))
+        assertEquals(42, NvGen.SpecializedSlot<Int>().Read(7))
     }
 
     @TestAttribute

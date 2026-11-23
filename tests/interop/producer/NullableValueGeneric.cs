@@ -24,8 +24,10 @@ namespace NvGen
 {
     public class ValueSlots<T> where T : struct
     {
-        public string Read(T value) => $"plain:{value}";
-        public string Read(T? value) => value.HasValue ? $"nullable:{value.Value}" : "missing";
+        public string Read(T value, string tag = "plain") => $"{tag}:{value}";
+        public string Read(T? value, string tag = "nullable") => $"{tag}:{(value.HasValue ? value.Value.ToString() : "missing")}";
+        public string Read(int? value, string tag = "int") => tag;
+        public T? Find(bool present, T value) => present ? value : null;
     }
 
 #nullable enable
@@ -33,6 +35,12 @@ namespace NvGen
     {
         public bool IsMissing(T? value) => value is null;
     }
+    public interface IAnnotatedSlot<X> { int Read(X? value); }
+    internal interface ISpecializedSlot<U> : IAnnotatedSlot<U> where U : struct
+    {
+        int IAnnotatedSlot<U>.Read(U value) => 42;
+    }
+    public class SpecializedSlot<U> : ISpecializedSlot<U> where U : struct { }
 #nullable restore
 
     public static class Api

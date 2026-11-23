@@ -12,7 +12,7 @@ static partial class NetInteropBinding
         => new(arguments ?? shapes ?? signature, signature ?? shapes ?? arguments ?? Array.Empty<TypeNode>(),
             shapes ?? signature ?? Array.Empty<TypeNode>(), arguments ?? signature ?? Array.Empty<TypeNode>());
 
-    static TypeNode[] NormalizeSignature(TypeNode[] signature, Type owner = null)
+    internal static TypeNode[] NormalizeSignature(IReadOnlyList<TypeNode> signature, Type owner = null)
     {
         var parameters = owner?.GetGenericArguments() ?? Type.EmptyTypes;
         return signature?.Select(type => NormSigTv(type, parameters)).ToArray() ?? Array.Empty<TypeNode>();
