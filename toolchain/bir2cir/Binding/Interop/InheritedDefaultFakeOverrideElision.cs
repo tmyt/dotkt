@@ -32,14 +32,19 @@ static partial class InheritedDefaultFakeOverrideElision
                 var inheritedProperty = method.Abstract.OrDefault() && method.TypeParams.OrEmpty().Length != 0
                     && method.PropertyAssociation.HasValue && KotlinPropertyAccessors.TryIdentity(method, out _, out _)
                     && method.Overrides.OrEmpty().Any(inherited => inherited.DeclarationId.HasValue);
-                if (!method.InheritedImplementation.HasValue && !inheritedProperty) continue;
+                var inheritedMethod = !method.PropertyAssociation.HasValue && method.Abstract.OrDefault()
+                    && method.TypeParams.OrEmpty().Length != 0
+                    && method.Overrides.OrEmpty() is { Length: > 0 } edges
+                    && edges.All(edge => edge.Kind.OrDefault() == "method" && edge.DeclarationId.HasValue)
+                    && edges.Select(edge => edge.DeclarationId.Value).Distinct(StringComparer.Ordinal).Count() == 1;
+                if (!method.InheritedImplementation.HasValue && !inheritedProperty && !inheritedMethod) continue;
                 if (KotlinPropertyAccessors.TryIdentity(method, out _, out var role) && method.PropertyAssociation.HasValue)
                 {
                     if (!removedAccessors.TryGetValue(method.PropertyAssociation.Value, out var roles))
                         removedAccessors[method.PropertyAssociation.Value] = roles = new(StringComparer.Ordinal);
                     roles.Add(role);
                 }
-                else if (method.Name.HasValue && method.Params.HasValue && method.Ret.HasValue)
+                else if (method.InheritedImplementation.HasValue && method.Name.HasValue && method.Params.HasValue && method.Ret.HasValue)
                 {
                     (added ??= new()).Add(new BirInheritedDefaultMethod {
                         Member = method.Name,

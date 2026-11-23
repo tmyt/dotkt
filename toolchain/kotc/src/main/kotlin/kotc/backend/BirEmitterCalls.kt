@@ -900,7 +900,17 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 				}
 		}
 	}
-	val physicalIdentityTarget = identityTarget ?: return rendered
+	val physicalIdentityTarget = identityTarget ?: run {
+		// An inherited abstract member has no implementation for resolveFakeOverride.
+		// A single declaring slot across the override edges is still an exact call target.
+		if (rendered is BirCallInstance && selectedTarget.isFakeOverride && selectedTarget.modality == Modality.ABSTRACT &&
+			(selectedTarget.parent as? IrClass)?.kind == ClassKind.INTERFACE && selectedTarget.typeParameters.isNotEmpty() &&
+			selectedTarget.correspondingPropertySymbol == null && rendered.method == selectedTarget.name.asString()) {
+			val id = rendered.overrides.orEmpty().map { it.declarationId }.distinct().singleOrNull()
+			if (id != null) return rendered.copy(declarationId = id)
+		}
+		return rendered
+	}
 	val id = selectedId ?: declarationIdForPhysicalAllocation(physicalIdentityTarget) ?: return rendered
 	if (rendered is BirCallInline) return rendered.copy(declarationId = id)
 	val semanticMethod = physicalIdentityTarget.correspondingPropertySymbol?.owner?.name?.asString()

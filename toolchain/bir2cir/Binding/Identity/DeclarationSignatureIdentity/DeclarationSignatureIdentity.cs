@@ -87,7 +87,7 @@ static partial class DeclarationSignatureIdentity
     }
 
     static string[] OverrideIds(BirOverride[] overrides) => overrides.Select(edge => edge.DeclarationId.OrDefault())
-        .Where(id => id != null).ToArray();
+        .Where(id => id != null).Distinct(StringComparer.Ordinal).ToArray();
 
     static TypeNode[] CaptureBounds(TypeNode type, OptionalField<BirTypeParameter[]> variables) => MethodVariables(type)
         .Distinct().OrderBy(index => index).Where(index => index >= 0 && variables.HasValue && index < variables.Value.Length)

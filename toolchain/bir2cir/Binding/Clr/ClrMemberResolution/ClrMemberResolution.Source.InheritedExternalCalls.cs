@@ -14,7 +14,8 @@ static partial class ClrMemberResolution
             if (owner.Name.HasValue)
                 methods[owner.Name.Value] = owner.Methods.OrEmpty().Select(method => new InheritedLocalMethod(
                     method.Name.OrDefault(), method.Static.OrDefault(), method.TypeParams.OrEmpty().Length,
-                    method.Params.OrDefault()?.Select(parameter => parameter.Type.OrDefault()).ToArray())).ToArray();
+                    method.Params.OrDefault()?.Select(parameter => parameter.Type.OrDefault()).ToArray(),
+                    method.DeclarationId.OrDefault())).ToArray();
 
         BirGraphValue Walk(BirGraphValue node)
         {
@@ -27,6 +28,9 @@ static partial class ClrMemberResolution
             if (node is not BirCallInstance call || call.MemberRef.IsPresent
                 || call.OwnerType.OrDefault() is not TypeNode.Fqn owner
                 || !call.Method.HasValue || !call.Sig.HasValue || call.Sig.Value.Any(type => type == null)) return node;
+            if ((call.SelectedGenericCallable ?? call.DeclarationId.OrDefault()) is string selected && methods.TryGetValue(owner.Name, out var local)
+                && local.Any(method => method.Identity == selected && method.Name == call.Method.Value
+                    && method.Arity == call.TypeArgs.OrEmpty().Length && !method.Static)) return node;
             var plan = PlanInheritedExternalCall(bindingLocalTypes, owner, call.Method.Value, call.TypeArgs.OrEmpty().Length,
                 call.Sig.Value, definitions, methods, refs);
             if (plan == null) return node;
