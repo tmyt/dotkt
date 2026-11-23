@@ -210,7 +210,7 @@ static partial class UnsafeAccessorLowering
         id = target?.DeclarationId.OrDefault() ?? id;
         if (target == null && id != null)
         {
-            var referenced = context.References.UnsafeAccessorConstructor(owner, id);
+            var referenced = context.References.SelectedReferenceConstructor(owner, id);
             if (referenced.IsPublic) return access;
             signature = referenced.GetParameters().Select(context.References.DeclarationSignatureSlot).ToArray();
         }

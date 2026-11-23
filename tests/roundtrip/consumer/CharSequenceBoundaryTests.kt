@@ -1,7 +1,9 @@
 package roundtriptests.charsequenceboundaries
 
 import NUnit.Framework.TestAttribute
+import roundtriptests.builderconstruction.checkBuilderConstructorSnapshot
 import roundtrip.upstreamstdlib.BoundarySequence
+import roundtrip.upstreamstdlib.LibraryConstructorText
 import roundtrip.upstreamstdlib.SequenceSource
 import roundtrip.upstreamstdlib.inlineSequenceIndex
 import roundtrip.upstreamstdlib.sequenceIndexInLibrary
@@ -22,6 +24,12 @@ private class ImportedText(value: BoundarySequence?) : CollapsedText(value)
 class CharSequenceBoundaryTests {
     @TestAttribute
     fun importedReceiverBodiesAndInlineSplicesUseTheSelectedRepresentation() {
+        checkBuilderConstructorSnapshot()
+        val builder = StringBuilder("abc")
+        fun imported(value: StringBuilder?) = LibraryConstructorText(value)
+        val stored = imported(builder)
+        builder.append('d')
+        check(stored.size() == 3 && imported(null).size() == -1)
         fun rawString(value: Any?) = value is String
         check(rawString(CollapsedText("a", "b").value))
         check(rawString(DerivedText("c", "d").value))

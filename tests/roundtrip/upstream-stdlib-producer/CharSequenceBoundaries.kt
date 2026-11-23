@@ -5,6 +5,11 @@ abstract class SequenceSource {
     fun first(): Char? = source?.get(0)
 }
 
+class LibraryConstructorText(val value: CharSequence?) {
+    constructor(value: String) : this(value as CharSequence?)
+    fun size() = value?.length ?: -1
+}
+
 class BoundarySequence(private val text: String) : CharSequence {
     override val length: Int get() = text.length
     override fun get(index: Int): Char = text[index]

@@ -1,6 +1,7 @@
 package roundtriptests.charsequencepolymorphic
 
 import NUnit.Framework.TestAttribute
+import roundtriptests.builderconstruction.checkBuilderConstructorSnapshot
 
 private class ConstructorValue<T>(val source: T)
 
@@ -18,6 +19,7 @@ private class OuterText<T>(val outer: T) {
 class CharSequenceConstructorTests {
     @TestAttribute
     fun selectedConstructorAdaptsStringsAndPreservesNullAndExistingViews() {
+        checkBuilderConstructorSnapshot()
         var reads = 0
         fun read(value: String?): String? { reads++; return value }
         check(ConstructorText(read("abc")).length() == 3)
