@@ -3876,6 +3876,7 @@ internal static class BirGraphDom
                 case "argTypes": break;
                 case "args": break;
                 case "constructorDeclarationId": break;
+                case "constructorNativeKey": break;
                 case "companionCaptureOwner": break;
                 case "propertyFunction": break;
                 case "memberVisibility": break;
@@ -3898,6 +3899,7 @@ internal static class BirGraphDom
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             ConstructorDeclarationId = Field<string>(fields, "constructorDeclarationId", value => value!.GetValue<string>()),
+            ConstructorNativeKey = Field<string>(fields, "constructorNativeKey", value => value!.GetValue<string>()),
             CompanionCaptureOwner = Field<string>(fields, "companionCaptureOwner", value => value!.GetValue<string>()),
             PropertyFunction = Field<BirPropertyFunction>(fields, "propertyFunction", value => ReadBirPropertyFunction(value!)),
             MemberVisibility = Field<string>(fields, "memberVisibility", value => value!.GetValue<string>()),
@@ -4530,6 +4532,7 @@ internal static class BirGraphDom
                 case "args": break;
                 case "memberRef": break;
                 case "argTypes": break;
+                case "constructorNativeKey": break;
                 case "kotlinHashStorageSignature": break;
                 case "memberSignature": break;
                 case "resolvedMemberParams": break;
@@ -4542,6 +4545,7 @@ internal static class BirGraphDom
             Args = Field<IBirExpression[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirExpression(item0!)).ToArray()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
+            ConstructorNativeKey = Field<string>(fields, "constructorNativeKey", value => value!.GetValue<string>()),
             KotlinHashStorageSignature = Field<bool>(fields, "kotlinHashStorageSignature", value => value!.GetValue<bool>()),
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ResolvedMemberParams = Field<TypeNode[]>(fields, "resolvedMemberParams", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),

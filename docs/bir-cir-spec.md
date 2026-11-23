@@ -914,8 +914,10 @@ constructors additionally carry `declarationId`; their selected construction and
 `constructorDeclarationId` and `delegationDeclarationId`. These current declaration identities select the physical
 constructor even when ordinary value erasure collapses its parameter vector. Signature-only CLR declarations retain
 their exact native descriptors. For a projected CLR constructor, dll2klib records the open CLR parameter signature
-as a declaration key. kotc forwards it on a base call as `delegationNativeKey`; bir2cir uses the same declaration
-for the base constructor reference and any optional constants. The key contains no metadata row
+as a declaration key. kotc forwards it as `constructorNativeKey` on direct construction or `delegationNativeKey`
+on a base call. bir2cir binds the constructor reference using that key on the selected owner, even when a
+nested type in the projected signature has fewer Kotlin arguments than CLR slots. For base delegation,
+optional constants also come from that declaration. The key contains no metadata row
 numbers and is not rewritten when Kotlin type arguments are erased. An alias constructor's explicit binding
 consumes its source identity. For a same-unit constructor, `bir2cir` uses the Kotlin identity to select one
 declaration, closes it in the constructed owner's final

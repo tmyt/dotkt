@@ -59,6 +59,7 @@ static partial class MemberCallSubstitution
         var actual = arguments.Select(FactoryClone).ToArray();
         if (viaAlias) CoerceCharSequenceCtorArgs(actual, signature);
         var lowered = new BirNewClr { Type = FactoryType(target), ArgTypes = signature, Args = actual,
+            ConstructorNativeKey = viaAlias ? default : node.ConstructorNativeKey,
             SourceClrBoundary = !viaAlias && refs.ResolveForeignProjectionType(owner.Name, owner.Args) != null };
         if (viaAlias && refs.IsKotlinHashStorageOwner(owner.Name)) KotlinHashStorageLowering.RequestComparer(lowered);
         // Only a projected CLR declaration keeps the authored native signature.

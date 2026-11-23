@@ -924,19 +924,19 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     public Dictionary<int, IBirExpression> KotlinDefaultValuesForDeclarationIdentity(string id) =>
         _executablePayloads.DefaultValuesByIdentity(id);
 
-    readonly Dictionary<Type, Dictionary<string, ConstructorInfo>> _nativeBaseConstructors = new();
+    readonly Dictionary<Type, Dictionary<string, ConstructorInfo>> _nativeConstructors = new();
 
-    internal ConstructorInfo SelectedNativeBaseConstructor(Type open, string key)
+    internal ConstructorInfo SelectedNativeConstructor(Type open, string key)
     {
-        if (!_nativeBaseConstructors.TryGetValue(open, out var declarations))
-            _nativeBaseConstructors.Add(open, declarations = ReferenceMetadataReader.NativeConstructorDeclarations(open));
+        if (!_nativeConstructors.TryGetValue(open, out var declarations))
+            _nativeConstructors.Add(open, declarations = ReferenceMetadataReader.NativeConstructorDeclarations(open));
         return declarations.TryGetValue(key, out var declaration) ? declaration
             : throw new InvalidOperationException($"bir2cir: selected native constructor is missing from '{open.FullName}'");
     }
 
     internal Dictionary<int, IBirExpression> DefaultValuesForNativeBaseConstructor(TypeNode.Fqn owner, string key) =>
         key == null || owner == null ? null : CallableDefaultsOf(
-            SelectedNativeBaseConstructor(ClrMemberResolution.ResolveOwnerType(owner, this), key), _universe.CoreType);
+            SelectedNativeConstructor(ClrMemberResolution.ResolveOwnerType(owner, this), key), _universe.CoreType);
 
     // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
     // from that MethodDef. A call through a derived receiver names the derived type but can select a base declaration;

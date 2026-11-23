@@ -3224,7 +3224,7 @@ internal object BirMessagePack {
 
     private fun writeBirNew(value: BirNew, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.argTypes == null) 0 else 1) + (if (value.constructorDeclarationId == null) 0 else 1) + (if (value.companionCaptureOwner == null) 0 else 1) + (if (value.propertyFunction == null) 0 else 1) + (if (value.memberVisibility == null) 0 else 1) + (if (value.memberOwnerTypeParams == null) 0 else 1) + (if (value.memberMethodTypeParams == null) 0 else 1) + (if (value.memberSignature == null) 0 else 1) + (if (value.memberReturnType == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.argTypes == null) 0 else 1) + (if (value.constructorDeclarationId == null) 0 else 1) + (if (value.constructorNativeKey == null) 0 else 1) + (if (value.companionCaptureOwner == null) 0 else 1) + (if (value.propertyFunction == null) 0 else 1) + (if (value.memberVisibility == null) 0 else 1) + (if (value.memberOwnerTypeParams == null) 0 else 1) + (if (value.memberMethodTypeParams == null) 0 else 1) + (if (value.memberSignature == null) 0 else 1) + (if (value.memberReturnType == null) 0 else 1))
         packer.packString("k")
         packer.packString("new")
         packer.packString("type")
@@ -3245,6 +3245,10 @@ internal object BirMessagePack {
         }
         value.constructorDeclarationId?.let { child ->
             packer.packString("constructorDeclarationId")
+            MessagePackText.write(packer, child)
+        }
+        value.constructorNativeKey?.let { child ->
+            packer.packString("constructorNativeKey")
             MessagePackText.write(packer, child)
         }
         value.companionCaptureOwner?.let { child ->

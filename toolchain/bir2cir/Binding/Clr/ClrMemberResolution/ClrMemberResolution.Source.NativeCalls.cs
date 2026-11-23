@@ -19,12 +19,12 @@ static partial class ClrMemberResolution
                     && !bindingLocalTypes.Contains(referenced.Name) && ResolveOwnerType(referenced, refs: bindingReferences) != null)
                     ResolveNativeConstructorSource(bindingLocalTypes, bindingReferences, construction, referenced, construction.ArgTypes.OrDefault(),
                         construction.Args.OrDefault(), construction.MemberSignature.OrDefault(),
-                        construction.ConstructorDeclarationId.OrDefault());
+                        construction.ConstructorDeclarationId.OrDefault(), construction.ConstructorNativeKey.OrDefault());
                 break;
             case BirNewClr construction:
                 if (construction.Type.OrDefault() is TypeNode.Fqn owner)
                     ResolveNativeConstructorSource(bindingLocalTypes, bindingReferences, construction, owner, construction.ArgTypes.OrDefault(),
-                        construction.Args.OrDefault(), construction.MemberSignature.OrDefault(), null);
+                        construction.Args.OrDefault(), construction.MemberSignature.OrDefault(), null, construction.ConstructorNativeKey.OrDefault());
                 break;
             case BirNativeStatic call:
                 ResolvePlainNativeCallSource(bindingLocalTypes, bindingReferences, call, call.Type.OrDefault(), call.Method.OrDefault(),
@@ -71,7 +71,7 @@ static partial class ClrMemberResolution
         => arguments?.Where(type => type != null).ToList() ?? new List<TypeNode>();
 
     static void ResolveNativeConstructorSource(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, BirGraphValue node, TypeNode.Fqn owner,
-        TypeNode[] argumentTypes, IBirExpression[] arguments, TypeNode[] selectedSignature, string identity)
+        TypeNode[] argumentTypes, IBirExpression[] arguments, TypeNode[] selectedSignature, string identity, string nativeKey)
     {
         var open = ResolveOwnerType(owner, refs: bindingReferences)
             ?? throw new InvalidOperationException($"bir2cir: newClr owner '{owner.Name}' does not resolve to a .NET type");
@@ -82,6 +82,7 @@ static partial class ClrMemberResolution
         ConstructorInfo selected;
         // Only the real BirNew producer carries the selected constructor ID.
         if (identity != null) selected = bindingReferences.SelectConstructorDeclaration(constructors, identity);
+        else if (nativeKey != null) selected = bindingReferences.SelectedNativeConstructor(open, nativeKey);
         else if (selectedSignature != null)
         {
             var declaration = selectedSignature.Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
@@ -101,11 +102,12 @@ static partial class ClrMemberResolution
                 construction.MemberRef = reference;
                 construction.ResolvedMemberReturn = new TypeNode.Fqn("void");
                 construction.ArgTypes = default; construction.MemberSignature = default;
-                construction.ConstructorDeclarationId = default;
+                construction.ConstructorDeclarationId = default; construction.ConstructorNativeKey = default;
                 break;
             case BirNewClr construction:
                 construction.MemberRef = reference;
                 construction.ResolvedMemberReturn = new TypeNode.Fqn("void");
+                construction.ConstructorNativeKey = default;
                 construction.ArgTypes = default; construction.MemberSignature = default;
                 break;
         }

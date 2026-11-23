@@ -28,7 +28,7 @@ static partial class ClrMemberResolution
                     .Where(candidate => candidate.GetParameters().Length == signature.Count).ToList();
                 var winner = ctor.DelegationDeclarationId.HasValue
                     ? refs.SelectConstructorDeclaration(candidates, ctor.DelegationDeclarationId.Value)
-                    : ctor.DelegationNativeKey.HasValue ? refs.SelectedNativeBaseConstructor(open, ctor.DelegationNativeKey.Value)
+                    : ctor.DelegationNativeKey.HasValue ? refs.SelectedNativeConstructor(open, ctor.DelegationNativeKey.Value)
                     : ClrDeclarationMatching.PickDeclaredConstructor(refs, candidates, signature,
                         $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(signature)})");
                 ctor.BaseCtorRef = BirMemberReference.FromPhysical(MemberRefOf(localTypes, refs, winner,
