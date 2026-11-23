@@ -2,6 +2,7 @@ package roundtriptests.charsequencepolymorphic
 
 import NUnit.Framework.TestAttribute
 import roundtrip.upstreamstdlib.inlineSequenceIndex
+import roundtriptests.sequenceresults.LocalSequenceResult
 
 private class ConsumerSequence(private val text: String) : CharSequence {
     override val length: Int get() = text.length
@@ -19,7 +20,8 @@ class CharSequencePolymorphicInlineTests {
         var predicates = 0
         fun stringOnce(): String { evaluations++; return "abc" }
         val custom = ConsumerSequence("abc")
-        fun customOnce(): CharSequence { evaluations++; return custom }
+        val holder = LocalSequenceResult(42, custom)
+        fun customOnce(): CharSequence { evaluations++; return holder.read()!! }
 
         check(inlineSequenceIndex(stringOnce(), { predicates++; it == 'b' }) { callbacks++; it } == 1)
         check(evaluations == 1 && callbacks == 1 && predicates == 2)
@@ -28,5 +30,6 @@ class CharSequencePolymorphicInlineTests {
         check((customOnce() as Any) === custom)
         check(evaluations == 3)
         check(custom.length == 3 && custom.toString() == "consumer-rendered")
+        check(holder.source === custom)
     }
 }
