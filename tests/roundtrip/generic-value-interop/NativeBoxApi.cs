@@ -112,6 +112,8 @@ public static class NativeBoxApi
         where A : System.IO.MemoryStream, IProjectedMark where B : System.IO.MemoryStream, IProjectedMark => typeof(A).Name;
     public static B DependentMarkedStream<A, B>(A first, B second)
         where A : System.IO.MemoryStream, IProjectedMark where B : A => second;
+    public static string IndependentType<A, B, Z>(A first, B second, Z independent)
+        where A : System.IO.MemoryStream, IProjectedMark where B : A => typeof(Z).Name;
     static Box<string, string> live = new("initial");
     public static void ResetLive() => live = new("initial");
     public static ref Box<string, string> Live() => ref live;

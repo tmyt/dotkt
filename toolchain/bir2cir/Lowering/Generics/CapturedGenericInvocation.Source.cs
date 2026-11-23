@@ -267,19 +267,10 @@ static partial class CapturedGenericInvocation
             var signature = target.Signature;
             var ret = target.Result;
             var actual = call.TypeArguments.Value;
-            var authored = actual.ToArray();
             var proofs = occurrence.MethodWitnessFacts.Value;
-            foreach (var proof in proofs) authored[proof.Argument.Value] = proof.Primary.Value;
-            var lexicalSlots = LostLexicalSlots(Enumerable.Range(0, actual.Length)
-                .Where(i => CallableWitnessScope.For(actual[i], classScope, methodScope).Any()).ToArray(),
-                proofs.Select(p => p.Argument.Value),
-                i => target.MethodFrame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(t =>
-                    definitions.TryGetValue(t.Name, out var declaration) ? declaration.Type.Kind.OrDefault() == "interface" : refs.IsInterfaceType(t)),
-                (i, lost) => target.MethodFrame[i].Constraints.OrEmpty().Any(t => ContainsCapturedSlot(t, lost)));
-            var facets = proofs.SelectMany(p => p.Interfaces.Value.Select(bound => (p.Argument.Value, bound)))
-                .Concat(lexicalSlots.SelectMany(index => CallableWitnessScope.For(actual[index], classScope, methodScope).SelectMany(proof =>
-                        new (int, TypeNode)[] { (index, proof.Slot.Bound), (index, proof.Variable) })))
-                .Distinct().ToArray();
+            var application = BindFixedWitnesses(target, actual, proofs, LexicalCandidates(actual, classScope, methodScope),
+                classScope, methodScope, t => definitions.TryGetValue(t.Name, out var declaration)
+                    ? declaration.Type.Kind.OrDefault() == "interface" : refs.IsInterfaceType(t));
             var unit = IsVoid(ret);
             var typed = target.ValueOwner && call.Instance || target.TypedParameters.Contains(true) || target.TypedResult;
             LexicalTarget lexical = null;
@@ -304,10 +295,10 @@ static partial class CapturedGenericInvocation
                 do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
                 return name;
             }
-            return typed || access != null ? ProjectAddressCall(call, target, owner, facets, refs, allocate ?? Allocate, generated, lexical, access, authored,
+            return typed || access != null ? ProjectAddressCall(call, target, owner, application.Facets, refs, allocate ?? Allocate, generated, lexical, access, application.Arguments,
                 captures: rows, capturedResult: capturedResult, resultUse: resultUse)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
-                    lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs, rows);
+                    lexical?.Method.Name.Value ?? target.Name, target.Keys, application.Arguments, application.Facets, result, unit, refs, rows);
         }
 
         BirFunctionDeclaration LexicalForwarder(Invocation call, TypeNode.Fqn target, string lexicalOwner, BirTypeParameter[] frame,

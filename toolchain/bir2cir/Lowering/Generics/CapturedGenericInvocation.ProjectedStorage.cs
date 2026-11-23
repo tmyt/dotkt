@@ -18,17 +18,40 @@ static partial class CapturedGenericInvocation
     // An unrelated lexical split cannot reopen an exact CLR argument. A slot
     // needs recovery only for its own interface obligation or a bound on a
     // slot that was already reopened (Y : X).
-    static int[] LostLexicalSlots(int[] candidates, IEnumerable<int> explicitSlots, Func<int,bool> hasInterface,
-        Func<int,HashSet<int>,bool> dependsOn)
+    static int[] LexicalCandidates(TypeNode[] actual, CallableWitnessScope owner, CallableWitnessScope method) =>
+        Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()).ToArray();
+
+    sealed record FixedApplication(TypeNode[] Arguments, (int Slot, TypeNode Bound)[] Facets);
+
+    static FixedApplication BindFixedWitnesses(AddressTarget target, TypeNode[] actual, BirMethodWitness[] explicitProofs,
+        int[] candidates, CallableWitnessScope owner, CallableWitnessScope method, Func<TypeNode.Fqn,bool> isInterface,
+        Dictionary<int, TypeNode> locations = null)
     {
-        var lost = explicitSlots.Concat(candidates.Where(hasInterface)).ToHashSet();
+        var arguments = explicitProofs.Length != 0 || locations != null ? actual.ToArray() : actual;
+        foreach (var proof in explicitProofs) arguments[proof.Argument.Value] = proof.Primary.Value;
+        if (locations != null)
+            foreach (var (operand, storage) in locations)
+            {
+                var pointee = (TypeNode.ByRef)SignatureValueTypes.Of(target.Signature[operand]);
+                arguments[((TypeNode.Tv)pointee.Of).I] = storage;
+            }
+        var frame = target.MethodFrame;
+        var lost = explicitProofs.Select(p => p.Argument.Value).Concat(candidates.Where(i =>
+            frame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(isInterface))).ToHashSet();
         int previous;
         do {
             previous = lost.Count;
             foreach (var i in candidates)
-                if (!lost.Contains(i) && dependsOn(i, lost)) lost.Add(i);
+                if (!lost.Contains(i) && frame[i].Constraints.OrEmpty().Any(t => ContainsCapturedSlot(t, lost))) lost.Add(i);
         } while (previous != lost.Count);
-        return candidates.Where(lost.Contains).ToArray();
+        var lexical = (from i in candidates where lost.Contains(i)
+            from proof in CallableWitnessScope.For(actual[i], owner, method) select (i, proof)).ToArray();
+        // Preserve an explicit occurrence's evidence. Within lexical evidence,
+        // prefer declared bounds to the live witness variables that also prove them.
+        var facets = explicitProofs.SelectMany(p => p.Interfaces.Value.Select(b => (p.Argument.Value, b)))
+            .Concat(lexical.Select(p => (p.i, p.proof.Slot.Bound)))
+            .Concat(lexical.Select(p => (p.i, (TypeNode)p.proof.Variable))).Distinct().ToArray();
+        return new(arguments, facets);
     }
 
     static bool TrySelectedMethod(Invocation site, TypeNode.Fqn owner, ReferenceMetadataIndex refs,
@@ -86,29 +109,11 @@ static partial class CapturedGenericInvocation
             for (int i = 0; i < values.Length; i++)
                 if (SignatureValueTypes.Of(member.ParameterTypes.Value[i]) is TypeNode.ByRef { Of: TypeNode.Tv { Scope: "method" } }
                     && Location(values[i]) is { } pointee) (fixedAddresses ??= new()).Add(i, pointee);
-        var candidates = arguments.Select((argument, index) => (argument, index))
-            .Where(row => CallableWitnessScope.For(row.argument, ownerScope, methodScope).Any())
-            .ToArray();
+        var candidates = LexicalCandidates(arguments, ownerScope, methodScope);
         if ((candidates.Length == 0 && fixedAddresses == null) || !TrySelectedMethod(site, owner, refs, out var selected)) return call;
-        var generic = selected.GetGenericArguments();
-        bool UsesLostSlot(System.Type type, HashSet<int> lost) =>
-            type.IsGenericParameter ? type.DeclaringMethod != null && lost.Contains(type.GenericParameterPosition)
-            : type.HasElementType ? UsesLostSlot(type.GetElementType(), lost)
-            : type.IsGenericType && type.GetGenericArguments().Any(t => UsesLostSlot(t, lost));
-        var missing = LostLexicalSlots(candidates.Select(row => row.index).ToArray(), [],
-            i => generic[i].GetGenericParameterConstraints().Any(t => t.IsInterface),
-            (i, lost) => generic[i].GetGenericParameterConstraints().Any(t => UsesLostSlot(t, lost)));
-        if (missing.Length == 0 && fixedAddresses == null) return call;
-        // A different parameter can force this storage class to split. Preserve
-        // each authored native argument whose own primary still proves its facets.
-        var proofs = (from i in missing
-            from evidence in CallableWitnessScope.For(arguments[i], ownerScope, methodScope)
-            select (Index: i, Evidence: evidence)).ToArray();
-        // Prefer the declared interface. A single actual witness may also
-        // discharge a conjunction that none of the declared facets proves alone.
-        var facets = proofs.Select(p => (Slot: p.Index, Bound: p.Evidence.Slot.Bound))
-            .Concat(proofs.Select(p => (Slot: p.Index, Bound: (TypeNode)p.Evidence.Variable)))
-            .Distinct().ToArray();
+        var target = AddressTarget.FromReference(selected, member);
+        var application = BindFixedWitnesses(target, arguments, [], candidates, ownerScope, methodScope, t => refs.IsInterfaceType(t), fixedAddresses);
+        if (application.Facets.Length == 0 && fixedAddresses == null) return call;
         var formal = selected.GetParameters();
         bool typed = (receiver != null && selected.DeclaringType.IsValueType)
             || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType);
@@ -120,11 +125,11 @@ static partial class CapturedGenericInvocation
             // issue a nonvirtual base call. Protected access likewise belongs
             // to the lexical type. Retain the selected call in that context.
             TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []);
-            var frame = generic.Select(p => CloneParameter(ReferenceMetadataReader.GenericParamDeclaration(p, native: true), Close)).ToArray();
+            var frame = target.MethodFrame.Select(p => CloneParameter(p, Close)).ToArray();
             var signature = member.ParameterTypes.Value.Select(t => Close(SignatureValueTypes.Of(t))).ToArray();
             var ret = Close(SignatureValueTypes.Of(member.ReturnType.Value));
-            var forward = site.Instance ? site.SuperForward(signature, ret, generic.Length, false) :
-                site.Forward(owner, generic.Length, signature, ret, false);
+            var forward = site.Instance ? site.SuperForward(signature, ret, frame.Length, false) :
+                site.Forward(owner, frame.Length, signature, ret, false);
             var number = lexicalMethods.Count;
             string lexicalName;
             do lexicalName = "dotkt$projectedCall$" + number++;
@@ -135,8 +140,8 @@ static partial class CapturedGenericInvocation
             lexicalTarget = new(new TypeNode.Fqn(lexical.Name.Value, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
                 .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, method);
         }
-        if (typed || access != null) return ProjectAddressCall(site, AddressTarget.FromReference(selected, member),
-            owner, facets, refs, allocate, generated, lexicalTarget, access, arguments, fixedAddresses);
+        if (typed || access != null) return ProjectAddressCall(site, target,
+            owner, application.Facets, refs, allocate, generated, lexicalTarget, access, application.Arguments, fixedAddresses);
 
         // The original native method is selected at compile time. Open only
         // its type argument on the actual object at the call boundary: the
@@ -144,7 +149,7 @@ static partial class CapturedGenericInvocation
         var result = FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(member.ReturnType.Value, owner.Args ?? [], arguments);
         return IntersectionCall(site, lexicalTarget?.Owner ?? owner, lexicalTarget == null ? selected.MetadataToken : 0,
             lexicalTarget?.Method.Name.Value ?? selected.Name,
-            formal.Select(p => ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)), arguments, facets, result, unit, refs);
+            target.Keys, application.Arguments, application.Facets, result, unit, refs);
     }
 
     static BirGraphValue IntersectionCall(Invocation site, TypeNode.Fqn owner, int token, string method,

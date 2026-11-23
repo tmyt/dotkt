@@ -96,15 +96,6 @@ static partial class CapturedGenericInvocation
         }
         var selectedSignature = lexical?.Method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() ??
             selected.Signature.Select(SignatureValueTypes.Of).ToArray();
-        if (fixedAddresses != null)
-        {
-            closureArguments = closureArguments.ToArray();
-            foreach (var (i, storage) in fixedAddresses)
-            {
-                var pointee = ((TypeNode.ByRef)SignatureValueTypes.Of(selected.Signature[i])).Of;
-                closureArguments[((TypeNode.Tv)pointee).I] = storage;
-            }
-        }
         for (var i = 0; i < selectedSignature.Length; i++)
         {
             var caller = fixedAddresses?.GetValueOrDefault(i) is { } location

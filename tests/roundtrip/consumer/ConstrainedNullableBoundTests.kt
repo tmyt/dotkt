@@ -282,6 +282,8 @@ class ConstrainedNullableBoundTests {
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
         fun firstType(first: A, second: B) = NativeBoxApi.FirstMarkedType<A, B>(first, second, TwoMarkedTags())
         fun dependent(first: A, second: A): A = NativeBoxApi.DependentMarkedStream<A, A>(first, second)
+        fun independentType(first: A, second: A, independent: B) =
+            NativeBoxApi.IndependentType<A, A, B>(first, second, independent)
     }
 
     interface ChildMark : IMark<String>
@@ -463,6 +465,8 @@ class ConstrainedNullableBoundTests {
         native.other = second
         check(native.other === second)
         check(streams.dependent(LongStream(), first) === first)
+        val independent = StreamSlot<MarkedStream<*>, ExactStream>(first)
+        check(independent.independentType(LongStream(), first, DerivedStream()) == "ExactStream")
         val linked = LinkedSlot<MarkedStream<*>, MarkedStream<*>>()
         linked.value = second
         check(linked.value === second)
