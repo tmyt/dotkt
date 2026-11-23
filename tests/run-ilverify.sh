@@ -41,11 +41,12 @@ declare -A ILVERIFY_UNVERIFIABLE=(
 )
 declare -A ALLOWED_UNMANAGED_POINTER=()
 
-# These two callbacks return their input Span or a view of a heap array. Equivalent C# methods
+# These methods return their input Span or a view of a heap array. Equivalent C# methods
 # produce ReturnPtrToStack too. Their NUnit runtime checks remain mandatory; this is not a compiler
 # defect or permission to ignore other errors involving Span. Assembly, full method and error kind
 # must all match. Generated-name drift is deliberately caught by --audit-baseline.
 declare -A ILVERIFY_SPAN_RETURN=(
+	['NominalFunctionDelegateTests::heapView(int32[])']='forwarded heap-array Span'
 	['NominalFunctionDelegateTests::dotkt:lambda:56([S.P.CoreLib]System.Span`1<int32>)']='input Span identity callback'
 	['NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure150::invoke()']='heap-array Span callback'
 )

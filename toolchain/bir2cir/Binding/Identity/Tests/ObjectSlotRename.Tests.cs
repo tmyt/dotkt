@@ -90,7 +90,7 @@ static partial class ObjectSlotRename
             var normalized = Apply(new BirObjectEquals { Lhs = receiver, Rhs = new BirConstant {
                 Type = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Nothing")), Value = nullValue } });
             if (normalized is not BirBinaryOperation { Op.HasValue: true } comparison || comparison.Op.Value != "==="
-                || comparison.Lhs.OrDefault() is not BirCast left || !ReferenceEquals(left.E.OrDefault(), receiver))
+                || !ReferenceEquals(comparison.Lhs.OrDefault(), receiver))
                 throw new InvalidOperationException("Owning null guard introduced virtual equality or duplicated evaluation");
             Idempotent(normalized);
         }
