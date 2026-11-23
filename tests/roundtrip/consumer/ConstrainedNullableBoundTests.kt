@@ -23,6 +23,9 @@ import roundtrip.constrainedbound.OtherSelector
 import roundtrip.constrainedbound.ConcreteMarkedItem
 import roundtrip.constrainedbound.NativeFacetHolder
 import roundtrip.constrainedbound.JoinedFactory
+import roundtrip.constrainedbound.JoinedParent
+import roundtrip.constrainedbound.makeNativeJoined
+import roundtrip.constrainedbound.keepMarker
 import RoundtripDependentNative.IMarker
 import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
@@ -283,6 +286,9 @@ class ConstrainedNullableBoundTests {
 
     interface ChildMark : IMark<String>
     private class Child<T> : Base(), ChildMark, IMarker<String>
+    private class MarkedChild<T> : RoundtripDependentNative.MarkedBase(), ChildMark
+    private fun <A> viaMarkedBase(value: A): Any where A : RoundtripDependentNative.MarkedBase, A : IMark<String> =
+        roundtrip.constrainedbound.NativeJoined<A>()
     private class LocalHolder<T> where T : Base, T : IMark<String> { var item: T? = null }
     private class Forward<T> where T : Base, T : ChildMark {
         fun local() = LocalHolder<T>()
@@ -300,10 +306,22 @@ class ConstrainedNullableBoundTests {
         JointSelection<A>().select(value)
     private fun <A> makeJoined(): Any where A : Base, A : IMark<String>, A : IMarker<String> =
         JointSelection<A>()
+    private fun <A> forwardNativeJoined(): Any where A : Base, A : ChildMark, A : IMarker<String> =
+        makeNativeJoined<A>()
+    private fun <R : IMarker<String>> forwardMarker(value: R): R = keepMarker<String, R>(value)
+
+    private interface JoinedSurface {
+        fun <A> make(value: A): Any where A : Base, A : IMark<String>, A : IMarker<String>
+    }
+    private class JoinedOverride : JoinedParent(), JoinedSurface {
+        override fun <A> make(value: A): Any where A : Base, A : IMark<String>, A : IMarker<String> =
+            super<JoinedParent>.make(value)
+    }
 
     @TestAttribute
     fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
         val value = Child<Int>()
+        check(forwardMarker(value) === value)
         val through = Forward<Child<*>>()
         val local = through.local()
         val imported = through.imported()
@@ -319,6 +337,13 @@ class ConstrainedNullableBoundTests {
         check(joined.item === value)
         check(selectJoined<Child<*>>(value) === value)
         check(makeJoined<Child<*>>() is RoundtripDependentNative.IKey<*>)
+        check(forwardNativeJoined<Child<*>>() is RoundtripDependentNative.IJoined<*>)
+        val implementation = JoinedOverride()
+        val fromBase: JoinedParent = implementation
+        val fromInterface: JoinedSurface = implementation
+        check(fromBase.make<Child<*>>(value) is RoundtripDependentNative.IJoined<*>)
+        check(fromInterface.make<Child<*>>(value) is RoundtripDependentNative.IJoined<*>)
+        check(viaMarkedBase<MarkedChild<*>>(MarkedChild<Int>()) is RoundtripDependentNative.IJoined<*>)
     }
 
     private fun checkFixedVirtualDispatch() {

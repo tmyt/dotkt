@@ -4,12 +4,9 @@ using DotKt.Cir;
 
 // Physical method formals remain in their own binder (!!i). An enclosing !i
 // in a constraint must still be substituted from the selected declaring owner.
-sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSources, int[] AddressOperands)
+sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Facets, int[] AddressOperands)
 {
-    internal int PrimaryArity => Parameters.Length - FacetSources.Length - AddressOperands.Length;
-    internal ProjectedClassStorageFrame.WitnessSlot[] Facets { get; } = FacetSources.Select((source, i) =>
-        new ProjectedClassStorageFrame.WitnessSlot(source,
-            Parameters[Parameters.Length - FacetSources.Length - AddressOperands.Length + i].Constraints.OrEmpty().Single(), false)).ToArray();
+    internal int PrimaryArity => Parameters.Length - Facets.Length - AddressOperands.Length;
 
     internal static bool HasMethodLocation(BirParameter parameter, ReferenceMetadataIndex references)
     {
@@ -26,7 +23,9 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
     internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands, ReferenceMetadataIndex references)
     {
         var formals = frame.Declare().ToList();
-        var facets = frame.Interfaces.Select(slot => slot.OwnerIndex).ToArray();
+        var facets = frame.Interfaces.Select((slot, i) =>
+            new ProjectedClassStorageFrame.WitnessSlot(slot.OwnerIndex, slot.Bound, slot.NativeArgument) {
+                Evidence = formals[frame.PrimaryArity + i].Constraints.OrEmpty() }).ToArray();
         var addresses = new List<int>();
         for (int i = 0; i < operands.Length; i++)
         {
@@ -78,31 +77,34 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
         var parameters = CloneParameters();
         foreach (var p in parameters)
             if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
-        return new(parameters, FacetSources, AddressOperands);
+        return new(parameters, Facets.Select((f, i) => f with { Bound = SupertypeGraph.SubstOwnerTvs(f.Bound, arguments),
+            Evidence = parameters[PrimaryArity + i].Constraints.OrEmpty() }).ToArray(), AddressOperands);
     }
 
     internal sealed record Application(bool Projected, TypeNode[] Arguments);
 
     internal Application Close(TypeNode[] actual, TypeNode[] ownerArgs, BirMethodWitness[] candidates,
         BirTypeParameter[] original, NullableRepresentationFrame representations, bool requireProjectedEntry,
-        Func<TypeNode, TypeNode, TypeNode> lexicalProof, Func<TypeNode, TypeNode, bool> declares,
+        Func<TypeNode, TypeNode, TypeNode[], TypeNode> lexicalProof, Func<TypeNode, TypeNode, bool> declares,
         Func<TypeNode, TypeNode, bool> proves)
     {
         var arguments = actual.ToArray();
         foreach (var candidate in candidates)
-            if (FacetSources.Contains(candidate.Argument.Value))
+            if (Facets.Any(f => f.OwnerIndex == candidate.Argument.Value))
                 arguments[candidate.Argument.Value] = candidate.Primary.Value;
         TypeNode Closed(TypeNode bound) => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(bound, ownerArgs, arguments);
         TypeNode Facet(ProjectedClassStorageFrame.WitnessSlot slot)
         {
             var bound = Closed(slot.Bound);
+            var constraints = (slot.Evidence ?? [slot.Bound]).Select(Closed).ToArray();
             var evidence = candidates.FirstOrDefault(c => c.Argument.Value == slot.OwnerIndex);
             if (evidence != null)
-                return proves(actual[slot.OwnerIndex], bound)
-                    ? actual[slot.OwnerIndex]
-                    : evidence.Interfaces.Value.Any(t => proves(t, bound))
-                        ? bound : evidence.Primary.Value;
-            return lexicalProof(actual[slot.OwnerIndex], bound);
+            {
+                var choices = new[] { actual[slot.OwnerIndex] }.Concat(evidence.Interfaces.Value).Append(evidence.Primary.Value);
+                return choices.FirstOrDefault(t => constraints.All(c => proves(t, c)))
+                    ?? throw new NotSupportedException("No single CLR type argument satisfies the projected method's interface constraints");
+            }
+            return lexicalProof(actual[slot.OwnerIndex], bound, constraints);
         }
         if (representations is { } map)
             for (var i = 0; i < actual.Length; i++)
@@ -112,11 +114,11 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, int[] FacetSour
                 var bounds = original[i].Constraints.OrEmpty();
                 if (bounds.Length != 1) continue;
                 var bound = Closed(bounds[0]);
-                if (lexicalProof(actual[source], bound) is { } proof) arguments[i] = proof;
+                if (lexicalProof(actual[source], bound, [bound]) is { } proof) arguments[i] = proof;
                 else if (!declares(actual[i], bound) && declares(actual[source], bound)) arguments[i] = actual[source];
             }
         var proofs = Facets.Select(Facet).ToArray();
         return proofs.All(p => p == null) && !requireProjectedEntry ? new(false, arguments) :
-            new(true, arguments.Concat(proofs.Select((p, i) => p ?? actual[FacetSources[i]])).ToArray());
+            new(true, arguments.Concat(proofs.Select((p, i) => p ?? actual[Facets[i].OwnerIndex])).ToArray());
     }
 }

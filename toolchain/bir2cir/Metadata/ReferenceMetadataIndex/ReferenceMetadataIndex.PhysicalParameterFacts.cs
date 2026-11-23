@@ -4,13 +4,19 @@ using DotKt.Bir.Lowering;
 
 sealed partial class ReferenceMetadataIndex
 {
+    internal bool IsInvariantForeignConstruction(TypeNode.Fqn type) =>
+        ResolveForeignProjectionType(type.Name, type.Args) is { IsGenericTypeDefinition: true } definition
+        && definition.GetGenericArguments().All(p =>
+            (p.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) == 0)
+        && type.Args?.Any(arg => arg is TypeNode.Projection or TypeNode.Star) != true;
+
     readonly Dictionary<(string Id, bool NativeNames), ProjectedConstructorPlan> constructorPlans = new();
     internal ProjectedMethodPlan ProjectedMethod(string id)
     {
         if (SelectedReferenceMethod(id) is not { } declaration) return null;
         var parameters = PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true)
             ?? throw new InvalidOperationException($"No shipped projected method '{id}'");
-        return ReadProjectedMethodPlan(declaration, parameters);
+        return ReadProjectedMethodPlan(declaration, parameters, WitnessConstraintKey);
     }
     internal TypeNode WitnessConstraintKey(TypeNode type) =>
         ClrMemberResolution.MethodImplComparisonType(PhysicalConstraintType(type), this);

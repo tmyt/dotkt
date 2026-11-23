@@ -28,6 +28,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Fix reads and writes of generic top-level extension properties imported from another DotKt assembly when the caller supplies its own type parameters (#1814).
 - Keep star-projected nested classes in their CLR access scope so implementing a private nested interface no longer prevents the assembly's types from loading.
 - Preserve class and interface bounds when a generic Kotlin method constructs a class defined in the same assembly (#1805).
+- Allow a generic Kotlin comparer to pass through a function bounded by a closed CLR interface such as `IComparer<String>` without losing the original instance (#1734).
 
 ## 0.9.31 (2026-11-22)
 

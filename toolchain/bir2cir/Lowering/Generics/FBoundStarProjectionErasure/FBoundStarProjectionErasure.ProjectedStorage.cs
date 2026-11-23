@@ -63,7 +63,7 @@ static partial class FBoundStarProjectionErasure
         CapturedGenericInvocation.PreparedInvocation invocations)
     {
         var storageOwners = new Dictionary<string, ProjectedStorageOwner>(StringComparer.Ordinal);
-        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners);
+        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners, carriers.Values);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
@@ -79,7 +79,8 @@ static partial class FBoundStarProjectionErasure
                 CapturedGenericInvocation.Map(t, tv => tv.Scope == "method" ? new TypeNode.Tv("type", tv.I) : tv))).ToArray();
             frames.Add(p.Exact, frame);
             var slots = p.Slots.Select((slot, i) => slot with {
-                Bound = ProjectedClassStorageFrame.DeclaredFacet(frame[p.Entry.PrimaryArity + i])
+                Bound = ProjectedClassStorageFrame.DeclaredFacet(frame[p.Entry.PrimaryArity + i]),
+                Evidence = frame[p.Entry.PrimaryArity + i].Constraints.OrEmpty()
             }).ToArray();
             storageOwners.Add(p.Exact, p with { Slots = slots, Entry = ProjectedConstructorPlan.From(frame, p.Entry.Captured, slots) });
         }

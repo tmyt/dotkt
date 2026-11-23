@@ -125,19 +125,48 @@ sealed partial class GenericRepresentationPolicy
     internal bool HasJointStorageBounds(TypeNode[] bounds) => bounds.Any(IsNominalStorageBound)
         && bounds.OfType<TypeNode.Fqn>().Any(b => !IsNominalStorageBound(b) && CanReferenceStorageProof(b));
 
+    // Closed native interfaces (and invariant native applications even when open)
+    // are proven by the native argument, not by the Kotlin value's storage type.
+    internal bool NeedsNativeWitness(TypeNode proof)
+    {
+        if (proof is not TypeNode.Fqn { Args.Length: > 0 } named || !HasNativeConstraint(named)
+            || _references?.IsInterfaceType(named) != true || !CanReferenceStorageProof(named)) return false;
+        if (_references.IsInvariantForeignConstruction(named)) return true;
+        var dependent = false;
+        BirGraphNameFields.VisitTypeNodes(named, t => dependent |= t is TypeNode.Tv or TypeNode.Star or TypeNode.Projection);
+        return !dependent;
+    }
+
+    internal IEnumerable<TypeNode> InheritedNativeWitnesses(TypeNode bound)
+    {
+        if (bound is not TypeNode.Fqn named) yield break;
+        var start = new SupertypeGraph.Def { Base = named };
+        foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
+            if (isInterface && NeedsNativeWitness(parent)) yield return parent;
+    }
+
+    internal bool JoinsNativeWitness(TypeNode bound) => NeedsNativeWitness(bound)
+        || CanReferenceStorageProof(bound) && InheritedNativeWitnesses(bound).Any();
+
+    internal IEnumerable<TypeNode> NativeProofsFromClass(TypeNode[] bounds) =>
+        bounds.Where(IsNominalStorageBound).SelectMany(InheritedNativeWitnesses);
+
     internal void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds)
     {
         var physical = new List<TypeNode>();
         var erased = new List<TypeNode>();
+        // A Kotlin value can use an existential storage type that implements no single
+        // closed construction of this native interface. Its proof belongs to the native use.
+        bool StorageProof(TypeNode proof) => CanReferenceStorageProof(proof) && !NeedsNativeWitness(proof);
         foreach (var bound in bounds)
         {
-            if (!IsNominalStorageBound(bound) && CanReferenceStorageProof(bound)) { physical.Add(bound); continue; }
+            if (!IsNominalStorageBound(bound) && StorageProof(bound)) { physical.Add(bound); continue; }
             erased.Add(bound);
             // Use the same public proof set at both ends of an open generic call,
             // including when its source bound is an explicitly named hidden interface.
             var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
             foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
-                if (isInterface && StorageConstraint(parent) is { } proof && CanReferenceStorageProof(proof)) physical.Add(proof);
+                if (isInterface && StorageConstraint(parent) is { } proof && StorageProof(proof)) physical.Add(proof);
         }
         if (physical.Count != 0) parameter.Constraints = physical.Distinct().ToArray();
         if (erased.Count != 0) parameter.ErasedInnerConstraints = erased.ToArray();

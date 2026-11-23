@@ -80,6 +80,16 @@ class NativeJoined<T> : RoundtripDependentNative.IJoined<T>
     where T : RoundtripDependentNative.Base, T : RoundtripDependentNative.Family.IMark<String>,
           T : RoundtripDependentNative.IMarker<String> { var item: T? = null }
 
+fun <A> makeNativeJoined(): Any where A : RoundtripDependentNative.Base, A : RoundtripDependentNative.Family.IMark<String>,
+                                      A : RoundtripDependentNative.IMarker<String> = NativeJoined<A>()
+
+fun <K, R : IMarker<K>> keepMarker(value: R): R = value
+
+open class JoinedParent {
+    open fun <A> make(value: A): Any where A : Base, A : RoundtripDependentNative.Family.IMark<String>,
+                                          A : IMarker<String> = makeNativeJoined<A>()
+}
+
 class JoinedFactory<T> where T : RoundtripDependentNative.Base, T : RoundtripDependentNative.Family.IMark<String>,
                              T : RoundtripDependentNative.IMarker<String> {
     fun create() = NativeJoined<T>()
