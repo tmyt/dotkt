@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve writes through `byref(local)` when Kotlin has smart-cast the local's value but the callee takes a reference to its declared type (#1837).
 - Dispatch Kotlin overrides of native virtual properties through the class and interface even when their CLR accessor names differ (#1872).
 - Forward native span results through public Kotlin functions without boxing them for a null check (#1850).
 - Include sparse CLR regex captures when iterating Kotlin match groups or reading `groupValues` (#1721).
