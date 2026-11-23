@@ -75,11 +75,14 @@ static partial class FBoundStarProjectionErasure
                 if (construction?.Args is { } constructorArguments)
                 {
                     Require(TypeRows(construction.Name), constructorArguments, "type", null);
-                    if (captureEdges && node is BirNew creation && creation.ConstructorDeclarationId.OrDefault() is string id &&
-                        constructorArguments.Any(a => a is TypeNode.Tv { Scope: "type" }))
+                    if (captureEdges && constructorArguments.Any(a => a is TypeNode.Tv { Scope: "type" }))
                     {
-                        if (!forwardedConstructors.TryGetValue(owner, out var uses)) forwardedConstructors[owner] = uses = [];
-                        uses.Add(new(id, construction));
+                        var id = (node as BirNew)?.ConstructorDeclarationId.OrDefault();
+                        if (id != null || node is BirNewClr)
+                        {
+                            if (!forwardedConstructors.TryGetValue(owner, out var uses)) forwardedConstructors[owner] = uses = [];
+                            uses.Add(new(id, construction));
+                        }
                     }
                 }
                 if (node.ApplicationTypeArguments.HasValue)

@@ -48,6 +48,19 @@ sealed class ProjectedClassStorageFrame
     internal ProjectedClassStorageFrame WithNativeArguments(Func<InterfaceSlot, bool> required) =>
         new(original, Interfaces.Select(s => s with { NativeArgument = required(s) }).ToArray());
 
+    internal ProjectedClassStorageFrame WithForwardedPrimaryBounds(Func<InterfaceSlot, IEnumerable<TypeNode>> required)
+    {
+        var changed = false;
+        var next = Interfaces.Select(s => {
+            var bounds = s.PrimaryBounds ?? [];
+            var added = required(s).Except(bounds).ToArray();
+            if (added.Length == 0) return s;
+            changed = true;
+            return s with { PrimaryBounds = bounds.Concat(added).ToArray() };
+        }).ToArray();
+        return changed ? new(original, next) : this;
+    }
+
     internal ProjectedClassStorageFrame WithDeclaredProofs(GenericRepresentationPolicy policy, Func<TypeNode,TypeNode> publish = null) =>
         new(original, Interfaces.Select(s => !policy.JoinsNativeWitness(s.Bound) ? s : s with {
             NativeArgument = true,
