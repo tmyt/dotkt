@@ -4,7 +4,7 @@ using DotKt.Cir;
 
 static partial class FBoundStarProjectionErasure
 {
-    sealed record ProjectionDeclaration(string Kind, bool SourceGeneric, string[] Variances,
+    sealed record ProjectionDeclaration(string Kind, bool SourceGeneric, bool NamedLocal, string[] Variances,
         NullableRepresentationFrame Frame);
 
     // Declaration readers vary by owning phase; representation policy does
@@ -82,7 +82,7 @@ static partial class FBoundStarProjectionErasure
         }
 
         static ProjectionDeclaration ReadSource(AliasDeclarationTransitions.LogicalHeaderFacts header) => new(
-            header.Kind.OrDefault(), IsSourceGeneric(header),
+            header.Kind.OrDefault(), IsSourceGeneric(header), header.NamedLocal,
             header.TypeParams.HasValue ? header.TypeParams.Value.Select(parameter => parameter.Variance.OrDefault()).ToArray() : null,
             header.KotlinSupertypesPre.OrDefault()?.NullableFrame);
 
@@ -557,7 +557,8 @@ static partial class FBoundStarProjectionErasure
         {
             if (application.Args is not { Length: > 0 } || Values?.IsBindingAlias(application.Name) == true) return false;
             if (LocalDeclaration(application.Name) is { } local)
-                return local.Kind is "class" or "interface" && local.SourceGeneric && Values.OwnsValueSlots(application.Name);
+                return local.Kind is "class" or "interface" && local.SourceGeneric && Values.OwnsValueSlots(application.Name)
+                    && (!local.NamedLocal || TryExistentialCarrier(application.Name, out _));
             if (IsCapturedInner(application)) return true;
             if (!References.HasDotKtOwner(application.Name) || !Values.OwnsValueSlots(application.Name)) return false;
             var physicalOwner = References.TryExactPhysicalTypeName(application.Name, application.Args.Length, out var exact)
