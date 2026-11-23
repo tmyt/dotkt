@@ -117,7 +117,8 @@ grep -q '0 KLIB(s) up to date' <<<"$stdlib_batch" \
 	|| die "response-file dll2klib projected a marked stdlib assembly"
 
 printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
-dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp"
+# Leave workers available for namespaces of the same assembly, not just for independent DLLs.
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 8 @"$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib-second" --jobs 1 @"$OUT/references.rsp"
 cmp -s "$PROBE_KLIB" "$OUT/klib-second/Probe.klib" \
 	|| die "same Probe MVID did not produce a deterministic KLIB"

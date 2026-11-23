@@ -1502,17 +1502,15 @@ internal sealed partial class AssemblyScanner : IDisposable
         int Depth,
         bool IsExplicit);
 
-    readonly Dictionary<TypeDefinitionHandle, IReadOnlySet<int>> _valueOwnerParameters = new();
+    readonly ConcurrentDictionary<TypeDefinitionHandle, IReadOnlySet<int>> _valueOwnerParameters = new();
 
     IReadOnlySet<int>? ValueOwnerParameters(GenericContext context)
     {
         if (context.TypeParameterIds.Count == 0) return null;
-        if (!_valueOwnerParameters.TryGetValue(context.Type, out var ids))
-            _valueOwnerParameters[context.Type] = ids = context.TypeParameterIds
-                .Where(pair => (_md.GetGenericParameter(pair.Key).Attributes
-                    & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
-                .Select(pair => pair.Value).ToHashSet();
-        return ids;
+        return _valueOwnerParameters.GetOrAdd(context.Type, static (_, state) => state.Ids
+            .Where(pair => (state.Reader.GetGenericParameter(pair.Key).Attributes
+                & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
+            .Select(pair => pair.Value).ToHashSet(), (Reader: _md, Ids: context.TypeParameterIds));
     }
 
     private readonly MetadataReader _md;
