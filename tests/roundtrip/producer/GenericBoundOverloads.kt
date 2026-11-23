@@ -5,6 +5,12 @@ import kotlin.coroutines.*
 interface Sink<T> { fun send(value: T) }
 interface Tag
 
+interface LeftBound
+interface RightBound
+interface BaseChoice { fun <T : LeftBound> choose(value: T): Int }
+interface OtherBound
+interface OtherChoice { fun <T : OtherBound> choose(value: T): Int }
+
 class BoundHost<E : Any> {
     fun <C : MutableCollection<in E>> copy(destination: C): C = destination
     fun <C : Sink<E>> copy(destination: C): C = destination

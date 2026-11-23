@@ -16,6 +16,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Preserve interface default dispatch when an inherited class method takes the same callback with its receiver written as the first argument (#1799).
 - Preserve CLR virtual property dispatch when a second Kotlin assembly overrides an already overridden accessor (#1779).
+- Preserve dispatch to inherited interface overloads that differ only in their Kotlin generic bounds across assemblies (#1744).
 
 - Preserve the element type and identity of a projected CLR list passed to an invariant generic parameter (#1802).
 - Preserve the original instance when Kotlin joins different type arguments of the same function-local class (#1785).

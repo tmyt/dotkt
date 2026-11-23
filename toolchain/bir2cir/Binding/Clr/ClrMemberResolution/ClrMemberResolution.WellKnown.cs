@@ -208,7 +208,7 @@ static partial class ClrMemberResolution
 
     // These are current header views, not source-eligibility registrations.
     // Both owning binding clocks use this same selection plan.
-    sealed record InheritedLocalMethod(string Name, bool Static, int Arity, TypeNode[] Parameters);
+    sealed record InheritedLocalMethod(string Name, bool Static, int Arity, TypeNode[] Parameters, string Identity);
     sealed record InheritedExternalCallPlan(MethodInfo Declaration, MemberRefNode Reference, TypeNode[] OwnerArgs);
 
 
