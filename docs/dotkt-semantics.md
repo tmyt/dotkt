@@ -1006,6 +1006,11 @@ references use the actual CLR group numbers, which may have gaps. A native
 right-to-left regex replaces its rightmost match first. A terminal empty match
 is included: replacing `a|$` in `a` with `<$0>` produces `<a><>`.
 
+`match.groups[n]` also uses the CLR group number. Iteration and `groupValues`, however,
+visit only declared groups in number order. For group numbers 0, 1, and 10,
+`groupValues[2]` is the value of group 10. An optional group that did not match
+still occupies its position (`null` in `groups`, `""` in `groupValues`); gaps do not.
+
 ## 5b-quater. `Regex.options` decodes the compiled `RegexOptions`; three `RegexOption`s have no CLR bit (deliberate CLR choice)
 
 `Regex.options` reads the instance's compiled `System.Text.RegularExpressions.RegexOptions` `[Flags]` bitmask (the enum
