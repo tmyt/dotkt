@@ -287,7 +287,15 @@ static class ClrDeclarationMatching
             if (a is TypeNode.Fqn unresolved
                 && string.Equals(StripArity(Dotted(unresolved.Name)),
                     StripArity(Dotted(p.FullName ?? p.Name)), StringComparison.Ordinal))
-                return MatchKind.Exact;
+            {
+                // An unresolved argument can leave the entire constructed type
+                // unmappable. Its nominal head alone does not identify a slot.
+                var args = unresolved.Args ?? Array.Empty<TypeNode>();
+                var formals = p.IsGenericType ? p.GetGenericArguments() : Type.EmptyTypes;
+                if (args.Length == formals.Length && args.Select((arg, i) =>
+                        Applies(references, arg, formals[i], ownerArgs)).All(match => match == MatchKind.Exact))
+                    return MatchKind.Exact;
+            }
             if (a is TypeNode.Fn fn) return MatchFnToDelegate(references, fn, p, ownerArgs);
             // An array with an UNRESOLVABLE element (`Array<T>`, T a type-var) still IS a System.Array/object and
             // implements the non-generic array interfaces — `System.Array` assignable to `p` means `T[]` is too (e.g.
@@ -313,8 +321,8 @@ static class ClrDeclarationMatching
         }
         if (p.IsByRef) return a is TypeNode.ByRef b ? Applies(references, b.Of, p.GetElementType(), ownerArgs) : MatchKind.No;
         if (p.IsArray) return a is TypeNode.Array ar ? Applies(references, ar.Elem, p.GetElementType(), ownerArgs) : MatchKind.No;
-        if (p.IsGenericType && SafeDef(p) == NullableDef(references))
-            return a is TypeNode.Nullable nv ? Applies(references, nv.Of, p.GetGenericArguments()[0], ownerArgs) : MatchKind.No;
+        if (a is TypeNode.Nullable nv && p.IsGenericType && SafeDef(p) == NullableDef(references))
+            return Applies(references, nv.Of, p.GetGenericArguments()[0], ownerArgs);
         if (a is TypeNode.Nullable nn) return Applies(references, nn.Of, p, ownerArgs);   // nullable ref arg = same .NET type
         if (a is TypeNode.Fn fnOpen) return MatchFnToDelegate(references, fnOpen, p, ownerArgs);     // a lambda arg binding an OPEN delegate param (`ThreadLocal<T>(Func<T>)`)
         if (a is not TypeNode.Fqn f) return MatchKind.No;

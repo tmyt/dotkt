@@ -148,7 +148,7 @@ static partial class NetInteropBinding
         var super = ValueOnly(call.Super);
         if (plan.Kind == NativeCallKind.Generic)
         {
-            var signature = NormalizeSignature(signatures.Generic);
+            var signature = NormalizeSignature(signatures.Generic, plan.NativeType);
             return plan.Static ? new BirGenericStatic {
                 Type = plan.Owner, Method = plan.Method, TypeArgs = call.TypeArguments, ResolvedMemberParams = signature,
                 Ret = ValueOnly(call.Ret), Args = args, Sty = sty, SuspendCall = suspend,
@@ -174,7 +174,7 @@ static partial class NetInteropBinding
                 Args = new[] { call.Receiver.OrDefault() }.Concat(args).ToArray(), Ret = call.Ret, Sty = sty, SuspendCall = suspend,
                 _capturedGenericArgument = captured, _capturedGenericResult = capturedResult, _foreignDeclarationSignature = foreign };
         var argumentTypes = signatures.Declared;
-        OptionalField<TypeNode[]> resolved = call.Signature.HasValue ? NormalizeSignature(call.Signature.Value) : default;
+        OptionalField<TypeNode[]> resolved = call.Signature.HasValue ? NormalizeSignature(call.Signature.Value, plan.NativeType) : default;
         return plan.Static ? new BirNativeStatic {
             Type = plan.Owner, Method = plan.Method, ArgTypes = argumentTypes, ResolvedMemberParams = resolved,
             Ret = call.Ret, Args = args, Sty = sty, SuspendCall = suspend,

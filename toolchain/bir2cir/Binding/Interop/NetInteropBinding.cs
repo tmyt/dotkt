@@ -27,20 +27,27 @@ static partial class NetInteropBinding
             Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Any"), arity).ToArray());
     }
 
-    // Annotation-only nullability over an open variable does not participate
-    // in CLR declaration matching; concrete Nullable<V> remains a real type.
-    static TypeNode NormSigTv(TypeNode t) => t switch
+    // NRT on a variable does not change the CLR signature. A nullable value
+    // in the selected native owner's struct-constrained slot, however, is a
+    // constructed CLR type even before the caller supplies its arguments.
+    static TypeNode NormSigTv(TypeNode t, Type[] ownerParameters)
     {
-        TypeNode.Oblivious o => NormSigTv(o.Of),                          // annotation-only wrapper: always unwrap
-        TypeNode.Nullable n => NormSigTv(n.Of) is TypeNode.Tv tv ? tv     // `T?` reflects as bare `T`
-                               : new TypeNode.Nullable(NormSigTv(n.Of)),  // `Int?` stays Nullable<Int32>
-        TypeNode.Fqn { Args: { } fa } f => new TypeNode.Fqn(f.Name, fa.Select(NormSigTv).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(NormSigTv(a.Elem)),
-        TypeNode.ByRef b => new TypeNode.ByRef(NormSigTv(b.Of)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, NormSigTv(fn.Ret), fn.Params.Select(NormSigTv).ToArray(),
-                                          fn.Recv == null ? null : NormSigTv(fn.Recv)),
-        _ => t,
-    };
+        TypeNode Normalize(TypeNode node) => node switch {
+            TypeNode.Oblivious o => Normalize(o.Of),
+            TypeNode.Nullable { Of: TypeNode.Tv { Scope: "type" } v } when (uint)v.I < (uint)ownerParameters.Length
+                && ownerParameters[v.I].IsGenericParameter && (ownerParameters[v.I].GenericParameterAttributes
+                    & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0
+                => new TypeNode.Fqn("System.Nullable`1", new TypeNode[] { v }),
+            TypeNode.Nullable n => Normalize(n.Of) is TypeNode.Tv tv ? tv : new TypeNode.Nullable(Normalize(n.Of)),
+            TypeNode.Fqn { Args: { } fa } f => new TypeNode.Fqn(f.Name, fa.Select(Normalize).ToArray()),
+            TypeNode.Array a => new TypeNode.Array(Normalize(a.Elem), a.Rank, a.SzArray),
+            TypeNode.ByRef b => new TypeNode.ByRef(Normalize(b.Of)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Normalize(fn.Ret), fn.Params.Select(Normalize).ToArray(),
+                fn.Recv == null ? null : Normalize(fn.Recv), fn.Clr, fn.Ctx?.Select(Normalize).ToArray()),
+            _ => node,
+        };
+        return Normalize(t);
+    }
 
     // Peel Nullable/Oblivious/ByRef wrappers off an owner type slot to reach the underlying .NET Fqn (name + type-args),
     // so a `List<Item>?`/`T!`/byref receiver resolves its open .NET definition.
@@ -227,7 +234,7 @@ static partial class NetInteropBinding
     static bool IsComparableSelfCall(Type type, TypeNode.Fqn owner, IReadOnlyList<TypeNode> sig)
     {
         if (sig is not { Count: 1 } || sig[0] is not TypeNode argType
-            || NormSigTv(argType) is not TypeNode.Fqn arg
+            || NormSigTv(argType, type.GetGenericArguments()) is not TypeNode.Fqn arg
             || arg != owner)
             return false;
         try
