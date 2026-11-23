@@ -1045,6 +1045,28 @@ static class ReferenceMetadataReader
         }
     }
 
+    internal sealed record NativeDefaultDeclaration(TypeNode.Fqn Owner, string Member, MethodSignature<TypeNode> Signature);
+
+    internal static NativeDefaultDeclaration[] NativeInterfaceDefaults(Type provider)
+    {
+        using var stream = File.OpenRead(provider.Module.FullyQualifiedName);
+        using var pe = new PEReader(stream);
+        var reader = pe.GetMetadataReader();
+        var definition = reader.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(provider.MetadataToken));
+        var result = new List<NativeDefaultDeclaration>();
+        foreach (var handle in definition.GetMethodImplementations())
+        {
+            var impl = reader.GetMethodImplementation(handle);
+            if (impl.MethodBody.Kind != HandleKind.MethodDefinition) continue;
+            var body = reader.GetMethodDefinition((MethodDefinitionHandle)impl.MethodBody);
+            if ((body.Attributes & (MethodAttributes.Abstract | MethodAttributes.Static)) != 0) continue;
+            if (TryMethodImplDeclaration(reader, new MethodImplOwnerTypeProvider(), impl.MethodDeclaration,
+                    out var owner, out var member))
+                result.Add(new(owner, member, NativeSignatureReader.Declaration(reader, impl.MethodDeclaration)));
+        }
+        return result.ToArray();
+    }
+
     internal static Dictionary<string, ConstructorInfo> NativeConstructorDeclarations(Type owner)
     {
         using var stream = File.OpenRead(owner.Module.FullyQualifiedName);

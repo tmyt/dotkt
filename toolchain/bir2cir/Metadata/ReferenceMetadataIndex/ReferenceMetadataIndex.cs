@@ -3322,6 +3322,41 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // intermediate interface), and each such CLR MethodImpl must name that exact declaring interface.
     // Early declaration materialization compares Kotlin constraints; post-erasure slot bridges compare CLR
     // constraints. The caller states its phase so the two sides are always compared in the same representation.
+    readonly Dictionary<Type, NativeDefaultDeclaration[]> nativeDefaultSlots = new();
+
+    // The source fact identifies the provider. Its MethodImpl identifies a
+    // callable declaration, not a body to call from a different assembly.
+    internal bool TryNativeDefaultAccessor(TypeNode.Fqn provider, string property, string role,
+        TypeNode[] parameters, TypeNode result, out TypeNode.Fqn callOwner, out ReferencedMethodDeclaration declaration)
+    {
+        callOwner = null;
+        declaration = null;
+        if (HasDotKtOwner(provider.Name) || ResolveNetType(provider.Name, provider.Args?.Length ?? 0) is not { IsInterface: true } type)
+            return false;
+        if (!nativeDefaultSlots.TryGetValue(type, out var slots))
+            nativeDefaultSlots.Add(type, slots = NativeInterfaceDefaults(type));
+        foreach (var slot in slots)
+        {
+            var owner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(slot.Owner, provider.Args ?? []);
+            if (slot.Signature.GenericParameterCount != 0
+                || !TrySelectedOverrideDeclarationByShape(owner.Name, property, role, 0, parameters, owner.Args ?? [],
+                    KotlinOverrideSlotBridge.MethodTypeParameterShapeKey([], []), false, out var candidate,
+                    semanticConstraints: true, selectedDeclarationId: null, publicOnly: true)
+                || candidate.PhysicalMember != slot.Member) continue;
+            if (!candidate.SignatureParameters.Select(DeclarationIdentityBinding.PhysicalTypeSignature)
+                    .SequenceEqual(slot.Signature.ParameterTypes.Select(DeclarationIdentityBinding.PhysicalTypeSignature))
+                || DeclarationIdentityBinding.PhysicalTypeSignature(candidate.PhysicalReturn)
+                    != DeclarationIdentityBinding.PhysicalTypeSignature(slot.Signature.ReturnType)
+                || (role == "get"
+                    ? !SourceDeclarationDescribesCall(SupertypeGraph.SubstOwnerTvs(candidate.PhysicalReturn, owner.Args ?? []), result)
+                    : candidate.ReturnsValue)) continue;
+            if (callOwner != null) return false;
+            callOwner = owner;
+            declaration = candidate;
+        }
+        return callOwner != null;
+    }
+
     internal bool TrySelectedSourceOverrideDeclaration(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, BirTypeParameter[] selectedTypeParams,
         TypeNode[] implementationOwnerTypeArguments, bool selectedSuspend, out ReferencedMethodDeclaration declaration,
@@ -3334,11 +3369,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     internal bool TrySelectedOverrideDeclarationByShape(string ownerFqn, string sourceMember, string accessorKind,
         int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, string selectedShape,
         bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints,
-        string selectedDeclarationId)
+        string selectedDeclarationId, bool publicOnly = false)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var matches = list.Where(member => !member.IsStatic && !member.IsPropertyBridge
+                && (!publicOnly || member.IsPublic)
                 && (selectedDeclarationId == null || member.DeclarationId == selectedDeclarationId)
                 && (accessorKind == null
                     ? member.SourcePropertyName == null

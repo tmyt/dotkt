@@ -644,6 +644,10 @@ static partial class KotlinOverrideSlotBridge
                 var t = inheritedSignature?[i] ?? ps[i].Signature ?? ps[i].Type;
                 var declared = t == null ? null : SupertypeGraph.SubstOwnerTvs(t, ownArgs);
                 ok = declared != null && (ErasureAligned(slotParams[i], declared)
+                    // The override edge already selects this inherited provider. A
+                    // platform-typed slot also accepts its selected non-null form.
+                    || inheritedSignature != null && slotParams[i] is TypeNode.Oblivious flexible
+                        && ErasureAligned(flexible.Of, declared)
                     || carrierSeam?.Invoke(slotParams[i], declared) == true
                     || IsCompanionScalarSeam(slotParams[i], declared)
                     || SameSourceRepresentationVariables(slotParams[i], declared, ownerFrame)

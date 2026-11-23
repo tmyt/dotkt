@@ -25,6 +25,10 @@ public sealed class NativeSignatureReader
     }
 
     public sealed record Signature(TypeNode Return, TypeNode[] Parameters);
+    public static MethodSignature<TypeNode> Declaration(MetadataReader reader, EntityHandle method) =>
+        method.Kind == HandleKind.MethodDefinition
+            ? reader.GetMethodDefinition((MethodDefinitionHandle)method).DecodeSignature(new Provider(), reader)
+            : reader.GetMemberReference((MemberReferenceHandle)method).DecodeMethodSignature(new Provider(), reader);
     readonly Dictionary<(string Path, Guid Mvid, int Token), Signature> _methods = new();
     readonly Dictionary<(string Path, Guid Mvid, int Token), TypeNode> _fields = new();
 
