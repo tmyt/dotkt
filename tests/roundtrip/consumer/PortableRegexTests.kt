@@ -7,6 +7,17 @@ class PortableRegexTests {
     @TestAttribute fun foreignRegexKeepsNativeMatchingAndDistinctReplacementSyntax() {
         val native = RegexInterop.NativeRegexes.Sparse()
         val regex = (native as Any) as Regex
+        val first = regex.find("ab a")!!
+        check(first.groups.size == 3 && first.groups[10]?.value == "a")
+        check(first.groups.map { it?.value } == listOf("ab", "b", "a"))
+        check(first.groupValues == listOf("ab", "b", "a"))
+        val next = first.next()!!
+        check(next.groups.map { it?.value } == listOf("a", null, "a"))
+        check(next.destructured.toList() == listOf("", "a"))
+        val alternate = (RegexInterop.NativeRegexes.WithAlternatePattern() as Any) as Regex
+        val entire = alternate.matchEntire("a")!!
+        check(entire.groups.size == 3 && entire.groups[10]?.value == "a")
+        check(entire.groupValues == listOf("a", "", "a"))
         check(replaceFromLibrary(regex, "a", "<\$10:\$1:\${named}>") == "<a::>")
         var missing = false
         try { replaceFromLibrary(regex, "a", "\$2") }

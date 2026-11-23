@@ -148,7 +148,7 @@ public actual class Regex {
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun find(input: CharSequence, startIndex: Int = 0): MatchResult? {
         val match = nativeMatch(input.toString(), startIndex)
-        return if (match.success) ClrMatchResult(match) else null
+        return if (match.success) ClrMatchResult(match, lazy { nativeGroupNumbers() }) else null
     }
 
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
@@ -169,8 +169,12 @@ public actual class Regex {
     public actual fun matchEntire(input: CharSequence): MatchResult? {
         // The native engine consumes a String snapshot.
         val text = input.toString()
-        val match = nativeAnchoredMatch(text, "\\A(?:" + pattern + ")\\z", nativeOptions)
-        return if (match.success) ClrMatchResult(match) else null
+        val anchored = "\\A(?:" + pattern + ")\\z"
+        val options = nativeOptions
+        val match = nativeAnchoredMatch(text, anchored, options)
+        // The static Match overload caches compiled patterns. A foreign Regex can override ToString(),
+        // so read capture numbers from the pattern actually matched, only if a collection needs them.
+        return if (match.success) ClrMatchResult(match, lazy { Regex(anchored, options).nativeGroupNumbers() }) else null
     }
 
     // The compiled BCL RegexOptions of this instance (System...Regex.Options), read as the opaque [ClrRegexOptions]
@@ -191,7 +195,7 @@ public actual class Regex {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
         val match = nativeMatch(text, index)
-        return if (match.success && match.index == index) ClrMatchResult(match) else null
+        return if (match.success && match.index == index) ClrMatchResult(match, lazy { nativeGroupNumbers() }) else null
     }
 
     @SinceKotlin("1.7")
@@ -303,6 +307,9 @@ public actual class Regex {
 
     @kotlin.clr.ClrIntrinsic("GroupNumberFromName")
     private fun nativeGroupNumberFromName(name: String): Int = TODO("clr binding should be implemented")
+
+    @kotlin.clr.ClrIntrinsic("GetGroupNumbers")
+    internal fun nativeGroupNumbers(): IntArray = TODO("clr binding should be implemented")
 
     @kotlin.clr.ClrIntrinsic("Replace")
     private fun nativeReplace(input: String, evaluator: MatchEvaluator, count: Int): String =
@@ -484,24 +491,25 @@ internal class ClrMatch {
 }
 
 /** Kotlin `MatchResult` over a System...Match. Real emitted class (not @ClrIntrinsic). */
-internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
+internal class ClrMatchResult(private val nativeMatch: ClrMatch, private val groupNumbers: Lazy<IntArray>) : MatchResult {
     override val range: IntRange
         get() = nativeMatch.index until (nativeMatch.index + nativeMatch.length)
     override val value: String
         get() = nativeMatch.value
-    override val groups: MatchGroupCollection = ClrMatchGroupCollection(nativeMatch.groups)
+    override val groups: MatchGroupCollection = ClrMatchGroupCollection(nativeMatch.groups, groupNumbers)
 
     private var groupValues_: List<String>? = null
 
     override val groupValues: List<String>
         get() {
             if (groupValues_ == null) {
+                val numbers = groupNumbers.value
                 groupValues_ = object : AbstractList<String>() {
-                    override val size: Int get() = nativeMatch.groups.count
+                    override val size: Int get() = numbers.size
                     override fun get(index: Int): String {
                         // Unlike Java Matcher.group, the CLR indexer returns an empty group out of bounds.
                         AbstractList.checkElementIndex(index, size)
-                        return nativeMatch.groups[index].value
+                        return nativeMatch.groups[numbers[index]].value
                     }
                 }
             }
@@ -511,18 +519,20 @@ internal class ClrMatchResult(private val nativeMatch: ClrMatch) : MatchResult {
     override fun next(): MatchResult? {
         // System...Match.NextMatch() advances to the next match (stepping past zero-width matches), so no manual index math.
         val m = nativeMatch.nextMatch()
-        return if (m.success) ClrMatchResult(m) else null
+        return if (m.success) ClrMatchResult(m, groupNumbers) else null
     }
 }
 
 /** Kotlin collection behavior over native CLR capture primitives. */
 internal class ClrMatchGroupCollection(
-    private val nativeGroups: ClrGroupCollection
+    private val nativeGroups: ClrGroupCollection,
+    private val groupNumbers: Lazy<IntArray>
 ) : MatchNamedGroupCollection, AbstractCollection<MatchGroup?>() {
     override val size: Int get() = nativeGroups.count
     override fun isEmpty(): Boolean = false
 
-    override fun iterator(): Iterator<MatchGroup?> = indices.asSequence().map { this[it] }.iterator()
+    // Numeric lookup uses CLR group numbers; collection positions only enumerate declared groups.
+    override fun iterator(): Iterator<MatchGroup?> = groupNumbers.value.asSequence().map { this[it] }.iterator()
 
     override fun get(index: Int): MatchGroup? {
         val g = nativeGroups[index]
