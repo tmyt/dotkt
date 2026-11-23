@@ -32,9 +32,9 @@ sealed partial class ReferenceMetadataIndex
     // the actual shipped CLR TypeDef, including a required runtime twin. Source
     // metadata cannot supply a physical proof absent from that declaration.
     // Return independent records rather than exposing cached mutable facts.
-    internal BirTypeParameter[] PhysicalOwnerTypeParametersInPhysicalFrame(string owner)
+    internal BirTypeParameter[] PhysicalOwnerTypeParametersInPhysicalFrame(string owner, bool nativeNames = false)
         => PhysicalOwnerForParameterFacts(owner) is { } type
-            ? type.GetGenericArguments().Select(GenericParamSourceDeclaration).ToArray() : null;
+            ? type.GetGenericArguments().Select(p => GenericParamDeclaration(p, nativeNames)).ToArray() : null;
 
     // The identity selects an exact reference MethodDef token, then the existing
     // twin resolver selects its shipped declaration. Do not reuse the owner's

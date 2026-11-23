@@ -95,9 +95,9 @@ class JoinedFactory<T> where T : RoundtripDependentNative.Base, T : RoundtripDep
     fun create() = NativeJoined<T>()
 }
 
-class FixedSlot<A> : RoundtripDependentNative.FixedSlotBase<A>() where A : Base, A : IMarker<String>
-class FixedSlotFactory<A> where A : Base, A : IMarker<String> {
-    fun usesMarkedBase() = FixedSlot<A>().UsesMarkedBase()
+class FixedSlot<A> : RoundtripDependentNative.FixedSlotBase<A>() where A : Base, A : RoundtripDependentNative.Family.IMark<String>
+class FixedSlotFactory<A> where A : Base, A : RoundtripDependentNative.Family.IMark<String>, A : IMarker<String> {
+    fun usesJoint() = FixedSlot<A>().UsesJoint()
 }
 
 class CapturedBoundOwner<X> {

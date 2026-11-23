@@ -1595,10 +1595,11 @@ static class ReferenceMetadataReader
                     return (native, nativeNames ? native : GenericConstraintType(c, false));
                 }), physical);
         }).ToArray();
-        var frame = formals.Take(primary).Select(p => CapturedGenericInvocation.CloneParameter(
-            GenericParamDeclaration(p, native: nativeNames), t => CapturedGenericInvocation.Map(t,
+        BirTypeParameter[] Frame(bool native) => formals.Take(primary).Select(p => CapturedGenericInvocation.CloneParameter(
+            GenericParamDeclaration(p, native), t => CapturedGenericInvocation.Map(t,
                 tv => tv.Scope == "method" ? new TypeNode.Tv("type", tv.I) : tv))).ToArray();
-        return ProjectedConstructorPlan.Bind(frame, captured, facets);
+        var plan = ProjectedConstructorPlan.Bind(Frame(nativeNames), captured, facets);
+        return nativeNames ? plan : plan with { PrimaryParameters = Frame(true) };
     }
 
     static BirTypeParameter[] SemanticMethodTypeParameters(MethodInfo method, bool dotKtAuthored,

@@ -7,9 +7,10 @@ public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
 public class Base { }
 public class MarkedBase : Base, IMarker<string> { }
-public class FixedSlotBase<A> where A : Base, IMarker<string>
+public class FixedJoint : Base, Family.IMark<string> { }
+public class FixedSlotBase<A> where A : Base, Family.IMark<string>
 {
-    public bool UsesMarkedBase() => typeof(A) == typeof(MarkedBase);
+    public bool UsesJoint() => typeof(A) == typeof(FixedJoint);
 }
 public class Selector
 {
