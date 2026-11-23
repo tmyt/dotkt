@@ -94,7 +94,7 @@ static partial class StringCharSequenceBridge
 
     static int _delegateAdapterCounter;
 
-    enum CharSequenceConversion { None, String, StringBuilder, NullableString, Branches }
+    enum CharSequenceConversion { None, String, StringBuilder, NullableString, NullableStringBuilder, Branches }
 
     // Whole-source and newly materialized-return traversal share the exact
     // positive conversion recognition/order over the same owning graph.
@@ -103,8 +103,10 @@ static partial class StringCharSequenceBridge
     {
         var stringType = (nonNullSlot || notNullAssertion) && type is TypeNode.Nullable nullable ? nullable.Of : type;
         if (IsStringTokT(stringType)) return CharSequenceConversion.String;
-        if (type is TypeNode.Fqn { Args: null } builder && StringBuilderTokens.Contains(builder.Name))
-            return CharSequenceConversion.StringBuilder;
+        var builderType = type switch { TypeNode.Nullable n => n.Of, TypeNode.Oblivious o => o.Of, _ => type };
+        if (builderType is TypeNode.Fqn { Args: null } builder && StringBuilderTokens.Contains(builder.Name))
+            return (type is TypeNode.Nullable or TypeNode.Oblivious) && !notNullAssertion
+                ? CharSequenceConversion.NullableStringBuilder : CharSequenceConversion.StringBuilder;
         if (!nonNullSlot && type is TypeNode.Nullable optional && IsStringTokT(optional.Of))
             return CharSequenceConversion.NullableString;
         return conditional ? CharSequenceConversion.Branches : CharSequenceConversion.None;

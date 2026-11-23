@@ -53,6 +53,12 @@ public static class NodeType
     public static TypeNode? Stamp(JsonObject o)
         => TypeJson.Read(o["sty"]) ?? TypeJson.Read(o["ret"]) ?? TypeJson.Read(o["dynRet"]);
 
+    public static TypeNode? SafeCastResult(TypeNode? target) => target switch {
+        null or TypeNode.Nullable => target,
+        TypeNode.Oblivious platform => new TypeNode.Nullable(platform.Of),
+        _ => new TypeNode.Nullable(target),
+    };
+
     /// <summary>
     /// A pass has just retyped this node's `ret`/`dynRet`; discharge the spec §2.7 obligation that comes with that —
     /// *a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`* — by DELETING the stamp when, and
@@ -171,7 +177,9 @@ public static class NodeType
                     ? BoolTn : recurse(o["lhs"]) ?? recurse(o["rhs"]);
             case "unaryOp":
                 return Str(o["op"]) == "!" ? BoolTn : recurse(o["e"]);
-            case "objEq": case "isInst": case "isInstRef": case "nullableHasValue":
+            case "isInstRef":
+                return SafeCastResult(TypeJson.Read(o["type"]));
+            case "objEq": case "isInst": case "nullableHasValue":
                 return BoolTn;
             case "throwExpr": case "returnExpr":
                 // A TERMINAL expression: control leaves and never comes back, so it produces no value — which in

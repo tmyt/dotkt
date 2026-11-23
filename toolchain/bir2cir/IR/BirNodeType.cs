@@ -46,7 +46,8 @@ static class BirNodeType
             BirBinaryOperation value => value.Op.OrDefault() is "===" or "==" or "!=" or "<" or ">" or "<=" or ">=" or "&&" or "||"
                 ? Boolean : Value(value.Lhs.OrDefault()) ?? Value(value.Rhs.OrDefault()),
             BirUnaryOperation value => value.Op.OrDefault() == "!" ? Boolean : Value(value.E.OrDefault()),
-            BirObjectEquals or BirIsInstance or BirInstanceOrNull or BirNullableHasValue => Boolean,
+            BirObjectEquals or BirIsInstance or BirNullableHasValue => Boolean,
+            BirInstanceOrNull value => NodeType.SafeCastResult(value.Type.OrDefault()),
             BirThrowExpression or BirReturnExpression => Nothing,
             BirArrayLength or BirEnumOrdinal => Integer,
             BirConcat or BirEnumName => Text,
@@ -114,6 +115,8 @@ static class BirNodeType
             (new BirUnaryOperation { Op = "-", E = leaf }, frame),
             (new BirUnaryOperation { Op = "!", E = leaf }, Boolean),
             (new BirNullableWrap { Elem = frame }, new TypeNode.Nullable(frame)),
+            (new BirIsInstance { Type = frame }, Boolean),
+            (new BirInstanceOrNull { Type = frame }, new TypeNode.Nullable(frame)),
             (new BirNullableValue { Elem = frame }, frame),
             (new BirByRefOf { Inner = leaf }, new TypeNode.ByRef(frame)),
             (new BirByRefOf { Inner = new BirByRefLoad { Elem = frame } }, new TypeNode.ByRef(frame)),
