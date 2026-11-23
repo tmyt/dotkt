@@ -21,8 +21,17 @@ import roundtrip.collslots.ReplacingResultList
 import roundtrip.collslots.makeReplacingResultList
 import roundtrip.collslots.ExternalAddProvider
 import roundtrip.collslots.ExternalDefaultAdd
+import roundtrip.collslots.NativeFeed
 
 private class CrossModuleInheritedAddResult<T>(values: MutableList<T>) : ReplacingResultList<T>(values)
+private class ImportedNativeFeed(source: ClrEnumerable<Int>) : NativeFeed<Int>(source)
+
+// These are source conversions of imported declarations. The two element types
+// distinguish a restored hidden parent from the direct CLR face with the same head.
+private fun words(feed: roundtrip.collslots.MixedFeed): Iterable<String> = feed
+private fun nativeInts(feed: roundtrip.collslots.ThroughPrivate<Int>): ClrEnumerable<Int> = feed
+private fun bclInts(feed: roundtrip.collslots.BclFeed<Int>): System.Collections.Generic.IEnumerable<Int> = feed
+private abstract class ImportedMap : roundtrip.collslots.DeclaredMap<String, String>
 
 private class CrossModuleAddProvider<T>(private val values: MutableList<T>) :
     ExternalAddProvider<T>(values), MutableCollection<T> {
@@ -132,6 +141,9 @@ class KotlinCollectionSlotTests {
     // referenced assembly's metadata, and the bridge must still be stated on this consumer's own class.
     @TestAttribute
     fun anImplementerOfAReferencedIterableInterfaceGetsItsBridge() {
+        val native = ImportedNativeFeed(listOf(7) as ClrEnumerable<Int>).GetEnumerator()
+        assertEquals(true, native.MoveNext())
+        assertEquals(7, native.current())
         val numbers = CrossModuleFeedNumbers()
         assertEquals(listOf(1, 2, 3), numbers.toList())
         assertEquals(6, numbers.sum())

@@ -40,6 +40,17 @@ interface ExternalDefaultAdd : MutableCollection<Int> {
  *  `GetEnumerator` that nothing in its own module states. */
 interface Feed<T> : Iterable<T>
 
+open class NativeFeed<T>(private val source: ClrEnumerable<T>) : ClrEnumerable<T> {
+    override fun GetEnumerator(): ClrEnumerator<T> = source.GetEnumerator()
+}
+
+private interface Words : Iterable<String>
+abstract class MixedFeed : ClrEnumerable<Int>, Words
+private interface PrivateNative<T> : ClrEnumerable<T>
+abstract class ThroughPrivate<T> : PrivateNative<T>
+interface BclFeed<T> : System.Collections.Generic.IEnumerable<T>
+interface DeclaredMap<K, V> : MutableMap<K, V>
+
 /** Iterator providers that are not themselves enumerable. A consumer can combine either one with [Feed], making
  *  the consumer class the first type that owes the CLR enumerable face. */
 open class ExternalIteratorProvider<T>(private val items: List<T>) {
