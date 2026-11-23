@@ -25271,6 +25271,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
     public OptionalField<TypeNode[]> ArgTypes { get; set; }
     public OptionalField<IBirExpression[]> Args { get; set; }
     public OptionalField<string> ConstructorDeclarationId { get; set; }
+    public OptionalField<string> ConstructorNativeKey { get; set; }
     public OptionalField<string> CompanionCaptureOwner { get; set; }
     public OptionalField<BirPropertyFunction> PropertyFunction { get; set; }
     public OptionalField<string> MemberVisibility { get; set; }
@@ -25352,6 +25353,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ConstructorDeclarationId.HasValue) { visit((string)ConstructorDeclarationId.Value); }
+        if (ConstructorNativeKey.HasValue) { visit((string)ConstructorNativeKey.Value); }
         if (CompanionCaptureOwner.HasValue) { visit((string)CompanionCaptureOwner.Value); }
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberSignature.HasValue) { foreach (var item0 in MemberSignature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
@@ -25561,6 +25563,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
             && EqualField(ArgTypes, value.ArgTypes, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(Args, value.Args, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(ConstructorDeclarationId, value.ConstructorDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(ConstructorNativeKey, value.ConstructorNativeKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(CompanionCaptureOwner, value.CompanionCaptureOwner, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(PropertyFunction, value.PropertyFunction, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(MemberVisibility, value.MemberVisibility, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
@@ -25583,6 +25586,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "constructorDeclarationId", ConstructorDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "constructorNativeKey", ConstructorNativeKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "companionCaptureOwner", CompanionCaptureOwner, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "propertyFunction", PropertyFunction, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
@@ -25607,6 +25611,7 @@ internal sealed record BirNew : BirGraphNode, IBirExpression, IBirAttributeValue
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (ConstructorDeclarationId.IsPresent) result["constructorDeclarationId"] = ConstructorDeclarationId.IsNull ? null : JsonValue.Create(ConstructorDeclarationId.Value);
+        if (ConstructorNativeKey.IsPresent) result["constructorNativeKey"] = ConstructorNativeKey.IsNull ? null : JsonValue.Create(ConstructorNativeKey.Value);
         if (CompanionCaptureOwner.IsPresent) result["companionCaptureOwner"] = CompanionCaptureOwner.IsNull ? null : JsonValue.Create(CompanionCaptureOwner.Value);
         if (PropertyFunction.IsPresent) result["propertyFunction"] = PropertyFunction.IsNull ? null : ((BirGraphValue)PropertyFunction.Value).ToDom(projected);
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
@@ -29662,6 +29667,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
     public OptionalField<IBirExpression[]> Args { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
     public OptionalField<TypeNode[]> ArgTypes { get; set; }
+    public OptionalField<string> ConstructorNativeKey { get; set; }
     public OptionalField<bool> KotlinHashStorageSignature { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode[]> ResolvedMemberParams { get; set; }
@@ -29715,6 +29721,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
     {
         if (Type.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Type.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
+        if (ConstructorNativeKey.HasValue) { visit((string)ConstructorNativeKey.Value); }
         if (MemberSignature.HasValue) { foreach (var item0 in MemberSignature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
@@ -29855,6 +29862,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
             && EqualField(Args, value.Args, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(MemberRef, value.MemberRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
             && EqualField(ArgTypes, value.ArgTypes, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
+            && EqualField(ConstructorNativeKey, value.ConstructorNativeKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(KotlinHashStorageSignature, value.KotlinHashStorageSignature, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(MemberSignature, value.MemberSignature, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(ResolvedMemberParams, value.ResolvedMemberParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
@@ -29867,6 +29875,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "constructorNativeKey", ConstructorNativeKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "kotlinHashStorageSignature", KotlinHashStorageSignature, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "resolvedMemberParams", ResolvedMemberParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
@@ -29881,6 +29890,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom(projected);
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
+        if (ConstructorNativeKey.IsPresent) result["constructorNativeKey"] = ConstructorNativeKey.IsNull ? null : JsonValue.Create(ConstructorNativeKey.Value);
         if (KotlinHashStorageSignature.IsPresent) result["kotlinHashStorageSignature"] = KotlinHashStorageSignature.IsNull ? null : JsonValue.Create(KotlinHashStorageSignature.Value);
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (ResolvedMemberParams.IsPresent) result["resolvedMemberParams"] = ResolvedMemberParams.IsNull ? null : new JsonArray(ResolvedMemberParams.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());

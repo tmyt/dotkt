@@ -1047,7 +1047,7 @@ sealed partial class TypedCirProjection
 
     internal CirNew ProjectCirNew(BirNew value)
     {
-        if (value.CompanionCaptureOwner.IsPresent || value.ConstructorDeclarationId.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullablePendingWitnesses.IsPresent || value.NullableWitnessCount.IsPresent || value.PropertyFunction.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.SuspendFnTypePre.IsPresent)
+        if (value.CompanionCaptureOwner.IsPresent || value.ConstructorDeclarationId.IsPresent || value.ConstructorNativeKey.IsPresent || value.MemberMethodTypeParams.IsPresent || value.MemberOwnerTypeParams.IsPresent || value.MemberReturnType.IsPresent || value.MemberSignature.IsPresent || value.MemberVisibility.IsPresent || value.NullablePendingWitnesses.IsPresent || value.NullableWitnessCount.IsPresent || value.PropertyFunction.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent || value.SuspendFnTypePre.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirNew");
         return new CirNew
         {
@@ -1061,7 +1061,7 @@ sealed partial class TypedCirProjection
 
     internal CirNewClr ProjectCirNewClr(BirNewClr value)
     {
-        if (value.KotlinHashStorageSignature.IsPresent || value.MemberSignature.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
+        if (value.ConstructorNativeKey.IsPresent || value.KotlinHashStorageSignature.IsPresent || value.MemberSignature.IsPresent || value.ResolvedMemberParams.IsPresent || value.ResolvedMemberReturn.IsPresent)
             throw new InvalidOperationException("Unconsumed lowering fact on BirNewClr");
         return new CirNewClr
         {

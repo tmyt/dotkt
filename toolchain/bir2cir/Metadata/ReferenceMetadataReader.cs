@@ -1067,11 +1067,8 @@ static class ReferenceMetadataReader
         return result.ToArray();
     }
 
-    internal static Dictionary<string, ConstructorInfo> NativeConstructorDeclarations(Type owner)
+    internal static Dictionary<string, ConstructorInfo> NativeConstructorDeclarations(Type owner, MetadataReader reader)
     {
-        using var stream = File.OpenRead(owner.Module.FullyQualifiedName);
-        using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
-        var reader = pe.GetMetadataReader();
         return owner.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Where(ClrMemberResolution.IsPublicOrProtected).ToDictionary(constructor =>
                 DotKt.Toolchain.RawSignatureTypeProvider<object>.ConstructorKey(reader,

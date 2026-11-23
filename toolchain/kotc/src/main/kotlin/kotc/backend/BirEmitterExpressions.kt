@@ -514,7 +514,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 			}
 			val identity = declarationIdForPhysicalAllocation(node.symbol.owner)
 			BirNew(type = clr, argTypes = externalTypes, args = externalArgs,
-				memberSignature = externalSignature, constructorDeclarationId = identity)
+				memberSignature = externalSignature, constructorDeclarationId = identity,
+				constructorNativeKey = nativeConstructorKey(node.symbol.owner))
 		}
 		else {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).

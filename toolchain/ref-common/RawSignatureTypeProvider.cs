@@ -16,13 +16,66 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
 {
     public static RawSignatureTypeProvider<TContext> Instance { get; } = new();
 
-    // Used only within a known declaring type. Unlike a MethodDef token or a signature blob,
-    // this key survives ref/implementation table renumbering. No Kotlin nullability is involved.
+    // Owned by an open CLR declaration. The signature shape never contains metadata row
+    // numbers; its ordered nominal leaves retain their scopes across inline publication.
     public static string ConstructorKey(MetadataReader reader, MethodDefinitionHandle handle)
     {
-        var signature = reader.GetMethodDefinition(handle).DecodeSignature(Instance, default(TContext)!);
-        return FormattableString.Invariant($"{signature.Header.RawValue}:{signature.RequiredParameterCount}:")
+        var leaves = new List<string>();
+        var provider = new RawSignatureTypeProvider<TContext>((md, type) =>
+        {
+            var (scope, name) = NominalLeaf(md, type);
+            leaves.Add(scope); leaves.Add(name);
+            return "_";
+        });
+        var signature = reader.GetMethodDefinition(handle).DecodeSignature(provider, default(TContext)!);
+        var shape = FormattableString.Invariant($"{signature.Header.RawValue}:{signature.RequiredParameterCount}:")
             + string.Concat(signature.ParameterTypes.Select(slot => FormattableString.Invariant($"{slot.Length}:{slot}")));
+        return leaves.Count == 0 ? shape : shape + "|" + JsonSerializer.Serialize(leaves);
+    }
+
+    static (string, string) NominalLeaf(MetadataReader md, EntityHandle type)
+    {
+        // Assembly.GetType consumes reflection names, in which '+' separates nested
+        // names and the other special characters must be escaped when literal.
+        static string Escape(string name) => name.IndexOfAny(['\\', '+', ',', '[', ']', '*', '&']) < 0
+            ? name : string.Concat(name.Select(c => "\\+,[]*&".Contains(c) ? "\\" + c : c.ToString()));
+        string name, ns;
+        EntityHandle parent;
+        if (type.Kind == HandleKind.TypeDefinition)
+        {
+            var def = md.GetTypeDefinition((TypeDefinitionHandle)type);
+            name = Escape(md.GetString(def.Name)); ns = md.GetString(def.Namespace); parent = def.GetDeclaringType();
+        }
+        else
+        {
+            var reference = md.GetTypeReference((TypeReferenceHandle)type);
+            name = Escape(md.GetString(reference.Name)); ns = md.GetString(reference.Namespace); parent = reference.ResolutionScope;
+        }
+        if (!parent.IsNil && parent.Kind is HandleKind.TypeReference or HandleKind.TypeDefinition)
+        {
+            var (scope, enclosing) = NominalLeaf(md, parent);
+            return (scope, enclosing + "+" + name);
+        }
+        var assembly = parent.Kind == HandleKind.AssemblyReference
+            ? md.GetAssemblyReference((AssemblyReferenceHandle)parent).GetAssemblyName().FullName
+            : md.IsAssembly ? md.GetAssemblyDefinition().GetAssemblyName().FullName
+            : "module:" + md.GetString(md.GetModuleDefinition().Name);
+        return (assembly!, ns.Length == 0 ? name : Escape(ns) + "." + name);
+    }
+
+    // Exact keys are the fast path. Distinct scopes only denote the same type if the
+    // consumer's reference universe can prove it (e.g. an actual CLR type forwarder).
+    public static bool SameConstructor(string left, string right, Func<string, string, string, bool> sameDefinition)
+    {
+        if (left == right) return true;
+        var split = left.IndexOf('|');
+        if (split < 0 || split != right.IndexOf('|') || !left.AsSpan(0, split).SequenceEqual(right.AsSpan(0, split))) return false;
+        var a = JsonSerializer.Deserialize<string[]>(left.AsSpan(split + 1))!;
+        var b = JsonSerializer.Deserialize<string[]>(right.AsSpan(split + 1))!;
+        if (a.Length != b.Length) return false;
+        for (var i = 0; i < a.Length; i += 2)
+            if (a[i + 1] != b[i + 1] || a[i] != b[i] && !sameDefinition(a[i + 1], a[i], b[i])) return false;
+        return true;
     }
     private readonly Func<MetadataReader, EntityHandle, string>? _typeIdentity;
     public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null) =>

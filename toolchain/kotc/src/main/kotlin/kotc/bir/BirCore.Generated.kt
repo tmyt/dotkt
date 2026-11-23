@@ -4023,6 +4023,7 @@ data class BirNew(
     val args: List<BirExpression>,
     val argTypes: List<TypeNode>? = null,
     val constructorDeclarationId: String? = null,
+    val constructorNativeKey: String? = null,
     val companionCaptureOwner: String? = null,
     val propertyFunction: BirPropertyFunction? = null,
     val memberVisibility: String? = null,
@@ -4053,6 +4054,10 @@ data class BirNew(
         output.append(']')
         constructorDeclarationId?.let { value ->
             output.append(",\"constructorDeclarationId\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        constructorNativeKey?.let { value ->
+            output.append(",\"constructorNativeKey\":")
             TypeNodeJson.writeString(value, output)
         }
         companionCaptureOwner?.let { value ->

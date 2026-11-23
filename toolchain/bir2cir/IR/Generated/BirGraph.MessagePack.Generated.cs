@@ -20702,24 +20702,25 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<IBirExpression[]> field2 = default;
         OptionalField<string> field3 = default;
         OptionalField<string> field4 = default;
-        OptionalField<BirPropertyFunction> field5 = default;
-        OptionalField<string> field6 = default;
-        OptionalField<BirTypeParameter[]> field7 = default;
+        OptionalField<string> field5 = default;
+        OptionalField<BirPropertyFunction> field6 = default;
+        OptionalField<string> field7 = default;
         OptionalField<BirTypeParameter[]> field8 = default;
-        OptionalField<TypeNode[]> field9 = default;
-        OptionalField<TypeNode> field10 = default;
+        OptionalField<BirTypeParameter[]> field9 = default;
+        OptionalField<TypeNode[]> field10 = default;
         OptionalField<TypeNode> field11 = default;
-        OptionalField<int> field12 = default;
-        OptionalField<IBirExpression[]> field13 = default;
-        OptionalField<int> field14 = default;
-        OptionalField<BirMemberReference> field15 = default;
-        OptionalField<TypeNode[]> field16 = default;
-        OptionalField<TypeNode> field17 = default;
+        OptionalField<TypeNode> field12 = default;
+        OptionalField<int> field13 = default;
+        OptionalField<IBirExpression[]> field14 = default;
+        OptionalField<int> field15 = default;
+        OptionalField<BirMemberReference> field16 = default;
+        OptionalField<TypeNode[]> field17 = default;
+        OptionalField<TypeNode> field18 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 18); if (IrMessagePack.ReadString(ref reader) != "new") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 19); if (IrMessagePack.ReadString(ref reader) != "new") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -20736,61 +20737,65 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 3);
                     field3 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "companionCaptureOwner":
+                case "constructorNativeKey":
                     Seen(ref seen, 1UL << 4);
                     field4 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "propertyFunction":
+                case "companionCaptureOwner":
                     Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<BirPropertyFunction>.Null : OptionalField<BirPropertyFunction>.Of(ReadBirPropertyFunction(ref reader));
+                    field5 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "propertyFunction":
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<BirPropertyFunction>.Null : OptionalField<BirPropertyFunction>.Of(ReadBirPropertyFunction(ref reader));
                     break;
                 case "memberVisibility":
-                    Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
                 case "memberOwnerTypeParams":
-                    Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
-                    break;
-                case "memberMethodTypeParams":
                     Seen(ref seen, 1UL << 8);
                     field8 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
                     break;
-                case "memberSignature":
+                case "memberMethodTypeParams":
                     Seen(ref seen, 1UL << 9);
-                    field9 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    field9 = reader.TryReadNil() ? OptionalField<BirTypeParameter[]>.Null : OptionalField<BirTypeParameter[]>.Of(ReadArray<BirTypeParameter>(ref reader, (ref MessagePackReader reader) => ReadBirTypeParameter(ref reader)));
+                    break;
+                case "memberSignature":
+                    Seen(ref seen, 1UL << 10);
+                    field10 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
                 case "memberReturnType":
-                    Seen(ref seen, 1UL << 10);
-                    field10 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 11);
+                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 case "suspendFnTypePre":
-                    Seen(ref seen, 1UL << 11);
-                    field11 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 12);
+                    field12 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TLayout.ReadType(ref reader));
                     break;
                 case "nullableWitnessCount":
-                    Seen(ref seen, 1UL << 12);
-                    field12 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    Seen(ref seen, 1UL << 13);
+                    field13 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
                     break;
                 case "nullablePendingWitnesses":
-                    Seen(ref seen, 1UL << 13);
-                    field13 = reader.TryReadNil() ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray<IBirExpression>(ref reader, (ref MessagePackReader reader) => ReadBirExpression(ref reader)));
+                    Seen(ref seen, 1UL << 14);
+                    field14 = reader.TryReadNil() ? OptionalField<IBirExpression[]>.Null : OptionalField<IBirExpression[]>.Of(ReadArray<IBirExpression>(ref reader, (ref MessagePackReader reader) => ReadBirExpression(ref reader)));
                     break;
                 case "localCtorIndex":
-                    Seen(ref seen, 1UL << 14);
-                    field14 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
+                    Seen(ref seen, 1UL << 15);
+                    field15 = reader.TryReadNil() ? OptionalField<int>.Null : OptionalField<int>.Of(reader.ReadInt32());
                     break;
                 case "memberRef":
-                    Seen(ref seen, 1UL << 15);
-                    field15 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    Seen(ref seen, 1UL << 16);
+                    field16 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 case "resolvedMemberParams":
-                    Seen(ref seen, 1UL << 16);
-                    field16 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    Seen(ref seen, 1UL << 17);
+                    field17 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
                 case "resolvedMemberReturn":
-                    Seen(ref seen, 1UL << 17);
-                    field17 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    Seen(ref seen, 1UL << 18);
+                    field18 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -20802,27 +20807,28 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             ArgTypes = field1,
             Args = field2,
             ConstructorDeclarationId = field3,
-            CompanionCaptureOwner = field4,
-            PropertyFunction = field5,
-            MemberVisibility = field6,
-            MemberOwnerTypeParams = field7,
-            MemberMethodTypeParams = field8,
-            MemberSignature = field9,
-            MemberReturnType = field10,
-            SuspendFnTypePre = field11,
-            NullableWitnessCount = field12,
-            NullablePendingWitnesses = field13,
-            LocalCtorIndex = field14,
-            MemberRef = field15,
-            ResolvedMemberParams = field16,
-            ResolvedMemberReturn = field17,
+            ConstructorNativeKey = field4,
+            CompanionCaptureOwner = field5,
+            PropertyFunction = field6,
+            MemberVisibility = field7,
+            MemberOwnerTypeParams = field8,
+            MemberMethodTypeParams = field9,
+            MemberSignature = field10,
+            MemberReturnType = field11,
+            SuspendFnTypePre = field12,
+            NullableWitnessCount = field13,
+            NullablePendingWitnesses = field14,
+            LocalCtorIndex = field15,
+            MemberRef = field16,
+            ResolvedMemberParams = field17,
+            ResolvedMemberReturn = field18,
         };
     }
 
     internal static void WriteBirNew(ref MessagePackWriter writer, BirNew value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.ConstructorDeclarationId.IsPresent ? 1 : 0) + (value.CompanionCaptureOwner.IsPresent ? 1 : 0) + (value.PropertyFunction.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.NullablePendingWitnesses.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.ConstructorDeclarationId.IsPresent ? 1 : 0) + (value.ConstructorNativeKey.IsPresent ? 1 : 0) + (value.CompanionCaptureOwner.IsPresent ? 1 : 0) + (value.PropertyFunction.IsPresent ? 1 : 0) + (value.MemberVisibility.IsPresent ? 1 : 0) + (value.MemberOwnerTypeParams.IsPresent ? 1 : 0) + (value.MemberMethodTypeParams.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.MemberReturnType.IsPresent ? 1 : 0) + (value.SuspendFnTypePre.IsPresent ? 1 : 0) + (value.NullableWitnessCount.IsPresent ? 1 : 0) + (value.NullablePendingWitnesses.IsPresent ? 1 : 0) + (value.LocalCtorIndex.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("new");
         if (value.Type.IsPresent)
@@ -20869,6 +20875,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             else
             {
                 IrMessagePack.WriteString(ref writer, value.ConstructorDeclarationId.Value);
+            }
+        }
+        if (value.ConstructorNativeKey.IsPresent)
+        {
+            writer.Write("constructorNativeKey");
+            if (value.ConstructorNativeKey.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.ConstructorNativeKey.Value);
             }
         }
         if (value.CompanionCaptureOwner.IsPresent)
@@ -23532,15 +23547,16 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<IBirExpression[]> field1 = default;
         OptionalField<BirMemberReference> field2 = default;
         OptionalField<TypeNode[]> field3 = default;
-        OptionalField<bool> field4 = default;
-        OptionalField<TypeNode[]> field5 = default;
+        OptionalField<string> field4 = default;
+        OptionalField<bool> field5 = default;
         OptionalField<TypeNode[]> field6 = default;
-        OptionalField<TypeNode> field7 = default;
+        OptionalField<TypeNode[]> field7 = default;
+        OptionalField<TypeNode> field8 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
             {
-                case "k": Seen(ref seen, 1UL << 8); if (IrMessagePack.ReadString(ref reader) != "newClr") throw new FormatException(); break;
+                case "k": Seen(ref seen, 1UL << 9); if (IrMessagePack.ReadString(ref reader) != "newClr") throw new FormatException(); break;
                 case "type":
                     Seen(ref seen, 1UL << 0);
                     field0 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
@@ -23557,21 +23573,25 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 3);
                     field3 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
-                case "kotlinHashStorageSignature":
+                case "constructorNativeKey":
                     Seen(ref seen, 1UL << 4);
-                    field4 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field4 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "kotlinHashStorageSignature":
+                    Seen(ref seen, 1UL << 5);
+                    field5 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 case "memberSignature":
-                    Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
-                    break;
-                case "resolvedMemberParams":
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
                     break;
-                case "resolvedMemberReturn":
+                case "resolvedMemberParams":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
+                    field7 = reader.TryReadNil() ? OptionalField<TypeNode[]>.Null : OptionalField<TypeNode[]>.Of(ReadArray<TypeNode>(ref reader, (ref MessagePackReader reader) => CirMessagePack.ReadType(ref reader)));
+                    break;
+                case "resolvedMemberReturn":
+                    Seen(ref seen, 1UL << 8);
+                    field8 = reader.TryReadNil() ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(CirMessagePack.ReadType(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -23583,17 +23603,18 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             Args = field1,
             MemberRef = field2,
             ArgTypes = field3,
-            KotlinHashStorageSignature = field4,
-            MemberSignature = field5,
-            ResolvedMemberParams = field6,
-            ResolvedMemberReturn = field7,
+            ConstructorNativeKey = field4,
+            KotlinHashStorageSignature = field5,
+            MemberSignature = field6,
+            ResolvedMemberParams = field7,
+            ResolvedMemberReturn = field8,
         };
     }
 
     internal static void WriteBirNewClr(ref MessagePackWriter writer, BirNewClr value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.KotlinHashStorageSignature.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(1 + (value.Type.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.ConstructorNativeKey.IsPresent ? 1 : 0) + (value.KotlinHashStorageSignature.IsPresent ? 1 : 0) + (value.MemberSignature.IsPresent ? 1 : 0) + (value.ResolvedMemberParams.IsPresent ? 1 : 0) + (value.ResolvedMemberReturn.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newClr");
         if (value.Type.IsPresent)
@@ -23640,6 +23661,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 {
                     CirMessagePack.WriteType(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.ConstructorNativeKey.IsPresent)
+        {
+            writer.Write("constructorNativeKey");
+            if (value.ConstructorNativeKey.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.ConstructorNativeKey.Value);
             }
         }
         if (value.KotlinHashStorageSignature.IsPresent)
