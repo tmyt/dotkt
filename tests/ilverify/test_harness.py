@@ -13,6 +13,7 @@ STACK = "StackBufferTests::stackAllocationAndSpanInterop()"
 BYREF = "ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"
 SPAN_INPUT = "NominalFunctionDelegateTests::dotkt:lambda:56([S.P.CoreLib]System.Span`1<int32>)"
 SPAN_HEAP = "NominalFunctionDelegateTests+dotkt$NominalFunctionDelegateTestsKt$Closure150::invoke()"
+SPAN_RETURNS = (SPAN_INPUT, SPAN_HEAP, "NominalFunctionDelegateTests::heapView(int32[])")
 
 
 class HarnessTests(unittest.TestCase):
@@ -111,13 +112,12 @@ class HarnessTests(unittest.TestCase):
         self.dll = self.work / "InteropConsumer.Tests.dll"
         self.dll.touch()
         self.run_probe(self.complete([self.finding(), self.finding(BYREF),
-                                      self.finding(SPAN_INPUT, "ReturnPtrToStack"),
-                                      self.finding(SPAN_HEAP, "ReturnPtrToStack")]), 2, 0, "--audit-baseline")
+                                      *(self.finding(m, "ReturnPtrToStack") for m in SPAN_RETURNS)]), 2, 0, "--audit-baseline")
 
     def test_exact_span_verifier_limits(self):
         self.dll = self.work / "InteropConsumer.Tests.dll"
         self.dll.touch()
-        for method in (SPAN_INPUT, SPAN_HEAP):
+        for method in SPAN_RETURNS:
             with self.subTest(method=method):
                 out = self.run_probe(self.complete([self.finding(method, "ReturnPtrToStack")]), 2, 0)
                 self.assertIn("SPAN-VERIFIER-LIMIT", out)

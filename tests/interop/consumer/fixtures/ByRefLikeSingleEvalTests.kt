@@ -143,5 +143,8 @@ class ByRefLikeSingleEvalTests {
         assertEquals(34, brlTally(ByRefLikeApi.MakeTally(brlMark(4))))
         assertEquals(1, brlSeq)
         assertEquals("Td", brlLog)
+        check(ByRefLikeApi.MakeTally(brlMark(4)) != null)
+        check(null != ByRefLikeApi.MakeTally(brlMark(4)))
+        assertEquals("TdTT", brlLog)
     }
 }
