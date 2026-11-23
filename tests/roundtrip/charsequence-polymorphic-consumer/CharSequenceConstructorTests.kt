@@ -9,6 +9,11 @@ private open class ConstructorText(val source: CharSequence?) {
     fun length() = source?.length ?: -1
 }
 private class DerivedText(a: String, b: String) : ConstructorText(a + b)
+private class OuterText<T>(val outer: T) {
+    open inner class Base<U>(val value: U)
+    inner class Child(text: String) : Base<CharSequence>(text)
+    fun textLength(text: String) = Child(text).value.length
+}
 
 class CharSequenceConstructorTests {
     @TestAttribute
@@ -20,6 +25,7 @@ class CharSequenceConstructorTests {
         check(reads == 2)
         check(ConstructorText("a", "bc").length() == 3)
         check(DerivedText("a", "bc").length() == 3)
+        check(OuterText(42).textLength("abc") == 3)
         check(ConstructorValue<CharSequence>("ab").source.length == 2)
         val custom = object : CharSequence {
             override val length: Int get() = 17

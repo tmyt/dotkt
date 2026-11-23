@@ -58,6 +58,7 @@ static partial class StringCharSequenceBridge
         // Read actual parameter slots after local String collapse; a use-site
         // signature still describes the original Kotlin declaration.
         var local = new Dictionary<(string, string), TypeNode[]>();
+        var innerOrder = new InnerApplicationOrder(files, refs);
         foreach (var file in files)
             foreach (var type in file.Types.OrEmpty())
                 foreach (var ctor in type.Ctors.OrEmpty())
@@ -67,7 +68,7 @@ static partial class StringCharSequenceBridge
         return (owner, id, includeReferenceCapture) => {
             if (owner == null) return null;
             if (id != null && local.TryGetValue((owner.Name, id), out var slots))
-                return owner.Args is { Length: > 0 } args
+                return innerOrder.DeclarationArguments(owner) is { Length: > 0 } args
                     ? slots.Select(slot => SubstCallTvs(slot, args, Array.Empty<TypeNode>())).ToArray() : slots;
             // Reflection supplies only the CLR type of a generated capture,
             // not its Kotlin nullability. Preserve null when adapting it.
@@ -243,14 +244,18 @@ static partial class StringCharSequenceBridge
         var owner = constructor.ThisArgs.HasValue ? env.Owner.Self : env.Owner.Base;
         var slots = env.ConstructorSlots?.Invoke(owner, constructor.DelegationDeclarationId.OrDefault(), includeReferenceCapture: false);
         // Local delegation uses the selected declaration after String collapse.
-        // Otherwise the existing open signature is closed in its base owner.
+        // Otherwise keep the open signature, closing base arguments for super calls.
         var parameters = slots ?? constructor.DelegationSig.Value;
         var ownerArgs = owner?.Args ?? Array.Empty<TypeNode>();
         for (var index = 0; index < Math.Min(arguments.Length, parameters.Length); index++)
         {
+            if (arguments[index] is not { } argument) continue;
             var type = slots == null ? SubstCallTvs(parameters[index], ownerArgs, Array.Empty<TypeNode>()) : parameters[index];
-            if (IsCharSeqT(type) && arguments[index] is { } argument)
+            if (IsCharSeqT(type))
                 arguments[index] = SourceCoerceCharSeqArg(argument, env, type);
+            else if (index < constructor.DelegationSig.Value.Length && IsCharSeqT(constructor.DelegationSig.Value[index])
+                && (IsStringTokT(type) || type is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)))
+                arguments[index] = CharSeqStringLowering.SnapshotForStringSlot(argument, env.Vars, type is TypeNode.Nullable) ?? argument;
         }
     }
 
