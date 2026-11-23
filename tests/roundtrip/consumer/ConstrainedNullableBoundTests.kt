@@ -23,6 +23,7 @@ import roundtrip.constrainedbound.OtherSelector
 import roundtrip.constrainedbound.ConcreteMarkedItem
 import roundtrip.constrainedbound.NativeFacetHolder
 import roundtrip.constrainedbound.JoinedFactory
+import roundtrip.constrainedbound.makeNativeJoined
 import RoundtripDependentNative.IMarker
 import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
@@ -300,6 +301,8 @@ class ConstrainedNullableBoundTests {
         JointSelection<A>().select(value)
     private fun <A> makeJoined(): Any where A : Base, A : IMark<String>, A : IMarker<String> =
         JointSelection<A>()
+    private fun <A> forwardNativeJoined(): Any where A : Base, A : ChildMark, A : IMarker<String> =
+        makeNativeJoined<A>()
 
     @TestAttribute
     fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
@@ -319,6 +322,7 @@ class ConstrainedNullableBoundTests {
         check(joined.item === value)
         check(selectJoined<Child<*>>(value) === value)
         check(makeJoined<Child<*>>() is RoundtripDependentNative.IKey<*>)
+        check(forwardNativeJoined<Child<*>>() is RoundtripDependentNative.IJoined<*>)
     }
 
     private fun checkFixedVirtualDispatch() {

@@ -24,7 +24,8 @@ sealed class ProjectedCallableEntries
     readonly bool referenceBuild;
     readonly CapturedGenericInvocation.PreparedInvocation invocations;
 
-    static string EntryId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-call");
+    internal static string EntryId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-call");
+    readonly IReadOnlyDictionary<string, HashSet<(int Primary, TypeNode Bound)>> callableFacets;
 
     internal static bool HasFixedAbi(BirFunctionDeclaration local, string id, ReferenceMetadataIndex references) =>
         local != null ? local.HasNativeOverrideSlot || local.RequiresClrOverride.OrDefault()
@@ -33,11 +34,13 @@ sealed class ProjectedCallableEntries
 
     internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild,
         CapturedGenericInvocation.PreparedInvocation invocations,
-        IReadOnlyDictionary<string, FBoundStarProjectionErasure.ProjectedStorageOwner> storageOwners)
+        IReadOnlyDictionary<string, FBoundStarProjectionErasure.ProjectedStorageOwner> storageOwners,
+        IReadOnlyDictionary<string, HashSet<(int Primary, TypeNode Bound)>> callableFacets)
     {
         this.references = references;
         this.invocations = invocations;
         this.storageOwners = storageOwners;
+        this.callableFacets = callableFacets;
         classHierarchy = new(() => SupertypeGraph.CollectSource(files));
         this.referenceBuild = referenceBuild;
         classes = files.SelectMany(f => f.Types.OrEmpty()).OfType<BirClassDefinition>()
@@ -161,8 +164,14 @@ sealed class ProjectedCallableEntries
             references.IsClassType(bound) || references.PhysicalTypeForProof(bound.Name, bound.Args?.Length ?? 0)?.IsClass == true
                 ? "class" : null)), locations);
 
-    ProjectedClassStorageFrame MethodFrame(BirFunctionDeclaration m) => Frame(m.TypeParams.OrEmpty(),
-        !m.Extern.OrDefault() && m.Params.OrEmpty().Any(p => ProjectedMethodPlan.HasMethodLocation(p, references)));
+    ProjectedClassStorageFrame MethodFrame(BirFunctionDeclaration m)
+    {
+        var frame = Frame(m.TypeParams.OrEmpty(),
+            !m.Extern.OrDefault() && m.Params.OrEmpty().Any(p => ProjectedMethodPlan.HasMethodLocation(p, references)));
+        var id = m.LocalBodyEntry?.Id ?? m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
+        return frame != null && id != null && callableFacets.TryGetValue(id, out var needed)
+            ? frame.WithNativeArguments(f => needed.Contains((f.OwnerIndex, references.WitnessConstraintKey(f.Bound)))) : frame;
+    }
 
     ProjectedMethodPlan DeclarationPlan(IBirTypeDeclaration owner, BirFunctionDeclaration method, ProjectedClassStorageFrame frame)
     {
@@ -276,7 +285,7 @@ sealed class ProjectedCallableEntries
         if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(); return; }
         var original = Enumerable.Range(0, exact.TypeParams.Value.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
         var exactLocations = plan.AddressOperands.Select(i => ((TypeNode.ByRef)SignatureValueTypes.Of(exact.Params.Value[i].Type.Value)).Of);
-        exact.Body = ForwardBody(owner, exact, implementation, original.Concat(plan.FacetSources.Select(i => original[i])).Concat(exactLocations).ToArray());
+        exact.Body = ForwardBody(owner, exact, implementation, original.Concat(plan.Facets.Select(f => original[f.OwnerIndex])).Concat(exactLocations).ToArray());
     }
 
     static IBirStatement[] ForwardBody(IBirTypeDeclaration owner, BirFunctionDeclaration exact,

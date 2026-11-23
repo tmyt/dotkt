@@ -63,7 +63,7 @@ static partial class FBoundStarProjectionErasure
         CapturedGenericInvocation.PreparedInvocation invocations)
     {
         var storageOwners = new Dictionary<string, ProjectedStorageOwner>(StringComparer.Ordinal);
-        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners);
+        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners, carriers.CallableFacets);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);

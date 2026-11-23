@@ -129,15 +129,28 @@ sealed partial class GenericRepresentationPolicy
     {
         var physical = new List<TypeNode>();
         var erased = new List<TypeNode>();
+        // A Kotlin value can use an existential storage type that implements no single
+        // closed construction of this native interface. Its proof belongs to the native use.
+        bool StorageProof(TypeNode proof)
+        {
+            if (!CanReferenceStorageProof(proof)) return false;
+            if (proof is not TypeNode.Fqn { Args.Length: > 0 } named || !HasNativeConstraint(named)
+                || _references?.IsInterfaceType(named) != true) return true;
+            // Dependent bounds are resolved in their declaring generic frame;
+            // in particular a captured IComparer<T> is not IComparer<closed T>.
+            var dependent = false;
+            BirGraphNameFields.VisitTypeNodes(named, t => dependent |= t is TypeNode.Tv or TypeNode.Star or TypeNode.Projection);
+            return dependent;
+        }
         foreach (var bound in bounds)
         {
-            if (!IsNominalStorageBound(bound) && CanReferenceStorageProof(bound)) { physical.Add(bound); continue; }
+            if (!IsNominalStorageBound(bound) && StorageProof(bound)) { physical.Add(bound); continue; }
             erased.Add(bound);
             // Use the same public proof set at both ends of an open generic call,
             // including when its source bound is an explicitly named hidden interface.
             var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
             foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
-                if (isInterface && StorageConstraint(parent) is { } proof && CanReferenceStorageProof(proof)) physical.Add(proof);
+                if (isInterface && StorageConstraint(parent) is { } proof && StorageProof(proof)) physical.Add(proof);
         }
         if (physical.Count != 0) parameter.Constraints = physical.Distinct().ToArray();
         if (erased.Count != 0) parameter.ErasedInnerConstraints = erased.ToArray();

@@ -47,8 +47,12 @@ static partial class RoundtripMetadata
         => method.Attrs = method.Attrs.OrEmpty().Append(PlacementCarrier(AKProjectedMethod,
             BirCarrier.EncodeMetadata(plan, static (ref MessagePackWriter writer, ProjectedMethodPlan p) => {
                 writer.WriteMapHeader(2); writer.Write("facets");
-                writer.WriteArrayHeader(p.FacetSources.Length);
-                foreach (var source in p.FacetSources) writer.Write(source);
+                writer.WriteArrayHeader(p.Facets.Length);
+                foreach (var f in p.Facets)
+                {
+                    writer.WriteArrayHeader(3); writer.Write(f.OwnerIndex);
+                    TypeNodeMessagePack.Write(ref writer, f.Bound); writer.Write(f.NativeArgument);
+                }
                 writer.Write("addresses"); writer.WriteArrayHeader(p.AddressOperands.Length);
                 foreach (var operand in p.AddressOperands) writer.Write(operand);
             }))).ToArray();

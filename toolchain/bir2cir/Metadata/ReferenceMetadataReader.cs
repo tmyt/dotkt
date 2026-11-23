@@ -1528,12 +1528,20 @@ static class ReferenceMetadataReader
         }
     }
 
-    internal static ProjectedMethodPlan ReadProjectedMethodPlan(MethodBase declaration, BirTypeParameter[] physical)
+    internal static ProjectedMethodPlan ReadProjectedMethodPlan(MethodBase declaration, BirTypeParameter[] physical,
+        Func<TypeNode, TypeNode> physicalKey)
     {
         var payload = CarrierJsonOf(declaration.GetCustomAttributesData(), declaration.DeclaringType.Assembly,
             RoundtripMetadata.AKProjectedMethod) ?? throw new InvalidDataException($"Missing projected method mapping on {declaration}");
-        int[] Positions(string name) => ((JsonArray)payload[name]).Select(row => (int)row).ToArray();
-        return new(physical, Positions("facets"), Positions("addresses"));
+        var addresses = ((JsonArray)payload["addresses"]).Select(row => (int)row).ToArray();
+        var rows = (JsonArray)payload["facets"];
+        var primary = physical.Length - rows.Count - addresses.Length;
+        var facets = rows.Select((row, i) => {
+            var key = physicalKey(TypeNode.Read(row[1]));
+            var bound = physical[primary + i].Constraints.OrEmpty().Single(c => physicalKey(c) == key);
+            return new ProjectedClassStorageFrame.WitnessSlot((int)row[0], bound, (bool)row[2]);
+        }).ToArray();
+        return new(physical, facets, addresses);
     }
 
     internal static ProjectedConstructorPlan ReadConstructorPlan(MethodBase declaration, MethodBase factory,

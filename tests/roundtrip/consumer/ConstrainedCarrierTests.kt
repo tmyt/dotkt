@@ -6,6 +6,7 @@ import constrainedcarrier.ReferencedAnimal
 import constrainedcarrier.ReferencedDog
 import constrainedcarrier.compareReferencedGeneric
 import constrainedcarrier.deferReferencedGeneric
+import constrainedcarrier.rotateComparer
 
 class ConsumerConstrainedSink : ReferencedSink<ReferencedAnimal>() {
     override fun <R : ReferencedAnimal> render(value: R): String {
@@ -19,6 +20,9 @@ class ConsumerConstrainedSink : ReferencedSink<ReferencedAnimal>() {
 
 class ConsumerGenericComparer : System.Collections.Generic.IComparer<Any> {
     override fun Compare(x: Any?, y: Any?): Int = x.toString().toInt()
+}
+private class ByElement<T> : System.Collections.Generic.IComparer<T> {
+    override fun Compare(x: T?, y: T?): Int = 0
 }
 class ConsumerGenericValue<out T>(val item: T) {
     fun <R : System.Collections.Generic.IComparer<T>> compare(value: R): Int = compareReferencedGeneric<T, R>(value, item)
@@ -39,5 +43,10 @@ class ConstrainedCarrierRoundtripTests {
         val generic: ConsumerGenericValue<Any> = ConsumerGenericValue(29)
         assertEquals(29, generic.compare(ConsumerGenericComparer()))
         assertEquals(29, generic.deferred(ConsumerGenericComparer())())
+        val first = ByElement<String>()
+        @Suppress("UNCHECKED_CAST")
+        val second = ByElement<Long>() as ByElement<String>
+        val next = rotateComparer(first, second)
+        check(next() === first && next() === second)
     }
 }

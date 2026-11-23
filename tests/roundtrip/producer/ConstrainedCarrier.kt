@@ -19,3 +19,8 @@ fun <T, R : System.Collections.Generic.IComparer<T>> compareReferencedGeneric(va
     value.Compare(item, item)
 fun <T, R : System.Collections.Generic.IComparer<T>> deferReferencedGeneric(value: R, item: T): () -> Int =
     { value.Compare(item, item) }
+
+fun <R : System.Collections.Generic.IComparer<String>> rotateComparer(first: R, second: R): () -> R {
+    var saved = first
+    return { val old = saved; saved = second; old }
+}
