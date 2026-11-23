@@ -683,7 +683,7 @@ sealed class Pipeline
         // Preserve the original per-file alias -> selected ID -> override order.
         var charSeqReturnViews = new CharSeqStringLowering.CharSeqRetLambdas[captured.Length];
         var charSeqResults = !referenceBuild && appBuild && !inventory.HasUserCharSeqImplementation
-            ? new CharSeqStringLowering.MemberResults() : null;
+            ? new CharSeqStringLowering.MemberSlots() : null;
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];

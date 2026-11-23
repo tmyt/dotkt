@@ -26,3 +26,4 @@ fun sequenceIndexInLibrary(value: CharSequence, predicate: (Char) -> Boolean): I
 
 fun sequenceObjectInLibrary(flag: Boolean, value: CharSequence): Any = if (flag) "raw" else value
 fun sequenceElvisInLibrary(value: CharSequence?): String = (value ?: "raw").toString()
+fun sequenceLengthInLibrary(value: CharSequence?): Int = value?.length ?: -1

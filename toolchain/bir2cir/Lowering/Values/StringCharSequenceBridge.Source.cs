@@ -84,7 +84,7 @@ static partial class StringCharSequenceBridge
     // This entry owns the continuing source graph. Newly authored callback
     // ingredients are returned by their actual slots, not detached snapshots.
     internal static SourceBridgeResult Apply(BirFileDeclaration file, Func<BirNew, TypeNode[]> constructorSlots,
-        CharSeqStringLowering.CharSeqRetLambdas retLambdas, CharSeqStringLowering.MemberResults results = null)
+        CharSeqStringLowering.CharSeqRetLambdas retLambdas, CharSeqStringLowering.MemberSlots results = null)
     {
         _retLambdas = retLambdas;
         _fired = false;
@@ -145,13 +145,15 @@ static partial class StringCharSequenceBridge
         return result;
     }
 
-    static void WalkSourceBridge(BirGraphSlot slot, SourceBridgeEnv env,
-        List<ClosureSynthesis.MaterializedOccurrence> materialized, bool returnsOnly = false, CharSeqStringLowering.MemberResults results = null)
+    // Report a selected collapsed result to its enclosing evaluation block,
+    // whose source stamp otherwise hides the physical result from its caller.
+    static bool WalkSourceBridge(BirGraphSlot slot, SourceBridgeEnv env,
+        List<ClosureSynthesis.MaterializedOccurrence> materialized, bool returnsOnly = false, CharSeqStringLowering.MemberSlots results = null)
     {
         var node = slot.Value;
-        if (node == null || node is IBirExecutablePayload) return;
+        if (node == null || node is IBirExecutablePayload) return false;
         var childEnv = env.WithDecl(node);
-        if (node is BirCallInstance call) results?.Bind(call);
+        var collapsedResult = false;
         node.VisitSourceChildren(child => WalkSourceBridge(child, childEnv, materialized, returnsOnly, results), region => {
             // Preserve the original valueBlock-only snapshot: its result sees
             // all declared local types, but a variable's initializer does not
@@ -170,12 +172,16 @@ static partial class StringCharSequenceBridge
                 if (region.Statements[index] is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
                     current = current.WithVar(variable.Name.Value, variable.Type.Value);
             }
-            if (region.Result is { } result) WalkSourceBridge(result, resultEnv, materialized, returnsOnly, results);
+            if (region.Result is { } result && WalkSourceBridge(result, resultEnv, materialized, returnsOnly, results)
+                && node is BirValueBlock block)
+                collapsedResult = CharSeqStringLowering.MemberSlots.BindResultBlock(block);
         });
-        if (returnsOnly && node is not BirReturn) return;
+        if (returnsOnly && node is not BirReturn) return false;
+        if (node is BirCallStatic or BirCallInstance) collapsedResult = results?.Bind(node, env.Vars) == true;
         if (node is BirConstructor constructor) SourceWrapDelegationArgs(constructor, childEnv);
         var replacement = SourceBridgeTransform(node, env, materialized);
         if (!ReferenceEquals(replacement, node)) slot.Replace(replacement);
+        return collapsedResult;
     }
 
     static BirGraphValue SourceBridgeTransform(BirGraphValue node, SourceBridgeEnv env,

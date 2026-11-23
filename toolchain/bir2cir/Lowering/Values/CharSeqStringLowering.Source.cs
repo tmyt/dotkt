@@ -8,35 +8,59 @@ using DotKt.Cir;
 
 static partial class CharSeqStringLowering
 {
-    // A selected local declaration, not its receiver's type or the member's
-    // spelling, determines whether an instance result was lowered to String.
-    internal sealed class MemberResults
+    // Local declarations own their physical call slots. A foreign method with
+    // the same source signature can still require the CharSequence interface.
+    internal sealed class MemberSlots
     {
-        readonly HashSet<string> declarations = new(StringComparer.Ordinal);
-        internal void Collect(BirFunctionDeclaration method)
+        readonly Dictionary<string, (BirFunctionDeclaration Method, bool StringResult)> declarations = new(StringComparer.Ordinal);
+        internal void Collect(BirFunctionDeclaration method, bool stringResult)
         {
-            if (method.DeclarationId.OrDefault() is string id && IsStringDeclT(method.Ret.OrDefault()))
-                declarations.Add(id);
+            if (method.DeclarationId.OrDefault() is string id)
+                declarations[id] = (method, stringResult);
         }
-        internal void Bind(BirCallInstance call)
+        internal bool Bind(BirGraphValue call, IReadOnlyDictionary<string, TypeNode> vars)
         {
-            if (call.DeclarationId.OrDefault() is string id && declarations.Contains(id))
+            var (id, sig, args) = call switch {
+                BirCallInstance c => (c.DeclarationId.OrDefault(), c.Sig.OrDefault() ?? c.ShapeTypes.OrDefault(), c.Args.OrDefault()),
+                BirCallStatic c => (c.DeclarationId.OrDefault(), c.Sig.OrDefault() ?? c.ShapeTypes.OrDefault(), c.Args.OrDefault()),
+                _ => default,
+            };
+            if (id == null || !declarations.TryGetValue(id, out var declaration)) return false;
+            var parameters = declaration.Method.Params.OrEmpty();
+            if (sig != null && args != null && parameters.Length == sig.Length)
+                for (var i = 0; i < Math.Min(sig.Length, args.Length); i++)
+                    if (IsScalarSequence(sig[i]) && IsStringDeclT(parameters[i].Type.OrDefault()))
+                    {
+                        sig[i] = LowerTokT(sig[i]);
+                        if (args[i] is { } argument && SnapshotForStringSlot(argument, vars, sig[i] is TypeNode.Nullable) is { } value)
+                            args[i] = value;
+                    }
+            if (declaration.StringResult)
                 call.RewriteOwnTypeFieldsInPlace((field, _, type) =>
                     (field is "sty" or "ret" or "dynRet" or "memberReturnType") && IsScalarSequence(type) ? LowerTokT(type) : type);
+            return declaration.StringResult;
+        }
+        internal static bool BindResultBlock(BirValueBlock block)
+        {
+            var surface = block.Type.OrDefault() ?? block.Sty.OrDefault();
+            if (surface != null && !IsScalarSequence(surface) && !IsStringDeclT(surface)) return false;
+            block.RewriteOwnTypeFieldsInPlace((field, _, type) =>
+                (field is "type" or "sty") && IsScalarSequence(type) ? LowerTokT(type) : type);
+            return true;
         }
     }
     static bool IsScalarSequence(TypeNode type) => type is TypeNode.Fqn { Name: CharSeq }
         or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } };
 
     internal static BirFileDeclaration Apply(BirFileDeclaration root, IReadOnlySet<string> localTopLevelFns,
-        out CharSeqRetLambdas retLambdas, MemberResults results = null)
+        out CharSeqRetLambdas retLambdas, MemberSlots results = null)
         => (BirFileDeclaration)Apply((BirGraphValue)root, localTopLevelFns, out retLambdas, results);
 
     internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns)
         => Apply(root, localTopLevelFns, out _);
 
     internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns,
-        out CharSeqRetLambdas retLambdas, MemberResults results = null)
+        out CharSeqRetLambdas retLambdas, MemberSlots results = null)
     {
         // These facts describe the original callable contract, before either a
         // declaration or a structured function-type return is collapsed.
@@ -60,14 +84,15 @@ static partial class CharSeqStringLowering
         Collect(root);
         retLambdas = new CharSeqRetLambdas(statics, closures);
         var candidates = root is BirFileDeclaration file && results != null
-            ? file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty().Where(m => IsScalarSequence(m.Ret.OrDefault()))
-                .Select(m => (Owner: t.Name.OrDefault(), Method: m)))
+            ? file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty()
+                .Select(m => (Owner: t.Name.OrDefault(), Method: m, SequenceResult: IsScalarSequence(m.Ret.OrDefault())))
+                .Where(c => c.SequenceResult || c.Method.Params.OrEmpty().Any(p => IsScalarSequence(p.Type.OrDefault()))))
                 .ToArray() : null;
         var lowered = WalkSource(root, new SourceEnv(), localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal), exempt);
         if (candidates != null)
-            foreach (var (owner, method) in candidates)
-                if (!StringCharSequenceBridge.RestoresClosureReturn(owner, method, retLambdas))
-                    results.Collect(method);
+            foreach (var (owner, method, sequenceResult) in candidates)
+                results.Collect(method, sequenceResult && IsStringDeclT(method.Ret.OrDefault())
+                    && !StringCharSequenceBridge.RestoresClosureReturn(owner, method, retLambdas));
         return lowered;
     }
 
@@ -340,15 +365,18 @@ static partial class CharSeqStringLowering
     static BirLocal ReadSource(string name) => new() { Name = name };
 
     static IBirExpression CoerceOrNull(IBirExpression value, SourceEnv env, bool nullableTarget)
+        => SnapshotForStringSlot(value, env.Vars, nullableTarget);
+
+    internal static IBirExpression SnapshotForStringSlot(IBirExpression value, IReadOnlyDictionary<string, TypeNode> vars, bool nullableTarget)
     {
-        if (IsStaticString(value, env)) return null;
+        if (IsStaticString(value, vars)) return null;
         if (!nullableTarget) return Snapshot(value);
         if (value is BirConstant constant && (!constant.Value.HasValue || constant.Value.Value is BirLiteral.NullLiteral))
         {
             constant.Type = new TypeNode.Nullable(StringTn);
             return constant;
         }
-        if (BirGraphStaticType.Surface(value, env.Vars) is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)) return null;
+        if (BirGraphStaticType.Surface(value, vars) is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)) return null;
         return SnapshotNullable(value);
     }
 
@@ -387,9 +415,9 @@ static partial class CharSeqStringLowering
     // Positive String recognition is deliberately narrower than Surface:
     // a local uses its lexical declaration, and other values use ret/dynRet,
     // never a convenient sty that could describe an uncollapsed adapter.
-    static bool IsStaticString(IBirExpression value, SourceEnv env) => value switch {
+    static bool IsStaticString(IBirExpression value, IReadOnlyDictionary<string, TypeNode> vars) => value switch {
         BirConstant constant => IsStringTokT(constant.Type.OrDefault()),
-        BirLocal local => local.Name.HasValue && env.Vars.TryGetValue(local.Name.Value, out var type) && IsStringTokT(type),
+        BirLocal local => local.Name.HasValue && vars.TryGetValue(local.Name.Value, out var type) && IsStringTokT(type),
         BirCast cast => IsStringTokT(cast.Type.OrDefault()),
         BirConcat => true,
         BirThis => false,

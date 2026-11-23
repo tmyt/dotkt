@@ -7,6 +7,7 @@ import roundtrip.upstreamstdlib.inlineSequenceIndex
 import roundtrip.upstreamstdlib.sequenceIndexInLibrary
 import roundtrip.upstreamstdlib.sequenceObjectInLibrary
 import roundtrip.upstreamstdlib.sequenceElvisInLibrary
+import roundtrip.upstreamstdlib.sequenceLengthInLibrary
 import roundtriptests.sequenceresults.LocalSequenceResult
 
 private class StringSource(private val text: String?) : SequenceSource() {
@@ -36,6 +37,11 @@ class CharSequenceBoundaryTests {
         fun once(): LocalSequenceResult<Int> { reads++; return holder }
         check(once().source?.length == 5 && reads == 1)
         check(once().read()?.length == 5 && reads == 2)
+        check(holder.lengthOf(once().read()) == 5 && reads == 3)
+        var arguments = 0
+        fun argument(): Int { arguments++; return arguments }
+        check(sequenceLengthInLibrary(holder.pick(argument())) == 5 && arguments == 1)
+        check(sequenceLengthInLibrary(LocalSequenceResult.text(0)) == 5)
         check(LocalSequenceResult(1, null).source == null && holder.item == 42)
     }
 
