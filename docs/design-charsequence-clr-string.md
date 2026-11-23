@@ -14,6 +14,13 @@ A non-string value entering one of these slots is converted through `.toString()
 snapshot: later changes to a StringBuilder are not visible through the CharSequence value. A string
 passes directly. Kotlin source types remain CharSequence; this is a physical representation choice.
 
+An array slot is not a scalar string slot. Passing or returning an array between slots with
+the same physical representation preserves its identity, including for nullable and jagged
+arrays. A fresh vector stores its elements using the selected component type; snapshot conversion
+applies to a scalar entering string storage, never to the enclosing array. This does not make
+a foreign interface array interchangeable with a local `string[]`: neither CLR array can be
+retyped as the other while preserving its identity.
+
 The pass handles the local declaration/call boundary. External stdlib extension signatures and
 higher-order delegate contracts can still require the synthetic interface, so collapsing every
 CharSequence occurrence to string would be incorrect.
