@@ -14,7 +14,7 @@ static class ReflectedKotlinType
         "Set", "MutableSet", "Map", "MutableMap", "ArrayList", "HashSet",
     }.ToDictionary(name => "kotlin.collections." + name,
         name => new TypeNode.Fqn("DotKt.Runtime.CompilerServices." + name + "Literal"), StringComparer.Ordinal);
-    static TypeNode CollectionLiteral(TypeNode type) => type switch {
+    internal static TypeNode CollectionLiteral(TypeNode type) => type switch {
         TypeNode.Nullable n => CollectionLiteral(n.Of),
         TypeNode.Oblivious o => CollectionLiteral(o.Of),
         TypeNode.Fqn f => CollectionLiterals.GetValueOrDefault(SourceName(f)),
@@ -41,25 +41,7 @@ static class ReflectedKotlinType
             });
             if (node is BirClassReference { Type.Value: TypeNode.Fn { Reflective: true, Suspend: false } } literal)
                 literal.Type = ReflectiveCallableClassifier();
-            if (node is BirClassReference reference && reference.ReifiedLiteral.HasValue)
-            {
-                var reified = reference.ReifiedLiteral.Value;
-                reference.ReifiedLiteral = default;
-                var target = reference.Type.Value;
-                if (CollectionLiteral(target) is TypeNode token) reference.Type = token;
-                else if (reified && KotlinTypeWitness.Variable(target) is { } variable)
-                {
-                    // A native generic argument need not identify the Kotlin collection declaration.
-                    // Forward the caller's reflection witness; keep the old runtime token for other types.
-                    var native = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
-                    return helpers.Bind(new BirCallStatic {
-                        Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt"),
-                        Method = "reifiedKClass", Sig = new TypeNode[] { native, KType }, Ret = native,
-                        Args = new IBirExpression[] { reference, new BirReflectedType { Operand = variable } },
-                    });
-                }
-                else if (reified) reference.ReifiedLiteral = true;
-            }
+            if (node is BirClassReference reference) BindKnownLiteral(reference);
             return node switch {
                 BirReflectedParameter parameter => (BirGraphValue)Declared(parameter, helpers, value => value),
                 BirReflectedType reflected => (BirGraphValue)Value(reflected.Operand.Value, helpers,
@@ -68,6 +50,17 @@ static class ReflectedKotlinType
             };
         }
         return (BirFileDeclaration)Lower(root);
+    }
+
+    // Defaults and inline bodies may acquire their source type in the consumer.
+    // Physical typeof operands never carry this source-literal fact.
+    internal static void BindKnownLiteral(BirClassReference reference)
+    {
+        if (!reference.ReifiedLiteral.HasValue || KotlinTypeWitness.Variable(reference.Type.Value) != null) return;
+        if (CollectionLiteral(reference.Type.Value) is { } token) {
+            reference.Type = token;
+            reference.ReifiedLiteral = default;
+        } else if (!reference.ReifiedLiteral.Value) reference.ReifiedLiteral = default;
     }
 
     internal static IBirExpression[] Projections(BirReflectedType reflected, SourceHelperBinder helpers,

@@ -61,6 +61,11 @@ static class KClassMemberBinding
                 return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
                     Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+            if (node is BirClassReference source) {
+                ReflectedKotlinType.BindKnownLiteral(source);
+                if (source.ReifiedLiteral.OrDefault() && KotlinTypeWitness.Variable(source.Type.Value) != null)
+                    return source; // The witness pass owns a still-open reified argument.
+            }
             IBirExpression operand;
             if (node is BirRuntimeClass runtime) operand = runtime;
             else if (node is BirClassReference literal && (literal.ReifiedLiteral.OrDefault()

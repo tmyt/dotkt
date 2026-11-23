@@ -62,13 +62,12 @@ private fun classifierIdentity(type: StarProjectionType): KotlinClassifierIdenti
 @PublishedApi
 internal fun runtimeKClass(type: StarProjectionType): StarProjectionType {
     if (!type.isGenericType) return type
-    val declared = classifierIdentity(type).classifier
-    return if (declared == type) nativeCollectionLiteral(type) ?: type else declared
+    return classifierIdentity(type).classifier
 }
 
 @PublishedApi
-internal fun reifiedKClass(type: StarProjectionType, shape: kotlin.reflect.KType): StarProjectionType {
-    val source = shape.classifier
+internal fun reifiedKClass(type: StarProjectionType, shape: Any?): StarProjectionType {
+    val source = if (shape is kotlin.reflect.KType) shape.classifier else shape
     return if (source is StarProjectionType && collectionLiteral(source) != null) source
         else if (type.isGenericType) classifierIdentity(type).classifier else type
 }

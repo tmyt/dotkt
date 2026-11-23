@@ -20,9 +20,14 @@ import roundtrip.reflectedtypes.declaredInCallback
 import roundtrip.reflectedtypes.declaredInDefault
 import roundtrip.kclassvalues.reflectedLiteral
 import roundtrip.kclassvalues.ImportedTyped
+import roundtrip.kclassvalues.CollectionKey
+import roundtrip.kclassvalues.defaultCollectionKey
+import roundtrip.kclassvalues.defaultReifiedKey
+import roundtrip.kclassvalues.classifierAfter
 
 private class Box<T>
 @ImportedTyped(Map::class) private class MapKey
+@CollectionKey private class DefaultMapKey
 private inline fun <reified T> forwardedDefault() = defaultType<T>()
 private fun <T : CharSequence> boundedType() = typeOf<List<T?>>()
 private inline fun <reified R, T : R> dependentBound() = typeOf<List<T>>()
@@ -80,11 +85,17 @@ class ReflectedTypeTests {
         // Equality with its own literal alone cannot distinguish a classifier from erased Object storage.
         val keys = mapOf(List::class to "list", Set::class to "set", Map::class to "map", Any::class to "any")
         check(keys.size == 4 && keys[reflectedLiteral<Map<String, Int>>()] == "map")
+        check(reflectedLiteral<List<suspend () -> Unit>>() == List::class)
+        check(classifierAfter<Int> {} == "Int" && defaultCollectionKey() == Map::class)
+        check(defaultReifiedKey<Map<String, Int>>() == Map::class)
+        check(reflectedLiteral<HashSet<Int>>() == HashSet::class && HashSet::class != Set::class)
+        val defaultKey = (DefaultMapKey::class as System.Type).GetCustomAttributes(false).filterIsInstance<CollectionKey>().single()
+        check(defaultKey.type == Map::class)
         check(keys[reflected<Set<Int>>().classifier as KClass<*>] == "set")
         val stored = reflected<ArrayList<Int>>().classifier as KClass<*>
         check(stored == ArrayList::class && stored.simpleName == "ArrayList" && stored !in keys)
         val list: Any = ArrayList<Int>()
-        check(list::class == stored && stored.isInstance(list))
+        check(stored.isInstance(list))
         val map = mapOf(1 to "one")
         check(Map::class.isInstance(map) && !List::class.isInstance(map))
         check(Set::class != Collection::class && Map::class != MutableMap::class)

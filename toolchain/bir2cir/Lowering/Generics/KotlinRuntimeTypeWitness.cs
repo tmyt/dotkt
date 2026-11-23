@@ -44,7 +44,8 @@ static partial class KotlinRuntimeTypeWitness
     internal static IBirExpression KnownValue(TypeNode type, ValueRepresentationLowering values, IBirExpression reflected = null) => CreateValue(
         KotlinTypeWitness.ConstantValue(KotlinTypeWitness.Flags(type)),
         new BirClassReference { Type = BirGraphValue.CopyType(values?.ClassifierType(type) ?? type), KotlinClassifierRef = true },
-        values?.PredicateValue(type) ?? new BirConstant { Type = PredicateType, Value = new BirLiteral.NullLiteral() }, reflected);
+        values?.PredicateValue(type) ?? new BirConstant { Type = PredicateType, Value = new BirLiteral.NullLiteral() },
+        reflected ?? (ReflectedKotlinType.CollectionLiteral(type) is { } token ? new BirClassReference { Type = token } : null));
 
     internal static IBirExpression NullableValue(IBirExpression witness, SourceHelperBinder reflected = null)
     {

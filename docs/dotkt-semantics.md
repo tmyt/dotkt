@@ -1446,8 +1446,8 @@ Collection class literals identify Kotlin declarations, even when those declarat
 For example, `List::class`, `Set::class`, `Map::class` and `Any::class` are four distinct keys.
 The classifier returned by `typeOf<Map<String, Int>>()` is the same key as `Map::class`; this also holds
 in a separately compiled reified function. A collection token's `isInstance` checks Kotlin membership,
-not whether the value fits in an Object slot. The exact BCL classes implementing Kotlin's `ArrayList`
-and `HashSet` identify those Kotlin declarations for `value::class`; their CLR subclasses retain their own identity.
+not whether the value fits in an Object slot. A dynamic `value::class` for a native collection
+retains its closed CLR type, so passing that token back to a CLR generic API preserves its actual type arguments.
 
 This does not change a CLR `GetType()` call or erase generic arguments from unrelated native CLR types. For dynamic types with
 no Kotlin classifier association, names still come from CLR reflection. For example, a nested CLR type can report
