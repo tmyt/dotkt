@@ -11,6 +11,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Preserve CLR virtual property dispatch when a second Kotlin assembly overrides an already overridden accessor (#1779).
 
 - Preserve the element type and identity of a projected CLR list passed to an invariant generic parameter (#1802).
+- Preserve the original instance when Kotlin joins different type arguments of the same function-local class (#1785).
 - Keep a native call's hidden element type when Kotlin uses its projected live reference or passes its span to a matching native consumer.
 - Preserve erased Kotlin iterator elements when advancing a CLR enumerator; only reading the typed `Current` requires a matching CLR element.
 - Forward the generic and non-generic CLR enumeration slots when a Kotlin class delegates `ClrEnumerable<T>`.

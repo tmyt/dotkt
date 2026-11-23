@@ -7,18 +7,6 @@ sealed partial class GenericRepresentationPolicy
     readonly HashSet<BirGraphValue> _sourceNativeStorage = new(ReferenceEqualityComparer.Instance);
     HashSet<(string Owner, string Name, bool Static, string Receiver)> _pendingNativePhysicalBindings;
     Dictionary<BirGraphValue, (string Owner, string Name, bool Static, string Receiver)> _pendingNativeOrigins;
-    readonly record struct SourceOwner(string Name, bool HasKind, bool Generated,
-        BirTypeParameter[] Parameters, BirAttribute[] Attributes, BirFieldDeclaration[] Fields);
-
-    static SourceOwner Owner(IBirTypeDeclaration declaration) => declaration switch {
-        BirClassDefinition value => new(value.Name.OrDefault(), value.Kind.HasValue, value.Generated.OrDefault(),
-            value.TypeParams.OrEmpty(), value.Attrs.OrEmpty(), value.Fields.OrEmpty()),
-        BirInterfaceDefinition value => new(value.Name.OrDefault(), value.Kind.HasValue, value.Generated.OrDefault(),
-            value.TypeParams.OrEmpty(), value.Attrs.OrEmpty(), value.Fields.OrEmpty()),
-        BirEnumDefinition value => new(value.Name.OrDefault(), value.Kind.HasValue, value.Generated.OrDefault(),
-            value.TypeParams.OrEmpty(), value.Attrs.OrEmpty(), value.Fields.OrEmpty()),
-        _ => throw new InvalidOperationException("Unaccounted generic source owner: " + declaration.GetType().Name),
-    };
 
     internal static GenericRepresentationPolicy CreateSource(IReadOnlyList<BirFileDeclaration> roots,
         IReadOnlyDictionary<string, string> aliases, ReferenceMetadataIndex references)
@@ -29,14 +17,12 @@ sealed partial class GenericRepresentationPolicy
         {
             foreach (var declaration in root.Types.OrEmpty())
             {
-                var owner = Owner(declaration);
-                if (owner.Name == null || !owner.HasKind) continue;
-                policy._localOwners.Add(owner.Name);
-                policy._sourceVisibility[owner.Name] = (PublishedApiTypeVisibilityLowering.ResolveVisibility(declaration),
+                if (declaration.Name.OrDefault() is not string name || !declaration.Kind.HasValue) continue;
+                policy._localOwners.Add(name);
+                policy._sourceVisibility[name] = (PublishedApiTypeVisibilityLowering.ResolveVisibility(declaration),
                     declaration.SemanticOwner.OrDefault() ?? declaration.NestedIn.OrDefault());
-                var alias = owner.Attributes.Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" });
-                if (FBoundStarProjectionErasure.IsSourceGeneric(owner.Name, owner.Generated, alias, owner.Parameters.Length))
-                    policy._existentialOwners.Add(owner.Name);
+                if (FBoundStarProjectionErasure.IsSourceGeneric(declaration))
+                    policy._existentialOwners.Add(name);
             }
             foreach (var cell in root.RefTypes.OrEmpty())
                 if (cell.Name.HasValue) policy._localOwners.Add(cell.Name.Value);
@@ -69,10 +55,7 @@ sealed partial class GenericRepresentationPolicy
             foreach (var cell in root.RefTypes.OrEmpty())
                 if (cell.Name.HasValue) fields.Add(FieldKey(cell.Name.Value, "v", false, (TypeNode)null), cell);
             foreach (var declaration in root.Types.OrEmpty())
-            {
-                var owner = Owner(declaration);
-                Fields(owner.Name, owner.Fields);
-            }
+                Fields(declaration.Name.OrDefault(), declaration.Fields.OrEmpty());
         }
         void Walk(BirGraphValue node)
         {
