@@ -24,7 +24,15 @@ static partial class InheritedDefaultFakeOverrideElision
             for (var index = methods.Length - 1; index >= 0; index--)
             {
                 var method = methods[index];
-                if (!method.FakeOverride.OrDefault() || !method.InheritedImplementation.HasValue) continue;
+                if (!method.FakeOverride.OrDefault()) continue;
+                // A method-generic Kotlin property is exposed by its accessor MethodDefs, not a CLR Property row.
+                // Its inherited obligations already have declaring slots. Don't count the transitive override
+                // edges or choose one here: normal interface inheritance retains *all* the original slots.
+                // Republishing a fake accessor would instead shadow the source property in reference KLIBs.
+                var inheritedProperty = method.Abstract.OrDefault() && method.TypeParams.OrEmpty().Length != 0
+                    && method.PropertyAssociation.HasValue && KotlinPropertyAccessors.TryIdentity(method, out _, out _)
+                    && method.Overrides.OrEmpty().Any(inherited => inherited.DeclarationId.HasValue);
+                if (!method.InheritedImplementation.HasValue && !inheritedProperty) continue;
                 if (KotlinPropertyAccessors.TryIdentity(method, out _, out var role) && method.PropertyAssociation.HasValue)
                 {
                     if (!removedAccessors.TryGetValue(method.PropertyAssociation.Value, out var roles))

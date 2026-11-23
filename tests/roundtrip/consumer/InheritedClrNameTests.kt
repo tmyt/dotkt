@@ -39,6 +39,10 @@ class InheritedClrNameRoundtripTests {
         val cell = ExtensionCell<String>(9)
         assertEquals(9, tagged.exchange(cell, 42))
         assertEquals(42, cell.n)
+        with(tagged) {
+            cell.value = 73
+            assertEquals(73, cell.value)
+        }
     }
 
     @TestAttribute
