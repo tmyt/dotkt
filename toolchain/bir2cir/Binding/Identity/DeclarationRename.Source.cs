@@ -48,22 +48,19 @@ static partial class DeclarationRename
                     // class slot. Only classes need the physical adjustment.
                     if (!inInterface)
                     {
-                        var clrBase = ResolveNetClassOwner(Overrides(method.Overrides.Value), Callable(method, ownerFrame), refs, out var baseReturn);
-                        if (clrBase == null && method.Vis.IsPresent) method.Vis = "public";
+                        var nativeSlot = ResolveNetClassSlot(Overrides(method.Overrides.Value), Callable(method, ownerFrame), refs);
+                        if (nativeSlot == null && method.Vis.IsPresent) method.Vis = "public";
                         // A virtual class accessor needs the exact base operand
                         // for MethodImpl binding, not implicit interface naming.
-                        if (clrBase != null)
+                        if (nativeSlot is { } target)
                         {
                             if (method.Override.IsPresent) method.Override = true;
-                            if (!method.PendingOverrideOwner.HasValue) method.PendingOverrideOwner = clrBase;
-                            if (!method.PendingOverrideReturn.HasValue) method.PendingOverrideReturn = baseReturn;
-                            if (property)
-                            {
-                                if (method.PendingOverrideMember.HasValue && method.PendingOverrideMember.Value != slot)
-                                    throw new InvalidOperationException(
-                                        $"conflicting CLR base property slots '{method.PendingOverrideMember.Value}' and '{slot}'");
-                                method.PendingOverrideMember = slot;
-                            }
+                            if (!method.PendingOverrideOwner.HasValue) method.PendingOverrideOwner = target.Owner;
+                            if (!method.PendingOverrideReturn.HasValue) method.PendingOverrideReturn = target.Return;
+                            if (method.PendingOverrideMember.HasValue && method.PendingOverrideMember.Value != target.Accessor)
+                                throw new InvalidOperationException(
+                                    $"conflicting CLR base accessor slots '{method.PendingOverrideMember.Value}' and '{target.Accessor}'");
+                            method.PendingOverrideMember = target.Accessor;
                         }
                     }
                     break;
@@ -86,10 +83,11 @@ static partial class DeclarationRename
             && refs.IsRule3Member(ReferenceMetadataIndex.BareOwnerFqn(owner), member);
     }
 
-    static TypeNode.Fqn ResolveNetClassOwner(SlotOverride[] overrides, CallableSlot callable,
-        ReferenceMetadataIndex refs, out TypeNode slotReturn)
+    // The nearest Kotlin accessor can have a different CLR name from the native
+    // virtual it implements. The MethodImpl operand belongs to one override edge.
+    static (TypeNode.Fqn Owner, string Accessor, TypeNode Return)? ResolveNetClassSlot(
+        SlotOverride[] overrides, CallableSlot callable, ReferenceMetadataIndex refs)
     {
-        slotReturn = null;
         foreach (var marker in overrides)
         {
             var owner = marker.Owner;
@@ -97,13 +95,12 @@ static partial class DeclarationRename
             if (refs.ResolveNetType(reflected, owner.Args?.Length ?? 0) is not { IsClass: true } native) continue;
             if (marker.Kind == "method" && callable.Signature != null
                 && refs.TryProjectedIndexerSlot(owner, marker.Member, callable.MethodArity, callable.Signature,
-                    out _, out slotReturn)) return new TypeNode.Fqn(reflected, owner.Args);
+                    out var indexer, out var indexerReturn)) return (new TypeNode.Fqn(reflected, owner.Args), indexer, indexerReturn);
             if (!callable.Declaration || callable.Signature == null
                 || !TryExactPropertySlot(callable.Signature, callable.MethodArity, refs, owner, marker.Member, marker.Kind,
-                    out _, out var property, out _, out var result)
+                    out _, out var property, out var accessor, out var result)
                 || !HasOverridableAccessor(native, property, marker.Kind)) continue;
-            slotReturn = result;
-            return new TypeNode.Fqn(reflected, owner.Args);
+            return (new TypeNode.Fqn(reflected, owner.Args), accessor, result);
         }
         // A Kotlin alias class reaches its actual BCL base through the same
         // exact projected property identity, not an accessor-name convention.
@@ -113,11 +110,10 @@ static partial class DeclarationRename
             if (refs.TryResolveClrOwner(owner.Name, out var bcl, out var kind) && kind == "class"
                 && callable.Declaration && callable.Signature != null
                 && TryExactPropertySlot(callable.Signature, callable.MethodArity, refs, owner, marker.Member, marker.Kind,
-                    out _, out var property, out _, out var result)
+                    out _, out var property, out var accessor, out var result)
                 && refs.ResolveNetType(bcl) is { } native && HasOverridableAccessor(native, property, marker.Kind))
             {
-                slotReturn = result;
-                return new TypeNode.Fqn(bcl, owner.Args);
+                return (new TypeNode.Fqn(bcl, owner.Args), accessor, result);
             }
         }
         return null;

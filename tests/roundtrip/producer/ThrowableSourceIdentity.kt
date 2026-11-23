@@ -1,6 +1,10 @@
 package roundtrip.throwablesource
 
 open class LibraryArgumentError(message: String) : IllegalArgumentException(message)
+open class LibraryMessageOverride : IllegalArgumentException("base") {
+    override val message: String get() = "library override"
+}
+open class LibraryInheritedMessage : LibraryMessageOverride()
 
 fun acceptThrowable(error: Throwable): String? = error.message
 fun echoException(error: Exception): Exception = error

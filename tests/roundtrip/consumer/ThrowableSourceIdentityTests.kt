@@ -9,6 +9,11 @@ class OverriddenErrorReader : ErrorBase(), ErrorReader {
 
 class InheritedErrorReader : ErrorBase(), ErrorReader
 
+private class ConsumerMessageOverride : LibraryInheritedMessage() {
+    override val message: String get() = "consumer override"
+    fun inherited(): String = super.message
+}
+
 class NarrowedObjectFactory : ObjectFactory {
     override fun <U : Any> make(value: U): String = "non-null"
 }
@@ -36,6 +41,10 @@ class ThrowableSourceIdentityTests {
         }
         check(importedMessage(overridden) == "override")
         check(overridden.baseMessage() == "base")
+        val mostDerived = ConsumerMessageOverride()
+        val viaLibrary: LibraryMessageOverride = mostDerived
+        check(viaLibrary.message == "consumer override" && acceptThrowable(mostDerived) == "consumer override")
+        check(mostDerived.inherited() == "library override")
         val error = IllegalStateException("expected")
         check(acceptThrowable(error) == "expected")
         check(echoException(error) === error)
