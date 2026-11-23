@@ -311,15 +311,18 @@ static partial class CharSeqStringLowering
     static BirLocal ReadSource(string name) => new() { Name = name };
 
     static IBirExpression CoerceOrNull(IBirExpression value, SourceEnv env, bool nullableTarget)
+        => SnapshotForStringSlot(value, env.Vars, nullableTarget);
+
+    internal static IBirExpression SnapshotForStringSlot(IBirExpression value, IReadOnlyDictionary<string, TypeNode> vars, bool nullableTarget)
     {
-        if (IsStaticString(value, env)) return null;
+        if (IsStaticString(value, vars)) return null;
         if (!nullableTarget) return Snapshot(value);
         if (value is BirConstant constant && (!constant.Value.HasValue || constant.Value.Value is BirLiteral.NullLiteral))
         {
             constant.Type = new TypeNode.Nullable(StringTn);
             return constant;
         }
-        if (BirGraphStaticType.Surface(value, env.Vars) is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)) return null;
+        if (BirGraphStaticType.Surface(value, vars) is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)) return null;
         return SnapshotNullable(value);
     }
 
@@ -358,9 +361,9 @@ static partial class CharSeqStringLowering
     // Positive String recognition is deliberately narrower than Surface:
     // a local uses its lexical declaration, and other values use ret/dynRet,
     // never a convenient sty that could describe an uncollapsed adapter.
-    static bool IsStaticString(IBirExpression value, SourceEnv env) => value switch {
+    static bool IsStaticString(IBirExpression value, IReadOnlyDictionary<string, TypeNode> vars) => value switch {
         BirConstant constant => IsStringTokT(constant.Type.OrDefault()),
-        BirLocal local => local.Name.HasValue && env.Vars.TryGetValue(local.Name.Value, out var type) && IsStringTokT(type),
+        BirLocal local => local.Name.HasValue && vars.TryGetValue(local.Name.Value, out var type) && IsStringTokT(type),
         BirCast cast => IsStringTokT(cast.Type.OrDefault()),
         BirConcat => true,
         BirThis => false,
