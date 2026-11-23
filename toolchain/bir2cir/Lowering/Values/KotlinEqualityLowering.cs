@@ -15,13 +15,12 @@ static class KotlinEqualityLowering
         Sig = new[] { AnyNullableType(), AnyNullableType() }, Args = new[] { left, right },
     };
 
-    static bool IsNull(IBirExpression value) => value is BirConstant constant
+    internal static bool IsNull(IBirExpression value) => value is BirConstant constant
         && (!constant.Value.HasValue || constant.Value.Value is BirLiteral.NullLiteral);
 
     internal static IBirExpression NullComparison(IBirExpression left, IBirExpression right) =>
         IsNull(left) || IsNull(right) ? new BirBinaryOperation {
-            Op = "===", Lhs = new BirCast { Type = AnyNullableType(), E = OptionalField<IBirExpression>.Of(left) },
-            Rhs = new BirCast { Type = AnyNullableType(), E = OptionalField<IBirExpression>.Of(right) },
+            Op = "===", Lhs = OptionalField<IBirExpression>.Of(left), Rhs = OptionalField<IBirExpression>.Of(right),
         } : null;
 
     // A preserved super call keeps its semantic slot for rebinding.

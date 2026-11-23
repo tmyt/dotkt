@@ -31,5 +31,9 @@ class NominalFunctionDelegateTests {
         val backing = intArrayOf(3, 4, 5)
         val spanFactory: () -> kotlin.clr.Span<Int> = { Callbacks.ArraySpan(backing) }
         check(Callbacks.ProducedSpanTotal(spanFactory) == 12)
+        check(Callbacks.SpanTotal(heapView(backing)) == 12)
+        check(backing.set(0, 9) != null && backing[0] == 9)
     }
+
+    fun heapView(values: IntArray) = Callbacks.ArraySpan(values)
 }

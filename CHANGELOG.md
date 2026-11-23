@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Forward native span results through public Kotlin functions without boxing them for a null check (#1850).
 - Include sparse CLR regex captures when iterating Kotlin match groups or reading `groupValues` (#1721).
 - Keep bare `T` distinct from nullable `T?` in C# generic classes with `where T : struct`, including overloaded method parameters, their defaults, and nullable results as seen from Kotlin (#1857).
 
