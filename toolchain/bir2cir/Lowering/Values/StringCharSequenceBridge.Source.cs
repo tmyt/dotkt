@@ -96,6 +96,7 @@ static partial class StringCharSequenceBridge
             TypeNode.Tv { Scope: "type" } => true,
             TypeNode.Nullable nullable => PotentialView(nullable.Of),
             TypeNode.Oblivious platform => PotentialView(platform.Of),
+            TypeNode.Array array => PotentialView(array.Elem),
             _ => IsScalarCharSequence(type) || IsStringTokT(type),
         };
     }
@@ -172,6 +173,7 @@ static partial class StringCharSequenceBridge
         var node = slot.Value;
         if (node == null || node is IBirExecutablePayload) return false;
         var childEnv = env.WithDecl(node);
+        if (results != null) SelectFreshArraySlots(node, env, results);
         var collapsedResult = false;
         node.VisitSourceChildren(child => WalkSourceBridge(child, childEnv, materialized, returnsOnly, results), region => {
             // Preserve the original valueBlock-only snapshot: its result sees
@@ -196,11 +198,46 @@ static partial class StringCharSequenceBridge
                 collapsedResult = CharSeqStringLowering.MemberSlots.BindResultBlock(block);
         });
         if (returnsOnly && node is not BirReturn) return false;
+        if (results != null) CharSeqStringLowering.BindArrayElement(node, env.Vars);
         if (node is BirCallStatic or BirCallInstance) collapsedResult = results?.Bind(node, env.Vars) == true;
         if (node is BirConstructor constructor) SourceWrapDelegationArgs(constructor, childEnv);
         var replacement = SourceBridgeTransform(node, env, materialized);
         if (!ReferenceEquals(replacement, node)) slot.Replace(replacement);
         return collapsedResult;
+    }
+
+    static void SelectFreshArraySlots(BirGraphValue node, SourceBridgeEnv env, CharSeqStringLowering.MemberSlots results)
+    {
+        void Select(IBirExpression value, TypeNode target) => CharSeqStringLowering.SelectFreshArray(value, target, env.Vars);
+        static bool MayAllocate(IBirExpression value) => value is BirNewArray or BirNewArrayInit or BirNewArraySized
+            or BirSpreadConcat or BirConditional or BirValueBlock;
+        switch (node)
+        {
+            case BirVariable v: Select(v.Init.OrDefault(), v.Type.OrDefault()); break;
+            case BirFieldDeclaration f: Select(f.Init.OrDefault(), f.Type.OrDefault()); break;
+            case BirSetLocal s when s.Name.HasValue && env.Vars.TryGetValue(s.Name.Value, out var location):
+                Select(s.Value.OrDefault(), location); break;
+            case BirReturn r: Select(r.Value.OrDefault(), env.RetType); break;
+            case BirCast c: Select(c.E.OrDefault(), c.Type.OrDefault()); break;
+            case BirArraySet s when MayAllocate(s.Value.OrDefault()):
+                Select(s.Value.Value, ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface(s.Array.OrDefault(), env.Vars)));
+                break;
+            case BirNew n when n.Args.OrDefault() is { } actual && actual.Any(MayAllocate):
+                var signature = n.ArgTypes.OrDefault();
+                var slots = env.ConstructorSlots?.Invoke(n.Type.OrDefault() as TypeNode.Fqn, n.ConstructorDeclarationId.OrDefault(), signature) ?? signature;
+                if (slots != null && slots.Length == actual.Length)
+                    for (var i = 0; i < actual.Length; i++) Select(actual[i], slots[i]);
+                break;
+            case BirCallStatic or BirCallInstance when SourceBridgeArguments(node) is { } args && args.Any(MayAllocate):
+                var (id, sig) = node is BirCallStatic sc ? (sc.DeclarationId.OrDefault(), sc.Sig.OrDefault() ?? sc.ShapeTypes.OrDefault())
+                    : (((BirCallInstance)node).DeclarationId.OrDefault(), ((BirCallInstance)node).Sig.OrDefault() ?? ((BirCallInstance)node).ShapeTypes.OrDefault());
+                var local = results.Parameters(id);
+                if (sig != null && sig.Length == args.Length)
+                    for (var i = 0; i < args.Length; i++)
+                        if (MayAllocate(args[i]) && (local?.Length == sig.Length ? local[i].Type.OrDefault() : sig[i]) is { } slot)
+                            Select(args[i], SourceSpecializeCallType(slot, node));
+                break;
+        }
     }
 
     static BirGraphValue SourceBridgeTransform(BirGraphValue node, SourceBridgeEnv env,

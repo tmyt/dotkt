@@ -12,12 +12,14 @@ static partial class CharSeqStringLowering
     // the same source signature can still require the CharSequence interface.
     internal sealed class MemberSlots
     {
-        readonly Dictionary<string, (BirFunctionDeclaration Method, bool StringResult)> declarations = new(StringComparer.Ordinal);
-        internal void Collect(BirFunctionDeclaration method, bool stringResult)
+        readonly Dictionary<string, (BirFunctionDeclaration Method, bool CollapsedResult)> declarations = new(StringComparer.Ordinal);
+        internal void Collect(BirFunctionDeclaration method, bool collapsedResult)
         {
             if (method.DeclarationId.OrDefault() is string id)
-                declarations[id] = (method, stringResult);
+                declarations[id] = (method, collapsedResult);
         }
+        internal BirParameter[] Parameters(string id) =>
+            id != null && declarations.TryGetValue(id, out var declaration) ? declaration.Method.Params.OrDefault() : null;
         internal bool Bind(BirGraphValue call, IReadOnlyDictionary<string, TypeNode> vars)
         {
             var (id, sig, args) = call switch {
@@ -35,22 +37,28 @@ static partial class CharSeqStringLowering
                         if (args[i] is { } argument && SnapshotForStringSlot(argument, vars, sig[i] is TypeNode.Nullable) is { } value)
                             args[i] = value;
                     }
-            if (declaration.StringResult)
+            if (declaration.CollapsedResult)
                 call.RewriteOwnTypeFieldsInPlace((field, _, type) =>
-                    (field is "sty" or "ret" or "dynRet" or "memberReturnType") && IsScalarSequence(type) ? LowerTokT(type) : type);
-            return declaration.StringResult;
+                    (field is "sty" or "ret" or "dynRet" or "memberReturnType") && IsCharSeqT(type) ? LowerTokT(type) : type);
+            return declaration.CollapsedResult;
         }
         internal static bool BindResultBlock(BirValueBlock block)
         {
             var surface = block.Type.OrDefault() ?? block.Sty.OrDefault();
-            if (surface != null && !IsScalarSequence(surface) && !IsStringDeclT(surface)) return false;
+            if (surface != null && !IsCharSeqT(surface) && !IsStringShape(surface)) return false;
             block.RewriteOwnTypeFieldsInPlace((field, _, type) =>
-                (field is "type" or "sty") && IsScalarSequence(type) ? LowerTokT(type) : type);
+                (field is "type" or "sty") && IsCharSeqT(type) ? LowerTokT(type) : type);
             return true;
         }
     }
     static bool IsScalarSequence(TypeNode type) => type is TypeNode.Fqn { Name: CharSeq }
         or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } };
+
+    static bool IsStringShape(TypeNode type) => type switch {
+        TypeNode.Array a => IsStringShape(a.Elem),
+        TypeNode.Nullable n => IsStringShape(n.Of),
+        _ => IsStringTokT(type),
+    };
 
     // Task<T> is invariant. A virtual suspend slot can be implemented in
     // a module with real CharSequence instances, even in a string-only app.
@@ -91,13 +99,13 @@ static partial class CharSeqStringLowering
         retLambdas = new CharSeqRetLambdas(statics, closures);
         var candidates = root is BirFileDeclaration file && results != null
             ? file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty()
-                .Select(m => (Owner: t.Name.OrDefault(), Method: m, SequenceResult: IsScalarSequence(m.Ret.OrDefault())))
-                .Where(c => c.SequenceResult || c.Method.Params.OrEmpty().Any(p => IsScalarSequence(p.Type.OrDefault()))))
+                .Select(m => (Owner: t.Name.OrDefault(), Method: m, SequenceResult: IsCharSeqT(m.Ret.OrDefault())))
+                .Where(c => c.SequenceResult || c.Method.Params.OrEmpty().Any(p => IsCharSeqT(p.Type.OrDefault()))))
                 .ToArray() : null;
         var lowered = WalkSource(root, new SourceEnv(), localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal), exempt);
         if (candidates != null)
             foreach (var (owner, method, sequenceResult) in candidates)
-                results.Collect(method, sequenceResult && IsStringDeclT(method.Ret.OrDefault())
+                results.Collect(method, sequenceResult && IsStringShape(method.Ret.OrDefault())
                     && !StringCharSequenceBridge.RestoresClosureReturn(owner, method, retLambdas));
         return lowered;
     }
@@ -253,10 +261,10 @@ static partial class CharSeqStringLowering
     {
         if (node is BirFieldGet or BirLateinitGet or BirStaticFieldGet
             || node is BirLocal local && (!local.Name.HasValue
-                || !env.Vars.TryGetValue(local.Name.Value, out var declared) || IsStringDeclT(declared)))
+                || !env.Vars.TryGetValue(local.Name.Value, out var declared) || IsStringShape(declared)))
             node.RewriteOwnTypeFieldsInPlace((field, _, type) => field == "sty" && IsCharSeqT(type) ? LowerTokT(type) : type);
 
-        if (node is BirCallInstance member && IsCharSeqT(member.OwnerType.OrDefault()))
+        if (node is BirCallInstance member && IsScalarSequence(member.OwnerType.OrDefault()))
         {
             var rewritten = RewriteMemberRead(member, env);
             if (rewritten != null) return rewritten;
@@ -290,16 +298,15 @@ static partial class CharSeqStringLowering
         switch (node)
         {
             case BirVariable variable when IsCharSeqT(variable.Type.OrDefault()):
-                var nullable = variable.Type.Value is TypeNode.Nullable;
+                var slot = variable.Type.Value;
                 variable.Type = LowerTokT(variable.Type.Value);
-                if (variable.Init.HasValue && CoerceOrNull(variable.Init.Value, env, nullable) is { } initializer)
+                if (variable.Init.HasValue && SnapshotAtSlot(variable.Init.Value, env, slot) is { } initializer)
                     variable.Init = ExpressionField(initializer);
                 break;
             case BirCallStatic call:
                 LowerLocalCall(call, env, localFns);
                 break;
-            case BirConditional conditional when conditional.Type.OrDefault() is TypeNode.Fqn { Name: CharSeq }
-                or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } }:
+            case BirConditional conditional when IsScalarSequence(conditional.Type.OrDefault()):
                 var nullableJoin = conditional.Type.Value is TypeNode.Nullable;
                 conditional.Type = LowerTokT(conditional.Type.Value);
                 if (conditional.Then.HasValue && CoerceOrNull(conditional.Then.Value, env, nullableJoin) is { } whenTrue)
@@ -308,11 +315,14 @@ static partial class CharSeqStringLowering
                     conditional.Else = ExpressionField(whenFalse);
                 break;
             case BirReturn statement when env.RetCharSeq != null && statement.Value.HasValue:
-                if (CoerceOrNull(statement.Value.Value, env, env.RetCharSeq is TypeNode.Nullable) is { } returned)
+                if (SnapshotAtSlot(statement.Value.Value, env, env.RetCharSeq) is { } returned)
                     statement.Value = ExpressionField(returned);
                 break;
-            case BirCast cast when IsCharSeqT(cast.Type.OrDefault()) && cast.E.HasValue:
+            case BirCast cast when IsScalarSequence(cast.Type.OrDefault()) && cast.E.HasValue:
                 return (BirGraphValue)(CoerceOrNull(cast.E.Value, env, cast.Type.Value is TypeNode.Nullable) ?? cast.E.Value);
+            case BirCast cast when IsCharSeqT(cast.Type.OrDefault()):
+                cast.Type = LowerTokT(cast.Type.Value);
+                break;
         }
         return node;
     }
@@ -329,7 +339,7 @@ static partial class CharSeqStringLowering
             if (!IsCharSeqT(type)) continue;
             signature[index] = LowerTokT(type);
             if (arguments != null && index < arguments.Length
-                && CoerceOrNull(arguments[index], env, type is TypeNode.Nullable) is { } converted)
+                && SnapshotAtSlot(arguments[index], env, type) is { } converted)
                 arguments[index] = converted;
         }
         call.RewriteOwnTypeFieldsInPlace((field, _, type) =>
@@ -380,6 +390,60 @@ static partial class CharSeqStringLowering
 
     static IBirExpression CoerceOrNull(IBirExpression value, SourceEnv env, bool nullableTarget)
         => SnapshotForStringSlot(value, env.Vars, nullableTarget);
+
+    static IBirExpression SnapshotAtSlot(IBirExpression value, SourceEnv env, TypeNode slot)
+        => IsScalarSequence(slot) ? CoerceOrNull(value, env, slot is TypeNode.Nullable) : null;
+
+    internal static void BindArrayElement(BirGraphValue node, IReadOnlyDictionary<string, TypeNode> vars)
+    {
+        var array = node switch {
+            BirArraySet s => s.Array.OrDefault(), BirArrayGet g => g.Array.OrDefault(), BirForArray f => f.Array.OrDefault(), _ => null,
+        };
+        if (array == null || OwnType(node, "elem") is not { } logical || !IsCharSeqT(logical)
+            || !MatchesCollapsedSlot(logical, ArrayConstructionLowering.ArrayElementOf(BirGraphStaticType.Surface(array, vars)))) return;
+        if (node is BirArraySet set && IsScalarSequence(logical) && set.Value.HasValue
+            && SnapshotForStringSlot(set.Value.Value, vars, logical is TypeNode.Nullable) is { } item)
+            set.Value = ExpressionField(item);
+        node.RewriteOwnTypeFieldsInPlace((field, _, type) => field == "elem" ? LowerTokT(type) : type);
+    }
+
+    static bool MatchesCollapsedSlot(TypeNode source, TypeNode target) => (source, target) switch {
+        (TypeNode.Nullable s, _) => MatchesCollapsedSlot(s.Of, target),
+        (_, TypeNode.Nullable t) => MatchesCollapsedSlot(source, t.Of),
+        (TypeNode.Array s, TypeNode.Array t) => MatchesCollapsedSlot(s.Elem, t.Elem),
+        _ => IsScalarSequence(source) && IsStringTokT(target),
+    };
+
+    // Array factories are already bound here. Select the component of a *fresh*
+    // vector at its use site; an existing array must never be replaced or copied.
+    internal static void SelectFreshArray(IBirExpression value, TypeNode target, IReadOnlyDictionary<string, TypeNode> vars)
+    {
+        if (value == null || ArrayConstructionLowering.ArrayElementOf(target) is not { } element || !IsStringShape(element)) return;
+        var node = (BirGraphValue)value;
+        if (node is BirValueBlock or BirConditional)
+            node.RewriteOwnTypeFieldsInPlace((field, _, type) =>
+                field is "type" or "sty" && MatchesCollapsedSlot(type, target) ? LowerTokT(type) : type);
+        if (node is BirValueBlock block) { SelectFreshArray(block.Result.OrDefault(), target, vars); return; }
+        if (node is BirConditional cond) {
+            SelectFreshArray(cond.Then.OrDefault(), target, vars);
+            SelectFreshArray(cond.Else.OrDefault(), target, vars);
+            return;
+        }
+        if (node is not (BirNewArray or BirNewArrayInit or BirNewArraySized or BirSpreadConcat)
+            || OwnType(node, "elem") is not { } logical || !MatchesCollapsedSlot(logical, element)) return;
+        node.RewriteOwnTypeFieldsInPlace((field, _, type) => field == "elem" ? LowerTokT(type) : type);
+        IBirExpression Item(IBirExpression item) {
+            if (IsScalarSequence(logical)) return SnapshotForStringSlot(item, vars, logical is TypeNode.Nullable) ?? item;
+            SelectFreshArray(item, element, vars);
+            return item;
+        }
+        if (node is BirNewArray literal && literal.Elems.OrDefault() is { } items)
+            for (var i = 0; i < items.Length; i++) items[i] = Item(items[i]);
+        if (node is BirSpreadConcat concat)
+            foreach (var part in concat.Parts.OrEmpty())
+                if (part.Spread.OrDefault()) SelectFreshArray(part.E.OrDefault(), target, vars);
+                else if (part.E.HasValue) part.E = ExpressionField(Item(part.E.Value));
+    }
 
     internal static IBirExpression SnapshotForStringSlot(IBirExpression value, IReadOnlyDictionary<string, TypeNode> vars, bool nullableTarget)
     {

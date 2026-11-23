@@ -3,6 +3,9 @@ package roundtriptests.charsequenceboundaries
 import NUnit.Framework.TestAttribute
 import roundtriptests.builderconstruction.checkBuilderConstructorSnapshot
 import roundtrip.portabletext.snapshotBuilder
+import roundtrip.portabletext.textVector
+import roundtrip.portabletext.echoTextVector
+import roundtrip.portabletext.writeTextVector
 import roundtrip.upstreamstdlib.BoundarySequence
 import roundtrip.upstreamstdlib.LibraryConstructorText
 import roundtrip.upstreamstdlib.SequenceSource
@@ -11,6 +14,7 @@ import roundtrip.upstreamstdlib.sequenceIndexInLibrary
 import roundtrip.upstreamstdlib.sequenceObjectInLibrary
 import roundtrip.upstreamstdlib.sequenceElvisInLibrary
 import roundtrip.upstreamstdlib.sequenceLengthInLibrary
+import roundtrip.upstreamstdlib.LibrarySequenceVector
 import roundtriptests.sequenceresults.LocalSequenceResult
 
 private class StringSource(private val text: String?) : SequenceSource() {
@@ -25,6 +29,23 @@ private class DerivedText(a: String, b: String) : CollapsedText(a + b)
 private class ImportedText(value: BoundarySequence?) : CollapsedText(value)
 
 class CharSequenceBoundaryTests {
+    @TestAttribute
+    fun collapsedArrayReturnsPreserveTheOriginalStorage() {
+        val builder = StringBuilder("before")
+        val original = textVector(builder)
+        builder.append("!")
+        val returned = echoTextVector(original)
+        check(returned === original && returned[0] == "before")
+        writeTextVector(returned, builder)
+        builder.append("?")
+        check(original[0] == "before!")
+        returned[0] = "after"
+        check(original[0] == "after")
+        val foreign = LibrarySequenceVector()
+        foreign.elements()[0] = "foreign"
+        check(foreign.length() == 7)
+    }
+
     @TestAttribute
     fun importedReceiverBodiesAndInlineSplicesUseTheSelectedRepresentation() {
         checkBuilderConstructorSnapshot()
