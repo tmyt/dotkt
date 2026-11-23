@@ -117,7 +117,15 @@ class KotlinUnlistedEvent : ExplicitEventReimplementationBase() {
     override val Updated by clrEvent()
 }
 
+private class DerivedProperty : PropertySlots.Base() { override val Value: Int get() = 2 }
+
+private fun checkPropertyDispatch(base: PropertySlots.Base, face: PropertySlots.I) {
+    check(base.Value == 2 && face.Value == 2)
+}
+
 fun main() {
+    val derived = DerivedProperty()
+    checkPropertyDispatch(derived, derived)
     val carrier = ExplicitCollisionCarrier()
     val constructed = ConstructedExplicitCollisionCarrier()
     val right = KotlinRightReimplementation()

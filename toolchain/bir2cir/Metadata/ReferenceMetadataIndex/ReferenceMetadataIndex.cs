@@ -3010,6 +3010,32 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             ownerType = ResolveNetType(physicalOwner, ownerArity);
         }
         if (paramCount < 0 || accessorSignature == null) return false;
+        // A CLR class inherits the properties of its base class, not the spelling of
+        // interface accessors its MethodImpls satisfy. Walk exact TypeDefs (not the
+        // arity-free Kotlin member index), keeping each association with its owner.
+        if (!IsAliasedOwner(bareOwner) && !HasDotKtOwner(bareOwner))
+        {
+            var arguments = ownerTypeArguments;
+            for (var owner = physicalOwner; owner != null && !HasDotKtOwner(owner);)
+            {
+                if (_membersByPhysicalOwner.TryGetValue(owner, out var members))
+                {
+                    var direct = MatchingPropertyAccessors(members, sourcePropertyName, accessorKind,
+                        paramCount, methodArity, accessorSignature, arguments);
+                    if (direct.Count > 1) return false;
+                    if (direct.Count == 1)
+                    {
+                        if (direct[0] is not { AssociatedPropertyName: { } property, Intrinsic: null, PropertyName: null } member)
+                            break; // Explicit source bindings use the semantic lookup below.
+                        (physicalOwner, physicalPropertyName, physicalMethodName) = (owner, property, member.Name);
+                        return true;
+                    }
+                }
+                if (!_referenceTypeShapesByPhysicalOwner.TryGetValue(owner, out var shape) || shape.Base == null) break;
+                arguments = ConstructedSupertypeArguments(shape.Base, arguments);
+                owner = ExactReflectedOwner(shape.Base.Name, shape.Base.Args?.Length ?? 0);
+            }
+        }
         string exactMethod = null;
         // A caller carrying the frontend-resolved property signature must never fall back to a name-only sibling.
         // The reference index records the exact MethodSemantics association for ordinary CLR properties as well as
@@ -4675,6 +4701,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return DeclarationDescribesCall(declaration, call);
     }
 
+    static List<MemberBinding> MatchingPropertyAccessors(List<MemberBinding> members, string propertyName,
+        string accessorKind, int paramCount, int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerArgs)
+        => members.Where(member => member.SourcePropertyName == propertyName
+            && !member.IsPropertyBridge && member.AccessorKind == accessorKind
+            && member.ParamCount == paramCount && member.MethodArity == methodArity
+            && AccessorSignatureMatches(member, signature, ownerArgs)).ToList();
+
     bool TryReferencedPropertyPhysicalBinding(string ownerFqn, string propertyName, string accessorKind,
         int paramCount, int methodArity, IReadOnlyList<TypeNode> accessorSignature,
         TypeNode[] ownerTypeArguments, HashSet<string> path,
@@ -4691,12 +4724,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             (string Property, string Method)? associated = null;
             if (TryMembersByBirOwner(lookupOwner, out var members))
             {
-                var direct = members.Where(member => member.SourcePropertyName == propertyName
-                        && !member.IsPropertyBridge && member.AccessorKind == accessorKind
-                        && member.ParamCount == paramCount
-                        && member.MethodArity == methodArity
-                        && AccessorSignatureMatches(member, accessorSignature, ownerTypeArguments))
-                    .ToList();
+                var direct = MatchingPropertyAccessors(members, propertyName, accessorKind,
+                    paramCount, methodArity, accessorSignature, ownerTypeArguments);
                 if (direct.Count > 1) return false;
                 if (direct.Count == 1)
                 {
@@ -4720,17 +4749,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                     // MethodSemantics is the authoritative physical association. SourcePropertyName may come from a
                     // Kotlin carrier and therefore need not equal the CLR Property row's metadata name.
                     if (member.AssociatedPropertyName != null)
-                    {
-                        // A native declaration's own MethodSemantics row is its accessor, not the
-                        // possibly differently named MethodImpl declaration on an interface.
-                        if (!HasDotKtOwner(lookupOwner) && !IsAliasedOwner(lookupOwner))
-                        {
-                            physicalPropertyName = member.AssociatedPropertyName;
-                            physicalMethodName = member.Name;
-                            return true;
-                        }
                         associated = (member.AssociatedPropertyName, member.Name);
-                    }
                 }
             }
 

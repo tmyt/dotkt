@@ -59,12 +59,13 @@ CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/P
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 TRANSITIVE_REF="$OUT/TransitiveSlotProbe.dll"
+PROPERTY_SLOTS="$OUT/NativePropertySlots.dll"
 MALFORMED_REF="$OUT/CSharp14Malformed.dll"
 FORWARDER_CONSUMER="$OUT/forwarder-inputs/ForwarderConsumer.dll"
 FORWARDER_FACADE="$OUT/forwarder-inputs/ForwarderProbe.dll"
 FORWARDER_TARGET="$OUT/forwarder-inputs/ForwarderTarget.dll"
 
-dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF"
+dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF" "$PROPERTY_SLOTS" "$DOTNET_REFPACK_DIR"
 dotnet "$OUT/tools/malformed-generator/StaticExtensionMalformedGenerator.dll" "$MALFORMED_REF" missing-marker
 printf '%s\n' "$TRANSITIVE_REF" > "$OUT/transitive-references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/transitive-references.rsp"
@@ -306,7 +307,7 @@ PY
 # Consumption requires the resolved framework universe too: imported Func/Action
 # are nominal SAM declarations, not structural function types supplied by stdlib.
 # Keep the small projection sets above for their targeted incremental-cache checks.
-printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" \
+printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" "$PROPERTY_SLOTS" \
 	> "$OUT/consumer-references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/consumer-klib" --jobs 0 @"$OUT/consumer-references.rsp"
 consumer_classpath="$FE_KLIB"
@@ -456,15 +457,15 @@ default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/explicit-slot-probe.kt" \
 	-no-stdlib \
 	-classpath "$consumer_classpath" -d "$OUT/explicit-slot-bir"
-dotnet "$BIR2CIR_DLL" "$OUT/explicit-slot-cir" --compile-refs "$compile_refs" \
+dotnet "$BIR2CIR_DLL" "$OUT/explicit-slot-cir" --compile-refs "$(refset_join "$compile_refs" "$PROPERTY_SLOTS")" \
 	"$OUT/explicit-slot-bir/explicit-slot-probe.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/explicit-slot-il" ExplicitSlotProbe \
-	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
-	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF" "$PROPERTY_SLOTS")" \
+	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$PROPERTY_SLOTS")" \
 	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
 	"$OUT/explicit-slot-cir/explicit-slot-probe.cir.json"
 write_runtimeconfig "$OUT/explicit-slot-il" ExplicitSlotProbe
-cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/explicit-slot-il/"
+cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$PROPERTY_SLOTS" "$OUT/explicit-slot-il/"
 explicit_slot_actual="$(dotnet "$OUT/explicit-slot-il/ExplicitSlotProbe.dll")"
 [[ "$explicit_slot_actual" == "463" ]] \
 	|| die "explicit interface slot program returned '$explicit_slot_actual', expected '463'"

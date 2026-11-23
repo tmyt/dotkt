@@ -4,4 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Reflection.MetadataLoadContext" HintPath="$(MSBuildToolsPath)/System.Reflection.MetadataLoadContext.dll" />
+  </ItemGroup>
 </Project>
