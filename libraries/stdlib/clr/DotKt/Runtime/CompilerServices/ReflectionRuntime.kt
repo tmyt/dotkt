@@ -39,7 +39,7 @@ private interface NativeReflectionType {
 // Only a declared identity applies. A non-generic Kotlin or native subclass must not inherit
 // the classifier of its generic base. The token also retains CLR IsInstanceOfType semantics.
 internal class KotlinClassifierIdentity(val classifier: StarProjectionType, val declaration: StarProjectionType,
-    val sourceName: String?, val local: Boolean)
+    val sourceName: String?, val local: Boolean, val collection: CollectionLiteralDescriptor? = null)
 
 private class ClassifierCell public constructor() {
     @kotlin.concurrent.Volatile var identity: KotlinClassifierIdentity? = null
@@ -52,7 +52,9 @@ private fun classifierIdentity(type: StarProjectionType): KotlinClassifierIdenti
     cell.identity?.let { return it }
     // The metadata of a loaded type is immutable. A racing first read may compute the
     // same answer twice; all later lookups, including native misses, avoid reflection.
-    val identity = readClassifierIdentity(type) ?: KotlinClassifierIdentity(type, type, null, false)
+    val collection = collectionLiteral(type)
+    val identity = if (collection == null) readClassifierIdentity(type) ?: KotlinClassifierIdentity(type, type, null, false)
+        else KotlinClassifierIdentity(type, type, collection.sourceName, false, collection)
     cell.identity = identity
     return identity
 }
@@ -60,8 +62,19 @@ private fun classifierIdentity(type: StarProjectionType): KotlinClassifierIdenti
 @PublishedApi
 internal fun runtimeKClass(type: StarProjectionType): StarProjectionType {
     if (!type.isGenericType) return type
-    return classifierIdentity(type).classifier
+    val declared = classifierIdentity(type).classifier
+    return if (declared == type) nativeCollectionLiteral(type) ?: type else declared
 }
+
+@PublishedApi
+internal fun reifiedKClass(type: StarProjectionType, shape: kotlin.reflect.KType): StarProjectionType {
+    val source = shape.classifier
+    return if (source is StarProjectionType && collectionLiteral(source) != null) source
+        else if (type.isGenericType) classifierIdentity(type).classifier else type
+}
+
+internal fun representedClassStorage(type: StarProjectionType): StarProjectionType =
+    if (classifierIdentity(type).collection == null) type else Any::class as StarProjectionType
 
 // A Kotlin generic declaration can use its non-generic classifier as array
 // storage. Bounds describe that declaration, not the CLR interfaces of its
@@ -155,6 +168,7 @@ internal fun kClassQualifiedName(value: Any): String? {
 internal fun kClassIsInstance(value: Any, instance: Any?): Boolean {
     if (value !is NativeReflectionType) return (value as KClassSlots).dotktIsInstance(instance)
     val token = value as StarProjectionType
+    classifierIdentity(token).collection?.let { return it.accepts(instance) }
     if (instance != null && token.isGenericTypeDefinition && classifierIdentity(token).local)
         return starProjectionHasView(instance.starProjectionRuntimeType(), token)
     return value.isInstance(instance)

@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin collection class identity in class literals, reflected types and reified calls across assemblies.
+
 - Preserve the selected CLR base constructor when an array parameter contains a Kotlin generic type with extra physical type arguments.
 
 - Preserve interface default dispatch when an inherited class method takes the same callback with its receiver written as the first argument (#1799).

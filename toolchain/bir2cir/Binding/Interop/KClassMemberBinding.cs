@@ -98,7 +98,8 @@ static class KClassMemberBinding
     // Null for any other token shape (tv/array/fn), which the caller routes to the run-time read instead of folding.
     static string FqnOf(TypeNode typeNode, ReferenceMetadataIndex refs) => typeNode switch
     {
-        TypeNode.Fqn f => refs?.TryExistentialPhysicalOwner(f.Name, out _) == true ? ReflectedKotlinType.SourceName(f) : f.Name,
+        TypeNode.Fqn f => ReflectedKotlinType.CollectionLiteralName(f.Name)
+            ?? (refs?.TryExistentialPhysicalOwner(f.Name, out _) == true ? ReflectedKotlinType.SourceName(f) : f.Name),
         TypeNode.Nullable nullable => FqnOf(nullable.Of, refs),
         _ => null,
     };

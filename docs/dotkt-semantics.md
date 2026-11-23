@@ -68,14 +68,15 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   *requires* `inline` (the type is baked in during inlining). You can't call a reified function non-inlined, and you
   can't pass a non-reified type parameter to a reified one.
 - **DotKt:** the CLR has **real reified generics**. `inline fun <reified T> foo()` is emitted as an ordinary generic
-  method `foo<T>()`. A class literal uses the CLR runtime type of that generic argument. This is a physical
-  storage type, not necessarily the Kotlin classifier: nullable value arguments such as `Int?` can use `Object`.
+  method `foo<T>()`. A reified class literal uses the caller's Kotlin classifier for erased collection declarations;
+  otherwise it resolves the CLR generic argument through its runtime classifier metadata. The argument is a physical
+  storage type: nullable value arguments such as `Int?` can use `Object`.
   CLR generic arguments also do not distinguish `String` from `String?`, and invariant collection storage does not
   encode Kotlin's nominal read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
   and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
-  method type parameters receive one hidden `ValueTuple<Int32, System.Type, Func<object, object>>` carrying
-  nullability/nominal flags, the runtime classifier, and an optional classifier predicate separately from generic
-  storage. The predicate expresses a Kotlin superclass whose native CLR values cannot inherit its runtime class.
+  method type parameters receive one hidden witness tuple separate from generic storage. It carries
+  nullability/nominal flags, the runtime classifier, an optional classifier predicate, and the reflected Kotlin shape when needed.
+  The predicate expresses a Kotlin superclass whose native CLR values cannot inherit its runtime class.
   Thus `is Int?` accepts null and boxed integers,
   but not an unrelated value merely because its storage fits `Object`. Opaque foreign generic classifiers carry
   their open CLR definition and use raw base/interface membership, just like a direct classifier check; they do
@@ -792,8 +793,8 @@ As with other unchecked class-bound casts, that raw bound guard admits null; act
 their own null handling. Direct and reified non-null Number casts still reject null.
 
 This is not a Kotlin-reflection implementation. Under the native class-token contract (§2, §5g),
-`Number::class` names its physical alias, `System.Object`. A generic `T::class`
-without classifier operations receives no semantic witness. It looks up the Kotlin declaration associated with
+`Number::class` names its physical alias, `System.Object`. For non-collection types, a reified `T::class`
+looks up the Kotlin declaration associated with
 its physical type argument when one exists (§5g). Instantiating it with Number exposes Object, whose CLR membership accepts non-numbers. These CLR reflection tokens are
 not the semantic classifier used by Kotlin `is`/`as` operations. Native `KClass.isInstance` uses that physical
 CLR type's membership; an ordinary Kotlin implementation retains its own method.
@@ -1441,7 +1442,14 @@ physical interface name. A reified `T::class` for the same declaration yields th
 uses the declaration, not its implementation interface. A local class has no qualified name and an anonymous
 object has no simple name either. A subclass still reports its own class; classifier metadata is never inherited.
 
-This does not change a CLR `GetType()` call or erase generic arguments from native CLR types. For dynamic types with
+Collection class literals identify Kotlin declarations, even when those declarations share CLR storage.
+For example, `List::class`, `Set::class`, `Map::class` and `Any::class` are four distinct keys.
+The classifier returned by `typeOf<Map<String, Int>>()` is the same key as `Map::class`; this also holds
+in a separately compiled reified function. A collection token's `isInstance` checks Kotlin membership,
+not whether the value fits in an Object slot. The exact BCL classes implementing Kotlin's `ArrayList`
+and `HashSet` identify those Kotlin declarations for `value::class`; their CLR subclasses retain their own identity.
+
+This does not change a CLR `GetType()` call or erase generic arguments from unrelated native CLR types. For dynamic types with
 no Kotlin classifier association, names still come from CLR reflection. For example, a nested CLR type can report
 `Outer+Inner` and an `Int` passed as `Any` can report `System.Int32`.
 
