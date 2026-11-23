@@ -682,6 +682,8 @@ sealed class Pipeline
         // mutates declarations shared by the module's prepared authorities.
         // Preserve the original per-file alias -> selected ID -> override order.
         var charSeqReturnViews = new CharSeqStringLowering.CharSeqRetLambdas[captured.Length];
+        var charSeqResults = !referenceBuild && appBuild && !inventory.HasUserCharSeqImplementation
+            ? new CharSeqStringLowering.MemberResults() : null;
         for (var index = 0; index < captured.Length; index++)
         {
             var source = captured[index];
@@ -727,8 +729,8 @@ sealed class Pipeline
             // cannot implement the interface contract.
             // Collapse only pure apps, while property identity is still explicit.
             CharSeqStringLowering.CharSeqRetLambdas charSeqReturns = null;
-            if (!referenceBuild && appBuild && !inventory.HasUserCharSeqImplementation)
-                CharSeqStringLowering.Apply(source, inventory.LocalTopLevelFunctions, out charSeqReturns);
+            if (charSeqResults != null)
+                CharSeqStringLowering.Apply(source, inventory.LocalTopLevelFunctions, out charSeqReturns, charSeqResults);
             // The selected declaration owns the CLR binding. Local sibling
             // top-level calls stay owner-less; only app references are attributed.
             if (!referenceBuild)
@@ -761,7 +763,7 @@ sealed class Pipeline
             {
                 // Preserve real CharSequence implementations in both runtime
                 // and application builds; a sealed String needs an adapter.
-                var bridge = StringCharSequenceBridge.Apply(source, charSequenceCtorSlots, charSeqReturnViews[index]);
+                var bridge = StringCharSequenceBridge.Apply(source, charSequenceCtorSlots, charSeqReturnViews[index], charSeqResults);
                 var callbacks = ClosureSynthesis.ApplyMaterialized(
                     source, bridge.DelegateAdapters, refs, scalarSlots.ProjectMethod);
                 // Both producers report their actual append order. Neither is

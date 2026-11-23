@@ -8,15 +8,35 @@ using DotKt.Cir;
 
 static partial class CharSeqStringLowering
 {
+    // A selected local declaration, not its receiver's type or the member's
+    // spelling, determines whether an instance result was lowered to String.
+    internal sealed class MemberResults
+    {
+        readonly HashSet<string> declarations = new(StringComparer.Ordinal);
+        internal void Collect(BirFunctionDeclaration method)
+        {
+            if (method.DeclarationId.OrDefault() is string id && IsStringDeclT(method.Ret.OrDefault()))
+                declarations.Add(id);
+        }
+        internal void Bind(BirCallInstance call)
+        {
+            if (call.DeclarationId.OrDefault() is string id && declarations.Contains(id))
+                call.RewriteOwnTypeFieldsInPlace((field, _, type) =>
+                    (field is "sty" or "ret" or "dynRet" or "memberReturnType") && IsScalarSequence(type) ? LowerTokT(type) : type);
+        }
+    }
+    static bool IsScalarSequence(TypeNode type) => type is TypeNode.Fqn { Name: CharSeq }
+        or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } };
+
     internal static BirFileDeclaration Apply(BirFileDeclaration root, IReadOnlySet<string> localTopLevelFns,
-        out CharSeqRetLambdas retLambdas)
-        => (BirFileDeclaration)Apply((BirGraphValue)root, localTopLevelFns, out retLambdas);
+        out CharSeqRetLambdas retLambdas, MemberResults results = null)
+        => (BirFileDeclaration)Apply((BirGraphValue)root, localTopLevelFns, out retLambdas, results);
 
     internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns)
         => Apply(root, localTopLevelFns, out _);
 
     internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns,
-        out CharSeqRetLambdas retLambdas)
+        out CharSeqRetLambdas retLambdas, MemberResults results = null)
     {
         // These facts describe the original callable contract, before either a
         // declaration or a structured function-type return is collapsed.
@@ -39,7 +59,16 @@ static partial class CharSeqStringLowering
         }
         Collect(root);
         retLambdas = new CharSeqRetLambdas(statics, closures);
-        return WalkSource(root, new SourceEnv(), localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal), exempt);
+        var candidates = root is BirFileDeclaration file && results != null
+            ? file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty().Where(m => IsScalarSequence(m.Ret.OrDefault()))
+                .Select(m => (Owner: t.Name.OrDefault(), Method: m)))
+                .ToArray() : null;
+        var lowered = WalkSource(root, new SourceEnv(), localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal), exempt);
+        if (candidates != null)
+            foreach (var (owner, method) in candidates)
+                if (!StringCharSequenceBridge.RestoresClosureReturn(owner, method, retLambdas))
+                    results.Collect(method);
+        return lowered;
     }
 
     sealed class SourceEnv

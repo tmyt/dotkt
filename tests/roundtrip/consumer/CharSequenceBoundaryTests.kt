@@ -7,6 +7,7 @@ import roundtrip.upstreamstdlib.inlineSequenceIndex
 import roundtrip.upstreamstdlib.sequenceIndexInLibrary
 import roundtrip.upstreamstdlib.sequenceObjectInLibrary
 import roundtrip.upstreamstdlib.sequenceElvisInLibrary
+import roundtriptests.sequenceresults.LocalSequenceResult
 
 private class StringSource(private val text: String?) : SequenceSource() {
     var reads = 0
@@ -26,6 +27,16 @@ class CharSequenceBoundaryTests {
         val custom = BoundarySequence("abc")
         check(sequenceIndexInLibrary(custom) { it == 'b' } == 1)
         check(custom.length == 3 && custom.toString() == "rendered")
+    }
+
+    @TestAttribute
+    fun localGenericMembersReturnCollapsedStrings() {
+        val holder = LocalSequenceResult(42, "hello")
+        var reads = 0
+        fun once(): LocalSequenceResult<Int> { reads++; return holder }
+        check(once().source?.length == 5 && reads == 1)
+        check(once().read()?.length == 5 && reads == 2)
+        check(LocalSequenceResult(1, null).source == null && holder.item == 42)
     }
 
     @TestAttribute
