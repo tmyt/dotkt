@@ -40,13 +40,17 @@ public sealed class NativeSignatureReader
     {
         if (!(method is MethodInfo info && ContainsPointer(info.ReturnType))
             && !method.GetParameters().Any(parameter => ContainsPointer(parameter.ParameterType))) return null;
+        return ExactMethod(method);
+    }
+
+    public Signature ExactMethod(MethodBase method)
+    {
         var key = (method.Module.FullyQualifiedName, method.Module.ModuleVersionId, method.MetadataToken);
         if (_methods.TryGetValue(key, out var cached)) return cached;
         using var stream = File.OpenRead(key.FullyQualifiedName);
         using var pe = new PEReader(stream);
         var reader = pe.GetMetadataReader();
-        var signature = reader.GetMethodDefinition((MethodDefinitionHandle)MetadataTokens.Handle(key.MetadataToken))
-            .DecodeSignature(new Provider(), reader);
+        var signature = Declaration(reader, (MethodDefinitionHandle)MetadataTokens.Handle(key.MetadataToken));
         var result = new Signature(signature.ReturnType, signature.ParameterTypes.ToArray());
         _methods.Add(key, result);
         return result;

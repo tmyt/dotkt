@@ -10,10 +10,14 @@ public interface IGenericPropertySlot<T>
     T value { get; set; }
 }
 
-public interface IExplicitIntDefault : IGenericPropertySlot<int>
+public sealed class SlotBox<T>(T item) { public T Item { get; } = item; }
+
+public interface IBoxSlot<T> { SlotBox<T> value { get; set; } }
+
+public interface IExplicitIntDefault : IBoxSlot<int>
 {
-    int Stored { get; set; }
-    int IGenericPropertySlot<int>.value { get => Stored; set => Stored = value; }
+    SlotBox<int> Stored { get; set; }
+    SlotBox<int> IBoxSlot<int>.value { get => Stored; set => Stored = value; }
 }
 
 public class PropertySlotBaseValue

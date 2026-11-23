@@ -106,9 +106,9 @@ private class ProtectedCompanionConsumer : ProtectedCompanionHost() {
     }
 }
 
-private interface PropertySibling<T> : RoundtripPropertyInterop.IGenericPropertySlot<T>
+private interface PropertySibling<T> : RoundtripPropertyInterop.IBoxSlot<T>
 private class ExplicitIntDefault : RoundtripPropertyInterop.IExplicitIntDefault, PropertySibling<Int> {
-    override var Stored: Int = 42
+    override var Stored: RoundtripPropertyInterop.SlotBox<Int> = RoundtripPropertyInterop.SlotBox<Int>(42)
 }
 
 private class ReferencedDefaultPropertyWithFunctionCollision : ReferencedDefaultPropertySlot {
@@ -180,11 +180,11 @@ class RoundtripSurfaceTests {
         val explicit = ExplicitIntDefault()
         val sibling: PropertySibling<Int> = explicit
         val native: RoundtripPropertyInterop.IExplicitIntDefault = explicit
-        ClassicAssert.AreEqual(42, sibling.value)
-        sibling.value = 73
-        ClassicAssert.AreEqual(73, native.value)
-        native.value = 19
-        ClassicAssert.AreEqual(19, sibling.value)
+        ClassicAssert.AreEqual(42, sibling.value.Item)
+        sibling.value = RoundtripPropertyInterop.SlotBox<Int>(73)
+        ClassicAssert.AreEqual(73, native.value.Item)
+        native.value = RoundtripPropertyInterop.SlotBox<Int>(19)
+        ClassicAssert.AreEqual(19, sibling.value.Item)
 
         val genericImplementation = ReferencedGenericDefaultPropertyWithFunctionCollision()
         val genericProperty: RoundtripPropertyInterop.IGenericPropertySlot<String> = genericImplementation

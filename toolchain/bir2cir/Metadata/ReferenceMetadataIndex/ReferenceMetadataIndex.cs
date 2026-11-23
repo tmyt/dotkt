@@ -3314,14 +3314,6 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return true;
     }
 
-    // Resolve the exact DIRECT referenced declaration named by a frontend override edge. Covariant return selection
-    // cannot compare the implementation return with the slot return — their deliberate difference is why the caller
-    // needs the declaration — so identity is source member/property role + method arity + parameter vector. Kotlin
-    // does not overload on return type. Inherited declarations are not searched here: kotc emits an override marker
-    // for each interface that contributes a direct declaration (including a synthesized redeclaration on an
-    // intermediate interface), and each such CLR MethodImpl must name that exact declaring interface.
-    // Early declaration materialization compares Kotlin constraints; post-erasure slot bridges compare CLR
-    // constraints. The caller states its phase so the two sides are always compared in the same representation.
     readonly Dictionary<Type, NativeDefaultDeclaration[]> nativeDefaultSlots = new();
 
     // The source fact identifies the provider. Its MethodImpl identifies a
@@ -3338,18 +3330,24 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         foreach (var slot in slots)
         {
             var owner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(slot.Owner, provider.Args ?? []);
-            if (slot.Signature.GenericParameterCount != 0
+            if (slot.Signature.GenericParameterCount != 0 || ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
+                is not { IsInterface: true } declaring) continue;
+            var tokens = declaring.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(method => method.Name == slot.Member && !method.IsGenericMethod)
+                .Where(method => {
+                    var raw = _nativeSignatures.ExactMethod(method);
+                    return DeclarationIdentityBinding.PhysicalTypeSignature(raw.Return)
+                            == DeclarationIdentityBinding.PhysicalTypeSignature(slot.Signature.ReturnType)
+                        && raw.Parameters.Select(DeclarationIdentityBinding.PhysicalTypeSignature)
+                            .SequenceEqual(slot.Signature.ParameterTypes.Select(DeclarationIdentityBinding.PhysicalTypeSignature));
+                }).Select(method => method.MetadataToken).ToArray();
+            if (tokens.Length != 1
                 || !TrySelectedOverrideDeclarationByShape(owner.Name, property, role, 0, parameters, owner.Args ?? [],
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey([], []), false, out var candidate,
-                    semanticConstraints: true, selectedDeclarationId: null, publicOnly: true)
-                || candidate.PhysicalMember != slot.Member) continue;
-            if (!candidate.SignatureParameters.Select(DeclarationIdentityBinding.PhysicalTypeSignature)
-                    .SequenceEqual(slot.Signature.ParameterTypes.Select(DeclarationIdentityBinding.PhysicalTypeSignature))
-                || DeclarationIdentityBinding.PhysicalTypeSignature(candidate.PhysicalReturn)
-                    != DeclarationIdentityBinding.PhysicalTypeSignature(slot.Signature.ReturnType)
-                || (role == "get"
+                    semanticConstraints: true, selectedDeclarationId: null, methodToken: tokens[0])) continue;
+            if (role == "get"
                     ? !SourceDeclarationDescribesCall(SupertypeGraph.SubstOwnerTvs(candidate.PhysicalReturn, owner.Args ?? []), result)
-                    : candidate.ReturnsValue)) continue;
+                    : candidate.ReturnsValue) continue;
             if (callOwner != null) return false;
             callOwner = owner;
             declaration = candidate;
@@ -3357,6 +3355,14 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return callOwner != null;
     }
 
+    // Resolve the exact DIRECT referenced declaration named by a frontend override edge. Covariant return selection
+    // cannot compare the implementation return with the slot return — their deliberate difference is why the caller
+    // needs the declaration — so identity is source member/property role + method arity + parameter vector. Kotlin
+    // does not overload on return type. Inherited declarations are not searched here: kotc emits an override marker
+    // for each interface that contributes a direct declaration (including a synthesized redeclaration on an
+    // intermediate interface), and each such CLR MethodImpl must name that exact declaring interface.
+    // Early declaration materialization compares Kotlin constraints; post-erasure slot bridges compare CLR
+    // constraints. The caller states its phase so the two sides are always compared in the same representation.
     internal bool TrySelectedSourceOverrideDeclaration(string ownerFqn, string sourceMember, int methodArity,
         IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, BirTypeParameter[] selectedTypeParams,
         TypeNode[] implementationOwnerTypeArguments, bool selectedSuspend, out ReferencedMethodDeclaration declaration,
@@ -3369,12 +3375,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     internal bool TrySelectedOverrideDeclarationByShape(string ownerFqn, string sourceMember, string accessorKind,
         int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments, string selectedShape,
         bool selectedSuspend, out ReferencedMethodDeclaration declaration, bool semanticConstraints,
-        string selectedDeclarationId, bool publicOnly = false)
+        string selectedDeclarationId, int? methodToken = null)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var matches = list.Where(member => !member.IsStatic && !member.IsPropertyBridge
-                && (!publicOnly || member.IsPublic)
+                && (methodToken == null || member.MetadataToken == methodToken)
                 && (selectedDeclarationId == null || member.DeclarationId == selectedDeclarationId)
                 && (accessorKind == null
                     ? member.SourcePropertyName == null
