@@ -1,4 +1,4 @@
 interface PrivateHelperContract {
-    private fun hidden(): Int = 17
-    fun answer(): Int = hidden()
+    private fun toString(value: Int): Int = value
+    fun answer(): Int = toString(17)
 }

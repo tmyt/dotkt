@@ -12,7 +12,7 @@ public class BidirectionalTests
 
     private sealed class IndependentHelper : PrivateHelperContract
     {
-        public int hidden() => 99;
+        public int toString(int value) => 99;
     }
 
     [Test]
@@ -20,7 +20,7 @@ public class BidirectionalTests
     {
         PrivateHelperContract value = new IndependentHelper();
         Assert.That(value.answer(), Is.EqualTo(17));
-        var helper = typeof(PrivateHelperContract).GetMethod("hidden",
+        var helper = typeof(PrivateHelperContract).GetMethod("toString",
             BindingFlags.DeclaredOnly | BindingFlags.NonPublic | BindingFlags.Instance);
         Assert.That(helper is { IsPrivate: true, IsVirtual: false }, Is.True);
     }
