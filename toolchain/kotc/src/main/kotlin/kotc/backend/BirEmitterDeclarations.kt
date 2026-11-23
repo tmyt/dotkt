@@ -2063,8 +2063,8 @@ private fun <T> BirEmitter.withDelegationPlan(site: DelegationSite, emit: () -> 
 			val plan = callPlan(site.call)
 			for (temp in site.temporaries) {
 				val init = temp.initializer!!
-				val location = byrefMarker(init)
-				val rendered = if (location != null) byrefBackingField(location) ?: expr(location) else expr(init)
+				val location = markerAddress(init)
+				val rendered = location ?: expr(init)
 				valSubst[temp] = if (location != null)
 					plan.bind("arg", "address", isStableLocation(init), birType(temp.type), "delegating constructor argument", rendered)
 				else plan.bind("arg", "value", isStableValue(init), birType(temp.type), "delegating constructor argument", rendered)

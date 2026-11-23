@@ -110,13 +110,13 @@ internal fun BirEmitter.expr(node: IrExpression): BirExpression {
 	if (node !is org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression) {
 		val rendered = exprInner(node)
 		val withMember = if (node is IrGetField) memberFieldVisibilityStamped(node.symbol.owner, rendered) else rendered
-		return styStamped(node, withMember)
+		return styStamped(node.type, withMember)
 	}
 	val (plan, s) = withCallPlan(node) {
 		val rendered = exprInner(node)
 		// A local delegate accessor is spliced. Its body already carries the operator's visibility.
 		val withMember = if (node is IrCall && node.symbol.owner in localDelegates) rendered else memberVisibilityStamped(node, rendered)
-		styStamped(node, withMember)
+		styStamped(node.type, withMember)
 	}
 	return plan.wrap(s, birType(node.type))
 }
@@ -279,14 +279,14 @@ internal fun BirEmitter.memberFieldVisibilityStamped(field: org.jetbrains.kotlin
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
-private fun BirEmitter.styStamped(node: IrExpression, s: BirExpression): BirExpression = when (s) {
-	is BirLocal -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
-	is BirCallLocal -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
-	is BirCallStatic -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
-	is BirCallInstance -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
-	is BirFieldGet -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
-	is BirLateinitGet -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
-	is BirStaticFieldGet -> if (s.sty == null) s.copy(sty = birType(node.type)) else s
+private fun BirEmitter.styStamped(type: IrType, s: BirExpression): BirExpression = when (s) {
+	is BirLocal -> if (s.sty == null) s.copy(sty = birType(type)) else s
+	is BirCallLocal -> if (s.sty == null) s.copy(sty = birType(type)) else s
+	is BirCallStatic -> if (s.sty == null) s.copy(sty = birType(type)) else s
+	is BirCallInstance -> if (s.sty == null) s.copy(sty = birType(type)) else s
+	is BirFieldGet -> if (s.sty == null) s.copy(sty = birType(type)) else s
+	is BirLateinitGet -> if (s.sty == null) s.copy(sty = birType(type)) else s
+	is BirStaticFieldGet -> if (s.sty == null) s.copy(sty = birType(type)) else s
 	else -> s
 }
 
@@ -340,7 +340,7 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 	val nested = if (checked) (node.argument as? IrTypeOperatorCall)?.takeIf {
 		(it.operator == IrTypeOperator.CAST || it.operator == IrTypeOperator.IMPLICIT_CAST) && planReads[it] == null
 	} else null
-	val original = if (nested != null) styStamped(nested, castExpression(nested, requireNonNullInput = true))
+	val original = if (nested != null) styStamped(nested.type, castExpression(nested, requireNonNullInput = true))
 		else expr(node.argument)
 	val operand = if (checked && nested == null)
 		wrapNonNullValue(original, node.argument.type, "null cannot be cast to a non-null type")
@@ -350,46 +350,53 @@ private fun BirEmitter.castExpression(node: IrTypeOperatorCall, requireNonNullIn
 	} ?: kotc.bir.BirCast(type = birType(node.typeOperand), reifiedTypeOperand = node.operator == IrTypeOperator.CAST && node.typeOperand.hasReifiedRuntimeOperand(), erasedTypeOperand = erasedTypeOperand(node.typeOperand), e = operand)
 }
 
-internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (node) {
-	is IrConst -> constant(node)
-	is IrGetValue -> {
-		val owner = node.symbol.owner
-		val name = owner.name.asString()
-		when {
-			// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure). The cell
-			// field `v` holds the FULL element type (`owner.type`); when that is a value-type nullable (`Int?` = `Nullable<T>`)
-			// read at a use-site narrowed to the bare value (an inline-closure smart-cast `if (q != null) … q …`, whose
-			// IrGetValue.type is the bare `Int`), UNWRAP `Nullable<T>.Value` — mirroring the plain-local read arm below, and
-			// keyed on the cell element type `owner.type` (NOT the smart-cast-narrowed `node.type`, which alone would defeat
-			// the leaf coerceValue). Consumed as `Nullable<T>` (no narrowing) -> the raw field. (#36)
-			isRefCell(owner) -> {
-				val raw = kotc.bir.BirFieldGet(ownerType = refType(owner), recv = refBase(owner), name = "v")
-				val vElem = nullableValueUnwrapElem(owner.type, node.type)
-				if (vElem != null) kotc.bir.BirNullableValue(elem = vElem, e = raw) else raw
-			}
-			captureSubst.containsKey(owner) -> captureSubst[owner]!!
-			selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
-			valSubst.containsKey(owner) -> valSubst[owner]!!
-			name == "<this>" -> BirThis()
-			else -> {
-				val slot = localSlotName(owner)
-				val local = BirLocal(slot, outer = if (isExactOuterValue(node)) true else null)
-				// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
-				// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
-				// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
-				// value keeps its boxed/declared form and ops like `>` compare the wrong thing.
-				val ut = birType(node.type); val dt = birType(owner.type)
-				// A value-type-nullable (`Int?` = `Nullable<T>`) narrowed to its non-null value (`if (n != null) { …n… }`)
-				// must UNWRAP `Nullable<T>.Value` — a bare `local` load of a `Nullable<int>` into an `int` context is
-				// invalid IL / reads garbage (the C1 smart-cast miscompile). This is the twin of the IMPLICIT_CAST path.
-				val vElem = nullableValueUnwrapElem(owner.type, node.type)
-				// The declared type is the boxed Any token ("object" fallback, or "kotlin.Any" for an Any/Nothing source type).
-				if (vElem != null) kotc.bir.BirNullableValue(elem = vElem, e = local)
-				else if (ut != dt && dt == OBJ) kotc.bir.BirCast(type = ut, e = local)
-				else local
-			}
+private fun BirEmitter.readValue(node: IrGetValue, readType: IrType): BirExpression {
+	val owner = node.symbol.owner
+	val name = owner.name.asString()
+	return when {
+		// A ref-cell var read `x` -> `x.v` (the heap cell, reached via the capture field inside a closure). The cell
+		// field `v` holds the FULL element type (`owner.type`); when that is a value-type nullable (`Int?` = `Nullable<T>`)
+		// read at a use-site narrowed to the bare value (an inline-closure smart-cast `if (q != null) … q …`, whose
+		// IrGetValue.type is the bare `Int`), UNWRAP `Nullable<T>.Value` — mirroring the plain-local read arm below, and
+		// keyed on the cell element type `owner.type` (NOT the smart-cast-narrowed `node.type`, which alone would defeat
+		// the leaf coerceValue). Consumed as `Nullable<T>` (no narrowing) -> the raw field. (#36)
+		isRefCell(owner) -> {
+			val raw = kotc.bir.BirFieldGet(ownerType = refType(owner), recv = refBase(owner), name = "v")
+			val vElem = nullableValueUnwrapElem(owner.type, readType)
+			if (vElem != null) kotc.bir.BirNullableValue(elem = vElem, e = raw) else raw
+		}
+		captureSubst.containsKey(owner) -> captureSubst[owner]!!
+		selfSubst.containsKey(owner) -> selfSubst[owner]!!   // extension `__self` (by identity, before name-based `<this>`)
+		valSubst.containsKey(owner) -> valSubst[owner]!!
+		name == "<this>" -> BirThis()
+		else -> {
+			val slot = localSlotName(owner)
+			val local = BirLocal(slot, outer = if (isExactOuterValue(node)) true else null)
+			// Smart-cast narrowing carried directly on the IrGetValue (no IMPLICIT_CAST node — e.g. the `&&`
+			// RHS / a compound condition: `x is Int && x > 10`): the use-site type is narrower than the
+			// declared type, so emit a cast (ilemit unboxes Any->Int / castclass for refs). Without it the
+			// value keeps its boxed/declared form and ops like `>` compare the wrong thing.
+			val ut = birType(readType); val dt = birType(owner.type)
+			// A value-type-nullable (`Int?` = `Nullable<T>`) narrowed to its non-null value (`if (n != null) { …n… }`)
+			// must UNWRAP `Nullable<T>.Value` — a bare `local` load of a `Nullable<int>` into an `int` context is
+			// invalid IL / reads garbage (the C1 smart-cast miscompile). This is the twin of the IMPLICIT_CAST path.
+			val vElem = nullableValueUnwrapElem(owner.type, readType)
+			// The declared type is the boxed Any token ("object" fallback, or "kotlin.Any" for an Any/Nothing source type).
+			if (vElem != null) kotc.bir.BirNullableValue(elem = vElem, e = local)
+			else if (ut != dt && dt == OBJ) kotc.bir.BirCast(type = ut, e = local)
+			else local
 		}
 	}
+}
+
+internal fun BirEmitter.localAddress(node: IrGetValue): BirExpression {
+	val declared = node.symbol.owner.type
+	return planReads[node] ?: styStamped(declared, readValue(node, declared))
+}
+
+internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (node) {
+	is IrConst -> constant(node)
+	is IrGetValue -> readValue(node, node.type)
 	is IrGetEnumValue -> {
 		val entry = node.symbol.owner
 		val parent = entry.parent as? IrClass

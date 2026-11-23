@@ -113,10 +113,15 @@ class InvariantValueStorageTests {
 
     @TestAttribute
     fun projectedManagedReferenceSlotsRetainTheirCarrierPointee() {
-        var slot: Box<*> = Box(1)
+        val first = Box(1)
+        var slot: Box<*> = first
+        check(slot === first) // narrows the value read, not the writable slot
         val replacement: Box<*> = Box("after")
-        replaceProjectedSlot(byref(slot), replacement)
-        check(slot === replacement && slot.value == "after")
+        var evaluations = 0
+        fun next(): Box<*> { evaluations++; return replacement }
+        replaceProjectedSlot(byref(slot), next())
+        fun contents(box: Box<*>): Any? = box.value
+        check(evaluations == 1 && slot === replacement && contents(slot) == "after")
         val holder = ProjectedReferenceField()
         holder.replace(replacement)
         check(holder.value === replacement && holder.value.value == "after")

@@ -650,7 +650,7 @@ internal fun BirEmitter.filledExternalArgs(
 		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
 		// address); under a plan that is an `address` binding — an ordering marker, never storage. `addressSlotExpr` is
 		// null for every ordinary argument, so this is a no-op everywhere else.
-		val address = byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) }
+		val address = markerAddress(arg)
 		slots[valIdx] =
 			if (address != null)
 				plan?.bind("arg", "address", isStableLocation(arg),
@@ -2350,6 +2350,23 @@ internal fun BirEmitter.typeArguments(call: IrCall): List<TypeNode>? {
 internal fun BirEmitter.byrefMarker(a: IrExpression): IrExpression? =
 	if (a is IrCall && a.symbol.owner.fqNameWhenAvailable?.asString() == "kotlin.clr.byref") regularArgs(a).firstOrNull() else null
 
+internal fun BirEmitter.markerAddress(arg: IrExpression): BirExpression? =
+	byrefMarker(arg)?.let { addressExpression(it, (arg as IrCall).typeArguments.singleOrNull()) }
+
+/** Flow narrowing describes the value read, not the storage designated by a ref to the declared type.
+ * Never peel an authored cast, a call, an evaluation-plan binding, or a conversion to a different pointee. */
+private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): BirExpression {
+	var storage = arg
+	while (storage is IrTypeOperatorCall && storage.operator == IrTypeOperator.IMPLICIT_CAST && storage !in planReads)
+		storage = storage.argument
+	if (storage is IrGetValue && pointee != null) {
+		val declared = storage.symbol.owner.type
+		// IR type equality alone ignores the platform-nullability annotation.
+		if (declared == pointee && birType(declared) == birType(pointee)) return localAddress(storage)
+	}
+	return byrefBackingField(arg) ?: expr(arg)
+}
+
 /** A stdlib byref parameter marked `@kotlin.clr.ClrRefArgument`: its argument is passed BY REFERENCE to the bound
  *  BCL member (bir2cir wraps the arg position `byref:` at substitution). kotc reads it ONLY to SHAPE the argument
  *  addressably — the byref call-substitution decision itself is bir2cir's. */
@@ -2363,8 +2380,8 @@ internal fun BirEmitter.isClrRefArgument(p: IrValueParameter): Boolean =
  *  THE single source of truth for "is this slot an address": [argExpr] renders it and [filledArgs] classifies by it. */
 internal fun BirEmitter.addressSlotExpr(arg: IrExpression, param: IrValueParameter?): BirExpression? {
 	if (param == null) return null
-	if (birType(param.type) is TypeNode.ByRef) return byrefMarker(arg)?.let { inner -> byrefBackingField(inner) ?: expr(inner) }
-	if (isClrRefArgument(param)) return byrefBackingField(arg) ?: expr(arg)
+	if (birType(param.type) is TypeNode.ByRef) return markerAddress(arg)
+	if (isClrRefArgument(param)) return addressExpression(arg, param.type)
 	return null
 }
 
