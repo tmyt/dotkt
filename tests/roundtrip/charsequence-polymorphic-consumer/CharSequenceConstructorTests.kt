@@ -4,10 +4,11 @@ import NUnit.Framework.TestAttribute
 
 private class ConstructorValue<T>(val source: T)
 
-private class ConstructorText(val source: CharSequence?) {
+private open class ConstructorText(val source: CharSequence?) {
     constructor(marker: String, source: String) : this(marker + source)
     fun length() = source?.length ?: -1
 }
+private class DerivedText(a: String, b: String) : ConstructorText(a + b)
 
 class CharSequenceConstructorTests {
     @TestAttribute
@@ -18,6 +19,7 @@ class CharSequenceConstructorTests {
         check(ConstructorText(read(null)).length() == -1)
         check(reads == 2)
         check(ConstructorText("a", "bc").length() == 3)
+        check(DerivedText("a", "bc").length() == 3)
         check(ConstructorValue<CharSequence>("ab").source.length == 2)
         val custom = object : CharSequence {
             override val length: Int get() = 17

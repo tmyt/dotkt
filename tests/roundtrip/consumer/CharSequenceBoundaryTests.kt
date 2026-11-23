@@ -13,7 +13,18 @@ private class StringSource(private val text: String?) : SequenceSource() {
     override val source: String? get() { reads++; return text }
 }
 
+private open class CollapsedText(val value: CharSequence?) {
+    constructor(a: String, b: String) : this(a + b)
+}
+private class DerivedText(a: String, b: String) : CollapsedText(a + b)
+
 class CharSequenceBoundaryTests {
+    @TestAttribute
+    fun thisAndSuperDelegationKeepTheSelectedStringSlot() {
+        fun rawString(value: Any?) = value is String
+        check(rawString(CollapsedText("a", "b").value))
+        check(rawString(DerivedText("c", "d").value))
+    }
     @TestAttribute
     fun importedReceiverBodiesAndInlineSplicesUseTheSelectedRepresentation() {
         var evaluations = 0
