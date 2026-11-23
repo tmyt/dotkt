@@ -42,8 +42,20 @@ class CharSequenceBoundaryTests {
         returned[0] = "after"
         check(original[0] == "after")
         val foreign = LibrarySequenceVector()
+        val copy = arrayOf<CharSequence>(*foreign.values, "tail")
+        check(copy[0] == "rendered" && copy[1] == "tail" && foreign.length() == 6)
+        foreign.values[0] = "field"
+        check(foreign.length() == 5)
         foreign.elements()[0] = "foreign"
         check(foreign.length() == 7)
+
+        fun fresh(init: (Int) -> StringBuilder?): Array<CharSequence?> = Array(3, init)
+        fun required(values: Array<CharSequence?>?): Array<CharSequence?> = values!!
+        var calls = 0
+        val snapshots = fresh { i -> check(i == calls++); if (i == 1) null else builder }
+        builder.append(".")
+        check(required(snapshots) === snapshots && calls == 3)
+        check(snapshots[0] == "before!?" && snapshots[1] == null && snapshots[2] == "before!?")
     }
 
     @TestAttribute

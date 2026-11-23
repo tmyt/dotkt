@@ -33,7 +33,7 @@ fun sequenceObjectInLibrary(flag: Boolean, value: CharSequence): Any = if (flag)
 fun sequenceElvisInLibrary(value: CharSequence?): String = (value ?: "raw").toString()
 fun sequenceLengthInLibrary(value: CharSequence?): Int = value?.length ?: -1
 class LibrarySequenceVector {
-    private val values = arrayOf<CharSequence>(BoundarySequence("before"))
+    @kotlin.clr.ClrField val values = arrayOf<CharSequence>(BoundarySequence("before"))
     fun elements(): Array<CharSequence> = values
     fun length() = values[0].length
 }
