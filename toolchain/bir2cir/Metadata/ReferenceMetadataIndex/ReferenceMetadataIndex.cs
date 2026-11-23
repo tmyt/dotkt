@@ -4720,7 +4720,17 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                     // MethodSemantics is the authoritative physical association. SourcePropertyName may come from a
                     // Kotlin carrier and therefore need not equal the CLR Property row's metadata name.
                     if (member.AssociatedPropertyName != null)
+                    {
+                        // A native declaration's own MethodSemantics row is its accessor, not the
+                        // possibly differently named MethodImpl declaration on an interface.
+                        if (!HasDotKtOwner(lookupOwner) && !IsAliasedOwner(lookupOwner))
+                        {
+                            physicalPropertyName = member.AssociatedPropertyName;
+                            physicalMethodName = member.Name;
+                            return true;
+                        }
                         associated = (member.AssociatedPropertyName, member.Name);
+                    }
                 }
             }
 
@@ -5093,6 +5103,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     {
         CarrierScanSelfTest();
         SelectedSourceConstraintShapeSelfTest();
+        NativePropertyAssociationSelfTest();
         SelfTestPhysicalTypeNameSnapshots();
         SelfTestRichEnumSelection();
         ClrMemberResolution.NativeSignatureLifetimeSelfTest();

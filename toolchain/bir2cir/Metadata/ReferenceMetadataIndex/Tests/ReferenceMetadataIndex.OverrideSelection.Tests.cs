@@ -6,6 +6,24 @@ using DotKt.Cir;
 
 sealed partial class ReferenceMetadataIndex
 {
+    static void NativePropertyAssociationSelfTest()
+    {
+        var index = Build(Array.Empty<string>());
+        var empty = Array.Empty<TypeNode>();
+        void Getter(string owner, string method) => index._membersByOwner[owner] = new() {
+            new(owner, method, 0, null, false, false, ParamTypeNodes: empty,
+                SourcePropertyName: "P", AccessorKind: "get", AssociatedPropertyName: "P")
+        };
+        Getter("NativeClass", "ReadClass");
+        Getter("NativeInterface", "ReadInterface");
+        index._referenceTypeShapes[new("NativeClass", 0)] = new(
+            0, "class", null, new[] { new TypeNode.Fqn("NativeInterface") });
+        foreach (var (owner, method) in new[] { ("NativeClass", "ReadClass"), ("NativeInterface", "ReadInterface") })
+            if (!index.TryExternalPropertyAccessor(owner, "P", "get", 0, 0, empty, null,
+                    out var declaring, out _, out var getter) || declaring != owner || getter != method)
+                throw new InvalidOperationException($"Expected the declared native accessor {owner}.{method}");
+    }
+
     static void SelectedSourceConstraintShapeSelfTest()
     {
         var index = Build(Array.Empty<string>());
