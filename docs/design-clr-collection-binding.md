@@ -84,6 +84,11 @@ A Kotlin implementation of `ClrEnumerable<T>` (including delegation or an interf
 
 bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, constructor, method bodies, and the `GetEnumerator()`/`dotkt$NonGenericGetEnumerator()` pair on each qualifying class, each carrying the exact MethodImpl descriptor of the slot it fills. The adapter cannot be written in Kotlin, because `IEnumerator<T>` and the non-generic `IEnumerator` declare two `Current` slots that differ only in return type; it is emitted once per module, since its CLR identity never appears in a signature.
 
+For Kotlin-authored supertypes, `KotlinSupertypes` records which CLR interface rows stand for
+the declared Kotlin protocols. Re-import replaces those rows with the source edges: a class
+declaring only `ClrEnumerable<T>` does not acquire `Iterable<T>`, while a class declaring
+both retains both. This does not change projection of an ordinary C# assembly.
+
 Inherited interfaces read from reference metadata resolve through the same alias declarations as local interfaces;
 CLR arity in a referenced owner's spelling must not hide its native enumeration obligation.
 

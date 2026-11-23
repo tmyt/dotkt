@@ -21,8 +21,10 @@ import roundtrip.collslots.ReplacingResultList
 import roundtrip.collslots.makeReplacingResultList
 import roundtrip.collslots.ExternalAddProvider
 import roundtrip.collslots.ExternalDefaultAdd
+import roundtrip.collslots.NativeFeed
 
 private class CrossModuleInheritedAddResult<T>(values: MutableList<T>) : ReplacingResultList<T>(values)
+private class ImportedNativeFeed(source: ClrEnumerable<Int>) : NativeFeed<Int>(source)
 
 private class CrossModuleAddProvider<T>(private val values: MutableList<T>) :
     ExternalAddProvider<T>(values), MutableCollection<T> {
@@ -132,6 +134,9 @@ class KotlinCollectionSlotTests {
     // referenced assembly's metadata, and the bridge must still be stated on this consumer's own class.
     @TestAttribute
     fun anImplementerOfAReferencedIterableInterfaceGetsItsBridge() {
+        val native = ImportedNativeFeed(listOf(7) as ClrEnumerable<Int>).GetEnumerator()
+        assertEquals(true, native.MoveNext())
+        assertEquals(7, native.current())
         val numbers = CrossModuleFeedNumbers()
         assertEquals(listOf(1, 2, 3), numbers.toList())
         assertEquals(6, numbers.sum())

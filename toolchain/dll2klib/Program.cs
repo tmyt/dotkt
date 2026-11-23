@@ -2356,9 +2356,12 @@ internal sealed partial class AssemblyScanner : IDisposable
                     .Where(method => !method.IsNil);
             }))
             .ToHashSet();
+        using var sourceSupertypes = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
+        var aliasTargets = sourceSupertypes is not null && sourceSupertypes.RootElement.TryGetProperty("interfaceAliasTargets", out var targets)
+            ? targets.EnumerateArray().Select(target => target.GetString()!).ToHashSet(StringComparer.Ordinal) : null;
         void AddProjectedInterfaces()
         {
-            var implementedInterfaces = ProjectedPublicInterfaces(def, names, signatures, typeContext).ToList();
+            var implementedInterfaces = ProjectedPublicInterfaces(def, names, signatures, typeContext, aliasTargets: aliasTargets).ToList();
             var genericInterfaceNames = implementedInterfaces
                 .Where(x => x.Argument.Count != 0 && x.HasClassName)
                 .Select(x => names.ClassName(x.ClassName)?.Split('.').Last())
@@ -2402,7 +2405,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             {
                 AddProjectedInterfaces();
                 RestoreErasedSupertypes(
-                    handle,
+                    sourceSupertypes,
                     result,
                     signatures,
                     names,
@@ -2432,13 +2435,13 @@ internal sealed partial class AssemblyScanner : IDisposable
                 result.Supertype.Add(signatures.DecodeEntity(def.BaseType, typeContext, platform: false));
             int? projectedBaseIndex = result.Supertype.Count == 0 ? null : 0;
             AddProjectedInterfaces();
-            if (result.Supertype.Count == 0)
+            if (result.Supertype.Count == 0 && aliasTargets is null)
             {
                 result.Supertype.Add(new KType { ClassName = names.Class("kotlin.Any") });
                 projectedBaseIndex = 0;
             }
             RestoreErasedSupertypes(
-                handle,
+                sourceSupertypes,
                 result,
                 signatures,
                 names,
@@ -3347,7 +3350,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         NameTable names,
         SignatureDecoder signatures,
         GenericContext context,
-        bool includePublicAncestors = false)
+        bool includePublicAncestors = false, IReadOnlySet<string>? aliasTargets = null)
     {
         var projected = new Dictionary<string, KType>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
@@ -3372,6 +3375,8 @@ internal sealed partial class AssemblyScanner : IDisposable
             string? definitionPath)
         {
             if (!surface.IsInterface) return;
+            if (aliasTargets is not null && NativeSignatureReader.Type(reader, entity) is TypeNode.Fqn face && aliasTargets.Contains(face.Name))
+                return; // the source edges replace this face, even when CLR metadata also lists it through an ancestor
             // A compiler-owned operational carrier and its physical parents are not Kotlin supertypes,
             // regardless of the carrier's CLR visibility.
             if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
@@ -6972,10 +6977,9 @@ internal sealed partial class AssemblyScanner : IDisposable
     // Kotlin variance also rides this carrier because CLR cannot express declaration-site variance on classes, and
     // a conflicting @UnsafeVariance use can require an interface's CLR GenericParam row to be invariant. Restoring the
     // authored variance here preserves the Kotlin declaration without asking consumers to infer it from physical ABI.
-    private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
+    private void RestoreErasedSupertypes(System.Text.Json.JsonDocument? doc, Class result, SignatureDecoder signatures,
         NameTable names, IReadOnlySet<int> capturedSourceIndices, int? projectedBaseIndex)
     {
-        using var doc = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
         if (doc is null) return;
         var pre = new List<KType>();
         if (doc.RootElement.TryGetProperty("base", out var b) && TypeNode.Read(b) is { } bn)

@@ -34,13 +34,14 @@ static partial class CollectionIdentityRecord
             Members(owner.Methods.OrEmpty(), owner.Ctors.OrEmpty(), owner.Fields.OrEmpty(), owner.Properties.OrEmpty());
     }
 
-    internal static void RecordTypeEdges(BirFileDeclaration file)
+    internal static void RecordTypeEdges(BirFileDeclaration file, IReadOnlyDictionary<string, string> aliases = null)
     {
         foreach (var declaration in file.Types.OrEmpty())
         {
             var baseType = declaration.Base.OrDefault();
             if (baseType == null || !NestsCollapsingReadonly(baseType)) baseType = null;
             var interfaces = declaration.Interfaces.OrEmpty().Where(type => NestsCollapsingReadonly(type)
+                || type is TypeNode.Fqn named && aliases?.ContainsKey(named.Name) == true
                 || type is TypeNode.Fqn { Name: "kotlin.collections.MutableCollection"
                     or "kotlin.collections.MutableList" or "kotlin.collections.MutableSet" })
                 .Select(BirGraphValue.CopyType).ToArray();
@@ -53,7 +54,8 @@ static partial class CollectionIdentityRecord
                     bounds[index] = parameters[index].Constraints.Value.Select(BirGraphValue.CopyType).ToArray();
             var node = (BirGraphValue)declaration;
             var before = NullableRepresentationViews.TypeFacts(node);
-            var after = (before ?? SourceTypeFacts.Empty).Merge(BirGraphValue.CopyType(baseType), interfaces, bounds);
+            var after = (before ?? SourceTypeFacts.Empty).Merge(BirGraphValue.CopyType(baseType), interfaces, bounds)
+                .BindInterfaceAliases(aliases);
             if (!ReferenceEquals(after, before ?? SourceTypeFacts.Empty))
                 NullableRepresentationViews.SetTypeFacts(node, after);
         }

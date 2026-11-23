@@ -782,7 +782,7 @@ sealed class Pipeline
         // inner applications or erased element consumers rewrite those uses.
         if (!referenceBuild) ClrEventImplBinding.BindLocalSubscriptionsAll(captured);
         if (appBuild)
-            foreach (var source in captured) CollectionIdentityRecord.RecordTypeEdges(source);
+            foreach (var source in captured) CollectionIdentityRecord.RecordTypeEdges(source, refs.Aliases);
         if (!referenceBuild) KotlinCollectionIdentitySynthesis.ApplyAll(captured, refs);
         for (var index = 0; index < captured.Length; index++)
             BirTypeLowering.ValidatePointerVocabulary(captured[index], OutputNameFor(inputsWithSources[index].Path));
