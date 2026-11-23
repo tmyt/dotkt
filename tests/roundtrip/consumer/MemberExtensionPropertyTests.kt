@@ -2,13 +2,6 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 import roundtrip.memberextensionsurface.GenericMemberPropertyCarrier
 import roundtrip.memberextensionsurface.GenericMemberPropertyHost
-import roundtrip.memberextensionsurface.TaggedMemberProperty
-
-private class IntMemberProperty : TaggedMemberProperty<Int> {
-    override var <R> GenericMemberPropertyCarrier<R>.item: Int
-        get() = value as Int
-        set(v) { value = v }
-}
 
 private class GenericMemberPropertyConsumer : GenericMemberPropertyHost() {
     inline fun <reified T> matches(value: Any?): Boolean =
@@ -63,10 +56,5 @@ class MemberExtensionPropertyTests {
         ClassicAssert.AreEqual(50, counted.value)
         ClassicAssert.AreEqual("direct", consumer.directOrdinaryValue(
             GenericMemberPropertyHost(), GenericMemberPropertyCarrier<String>("direct")))
-        val tagged: TaggedMemberProperty<Int> = IntMemberProperty()
-        with(tagged) {
-            counted.item = 73
-            ClassicAssert.AreEqual(73, counted.item)
-        }
     }
 }

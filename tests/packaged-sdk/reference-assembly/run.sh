@@ -29,6 +29,10 @@ class Box<T : Bound>(val value: T) {
     fun echo(other: T = value): T = other
 }
 interface AbstractApi { fun action(): Int }
+class Cell<R>(var n: Int)
+interface Slot<T> { var <R> Cell<R>.item: T }
+interface IntSlot : Slot<Int> { abstract override var <R> Cell<R>.item: Int }
+interface Tagged : IntSlot
 inline fun supplied(get: () -> Int): Int = get() + 1
 EOF
 for consumer in kotlin csharp; do
@@ -48,6 +52,8 @@ done
 cat > "$ws/kotlin/Program.kt" <<'EOF'
 import refprobe.Bound
 import refprobe.Box
+import refprobe.Cell
+import refprobe.Tagged
 import refprobe.supplied
 
 fun result(): Int {
@@ -57,7 +63,18 @@ fun result(): Int {
     return 0
 }
 
-fun main() { check(result() == 42) }
+private class Direct : Tagged {
+    override var <R> Cell<R>.item: Int
+        get() = n
+        set(v) { n = v }
+}
+
+fun main() {
+    check(result() == 42)
+    val tagged: Tagged = Direct()
+    val cell = Cell<String>(7)
+    with(tagged) { cell.item = 42; check(cell.item == 42) }
+}
 EOF
 cat > "$ws/csharp/Program.cs" <<'EOF'
 using System;
