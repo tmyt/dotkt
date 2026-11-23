@@ -37,8 +37,9 @@ static class TypedPhysicalValueCoercion
             index.ArrayNames = new BirTemporaryNames(root);
             RewriteMembers(root.Fields.OrEmpty(), [], root.Methods.OrEmpty(),
                 root.FileClass.HasValue ? new TypeNode.Fqn(root.FileClass.Value) : null, index);
-            // Synthesis can append declarations while rewriting a member.
-            foreach (var type in root.Types.OrEmpty().ToArray()) RewriteType(type, index);
+            // Adapters appended by a constructor also have a native result
+            // boundary. Visit each appended declaration once, in creation order.
+            for (var i = 0; i < root.Types.OrEmpty().Length; i++) RewriteType(root.Types.Value[i], index);
         }
     }
 
@@ -313,7 +314,11 @@ static class TypedPhysicalValueCoercion
         if (FunctionSlot(target, selected, index) != target && Underlying(selected) is TypeNode.Fn selectedFunction
             && Underlying(target) is TypeNode.Fqn slot && !index.ReferenceBuild)
         {
-            var source = ExprType(Graph(value), scope, index);
+            var operand = Graph(value);
+            var physical = PhysicalResult(operand, scope, index);
+            if (physical is TypeNode.Fqn exact && ClrMemberResolution.SameInterfaceSlotType(exact, slot)) return value;
+            var source = physical is TypeNode.Fqn && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native
+                ? native : ExprType(operand, scope, index);
             if (Underlying(source) is TypeNode.Fn { Suspend: false } function
                 && function.DelegateParams.Length == selectedFunction.DelegateParams.Length)
                 return index.DelegateAdapters.AdaptFunctionView(index.Document, value, selectedFunction, slot, function);
@@ -1040,11 +1045,11 @@ static class TypedPhysicalValueCoercion
     {
         if (node is BirBinaryOperation binary) WidenNumericOperands(binary, scope, index);
         if (index.ReferenceBuild && node is not BirBinaryOperation { Op.HasValue: true, Op.Value: "===" }) return;
-        OptionalField<IBirExpression> C(OptionalField<IBirExpression> value, TypeNode target) => value.HasValue && target != null
-            ? OptionalField<IBirExpression>.Of(CoerceExpression(value.Value, target, scope, index)) : value;
-        OptionalField<IBirExpression> Cross(OptionalField<IBirExpression> value, TypeNode target, bool native)
+        OptionalField<IBirExpression> C(OptionalField<IBirExpression> value, TypeNode target, TypeNode selected = null) => value.HasValue && target != null
+            ? OptionalField<IBirExpression>.Of(CoerceExpression(value.Value, target, scope, index, selected)) : value;
+        OptionalField<IBirExpression> Cross(OptionalField<IBirExpression> value, TypeNode target, bool native, TypeNode selected = null)
         {
-            var converted = C(value, target);
+            var converted = C(value, target, selected);
             if (!native || !converted.HasValue) return converted;
             if (target is TypeNode.Array)
                 return Field(Cast(ArrayRuntimeCall("exposeProjectedArray", NativeVector, [NativeVector], index, converted.Value), target));
@@ -1059,7 +1064,8 @@ static class TypedPhysicalValueCoercion
         OptionalField<IBirExpression> FieldWrite(OptionalField<IBirExpression> value)
         {
             var target = FieldTarget(node, scope, index);
-            return Cross(value, target, MayHoldArray(target, index) && IsForeignOwner(Member(node)?.DeclaringType.OrDefault(), index));
+            return Cross(value, target, MayHoldArray(target, index) && IsForeignOwner(Member(node)?.DeclaringType.OrDefault(), index),
+                Signature(node)?.LastOrDefault());
         }
         OptionalField<IBirExpression> AsKotlinObject(OptionalField<IBirExpression> value) =>
             value.HasValue && FunctionViewOperand(Graph(value.Value), ExprType(Graph(value.Value), scope, index), Object, index)

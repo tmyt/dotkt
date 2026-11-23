@@ -119,7 +119,7 @@ sealed class TypedPhysicalDelegateAdapter
             || captured.Name.Value != variable.Name.Value || nullTest.Lhs.Value is not BirLocal tested || tested.Name.Value != variable.Name.Value
             || ReferenceEquals(captured, tested)
             || conditional.Then.Value is not BirConstant { Value.Value: BirLiteral.NullLiteral }
-            || nullTest.Rhs.Value is not BirConstant { Value.Value: BirLiteral.NullLiteral })
+            || nullTest.Op.OrDefault() != "==" || nullTest.Rhs.Value is not BirConstant { Value.Value: BirLiteral.NullLiteral })
             throw new InvalidOperationException("Typed Unit delegate adapter lost one evaluation or nullable identity");
         var declaration = (BirClassDefinition)root.Types.Value.Single();
         var invoke = declaration.Methods.Value.Single();

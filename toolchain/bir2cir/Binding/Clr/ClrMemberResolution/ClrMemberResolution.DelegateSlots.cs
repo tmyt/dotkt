@@ -106,7 +106,7 @@ static partial class ClrMemberResolution
 
     // Local function slots use Fn; exact imported CLR signatures use the equivalent named Func/Action.
     // Read the latter's physical Invoke and close its owner parameters, without folding the Unit class to void.
-    static TypeNode.Fn PhysicalFunctionShape(ReferenceMetadataIndex bindingReferences, TypeNode type, bool includeNominal = false)
+    internal static TypeNode.Fn PhysicalFunctionShape(ReferenceMetadataIndex bindingReferences, TypeNode type, bool includeNominal = false)
     {
         if (type is TypeNode.Fn fn) return fn;
         if (type is not TypeNode.Fqn named || ResolveOwnerType(named, refs: bindingReferences) is not Type owner

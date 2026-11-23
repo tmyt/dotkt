@@ -22,8 +22,11 @@ static partial class ClrMemberResolution
     {
         var view = knownView ?? FunctionValueRepresentation.OrdinaryView(selected, references.IsByRefLikeFqn);
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
-        return SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot) ? null :
-            BoxedDelegateAdapterPlan(natural, PhysicalFunctionShape(references, slot, includeNominal: true));
+        if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
+        var target = PhysicalFunctionShape(references, slot, includeNominal: true);
+        return BoxedDelegateAdapterPlan(natural, target) with {
+            PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
+                && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references) };
     }
 
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,

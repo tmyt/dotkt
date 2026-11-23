@@ -20,13 +20,31 @@ private class FirstPlusLast : WideIntCallback {
 }
 private class NativeIntCallbackDerived(op: FirstPlusLast) : GenericValueInterop.NativeIntCallbackBase(op)
 private class NativeFunctionDerived(op: WideIntCallback) : GenericValueInterop.NativeIntCallbackBase(op)
+private class NativeGetterDerived : GenericValueInterop.NativeCallbackBase(GenericValueInterop.NativeWideCallbacks.IntResult)
+private class NativeArrayDerived(op: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any)
+    : GenericValueInterop.NativeArrayCallbackBase(op)
+private class CallbackBox<T>(val value: T)
 
 class WideFunctionTypeTests {
     @TestAttribute
     fun wideFunctionValuesCrossTheModuleBoundary() {
         assertEquals(17, NativeCallbackDerived(LastArgument()).Read())
-        assertEquals(18, NativeIntCallbackDerived(FirstPlusLast()).Read())
+        val native = NativeIntCallbackDerived(FirstPlusLast())
+        assertEquals(18, native.Read())
+        native.Callback = FirstPlusLast()
+        assertEquals(18, native.Read())
         assertEquals(18, NativeFunctionDerived(FirstPlusLast()).Read())
+        assertEquals(18, NativeGetterDerived().Read())
+        val array = arrayOf(CallbackBox("text"))
+        val returning = NativeArrayDerived { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> array }
+        check(returning.Read() === array)
+        @Suppress("UNCHECKED_CAST")
+        val incompatible = CallbackBox(7) as CallbackBox<String>
+        val unexported = arrayOf(CallbackBox("other"))
+        unexported[0] = incompatible
+        val invalid = NativeArrayDerived { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> unexported }
+        try { invalid.Read(); error("native callback exposed an incompatible array") }
+        catch (_: System.InvalidCastException) {}
         assertEquals(18, param17 { p1, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p17 -> p1 + p17 })
         assertEquals(18, ret17()(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
 

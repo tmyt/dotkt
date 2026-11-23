@@ -165,6 +165,7 @@ static partial class NetInteropBinding
                 _capturedGenericArgument = captured, _capturedGenericResult = capturedResult, _foreignDeclarationSignature = foreign };
         if (plan.Kind == NativeCallKind.PropertySet)
             return new BirPropertySet { Type = plan.Owner, Name = plan.Method, Static = plan.Static,
+                Sig = call.Signature,
                 Recv = plan.Static ? default : receiver, Value = args.Length == 0 ? default : OptionalField<IBirExpression>.Of(args[0]),
                 Sty = sty, Super = plan.Static ? default : super,
                 _capturedGenericArgument = captured, _capturedGenericResult = capturedResult, _foreignDeclarationSignature = foreign };
