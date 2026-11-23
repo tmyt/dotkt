@@ -30,6 +30,10 @@ class Box<T : Bound>(val value: T) {
 }
 interface AbstractApi { fun action(): Int }
 class Cell<R>(var n: Int)
+fun replaceCell(cell: kotlin.clr.ClrRef<Cell<*>>, replacement: Cell<*>): Cell<*> {
+    cell.value = replacement
+    return cell.value
+}
 interface Slot<T> { var <R> Cell<R>.item: T }
 interface IntSlot : Slot<Int> { abstract override var <R> Cell<R>.item: Int }
 interface Tagged : IntSlot
@@ -54,6 +58,7 @@ import refprobe.Bound
 import refprobe.Box
 import refprobe.Cell
 import refprobe.Tagged
+import refprobe.replaceCell
 import refprobe.supplied
 
 fun result(): Int {
@@ -74,6 +79,12 @@ fun main() {
     val tagged: Tagged = Direct()
     val cell = Cell<String>(7)
     with(tagged) { cell.item = 42; check(cell.item == 42) }
+    var slot: Cell<*> = cell
+    check(slot === cell)
+    var calls = 0
+    fun next(): Cell<Int> { calls++; return Cell(17) }
+    val written = replaceCell(replacement = next(), cell = kotlin.clr.byref(slot))
+    check(calls == 1 && slot === written && slot.n == 17)
 }
 EOF
 cat > "$ws/csharp/Program.cs" <<'EOF'

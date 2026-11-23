@@ -113,11 +113,9 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): List<B
 	// A `ClrRef<T>` delegate local (`var x by byref(m())`) -> a `ref T` local holding the live managed pointer
 	// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
 	is IrVariable -> listOf(if (birType(node.type) is TypeNode.ByRef) {
-		val inner = node.initializer?.let { byrefMarker(it) ?: it }
-		// A property read designates its own-source backing storage here just as it does when `byref(...)` is passed
-		// directly to a ref parameter. Routing through get_<p>() would take the address of a returned copy, so writes
-		// through the delegated local would be silently lost and a volatile backing field could not order ldobj/stobj.
-		val init = inner?.let { BirByRefOf(inner = byrefBackingField(it) ?: expr(it)) }
+		// IR argument reordering can store the marker in a temporary. It still designates the
+		// same location as a direct argument; in particular, a smart cast does not create storage.
+		val init = node.initializer?.let { BirByRefOf(inner = markerAddress(it) ?: byrefBackingField(it) ?: expr(it)) }
 		BirVariable(name = localSlotName(node), type = birType(node.type),
 			init = init?.let { BirField.Value(it) } ?: BirField.Null)
 	}

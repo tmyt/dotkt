@@ -2359,7 +2359,11 @@ private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): B
 	var storage = arg
 	while (storage is IrTypeOperatorCall && storage.operator == IrTypeOperator.IMPLICIT_CAST && storage !in planReads)
 		storage = storage.argument
-	if (storage is IrGetValue && storage.symbol.owner.type == pointee) return localAddress(storage)
+	if (storage is IrGetValue && pointee != null) {
+		val declared = storage.symbol.owner.type
+		// IR type equality alone ignores the platform-nullability annotation.
+		if (declared == pointee && birType(declared) == birType(pointee)) return localAddress(storage)
+	}
 	return byrefBackingField(arg) ?: expr(arg)
 }
 
