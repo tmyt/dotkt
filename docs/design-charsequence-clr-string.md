@@ -18,6 +18,15 @@ The pass handles the local declaration/call boundary. External stdlib extension 
 higher-order delegate contracts can still require the synthetic interface, so collapsing every
 CharSequence occurrence to string would be incorrect.
 
+For a non-overridable suspend function with a collapsed scalar result, the CLR entry returns
+`Task<string>`. A return value saved across a suspending `finally` uses the same string storage.
+An overridable `suspend fun read(): CharSequence?` instead retains the interface as the CLR
+`Task<T>` argument: a derived implementation in another assembly can return a real sequence,
+and CLR tasks are invariant. The erased Kotlin continuation can carry the original string or
+sequence. The Task bridge converts a string to the interface view on completion (immediate or
+resumed), passes through a real implementation, and preserves null. That conversion does not
+change a string returned to a Kotlin caller into a different object merely to satisfy the CLR Task.
+
 ## Polymorphic interface slots
 
 A user `class S : CharSequence` implements the synthetic `dotkt$CharSequence` interface.

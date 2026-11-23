@@ -43,5 +43,5 @@ public class SuspendOperandCrossModuleBox(private val base: Int) {
 public suspend fun suspendOperandCrossModuleRelay(n: Int): Int = n
 
 abstract class SuspendTextSource {
-    abstract suspend fun readText(): CharSequence?
+    abstract suspend fun readText(gate: Task): CharSequence?
 }

@@ -267,10 +267,14 @@ static partial class CharSeqStringLowering
             var named = SourceRecordName(node).HasValue;
             var openSuspendResult = HasOpenSuspendResult(node);
             node.RewriteOwnTypeFieldsInPlace((field, _, type) =>
-                (field == "ret" && !openSuspendResult || field == "type" && named) && IsCharSeqT(type) ? LowerTokT(type) : type);
+                (field == "ret" || field == "type" && named) && IsCharSeqT(type) ? LowerTokT(type) : type);
             if (node is BirFunctionDeclaration method && IsScalarSequence(method.SuspendRet.OrDefault())
-                && IsStringDeclT(method.Ret.OrDefault()) && !method.SuspendTaskResult.IsPresent)
-                method.SuspendTaskResult = BirGraphValue.CopyType(method.Ret.Value);
+                && IsStringDeclT(method.Ret.OrDefault()))
+            {
+                if (openSuspendResult && !method.SuspendTaskResult.IsPresent)
+                    method.SuspendTaskResult = BirGraphValue.CopyType(method.SuspendRet.Value);
+                method.SuspendRet = openSuspendResult ? new TypeNode.Fqn("object") : BirGraphValue.CopyType(method.Ret.Value);
+            }
             node.VisitOwnChildSlots((field, _, slot) => {
                 if (field != "params") return;
                 switch (slot.Value)

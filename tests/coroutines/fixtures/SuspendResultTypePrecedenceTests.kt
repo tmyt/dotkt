@@ -247,13 +247,17 @@ suspend fun suspendResultTypeNetGenericCall(): String = suspendResultTypeJoinB(A
 fun suspendResultTypeNetGenericCallPlain(): String = suspendResultTypeJoinB(Activator.CreateInstance<StringBuilder>(), 2)
 
 suspend fun suspendResultTypeText(gate: Task, text: String?): CharSequence? {
-    gate.await()
-    return text
+    try { return text } finally { gate.await() }
 }
 
 private class SuspendStringSource : SuspendTextSource() {
-    override suspend fun readText(): CharSequence? = "hello"
+    override suspend fun readText(gate: Task): CharSequence? {
+        gate.await()
+        return "hello"
+    }
 }
+private open class LocalSuspendText { open suspend fun read(): CharSequence? = "text" }
+private class NarrowSuspendText : LocalSuspendText() { override suspend fun read(): String = "narrow" }
 
 class SuspendResultTypePrecedenceTests {
     @TestAttribute
@@ -276,12 +280,18 @@ class SuspendResultTypePrecedenceTests {
     @TestAttribute
     fun virtualCharSequenceTaskPreservesTheImportedSlot() {
         val source: SuspendTextSource = SuspendStringSource()
-        val bridge = (source as System.Object).GetType().BaseType!!.GetMethod("readText")!!
+        val bridge = Type.GetType("dotkt.support.SuspendTextSource, DotKt.Tests.CoroutineSupport")!!.GetMethod("readText")!!
         check(bridge.ReturnType.GenericTypeArguments[0].IsInterface)
-        val task = bridge.Invoke(source, null) as Task
+        val gate = TaskCompletionSource1<Int>()
+        val task = bridge.Invoke(source, arrayOf<Any?>(gate.Task)) as Task
+        check(!task.IsCompleted)
+        gate.SetResult(1)
         check(task.Wait(10000))
         assertEquals("hello", bridge.ReturnType.GetProperty("Result")!!.GetValue(task).toString())
-        assertEquals(5, blockOn { source.readText()!!.length })
+        assertEquals(5, blockOn { source.readText(gate.Task)!!.length })
+        check(blockOn { LocalSuspendText().read() is String && LocalSuspendText().read() == "text" })
+        val wider: LocalSuspendText = NarrowSuspendText()
+        assertEquals(6, blockOn { wider.read()!!.length })
     }
 
     @TestAttribute

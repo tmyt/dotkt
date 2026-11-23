@@ -40,6 +40,7 @@ static partial class SuspendColdLowering
         }
 
         BirFileDeclaration rootHost = null;
+        (BirFileDeclaration Host, TypeNode Result)? textRoot = null;
         foreach (var entry in module.NamedEntries)
         {
             var method = entry.Method;
@@ -56,7 +57,8 @@ static partial class SuspendColdLowering
             var output = generator.Build();
             foreach (var generated in output.Methods) MaterializedExecutable.NormalizeSource(generated);
             foreach (var generated in output.Types) MaterializedExecutable.NormalizeSource((BirGraphValue)generated);
-            if (output.NeedsRootContinuation) rootHost ??= entry.File;
+            if (generator.ProjectedRootResult is { } projected) textRoot ??= (entry.File, projected);
+            else if (output.NeedsRootContinuation) rootHost ??= entry.File;
             var current = entry.Owner?.Methods.OrEmpty() ?? entry.File.Methods.OrEmpty();
             if (!module.ContinuationBaseIsLocal)
             {
@@ -80,12 +82,14 @@ static partial class SuspendColdLowering
                 module.Transitions.PublishTypes(entry.File, output.Types);
             }
         }
-        if (rootHost != null)
+        void PublishRoot(BirFileDeclaration host, TypeNode projected)
         {
-            var sink = MaterializedExecutable.NormalizeSource(BuildRootContinuationSource(TaskCompletionSourceBclFqn));
-            rootHost.Types = rootHost.Types.OrEmpty().Append(sink).ToArray();
-            module.Transitions.PublishTypes(rootHost, new IBirTypeDeclaration[] { sink });
+            var sink = MaterializedExecutable.NormalizeSource(BuildRootContinuationSource(TaskCompletionSourceBclFqn, projected));
+            host.Types = host.Types.OrEmpty().Append(sink).ToArray();
+            module.Transitions.PublishTypes(host, new IBirTypeDeclaration[] { sink });
         }
+        if (rootHost != null) PublishRoot(rootHost, null);
+        if (textRoot is { } restore) PublishRoot(restore.Host, restore.Result);
         if (!module.ContinuationBaseIsLocal && module.ConsumedIntrinsicClosures.Count > 0)
         {
             // The selected intrinsic records give the producer's exact consumed

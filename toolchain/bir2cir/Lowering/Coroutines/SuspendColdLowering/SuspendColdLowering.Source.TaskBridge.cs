@@ -6,6 +6,10 @@ static partial class SuspendColdLowering
 {
     internal sealed partial class SourceFunGen
     {
+        internal TypeNode ProjectedRootResult => NeedsRootContinuation
+            && StringCharSequenceBridge.CanRestoreMaterializedValue(_resultType, _taskResultType)
+                ? _taskResultType is TypeNode.Nullable nullable ? nullable.Of : _taskResultType : null;
+
         BirFunctionDeclaration BuildBridge()
         {
             var isUnit = IsUnitTn(_resultType) && !_resultNullable && !_m.DotktValueReturn.OrDefault();
@@ -25,7 +29,8 @@ static partial class SuspendColdLowering
             if (!_memberAbstract)
             {
                 var tcs = new TypeNode.Fqn(_tcsBcl, new[] { resultSlot });
-                var root = new TypeNode.Fqn(RootContinuationFqn, new[] { resultSlot });
+                var root = ProjectedRootResult != null ? new TypeNode.Fqn(TextRootFqn)
+                    : new TypeNode.Fqn(RootContinuationFqn, new[] { resultSlot });
                 var body = BridgePrelude(tcs, root);
                 body.Add(new BirVariable { Name = BridgeResultLocal, Type = AnyTn, Init = Suspended() });
                 body.Add(new BirTry {
@@ -39,8 +44,7 @@ static partial class SuspendColdLowering
                 });
                 var skip = NextLabel();
                 body.Add(BrIf(new BirBinaryOperation { Op = "===", Lhs = Local(BridgeResultLocal), Rhs = Suspended() }, true, skip));
-                IBirExpression value = IsAnyTn(resultSlot) ? Local(BridgeResultLocal)
-                    : new BirCast { Type = resultSlot, E = Local(BridgeResultLocal) };
+                IBirExpression value = ProjectColdResult(Local(BridgeResultLocal), resultSlot);
                 body.Add(new BirExpressionStatement { Expr = TcsCall(tcs, "TrySetResult", resultSlot, value) });
                 body.Add(Label(skip));
                 IBirExpression task = new BirPropertyGet { Type = tcs, Name = "Task", Static = false,

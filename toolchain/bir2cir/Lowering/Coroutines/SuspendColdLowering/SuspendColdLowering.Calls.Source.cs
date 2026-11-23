@@ -44,8 +44,7 @@ static partial class SuspendColdLowering
             output.Add(new BirSetLocal { Name = ResumeResultParameter, Value = SourceOperandField(ColdCall(callNode, output)) });
             EmitSuspensionMerge(output, resume);
             output.Add(new BirExpressionStatement { Expr = ThrowOnFailure() });
-            output.Add(SetField(field, IsAnyTn(resultType) ? Local(ResumeResultParameter)
-                : CallCast(resultType, Local(ResumeResultParameter))));
+            output.Add(SetField(field, ProjectColdResult(Local(ResumeResultParameter), resultType)));
             return FieldOf(field, resultType);
         }
 
