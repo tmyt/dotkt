@@ -652,6 +652,10 @@ static partial class KotlinOverrideSlotBridge
                 var t = inheritedSignature?[i] ?? ps[i].Signature ?? ps[i].Type;
                 var declared = t == null ? null : SupertypeGraph.SubstOwnerTvs(t, ownArgs);
                 ok = declared != null && (ErasureAligned(slotParams[i], declared)
+                    // The inherited accessor has a source selection signature. Match it
+                    // as a source declaration, including platform types inside type arguments.
+                    || inheritedSignature != null && propertyName != null
+                        && ReferenceMetadataIndex.SourceDeclarationDescribesCall(slotParams[i], declared)
                     || carrierSeam?.Invoke(slotParams[i], declared) == true
                     || IsCompanionScalarSeam(slotParams[i], declared)
                     || SameSourceRepresentationVariables(slotParams[i], declared, ownerFrame)
