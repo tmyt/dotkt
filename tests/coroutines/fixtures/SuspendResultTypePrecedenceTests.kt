@@ -36,7 +36,11 @@ import System.Math
 import System.Numerics.Vector3
 import System.Text.StringBuilder
 import System.Threading.Tasks.Task
+import System.Threading.Tasks.Task1
+import System.Threading.Tasks.TaskCompletionSource1
+import System.Type
 import dotkt.support.blockOn
+import dotkt.support.SuspendTextSource
 
 // A real suspension on every path — a defect that only shows once the outer call genuinely returns
 // COROUTINE_SUSPENDED is invisible without one.
@@ -242,7 +246,44 @@ suspend fun suspendResultTypeNetGenericCall(): String = suspendResultTypeJoinB(A
 
 fun suspendResultTypeNetGenericCallPlain(): String = suspendResultTypeJoinB(Activator.CreateInstance<StringBuilder>(), 2)
 
+suspend fun suspendResultTypeText(gate: Task, text: String?): CharSequence? {
+    gate.await()
+    return text
+}
+
+private class SuspendStringSource : SuspendTextSource() {
+    override suspend fun readText(): CharSequence? = "hello"
+}
+
 class SuspendResultTypePrecedenceTests {
+    @TestAttribute
+    fun nullableCharSequenceTaskUsesTheSelectedStringResult() {
+        // Calling from Kotlin normally selects the cold continuation entry.
+        val bridge = Type.GetType("SuspendResultTypePrecedenceTestsKt")!!.GetMethod("suspendResultTypeText")!!
+        for (immediate in listOf(true, false)) {
+            for (text in listOf("hello", null)) {
+                val gate = TaskCompletionSource1<Int>()
+                if (immediate) gate.SetResult(1)
+                val task = bridge.Invoke(null, arrayOf<Any?>(gate.Task, text)) as Task1<String?>
+                assertEquals(immediate, task.IsCompleted)
+                if (!immediate) gate.SetResult(1)
+                check(task.Wait(10000))
+                assertEquals(text, task.Result)
+            }
+        }
+    }
+
+    @TestAttribute
+    fun virtualCharSequenceTaskPreservesTheImportedSlot() {
+        val source: SuspendTextSource = SuspendStringSource()
+        val bridge = (source as System.Object).GetType().BaseType!!.GetMethod("readText")!!
+        check(bridge.ReturnType.GenericTypeArguments[0].IsInterface)
+        val task = bridge.Invoke(source, null) as Task
+        check(task.Wait(10000))
+        assertEquals("hello", bridge.ReturnType.GetProperty("Result")!!.GetValue(task).toString())
+        assertEquals(5, blockOn { source.readText()!!.length })
+    }
+
     @TestAttribute
     fun safeCallValueTypeResultIsNotBoxed() {
         assertEquals(8, blockOn { suspendResultTypeSafeInt(SuspendResultTypeBox(7)) })

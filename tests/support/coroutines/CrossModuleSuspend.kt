@@ -41,3 +41,7 @@ public class SuspendOperandCrossModuleBox(private val base: Int) {
 
 /** A cross-module suspend callee that completes without ever suspending — the synchronous cold-call path. */
 public suspend fun suspendOperandCrossModuleRelay(n: Int): Int = n
+
+abstract class SuspendTextSource {
+    abstract suspend fun readText(): CharSequence?
+}
