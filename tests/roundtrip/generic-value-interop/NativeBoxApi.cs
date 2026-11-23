@@ -7,6 +7,7 @@ public interface ILeftMark { }
 public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
+public interface IJointTag<T> where T : ILeftMark, IRightMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
 public sealed class NativeResultProbe
 {
@@ -114,6 +115,8 @@ public static class NativeBoxApi
         where A : System.IO.MemoryStream, IProjectedMark where B : A => second;
     public static string IndependentType<A, B, Z>(A first, B second, Z independent)
         where A : System.IO.MemoryStream, IProjectedMark where B : A => typeof(Z).Name;
+    public static string RightWitness<P,T>(P item) where P : System.IO.MemoryStream, ILeftMark where T : IRightMark => typeof(T).Name;
+    public static void ReplaceLocation<P,T>(P item, ref T target, T next) where P : System.IO.MemoryStream, IProjectedMark => target = next;
     static Box<string, string> live = new("initial");
     public static void ResetLive() => live = new("initial");
     public static ref Box<string, string> Live() => ref live;

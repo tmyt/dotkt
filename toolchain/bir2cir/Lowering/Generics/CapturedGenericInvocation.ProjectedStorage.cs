@@ -15,15 +15,12 @@ static partial class CapturedGenericInvocation
     static IBirExpression CaptureCoordinates(CaptureRow[] rows) => rows is { Length: > 0 }
         ? NewArray(Int, rows.SelectMany(r => new[] { r.Argument, r.Position, r.Slot, r.Nullable }).Select(Number)) : Null();
 
-    // An unrelated lexical split cannot reopen an exact CLR argument. A slot
-    // needs recovery only for its own interface obligation or a bound on a
-    // slot that was already reopened (Y : X).
     static int[] LexicalCandidates(TypeNode[] actual, CallableWitnessScope owner, CallableWitnessScope method) =>
         Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()).ToArray();
 
     sealed record FixedApplication(TypeNode[] Arguments, (int Slot, TypeNode Bound)[] Facets);
 
-    static FixedApplication BindFixedWitnesses(AddressTarget target, TypeNode[] actual, BirMethodWitness[] explicitProofs,
+    static FixedApplication BindFixedWitnesses(BirTypeParameter[] frame, TypeNode[] signature, TypeNode[] actual, BirMethodWitness[] explicitProofs,
         int[] candidates, CallableWitnessScope owner, CallableWitnessScope method, Func<TypeNode.Fqn,bool> isInterface,
         Dictionary<int, TypeNode> locations = null)
     {
@@ -32,10 +29,11 @@ static partial class CapturedGenericInvocation
         if (locations != null)
             foreach (var (operand, storage) in locations)
             {
-                var pointee = (TypeNode.ByRef)SignatureValueTypes.Of(target.Signature[operand]);
+                var pointee = (TypeNode.ByRef)SignatureValueTypes.Of(signature[operand]);
                 arguments[((TypeNode.Tv)pointee.Of).I] = storage;
             }
-        var frame = target.MethodFrame;
+        // Reopen a lexical argument only for its own interface obligation
+        // or a dependency on a recovered argument (Y : X).
         var lost = explicitProofs.Select(p => p.Argument.Value).Concat(candidates.Where(i =>
             frame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(isInterface))).ToHashSet();
         int previous;
@@ -47,7 +45,8 @@ static partial class CapturedGenericInvocation
         var lexical = (from i in candidates where lost.Contains(i)
             from proof in CallableWitnessScope.For(actual[i], owner, method) select (i, proof)).ToArray();
         // Preserve an explicit occurrence's evidence. Within lexical evidence,
-        // prefer declared bounds to the live witness variables that also prove them.
+        // prefer declared bounds. A live variable may prove a conjunction
+        // that none of the individual declared bounds satisfies.
         var facets = explicitProofs.SelectMany(p => p.Interfaces.Value.Select(b => (p.Argument.Value, b)))
             .Concat(lexical.Select(p => (p.i, p.proof.Slot.Bound)))
             .Concat(lexical.Select(p => (p.i, (TypeNode)p.proof.Variable))).Distinct().ToArray();
@@ -92,6 +91,17 @@ static partial class CapturedGenericInvocation
         return site;
     }
 
+    static Dictionary<int,TypeNode> FixedAddresses(TypeNode[] signature, IBirExpression[] values, IReadOnlyDictionary<string, TypeNode> locations)
+    {
+        if (locations == null || values == null || signature.Length != values.Length) return null;
+        Dictionary<int,TypeNode> result = null;
+        for (int i = 0; i < values.Length; i++)
+            if (SignatureValueTypes.Of(signature[i]) is TypeNode.ByRef { Of: TypeNode.Tv { Scope: "method" } }
+                && (values[i] is BirByRefOf r ? r.Inner.OrDefault() : values[i]) is BirLocal local
+                && locations.TryGetValue(local.Name.Value, out var storage)) (result ??= new()).Add(i, storage);
+        return result;
+    }
+
     internal static BirGraphValue ProjectStorageCall(BirGraphValue call,
         CallableWitnessScope ownerScope, CallableWitnessScope methodScope,
         ReferenceMetadataIndex refs, Func<string,string> allocate, List<IBirTypeDeclaration> generated, IBirTypeDeclaration lexical,
@@ -102,21 +112,14 @@ static partial class CapturedGenericInvocation
         var (member, arguments, values, receiver) = (site.Member, site.TypeArguments.OrDefault(),
             site.Arguments.OrDefault(), site.Receiver);
         if (member?.DeclaringType.OrDefault() is not TypeNode.Fqn owner || arguments == null || values == null) return call;
-        TypeNode Location(IBirExpression value) => (value is BirByRefOf r ? r.Inner.OrDefault() : value) is BirLocal local
-            ? locations?.GetValueOrDefault(local.Name.Value) : null;
-        Dictionary<int, TypeNode> fixedAddresses = null;
-        if (locations != null && member.ParameterTypes.Value.Length == values.Length)
-            for (int i = 0; i < values.Length; i++)
-                if (SignatureValueTypes.Of(member.ParameterTypes.Value[i]) is TypeNode.ByRef { Of: TypeNode.Tv { Scope: "method" } }
-                    && Location(values[i]) is { } pointee) (fixedAddresses ??= new()).Add(i, pointee);
+        var fixedAddresses = FixedAddresses(member.ParameterTypes.Value, values, locations);
         var candidates = LexicalCandidates(arguments, ownerScope, methodScope);
         if ((candidates.Length == 0 && fixedAddresses == null) || !TrySelectedMethod(site, owner, refs, out var selected)) return call;
-        var target = AddressTarget.FromReference(selected, member);
-        var application = BindFixedWitnesses(target, arguments, [], candidates, ownerScope, methodScope, t => refs.IsInterfaceType(t), fixedAddresses);
+        var methodFrame = AddressTarget.ReadFrame(selected.GetGenericArguments());
+        var application = BindFixedWitnesses(methodFrame, member.ParameterTypes.Value, arguments, [], candidates, ownerScope, methodScope, t => refs.IsInterfaceType(t), fixedAddresses);
         if (application.Facets.Length == 0 && fixedAddresses == null) return call;
-        var formal = selected.GetParameters();
-        bool typed = (receiver != null && selected.DeclaringType.IsValueType)
-            || formal.Any(p => RequiresTypedSlot(p.ParameterType)) || RequiresTypedSlot(selected.ReturnType);
+        var target = AddressTarget.FromReference(selected, member, methodFrame);
+        bool typed = (receiver != null && target.ValueOwner) || target.TypedParameters.Contains(true) || target.TypedResult;
         var unit = selected.ReturnType.FullName == "System.Void";
         LexicalTarget lexicalTarget = null;
         if (access == null && (site.Super || typed && !selected.IsPublic))
