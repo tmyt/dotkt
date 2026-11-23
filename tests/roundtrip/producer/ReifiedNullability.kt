@@ -8,9 +8,8 @@ public inline fun <reified T> checkedCast(value: Any?): T = value as T
 
 public inline fun <reified T> nullableForwarded(value: Any?): Boolean = matches<T?>(value)
 
-// A class literal reads the CLR generic argument's runtime type, not a membership predicate. This declaration
-// retains Kotlin's semantic `reified` marker for consumers but has no type-test witness demand.
 public inline fun <reified T> classifierName(): String = T::class.simpleName ?: "?"
+public inline fun <reified T> unusedReified(): String = "unused"
 
 public inline fun <reified T> forwarded(value: Any?): Boolean = matches<T>(value)
 

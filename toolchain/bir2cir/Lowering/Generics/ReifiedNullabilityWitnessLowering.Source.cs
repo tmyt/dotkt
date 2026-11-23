@@ -150,6 +150,17 @@ static partial class ReifiedNullabilityWitnessLowering
             // expressions again; repeat admission is rejected by PrepareSourceWitnesses below.
             var pending = SourcePending(node).OrEmpty().Cast<BirGraphValue>().ToHashSet(ReferenceEqualityComparer.Instance);
             node.VisitChildSlots(slot => { if (!pending.Contains(slot.Value)) slot.Replace(Walk(slot.Value, witnesses)); });
+            if (node is BirClassReference literal && literal.ReifiedLiteral.OrDefault()
+                && KotlinTypeWitness.Variable(literal.Type.OrDefault()) is { } literalVariable)
+            {
+                literal.ReifiedLiteral = default;
+                var native = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
+                return helpers.Bind(new BirCallStatic {
+                    Owner = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.ReflectionRuntimeKt"),
+                    Method = "reifiedKClass", Sig = new TypeNode[] { native, new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) }, Ret = native,
+                    Args = new IBirExpression[] { literal, KotlinRuntimeTypeWitness.ReflectedValue(SourceWitnessFor(literalVariable, witnesses, values)) },
+                });
+            }
             var tested = node switch {
                 BirCast cast when KotlinTypeWitness.NeedsWitness(cast.Tag, cast.ReifiedTypeOperand.OrDefault()) => cast.Type.OrDefault(),
                 BirIsInstance test => test.Type.OrDefault(),

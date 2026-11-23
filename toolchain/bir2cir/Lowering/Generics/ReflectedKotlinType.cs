@@ -7,6 +7,22 @@ using DotKt.Cir;
 // to the CLR storage type of the generic parameter.
 static class ReflectedKotlinType
 {
+    // Nominal declaration tokens in the CLR stdlib. Multiple Kotlin declarations can have
+    // the same @ClrTypeAlias; this association must be selected before physical erasure.
+    static readonly Dictionary<string, TypeNode.Fqn> CollectionLiterals = new[] {
+        "Iterable", "MutableIterable", "Collection", "MutableCollection", "List", "MutableList",
+        "Set", "MutableSet", "Map", "MutableMap", "ArrayList", "HashSet",
+    }.ToDictionary(name => "kotlin.collections." + name,
+        name => new TypeNode.Fqn("DotKt.Runtime.CompilerServices." + name + "Literal"), StringComparer.Ordinal);
+    internal static TypeNode CollectionLiteral(TypeNode type) => type switch {
+        TypeNode.Nullable n => CollectionLiteral(n.Of),
+        TypeNode.Oblivious o => CollectionLiteral(o.Of),
+        TypeNode.Fqn f => CollectionLiterals.GetValueOrDefault(SourceName(f)),
+        _ => null,
+    };
+    static readonly Dictionary<string, string> LiteralNames = CollectionLiterals.ToDictionary(
+        binding => binding.Value.Name, binding => binding.Key, StringComparer.Ordinal);
+    internal static string CollectionLiteralName(string token) => LiteralNames.GetValueOrDefault(token);
     internal static string SourceName(TypeNode.Fqn f) => f.Classifier is { } logical
         ? string.Join(".", new[] { logical.PackageName }.Concat(logical.OwnerPath).Append(logical.Name).Where(part => part.Length != 0))
         : f.Name;
@@ -25,6 +41,7 @@ static class ReflectedKotlinType
             });
             if (node is BirClassReference { Type.Value: TypeNode.Fn { Reflective: true, Suspend: false } } literal)
                 literal.Type = ReflectiveCallableClassifier();
+            if (node is BirClassReference reference) BindKnownLiteral(reference);
             return node switch {
                 BirReflectedParameter parameter => (BirGraphValue)Declared(parameter, helpers, value => value),
                 BirReflectedType reflected => (BirGraphValue)Value(reflected.Operand.Value, helpers,
@@ -33,6 +50,17 @@ static class ReflectedKotlinType
             };
         }
         return (BirFileDeclaration)Lower(root);
+    }
+
+    // Defaults and inline bodies may acquire their source type in the consumer.
+    // Physical typeof operands never carry this source-literal fact.
+    internal static void BindKnownLiteral(BirClassReference reference)
+    {
+        if (!reference.ReifiedLiteral.HasValue || KotlinTypeWitness.Variable(reference.Type.Value) != null) return;
+        if (CollectionLiteral(reference.Type.Value) is { } token) {
+            reference.Type = token;
+            reference.ReifiedLiteral = default;
+        } else if (!reference.ReifiedLiteral.Value) reference.ReifiedLiteral = default;
     }
 
     internal static IBirExpression[] Projections(BirReflectedType reflected, SourceHelperBinder helpers,
@@ -77,7 +105,7 @@ static class ReflectedKotlinType
         };
         return Call("reflectedType", [String, Classifier, Boolean, new TypeNode.Array(Projection)],
             [new BirConstant { Type = String, Value = new BirLiteral.TextLiteral(name) },
-             new BirClassReference { Type = selectClassifier?.Invoke(classifier) ?? classifier }, new BirConstant { Type = Boolean, Value = new BirLiteral.BooleanLiteral(nullable) },
+             new BirClassReference { Type = CollectionLiteral(core) ?? selectClassifier?.Invoke(classifier) ?? classifier }, new BirConstant { Type = Boolean, Value = new BirLiteral.BooleanLiteral(nullable) },
              new BirNewArray { Elem = Projection, Elems = projections ?? arguments.Select(Project).ToArray() }], KType);
 
         IBirExpression Project(TypeNode argument) => argument switch {

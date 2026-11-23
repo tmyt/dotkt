@@ -114,6 +114,8 @@ class KClassValueRoundtripTests {
         val lookup: ClassLookup = ObservedClassLookup()
         val custom = ManualToken<Int, String>(42)
         assertEquals("System.Int32", capturedName(lookup, Int::class))
+        val native: Any = ArrayList<Int>()
+        assertEquals(ObservedClassLookup.RuntimeTypeName(native), capturedName(lookup, native::class))
         assertEquals("System.String", capturedName(lookup, custom))
         assertEquals("System.Int32", capturedNameHere(lookup, Int::class))
         assertEquals("System.String", capturedNameHere(lookup, custom))
