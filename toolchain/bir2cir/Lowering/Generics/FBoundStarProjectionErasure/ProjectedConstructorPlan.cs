@@ -16,7 +16,15 @@ sealed record ProjectedConstructorPlan(BirTypeParameter[] WitnessParameters, int
         if (available is not TypeNode.Fqn root || required is not TypeNode.Fqn target) return false;
         TypeNode Identity(TypeNode.Fqn f) => hierarchy.ContainsKey(f.Name) ? f : references.WitnessConstraintKey(f);
         var key = Identity(target);
-        return SupertypeGraph.ReachableFromClass(root, hierarchy, references).Any(edge => Identity(edge.spec) == key);
+        var expected = !hierarchy.ContainsKey(target.Name) && key is TypeNode.Fqn to
+            ? FBoundStarProjectionErasure.ResolveClosedReferenceType(to, references, physicalTypes: true) : null;
+        return SupertypeGraph.ReachableFromClass(root, hierarchy, references).Any(edge => {
+            var candidate = Identity(edge.spec);
+            return candidate == key || expected is { IsInterface: true } && !hierarchy.ContainsKey(edge.spec.Name)
+                && candidate is TypeNode.Fqn { Args.Length: > 0 } from
+                && FBoundStarProjectionErasure.ResolveClosedReferenceType(from, references, physicalTypes: true)
+                    is { IsInterface: true } actual && expected.IsAssignableFrom(actual);
+        });
     }
 
     internal static ProjectedConstructorPlan Bind(BirTypeParameter[] primary, int captured, Facet[] facets)

@@ -12,58 +12,6 @@ static partial class FBoundStarProjectionErasure
     {
         internal sealed record ConstructorEdge(string Id, TypeNode.Fqn Application);
         readonly Dictionary<DeclarationBinding, List<ConstructorEdge>> forwardedConstructors = new();
-        sealed record CallableEdge(string Caller, string Target, TypeNode[] Arguments, TypeNode[] Owner, bool Constructor);
-        readonly List<CallableEdge> callableEdges = [];
-        readonly Dictionary<string, TypeNode[][]> callableBounds = new(StringComparer.Ordinal);
-
-        void CaptureCallableEdge(DeclarationBinding caller, string target, TypeNode[] args, TypeNode[] owner, bool constructor)
-        {
-            if (caller?.Source is not BirFunctionDeclaration { DeclarationId.HasValue: true } method || target == null
-                || !args.Any(a => a is TypeNode.Tv { Scope: "method" })) return;
-            var id = method.DeclarationId.Value;
-            if (!callableBounds.ContainsKey(id))
-                callableBounds[id] = Constraints(caller).Select(row => row.Select(BirGraphValue.CopyType).ToArray()).ToArray();
-            callableEdges.Add(new(id, target, args.ToArray(), owner?.ToArray() ?? [], constructor));
-        }
-
-        // Bound propagation is finite: admit only a facet already declared by the caller.
-        // The selected construction/call, not the mere existence of a source bound, owns this obligation.
-        internal Dictionary<string, HashSet<(int Primary, TypeNode Bound)>> CompleteCallableFacets(SourceCarrierDeclarations declarations)
-        {
-            var result = new Dictionary<string, HashSet<(int, TypeNode)>>(StringComparer.Ordinal);
-            var uses = callableEdges.GroupBy(e => e.Target).ToDictionary(g => g.Key, g => g.ToArray());
-            var pending = new Queue<(CallableEdge Call, int Slot, TypeNode Bound)>();
-            foreach (var edge in callableEdges)
-            {
-                if (edge.Constructor)
-                {
-                    var id = StorageFactoryId(edge.Target);
-                    var plan = declarations.ProjectedConstructors.TryGetValue(id, out var local)
-                        ? local.Plan : references.ConstructorPlan(id, nativeNames: true);
-                    if (plan != null)
-                        foreach (var f in plan.Facets.Where(f => f.NativeArgument)) pending.Enqueue((edge, f.Primary, f.Bound));
-                }
-                else if (!methods.ContainsKey(edge.Target) && references.ProjectedMethod(ProjectedCallableEntries.EntryId(edge.Target)) is { } imported)
-                    foreach (var f in imported.Facets.Where(f => f.NativeArgument)) pending.Enqueue((edge, f.OwnerIndex, f.Bound));
-            }
-            while (pending.TryDequeue(out var next))
-            {
-                var (edge, slot, bound) = next;
-                if (slot >= edge.Arguments.Length || edge.Arguments[slot] is not TypeNode.Tv { Scope: "method" } input) continue;
-                var required = SubstituteDeclarationTypeArguments(bound,
-                    edge.Constructor ? edge.Arguments : edge.Owner, edge.Constructor ? [] : edge.Arguments);
-                var key = references.WitnessConstraintKey(required);
-                var caller = edge.Caller;
-                var declared = callableBounds[caller][input.I];
-                var matching = declared.FirstOrDefault(b => references.WitnessConstraintKey(b) == key)
-                    ?? declared.FirstOrDefault(b => ProjectedConstructorPlan.Proves(b, required, sourceSupertypes, references));
-                if (matching == null) continue;
-                if (!result.TryGetValue(caller, out var facets)) result[caller] = facets = [];
-                if (facets.Add((input.I, references.WitnessConstraintKey(matching))) && uses.TryGetValue(caller, out var callers))
-                    foreach (var use in callers.Where(e => !e.Constructor)) pending.Enqueue((use, input.I, matching));
-            }
-            return result;
-        }
         internal IEnumerable<ConstructorEdge> ForwardedConstructors(DeclarationBinding owner) =>
             owner != null && forwardedConstructors.TryGetValue(owner, out var uses) ? uses : [];
 
@@ -127,8 +75,6 @@ static partial class FBoundStarProjectionErasure
                 if (construction?.Args is { } constructorArguments)
                 {
                     Require(TypeRows(construction.Name), constructorArguments, "type", null);
-                    if (captureEdges && node is BirNew allocation)
-                        CaptureCallableEdge(method, allocation.ConstructorDeclarationId.OrDefault(), constructorArguments, null, true);
                     if (captureEdges && node is BirNew creation && creation.ConstructorDeclarationId.OrDefault() is string id &&
                         constructorArguments.Any(a => a is TypeNode.Tv { Scope: "type" }))
                     {
@@ -141,7 +87,6 @@ static partial class FBoundStarProjectionErasure
                     var methodArguments = node.ApplicationTypeArguments.Value;
                     var selectedOwner = SelectedOwner(node);
                     var identity = node.DeclarationIdentityFact.OrDefault();
-                    if (captureEdges) CaptureCallableEdge(method, identity, methodArguments, selectedOwner?.Args, false);
                     var selected = identity != null && selectedOwner != null
                         && declarations.SourceLocalDeclarations.TryGetValue((selectedOwner.Name, identity), out var local)
                             ? local : methods.GetValueOrDefault(identity ?? "");

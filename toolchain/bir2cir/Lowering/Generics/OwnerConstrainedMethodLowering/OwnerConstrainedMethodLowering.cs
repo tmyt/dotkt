@@ -63,11 +63,7 @@ static partial class OwnerConstrainedMethodLowering
         if (nominal is TypeNode.Fqn erased
             && BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(erased.Name))
             return false;
-        if (nominal is TypeNode.Fqn named
-            && references.ResolveForeignProjectionType(named.Name, named.Args) is { IsGenericTypeDefinition: true } foreign
-            && foreign.GetGenericArguments().All(parameter =>
-                (parameter.GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) == 0)
-            && named.Args?.Any(argument => argument is TypeNode.Projection or TypeNode.Star) != true)
+        if (nominal is TypeNode.Fqn named && references.IsInvariantForeignConstruction(named))
             return false;
         var changed = false;
         MapVariables(bound, tv => {

@@ -125,23 +125,39 @@ sealed partial class GenericRepresentationPolicy
     internal bool HasJointStorageBounds(TypeNode[] bounds) => bounds.Any(IsNominalStorageBound)
         && bounds.OfType<TypeNode.Fqn>().Any(b => !IsNominalStorageBound(b) && CanReferenceStorageProof(b));
 
+    // Closed native interfaces (and invariant native applications even when open)
+    // are proven by the native argument, not by the Kotlin value's storage type.
+    internal bool NeedsNativeWitness(TypeNode proof)
+    {
+        if (proof is not TypeNode.Fqn { Args.Length: > 0 } named || !HasNativeConstraint(named)
+            || _references?.IsInterfaceType(named) != true || !CanReferenceStorageProof(named)) return false;
+        if (_references.IsInvariantForeignConstruction(named)) return true;
+        var dependent = false;
+        BirGraphNameFields.VisitTypeNodes(named, t => dependent |= t is TypeNode.Tv or TypeNode.Star or TypeNode.Projection);
+        return !dependent;
+    }
+
+    internal IEnumerable<TypeNode> InheritedNativeWitnesses(TypeNode bound)
+    {
+        if (bound is not TypeNode.Fqn named) yield break;
+        var start = new SupertypeGraph.Def { Base = named };
+        foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
+            if (isInterface && NeedsNativeWitness(parent)) yield return parent;
+    }
+
+    internal bool JoinsNativeWitness(TypeNode bound) => NeedsNativeWitness(bound)
+        || CanReferenceStorageProof(bound) && InheritedNativeWitnesses(bound).Any();
+
+    internal IEnumerable<TypeNode> NativeProofsFromClass(TypeNode[] bounds) =>
+        bounds.Where(IsNominalStorageBound).SelectMany(InheritedNativeWitnesses);
+
     internal void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds)
     {
         var physical = new List<TypeNode>();
         var erased = new List<TypeNode>();
         // A Kotlin value can use an existential storage type that implements no single
         // closed construction of this native interface. Its proof belongs to the native use.
-        bool StorageProof(TypeNode proof)
-        {
-            if (!CanReferenceStorageProof(proof)) return false;
-            if (proof is not TypeNode.Fqn { Args.Length: > 0 } named || !HasNativeConstraint(named)
-                || _references?.IsInterfaceType(named) != true) return true;
-            // Dependent bounds are resolved in their declaring generic frame;
-            // in particular a captured IComparer<T> is not IComparer<closed T>.
-            var dependent = false;
-            BirGraphNameFields.VisitTypeNodes(named, t => dependent |= t is TypeNode.Tv or TypeNode.Star or TypeNode.Projection);
-            return dependent;
-        }
+        bool StorageProof(TypeNode proof) => CanReferenceStorageProof(proof) && !NeedsNativeWitness(proof);
         foreach (var bound in bounds)
         {
             if (!IsNominalStorageBound(bound) && StorageProof(bound)) { physical.Add(bound); continue; }

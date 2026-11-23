@@ -7,7 +7,12 @@ using DotKt.Cir;
 // method variables in members never need to be renumbered.
 sealed class ProjectedClassStorageFrame
 {
-    internal record WitnessSlot(int OwnerIndex, TypeNode Bound, bool NativeArgument);
+    internal record WitnessSlot(int OwnerIndex, TypeNode Bound, bool NativeArgument)
+    {
+        internal TypeNode[] Evidence { get; init; }
+        internal bool Proves(TypeNode constraint, Func<TypeNode,TypeNode,bool> proves) =>
+            proves(Bound, constraint) || (Evidence?.Any(b => proves(b, constraint)) ?? false);
+    }
     internal sealed record InterfaceSlot(int OwnerIndex, int BoundIndex, TypeNode Bound, TypeNode[] PrimaryBounds = null,
         bool NativeArgument = false) : WitnessSlot(OwnerIndex, Bound, NativeArgument);
     internal readonly InterfaceSlot[] Interfaces;
@@ -43,6 +48,13 @@ sealed class ProjectedClassStorageFrame
     internal ProjectedClassStorageFrame WithNativeArguments(Func<InterfaceSlot, bool> required) =>
         new(original, Interfaces.Select(s => s with { NativeArgument = required(s) }).ToArray());
 
+    internal ProjectedClassStorageFrame WithDeclaredProofs(GenericRepresentationPolicy policy, Func<TypeNode,TypeNode> publish = null) =>
+        new(original, Interfaces.Select(s => !policy.JoinsNativeWitness(s.Bound) ? s : s with {
+            NativeArgument = true,
+            Evidence = policy.NativeProofsFromClass(original[s.OwnerIndex].Constraints.OrEmpty())
+                .Select(t => publish == null ? t : publish(t)).Distinct().ToArray()
+        }).ToArray());
+
     internal ProjectedClassStorageFrame ForBase(Func<InterfaceSlot, TypeNode[]> requiredOnPrimary)
     {
         var split = Interfaces.Select(s => s with { PrimaryBounds = requiredOnPrimary(s) })
@@ -59,7 +71,7 @@ sealed class ProjectedClassStorageFrame
             // One native argument must prove all of its interface constraints at
             // once. Consumers select the published facet, not the first CLR constraint.
             var bounds = new[] { bound }.Concat(slots.Where(s => slot.NativeArgument && s.NativeArgument && s.OwnerIndex == slot.OwnerIndex)
-                .Select(s => original[s.OwnerIndex].Constraints.Value[s.BoundIndex])).Distinct();
+                .Select(s => original[s.OwnerIndex].Constraints.Value[s.BoundIndex])).Concat(slot.Evidence ?? []).Distinct();
             parameters.Add(new BirTypeParameter { Name = "$interface$" + parameters.Count,
                 Constraints = bounds.Select(BirGraphValue.CopyType).ToArray() });
         }

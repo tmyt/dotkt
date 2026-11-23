@@ -23,8 +23,9 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
     internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands, ReferenceMetadataIndex references)
     {
         var formals = frame.Declare().ToList();
-        var facets = frame.Interfaces.Select(slot =>
-            new ProjectedClassStorageFrame.WitnessSlot(slot.OwnerIndex, slot.Bound, slot.NativeArgument)).ToArray();
+        var facets = frame.Interfaces.Select((slot, i) =>
+            new ProjectedClassStorageFrame.WitnessSlot(slot.OwnerIndex, slot.Bound, slot.NativeArgument) {
+                Evidence = formals[frame.PrimaryArity + i].Constraints.OrEmpty() }).ToArray();
         var addresses = new List<int>();
         for (int i = 0; i < operands.Length; i++)
         {
@@ -76,14 +77,15 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         var parameters = CloneParameters();
         foreach (var p in parameters)
             if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
-        return new(parameters, Facets.Select(f => f with { Bound = SupertypeGraph.SubstOwnerTvs(f.Bound, arguments) }).ToArray(), AddressOperands);
+        return new(parameters, Facets.Select((f, i) => f with { Bound = SupertypeGraph.SubstOwnerTvs(f.Bound, arguments),
+            Evidence = parameters[PrimaryArity + i].Constraints.OrEmpty() }).ToArray(), AddressOperands);
     }
 
     internal sealed record Application(bool Projected, TypeNode[] Arguments);
 
     internal Application Close(TypeNode[] actual, TypeNode[] ownerArgs, BirMethodWitness[] candidates,
         BirTypeParameter[] original, NullableRepresentationFrame representations, bool requireProjectedEntry,
-        Func<TypeNode, TypeNode, TypeNode> lexicalProof, Func<TypeNode, TypeNode, bool> declares,
+        Func<TypeNode, TypeNode, TypeNode[], TypeNode> lexicalProof, Func<TypeNode, TypeNode, bool> declares,
         Func<TypeNode, TypeNode, bool> proves)
     {
         var arguments = actual.ToArray();
@@ -94,13 +96,15 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         TypeNode Facet(ProjectedClassStorageFrame.WitnessSlot slot)
         {
             var bound = Closed(slot.Bound);
+            var constraints = (slot.Evidence ?? [slot.Bound]).Select(Closed).ToArray();
             var evidence = candidates.FirstOrDefault(c => c.Argument.Value == slot.OwnerIndex);
             if (evidence != null)
-                return proves(actual[slot.OwnerIndex], bound)
-                    ? actual[slot.OwnerIndex]
-                    : evidence.Interfaces.Value.Any(t => proves(t, bound))
-                        ? bound : evidence.Primary.Value;
-            return lexicalProof(actual[slot.OwnerIndex], bound);
+            {
+                var choices = new[] { actual[slot.OwnerIndex] }.Concat(evidence.Interfaces.Value).Append(evidence.Primary.Value);
+                return choices.FirstOrDefault(t => constraints.All(c => proves(t, c)))
+                    ?? throw new NotSupportedException("No single CLR type argument satisfies the projected method's interface constraints");
+            }
+            return lexicalProof(actual[slot.OwnerIndex], bound, constraints);
         }
         if (representations is { } map)
             for (var i = 0; i < actual.Length; i++)
@@ -110,7 +114,7 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
                 var bounds = original[i].Constraints.OrEmpty();
                 if (bounds.Length != 1) continue;
                 var bound = Closed(bounds[0]);
-                if (lexicalProof(actual[source], bound) is { } proof) arguments[i] = proof;
+                if (lexicalProof(actual[source], bound, [bound]) is { } proof) arguments[i] = proof;
                 else if (!declares(actual[i], bound) && declares(actual[source], bound)) arguments[i] = actual[source];
             }
         var proofs = Facets.Select(Facet).ToArray();

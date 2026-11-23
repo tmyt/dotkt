@@ -6,6 +6,7 @@ public sealed class StringKey : IKey<string> { }
 public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
 public class Base { }
+public class MarkedBase : Base, IMarker<string> { }
 public class Selector
 {
     public int Visits { get; private set; }

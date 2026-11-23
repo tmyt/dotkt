@@ -1539,7 +1539,8 @@ static class ReferenceMetadataReader
         var facets = rows.Select((row, i) => {
             var key = physicalKey(TypeNode.Read(row[1]));
             var bound = physical[primary + i].Constraints.OrEmpty().Single(c => physicalKey(c) == key);
-            return new ProjectedClassStorageFrame.WitnessSlot((int)row[0], bound, (bool)row[2]);
+            return new ProjectedClassStorageFrame.WitnessSlot((int)row[0], bound, (bool)row[2]) {
+                Evidence = physical[primary + i].Constraints.OrEmpty() };
         }).ToArray();
         return new(physical, facets, addresses);
     }

@@ -329,6 +329,7 @@ static partial class FBoundStarProjectionErasure
                 r.Index == slot.OwnerIndex && slot.Bound is TypeNode.Fqn face && (r.Bound == face ||
                     SupertypeGraph.Reaches(face, r.Bound, Preparation.SourceSupertypes, References));
             if (nativeArguments.Count != 0) frame = frame.WithNativeArguments(s => nativeArguments.Contains(s.OwnerIndex));
+            frame = frame.WithDeclaredProofs(Values);
             return required.Length == 0 ? frame : frame.ForBase(s => required.Where(r => Required(s, r))
                 .Select(r => (TypeNode)r.Bound).Distinct().ToArray());
         }

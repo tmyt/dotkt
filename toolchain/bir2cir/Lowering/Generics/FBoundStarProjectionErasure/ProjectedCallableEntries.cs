@@ -25,7 +25,7 @@ sealed class ProjectedCallableEntries
     readonly CapturedGenericInvocation.PreparedInvocation invocations;
 
     internal static string EntryId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-call");
-    readonly IReadOnlyDictionary<string, HashSet<(int Primary, TypeNode Bound)>> callableFacets;
+    readonly GenericRepresentationPolicy values;
 
     internal static bool HasFixedAbi(BirFunctionDeclaration local, string id, ReferenceMetadataIndex references) =>
         local != null ? local.HasNativeOverrideSlot || local.RequiresClrOverride.OrDefault()
@@ -35,12 +35,12 @@ sealed class ProjectedCallableEntries
     internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild,
         CapturedGenericInvocation.PreparedInvocation invocations,
         IReadOnlyDictionary<string, FBoundStarProjectionErasure.ProjectedStorageOwner> storageOwners,
-        IReadOnlyDictionary<string, HashSet<(int Primary, TypeNode Bound)>> callableFacets)
+        GenericRepresentationPolicy values)
     {
         this.references = references;
         this.invocations = invocations;
         this.storageOwners = storageOwners;
-        this.callableFacets = callableFacets;
+        this.values = values;
         classHierarchy = new(() => SupertypeGraph.CollectSource(files));
         this.referenceBuild = referenceBuild;
         classes = files.SelectMany(f => f.Types.OrEmpty()).OfType<BirClassDefinition>()
@@ -162,15 +162,13 @@ sealed class ProjectedCallableEntries
     ProjectedClassStorageFrame Frame(BirTypeParameter[] parameters, bool locations = false) => ProjectedClassStorageFrame.Plan(parameters,
         (_, bound) => (bound, kinds.GetValueOrDefault(bound.Name) ?? (references.IsInterfaceType(bound) ? "interface" :
             references.IsClassType(bound) || references.PhysicalTypeForProof(bound.Name, bound.Args?.Length ?? 0)?.IsClass == true
-                ? "class" : null)), locations);
+                ? "class" : null)), locations)?.WithDeclaredProofs(values, references.PhysicalConstraintType);
 
     ProjectedClassStorageFrame MethodFrame(BirFunctionDeclaration m)
     {
         var frame = Frame(m.TypeParams.OrEmpty(),
             !m.Extern.OrDefault() && m.Params.OrEmpty().Any(p => ProjectedMethodPlan.HasMethodLocation(p, references)));
-        var id = m.LocalBodyEntry?.Id ?? m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
-        return frame != null && id != null && callableFacets.TryGetValue(id, out var needed)
-            ? frame.WithNativeArguments(f => needed.Contains((f.OwnerIndex, references.WitnessConstraintKey(f.Bound)))) : frame;
+        return frame;
     }
 
     ProjectedMethodPlan DeclarationPlan(IBirTypeDeclaration owner, BirFunctionDeclaration method, ProjectedClassStorageFrame frame)
@@ -408,12 +406,15 @@ sealed class ProjectedCallableEntries
                 .Select(references.DeclarationSignatureSlot).ToArray());
     }
 
-    TypeNode Proof(TypeNode ordinary, TypeNode bound, Scope ownerScope, Scope methodScope)
+    TypeNode Proof(TypeNode ordinary, TypeNode bound, Scope ownerScope, Scope methodScope, TypeNode[] required = null)
     {
         var evidence = Scope.For(ordinary, ownerScope, methodScope).ToArray();
-        return evidence.FirstOrDefault(e => e.Slot.Bound.Equals(bound)).Variable ??
-            evidence.FirstOrDefault(e => ProjectedConstructorPlan.Proves(e.Slot.Bound, bound, classHierarchy.Value, references)).Variable;
+        return evidence.OrderByDescending(e => e.Slot.Bound == bound).FirstOrDefault(e =>
+            (required ?? [bound]).All(c => e.Slot.Proves(c, Proves))).Variable;
     }
+
+    bool Proves(TypeNode source, TypeNode target) =>
+        ProjectedConstructorPlan.Proves(source, target, classHierarchy.Value, references);
 
     TypeNode[] ForwardConstructor(ProjectedConstructorPlan plan, TypeNode[] actual, Scope owner, Scope method)
     {
@@ -444,10 +445,11 @@ sealed class ProjectedCallableEntries
             }
             // All native uses of this source argument share one CLR value witness.
             // The open caller formal must prove the callee's whole conjunction.
-            foreach (var constraint in f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)))
-                if (!sameValue.Any(row => ProjectedConstructorPlan.Proves(row.slot.Bound, constraint, classHierarchy.Value, references)))
-                    throw new InvalidOperationException("Projected constructor argument lacks its declared native interface proof");
-            return new TypeNode.Tv(v.Scope, scope.Parameters.Length + sameValue[0].i);
+            var requiredRows = f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)).ToArray();
+            foreach (var row in sameValue)
+                if (requiredRows.All(c => row.slot.Proves(c, Proves)))
+                    return new TypeNode.Tv(v.Scope, scope.Parameters.Length + row.i);
+            throw new InvalidOperationException("Projected constructor argument lacks its declared native interface proof");
         });
     }
 
@@ -485,6 +487,7 @@ sealed class ProjectedCallableEntries
         copy.RoundtripTypeHeaderPending = default;
         copy.RoundtripSupertypesPre = default;
         var full = ProjectedClassStorageFrame.Declare(parameters, split);
+        split = split.Select((s, i) => s with { Evidence = full[parameters.Length + i].Constraints.OrEmpty() }).ToArray();
         copy.TypeParams = full[prefix..];
         var children = new List<IBirTypeDeclaration>();
         FBoundStarProjectionErasure.ProjectLexicalClosures(copy, named.Name, split.Length, full, Definition, allocate, children);
@@ -524,8 +527,8 @@ sealed class ProjectedCallableEntries
         var application = target.Plan.Close(actual, ownerArgs, node.MethodWitnessFacts.OrEmpty(),
             target.Original, target.Representations, node is BirCallInstance super && super.Super.OrDefault() ||
                 locationBody && target.Plan.AddressOperands.Length != 0,
-            (t, b) => Proof(t, b, ownerScope, methodScope), Declares,
-            (t, b) => ProjectedConstructorPlan.Proves(t, b, classHierarchy.Value, references));
+            (t, b, rows) => Proof(t, b, ownerScope, methodScope, rows), Declares,
+            Proves);
         node.ApplicationTypeArguments = application.Arguments;
         node.MethodWitnessFacts = default;
         if (!application.Projected) return true;
