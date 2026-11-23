@@ -44,7 +44,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Statics — direct `Type.member` (no synthetic `.Companion`) | ✅ |
 | Events (`X.subscribe(handler)` returning a closeable subscription), lambdas → any delegate (incl. custom generic delegates) | ✅ |
 | `out`/`ref` via `byref()`; user Kotlin `ClrRef<T>` parameters as CLR `ref T`; nullable value types (`int?`); .NET enums (including typed `[Flags]` operations) | ✅ |
-| Native P/Invoke via top-level `external fun` + CLR `DllImportAttribute` (initial blittable/`IntPtr`/`ClrRef<T>` subset) | ✅ |
+| [Native P/Invoke](using-dotnet-from-kotlin.md#5-native-calls-with-dllimportattribute) via top-level `external fun` + CLR `DllImportAttribute`: blittable primitives and enums, `IntPtr`/`UIntPtr`, `ClrRef<T>` of those types, and read-only by-value `String`/`String?` inputs | ✅ |
 | Plain value consumption of a generic method's ref return | 🚧 [Current generic-call emission bug](using-dotnet-from-kotlin.md#4-out--ref-parameters--byref) |
 | Imported BCL signatures containing native-integer `nint`/`nuint` codes | 🚧 [Current projection bug](using-dotnet-from-kotlin.md#imported-native-sized-integers) |
 | C# operator overloads and extension methods | ✅ |
