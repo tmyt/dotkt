@@ -103,7 +103,7 @@ static partial class StringCharSequenceBridge
     // This entry owns the continuing source graph. Newly authored callback
     // ingredients are returned by their actual slots, not detached snapshots.
     internal static SourceBridgeResult Apply(BirFileDeclaration file, ConstructorParameters constructorSlots,
-        CharSeqStringLowering.CharSeqRetLambdas retLambdas)
+        CharSeqStringLowering.CharSeqRetLambdas retLambdas, CharSeqStringLowering.MemberSlots results = null)
     {
         _retLambdas = retLambdas;
         _fired = false;
@@ -113,7 +113,7 @@ static partial class StringCharSequenceBridge
         var context = new ClosureSynthesis.CaptureContext("<file>", position?.F.OrDefault(),
             position?.L.HasValue == true ? position.L.Value : null);
         WalkSourceBridge(new BirGraphSlot(() => file, _ => throw new InvalidOperationException("A bridge cannot replace its file")),
-            new SourceBridgeEnv(context, constructorSlots), materialized);
+            new SourceBridgeEnv(context, constructorSlots), materialized, results: results);
         IReadOnlyList<BirClassDefinition> appended = Array.Empty<BirClassDefinition>();
         if (!_adapterEmitted && (_fired || SourceUsesCharSequenceView(file))) appended = EmitSourceAdapter(file);
         return new SourceBridgeResult(appended, materialized);
@@ -164,13 +164,16 @@ static partial class StringCharSequenceBridge
         return result;
     }
 
-    static void WalkSourceBridge(BirGraphSlot slot, SourceBridgeEnv env,
-        List<ClosureSynthesis.MaterializedOccurrence> materialized, bool returnsOnly = false)
+    // Report a selected collapsed result to its enclosing evaluation block,
+    // whose source stamp otherwise hides the physical result from its caller.
+    static bool WalkSourceBridge(BirGraphSlot slot, SourceBridgeEnv env,
+        List<ClosureSynthesis.MaterializedOccurrence> materialized, bool returnsOnly = false, CharSeqStringLowering.MemberSlots results = null)
     {
         var node = slot.Value;
-        if (node == null || node is IBirExecutablePayload) return;
+        if (node == null || node is IBirExecutablePayload) return false;
         var childEnv = env.WithDecl(node);
-        node.VisitSourceChildren(child => WalkSourceBridge(child, childEnv, materialized, returnsOnly), region => {
+        var collapsedResult = false;
+        node.VisitSourceChildren(child => WalkSourceBridge(child, childEnv, materialized, returnsOnly, results), region => {
             // Preserve the original valueBlock-only snapshot: its result sees
             // all declared local types, but a variable's initializer does not
             // see itself. Other regions do not acquire this sibling scope.
@@ -184,16 +187,20 @@ static partial class StringCharSequenceBridge
             {
                 var at = index;
                 WalkSourceBridge(new BirGraphSlot(() => (BirGraphValue)region.Statements[at],
-                    value => region.Statements[at] = (IBirStatement)value), current, materialized, returnsOnly);
+                    value => region.Statements[at] = (IBirStatement)value), current, materialized, returnsOnly, results);
                 if (region.Statements[index] is BirVariable { Name.HasValue: true, Type.HasValue: true } variable)
                     current = current.WithVar(variable.Name.Value, variable.Type.Value);
             }
-            if (region.Result is { } result) WalkSourceBridge(result, resultEnv, materialized, returnsOnly);
+            if (region.Result is { } result && WalkSourceBridge(result, resultEnv, materialized, returnsOnly, results)
+                && node is BirValueBlock block)
+                collapsedResult = CharSeqStringLowering.MemberSlots.BindResultBlock(block);
         });
-        if (returnsOnly && node is not BirReturn) return;
+        if (returnsOnly && node is not BirReturn) return false;
+        if (node is BirCallStatic or BirCallInstance) collapsedResult = results?.Bind(node, env.Vars) == true;
         if (node is BirConstructor constructor) SourceWrapDelegationArgs(constructor, childEnv);
         var replacement = SourceBridgeTransform(node, env, materialized);
         if (!ReferenceEquals(replacement, node)) slot.Replace(replacement);
+        return collapsedResult;
     }
 
     static BirGraphValue SourceBridgeTransform(BirGraphValue node, SourceBridgeEnv env,
@@ -414,6 +421,9 @@ static partial class StringCharSequenceBridge
         }
     }
 
+    internal static bool RestoresClosureReturn(string owner, BirFunctionDeclaration method, CharSeqStringLowering.CharSeqRetLambdas returns)
+        => returns.Closures.Contains(owner) && method.Name.OrDefault() == "invoke" && IsStringTokT(method.Ret.OrDefault());
+
     static IBirExpression SourceCollapsedConstructorArgument(IBirExpression value, SourceBridgeEnv env, TypeNode declared, TypeNode slot)
         => (IsScalarCharSequence(declared) || IsSourceCharSeqT(declared))
             && (IsStringTokT(slot) || slot is TypeNode.Nullable n && IsStringTokT(n.Of))
@@ -429,7 +439,7 @@ static partial class StringCharSequenceBridge
         foreach (var type in file.Types.OrEmpty())
             if (returns.Closures.Contains(type.Name.OrDefault()))
                 foreach (var method in type.Methods.OrEmpty())
-                    if (method.Name.OrDefault() == "invoke" && IsStringTokT(method.Ret.OrDefault()))
+                    if (RestoresClosureReturn(type.Name.Value, method, returns))
                         method.Ret = new TypeNode.Fqn(CharSeq);
     }
 

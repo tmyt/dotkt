@@ -8,15 +8,59 @@ using DotKt.Cir;
 
 static partial class CharSeqStringLowering
 {
+    // Local declarations own their physical call slots. A foreign method with
+    // the same source signature can still require the CharSequence interface.
+    internal sealed class MemberSlots
+    {
+        readonly Dictionary<string, (BirFunctionDeclaration Method, bool StringResult)> declarations = new(StringComparer.Ordinal);
+        internal void Collect(BirFunctionDeclaration method, bool stringResult)
+        {
+            if (method.DeclarationId.OrDefault() is string id)
+                declarations[id] = (method, stringResult);
+        }
+        internal bool Bind(BirGraphValue call, IReadOnlyDictionary<string, TypeNode> vars)
+        {
+            var (id, sig, args) = call switch {
+                BirCallInstance c => (c.DeclarationId.OrDefault(), c.Sig.OrDefault() ?? c.ShapeTypes.OrDefault(), c.Args.OrDefault()),
+                BirCallStatic c => (c.DeclarationId.OrDefault(), c.Sig.OrDefault() ?? c.ShapeTypes.OrDefault(), c.Args.OrDefault()),
+                _ => default,
+            };
+            if (id == null || !declarations.TryGetValue(id, out var declaration)) return false;
+            var parameters = declaration.Method.Params.OrEmpty();
+            if (sig != null && args != null && parameters.Length == sig.Length)
+                for (var i = 0; i < Math.Min(sig.Length, args.Length); i++)
+                    if (IsScalarSequence(sig[i]) && IsStringDeclT(parameters[i].Type.OrDefault()))
+                    {
+                        sig[i] = LowerTokT(sig[i]);
+                        if (args[i] is { } argument && SnapshotForStringSlot(argument, vars, sig[i] is TypeNode.Nullable) is { } value)
+                            args[i] = value;
+                    }
+            if (declaration.StringResult)
+                call.RewriteOwnTypeFieldsInPlace((field, _, type) =>
+                    (field is "sty" or "ret" or "dynRet" or "memberReturnType") && IsScalarSequence(type) ? LowerTokT(type) : type);
+            return declaration.StringResult;
+        }
+        internal static bool BindResultBlock(BirValueBlock block)
+        {
+            var surface = block.Type.OrDefault() ?? block.Sty.OrDefault();
+            if (surface != null && !IsScalarSequence(surface) && !IsStringDeclT(surface)) return false;
+            block.RewriteOwnTypeFieldsInPlace((field, _, type) =>
+                (field is "type" or "sty") && IsScalarSequence(type) ? LowerTokT(type) : type);
+            return true;
+        }
+    }
+    static bool IsScalarSequence(TypeNode type) => type is TypeNode.Fqn { Name: CharSeq }
+        or TypeNode.Nullable { Of: TypeNode.Fqn { Name: CharSeq } };
+
     internal static BirFileDeclaration Apply(BirFileDeclaration root, IReadOnlySet<string> localTopLevelFns,
-        out CharSeqRetLambdas retLambdas)
-        => (BirFileDeclaration)Apply((BirGraphValue)root, localTopLevelFns, out retLambdas);
+        out CharSeqRetLambdas retLambdas, MemberSlots results = null)
+        => (BirFileDeclaration)Apply((BirGraphValue)root, localTopLevelFns, out retLambdas, results);
 
     internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns)
         => Apply(root, localTopLevelFns, out _);
 
     internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns,
-        out CharSeqRetLambdas retLambdas)
+        out CharSeqRetLambdas retLambdas, MemberSlots results = null)
     {
         // These facts describe the original callable contract, before either a
         // declaration or a structured function-type return is collapsed.
@@ -39,7 +83,17 @@ static partial class CharSeqStringLowering
         }
         Collect(root);
         retLambdas = new CharSeqRetLambdas(statics, closures);
-        return WalkSource(root, new SourceEnv(), localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal), exempt);
+        var candidates = root is BirFileDeclaration file && results != null
+            ? file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty()
+                .Select(m => (Owner: t.Name.OrDefault(), Method: m, SequenceResult: IsScalarSequence(m.Ret.OrDefault())))
+                .Where(c => c.SequenceResult || c.Method.Params.OrEmpty().Any(p => IsScalarSequence(p.Type.OrDefault()))))
+                .ToArray() : null;
+        var lowered = WalkSource(root, new SourceEnv(), localTopLevelFns ?? new HashSet<string>(StringComparer.Ordinal), exempt);
+        if (candidates != null)
+            foreach (var (owner, method, sequenceResult) in candidates)
+                results.Collect(method, sequenceResult && IsStringDeclT(method.Ret.OrDefault())
+                    && !StringCharSequenceBridge.RestoresClosureReturn(owner, method, retLambdas));
+        return lowered;
     }
 
     sealed class SourceEnv
