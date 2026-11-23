@@ -287,6 +287,12 @@ class ConstrainedNullableBoundTests {
     interface ChildMark : IMark<String>
     private class Child<T> : Base(), ChildMark, IMarker<String>
     private class MarkedChild<T> : RoundtripDependentNative.MarkedBase(), ChildMark
+    @TestAttribute
+    fun erasedFactoryRetainsTheNativeConstructorArgument() {
+        fun checkFactory(factory: roundtrip.constrainedbound.FixedSlotFactory<*>) = factory.usesMarkedBase()
+        check(!checkFactory(roundtrip.constrainedbound.FixedSlotFactory<MarkedChild<Int>>()))
+        check(checkFactory(roundtrip.constrainedbound.FixedSlotFactory<MarkedChild<*>>()))
+    }
     private fun <A> viaMarkedBase(value: A): Any where A : RoundtripDependentNative.MarkedBase, A : IMark<String> =
         roundtrip.constrainedbound.NativeJoined<A>()
     private class LocalHolder<T> where T : Base, T : IMark<String> { var item: T? = null }
