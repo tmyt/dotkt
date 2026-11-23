@@ -25,12 +25,10 @@ static partial class FBoundStarProjectionErasure
                     if (!type.Name.HasValue) continue;
                     var name = type.Name.Value;
                     var binding = bindings.GetSource((BirGraphValue)type);
-                    var alias = type.Attrs.OrEmpty().Any(attribute =>
-                        attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" });
                     var arity = type.TypeParams.OrEmpty().Length;
-                    if (IsSourceGeneric(name, type.Generated.OrDefault(), alias, arity))
+                    if (IsSourceGeneric(type))
                         generic.TryAdd(name, new GenericOwner(name, binding, rootBinding, arity,
-                            type.Vis.OrDefault() is null or "public" or "protected" or "internal"));
+                            !type.Generated.OrDefault() && type.Vis.OrDefault() is (null or "public" or "protected" or "internal")));
                 }
             GenericOwners = generic.Values.ToArray();
         }

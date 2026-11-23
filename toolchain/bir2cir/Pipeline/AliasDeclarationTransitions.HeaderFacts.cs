@@ -7,11 +7,13 @@ sealed partial class AliasDeclarationTransitions
     // vectors remain the producer's actual records, not a second declaration
     // authority. In particular captured parameters, bodies and fields are absent.
     internal readonly record struct LogicalHeaderFacts(OptionalField<string> Name, OptionalField<string> Kind,
-        OptionalField<bool> Generated, OptionalField<BirTypeParameter[]> TypeParams,
+        OptionalField<bool> Generated, bool NamedLocal, OptionalField<BirTypeParameter[]> TypeParams,
         OptionalField<BirAttribute[]> Attrs, OptionalField<SourceTypeFacts> KotlinSupertypesPre);
 
     internal static LogicalHeaderFacts ReadLogicalHeaderFacts(IBirTypeDeclaration source) => new(
-        source.Name, source.Kind, source.Generated, source.TypeParams, source.Attrs, source switch {
+        source.Name, source.Kind, source.Generated,
+        source is BirClassDefinition local && local.LocalClassifierName.OrDefault() is { Length: > 0 },
+        source.TypeParams, source.Attrs, source switch {
             BirClassDefinition value => value.KotlinSupertypesPre,
             BirInterfaceDefinition value => value.KotlinSupertypesPre,
             BirEnumDefinition value => value.KotlinSupertypesPre,
