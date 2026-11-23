@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.32 (2026-11-23)
+
+- Support by-value `String` and `String?` inputs in Kotlin P/Invoke declarations using the standard .NET marshaler. Explicit UTF-8 is supported; `CharSet.Ansi` keeps its normal platform-dependent meaning. Unsupported signatures now report a source-located build error (#1822, #1825).
+- Use the selected generic declaration's constraints for projected constructors, inner factories, and virtual calls across assemblies. If a CLR declaration requires one type argument to satisfy both a class and an interface constraint, constructing a Kotlin wrapper with a star-projected argument fails at compile time when no common CLR type satisfies both. Independent bounds do not impose this restriction (#1827, #1828, #1830, #1832).
+- Preserve the selected native generic argument and original managed location when a Kotlin override forwards a projected call to CLR code (#1834, #1835, #1836).
+- Read a non-generic base property on an imported star-projected subclass using a verifier-compatible receiver (#1800).
+
 - Keep private Kotlin interface helpers callable by their own default methods without exposing an override slot (#1765).
 
 - Preserve Kotlin collection class identity in class literals, reflected types and reified calls across assemblies (#1781).
