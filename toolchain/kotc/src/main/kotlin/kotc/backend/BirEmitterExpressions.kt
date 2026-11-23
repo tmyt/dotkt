@@ -584,10 +584,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 	// `try { … } catch { … }` in VALUE position (`val x = try …`, `return try …`, a try in a lambda) -> a temp
 	// local assigned in each branch, wrapped in a valueBlock (a CLR try/catch leaves no value on the stack).
 	is IrTry -> tryExpr(node)
-	// `T::class` / `Foo::class` -> a System.Type token. For a generic param `T` this is `ldtoken !!0` in the
-	// generic method (CLR reified generics); `Foo::class` is a concrete `ldtoken Foo`.
+	// Presence marks a source class literal (rather than a storage token introduced by lowering).
 	is IrClassReference -> kotc.bir.BirClassReference(functionClassifierOperand(node.classType) ?: birType(node.classType),
-		reifiedLiteral = true.takeIf { (node.classType.classifierOrNull as? IrTypeParameterSymbol)?.owner?.isReified == true })
+		reifiedLiteral = (node.classType.classifierOrNull as? IrTypeParameterSymbol)?.owner?.isReified == true)
 	// `x::class` (runtime class of an instance) -> `x.GetType()` (a System.Type); `.simpleName`/`.qualifiedName`
 	// on the result route to Type.Name/FullName, same as the `T::class` literal path.
 	is IrGetClass -> kotc.bir.BirRuntimeClass(e = expr(node.argument))

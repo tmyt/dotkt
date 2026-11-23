@@ -466,8 +466,10 @@ static void VerifyReifiedWitnessContract(string dllPath, string klibPath, string
             "matches<T>(value) must carry one semantic value plus one nullable witness");
         Require(ParameterCount("forwarded") == 2,
             "transitive nullable-witness demand did not reach forwarded<T>");
-        Require(ParameterCount("classifierName") == 0,
-            "classifierName<T>() received a nullable witness solely because T is reified");
+        Require(ParameterCount("classifierName") == 1,
+            "classifierName<T>() must receive the Kotlin classifier independently of CLR storage");
+        Require(ParameterCount("unusedReified") == 0,
+            "a reified parameter with no classifier operation must not receive a witness");
     }
 
     using var archive = ZipFile.OpenRead(klibPath);

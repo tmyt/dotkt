@@ -684,7 +684,7 @@ private fun starProjectionBindCapture(inferred: Array<StarProjectionType?>, argu
     position: Int, slot: Int, nullableSlot: Int) {
     // Native class tokens represent T directly; other values expose their
     // declared construction, not necessarily their own TypeDef's arguments.
-    val actual = if (argument is StarProjectionType && (RepresentedTypeConstruction::class as StarProjectionType).isAssignableFrom(owner)) argument
+    val actual = if (argument is StarProjectionType && (RepresentedTypeConstruction::class as StarProjectionType).isAssignableFrom(owner)) representedClassStorage(argument)
         else if (argument == null) null
         else starProjectionClosedView(argument.starProjectionRuntimeType(), owner)?.getGenericArguments()?.get(position)
     if (actual == null) return

@@ -23,7 +23,13 @@ static partial class DefaultArgSplice
             void Walk(BirGraphValue node, CaptureContext context)
             {
                 if (node == null || node is IBirExecutablePayload) return;
-                if (node is BirAttribute annotation) { expansion.ExpandAttribute(annotation); return; }
+                if (node is BirAttribute annotation)
+                {
+                    expansion.ExpandAttribute(annotation);
+                    // Attribute defaults are values too, but do not enter the executable body pass.
+                    annotation.Visit(child => { if (child is BirClassReference literal) ReflectedKotlinType.BindKnownLiteral(literal); });
+                    return;
+                }
                 context = ContextFor(node, context);
                 foreach (var slot in ExpandMaterialized(node, expansion, hoist))
                     materialized.Add(new MaterializedOccurrence(slot, context));
