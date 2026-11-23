@@ -36,28 +36,27 @@ static class KClassMemberBinding
         },
     };
 
-    internal static HashSet<string> BindLocalDeclarations(BirFileDeclaration root)
+    internal static void BindLocalDeclarations(BirFileDeclaration root, IReadOnlyDictionary<string, string> carriers)
     {
-        var locals = new HashSet<string>(StringComparer.Ordinal);
         foreach (var type in root.Types.OrEmpty().OfType<BirClassDefinition>()) {
             if (type.LocalClassifierName.OrDefault() is not string sourceName) continue;
             var owner = type.Name.Value;
-            locals.Add(owner);
-            type.Attrs = type.Attrs.OrEmpty().Append(Identity(owner, owner, sourceName, true)).ToArray();
+            type.Attrs = type.Attrs.OrEmpty().Append(Identity(carriers.GetValueOrDefault(owner, owner), owner, sourceName, true)).ToArray();
             type.LocalClassifierName = default;
         }
-        return locals;
     }
 
-    public static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs = null, HashSet<string> locals = null)
+    public static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs = null)
     {
+        var locals = root.Types.OrEmpty().OfType<BirClassDefinition>().Where(type => type.LocalClassifierName.HasValue)
+            .Select(type => type.Name.Value).ToHashSet(StringComparer.Ordinal);
         BirGraphValue Walk(BirGraphValue node)
         {
             if (node is IBirExecutablePayload or BirAttribute) return node;
             if (node is BirCallInstance call && call.OwnerType.OrDefault() is TypeNode.Fqn { Name: "kotlin.reflect.KClass" }
                 && call.Prop.OrDefault() == "get" && call.Method.OrDefault() is "simpleName" or "qualifiedName"
                 && call.Recv.OrDefault() is IBirExpression receiver && StaticKotlinFqn(receiver, refs) is string name
-                && locals?.Contains(name) != true)
+                && !locals.Contains(name))
                 return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
                     Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
@@ -69,7 +68,7 @@ static class KClassMemberBinding
             IBirExpression operand;
             if (node is BirRuntimeClass runtime) operand = runtime;
             else if (node is BirClassReference literal && (literal.ReifiedLiteral.OrDefault()
-                || literal.Type.OrDefault() is TypeNode.Fqn f && locals?.Contains(f.Name) == true)) {
+                || literal.Type.OrDefault() is TypeNode.Fqn f && locals.Contains(f.Name))) {
                 literal.ReifiedLiteral = default;
                 operand = literal;
             } else return node;

@@ -178,8 +178,6 @@ static partial class FBoundStarProjectionErasure
                 (declaration.Source as BirFunctionDeclaration)?._ownerConstraintOverrideBounds.OrDefault(), references);
 
         static bool SourceGeneric(DeclarationBinding declaration) =>
-            declaration.Source is IBirTypeDeclaration type && IsSourceGeneric(type.Name.OrDefault(), type.Generated.OrDefault(),
-                type.Attrs.OrEmpty().Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: "kotlin.clr.ClrTypeAlias" }),
-                type.TypeParams.OrEmpty().Length);
+            declaration.Source is IBirTypeDeclaration type && IsSourceGeneric(type);
     }
 }

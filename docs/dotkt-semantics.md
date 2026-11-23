@@ -105,10 +105,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 - **A Kotlin star projection is never represented as `G<object>`.** CLR generics are reified and invariant, so
   `G<String>` is not a `G<object>` and that substitution changes both runtime tests and dispatch. For a generic
   declaration emitted by DotKt, `bir2cir` adds a compiler-generated non-generic existential interface implemented by
-  every `G<T...>` closure. The interface is emitted eagerly as declaration ABI, preserves object identity, supports
+  every `G<T...>` closure. For an exported declaration the interface is emitted eagerly as declaration ABI, preserves object identity, supports
   arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
   `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
-  name has no meaning and is chosen collision-free.
+  name has no meaning and is chosen collision-free. A named function-local class can also need this interface:
+  for example, the result of `if (flag) Local(1) else Local("text")` still refers to the original object.
+  Its interface stays in the class's lexical access scope and retains its Kotlin reflection identity, but
+  does not advertise the local class as a declaration that another module can name.
 - **Unchecked generic casts test the raw Kotlin classifier, including concrete type arguments.**
   `value as G<Any>` and `value as? G<Any>` do not test a closed CLR `G<object>` construction. Their runtime
   checks use the declaration's existential interface and preserve object identity. A statically proven

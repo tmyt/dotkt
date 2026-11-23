@@ -117,23 +117,30 @@ static partial class FBoundStarProjectionErasure
                 }
             }
         }
-        var scope = context.ErasedEnclosingScope(root, definition);
+        var localName = (definition as BirClassDefinition)?.LocalClassifierName.OrDefault();
+        // A function-local view is not a downstream classifier. Keep it in the
+        // original access scope, including any protected base interfaces.
+        var scope = localName != null ? definition.NestedIn.OrDefault() ?? definition.SemanticOwner.OrDefault()
+            : context.ErasedEnclosingScope(root, definition);
         var erased = new BirInterfaceDefinition {
             Name = owner.ErasedName, Kind = "interface", Generated = true,
-            KotlinType = new TypeNode.Fqn(owner.Name, Enumerable.Range(0, owner.Arity)
-                .Select(_ => (TypeNode)new TypeNode.Star()).ToArray()),
             Base = OptionalField<TypeNode>.Null, Interfaces = inherited.ToArray(),
             Fields = Array.Empty<BirFieldDeclaration>(), Ctors = Array.Empty<BirConstructor>(),
             Methods = methods.ToArray(), Properties = Array.Empty<BirPropertyDeclaration>(), Attrs = Array.Empty<BirAttribute>(),
         };
         // The physical generic and its existential interface denote one source classifier.
         // Give reflection the actual allocated token, not a convention for parsing CLR names.
-        BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, owner.Name, false);
-        definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
+        BirAttribute ClassifierIdentity() => KClassMemberBinding.Identity(owner.ErasedName, owner.Name, localName ?? owner.Name, localName != null);
+        if (localName == null) {
+            erased.KotlinType = new TypeNode.Fqn(owner.Name, Enumerable.Range(0, owner.Arity)
+                .Select(_ => (TypeNode)new TypeNode.Star()).ToArray());
+            definition.Attrs = definition.Attrs.OrEmpty().Append(ClassifierIdentity()).ToArray();
+        }
         erased.Attrs = new[] { ClassifierIdentity() };
         RegisterProjectedStorage(owner, definition, erased, context);
         if (scope != null) erased.NestedIn = scope;
-        if (CarrierRealizationContext.VisibilityInScope(definition, scope) is { } visibility) erased.Vis = visibility;
+        if (localName != null) erased.Vis = "internal";
+        else if (CarrierRealizationContext.VisibilityInScope(definition, scope) is { } visibility) erased.Vis = visibility;
         context.AttachType(root, erased);
         foreach (var slot in methods)
         {
