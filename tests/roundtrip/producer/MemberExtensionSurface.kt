@@ -6,6 +6,12 @@ class NumberContext(val delta: Int)
 
 class GenericMemberPropertyCarrier<T>(var value: Any?)
 
+interface ReadMemberProperty<T> {
+    var <R> GenericMemberPropertyCarrier<R>.item: T
+}
+
+interface TaggedMemberProperty<T> : ReadMemberProperty<T>
+
 open class GenericMemberPropertyHost {
     inline val <reified T> GenericMemberPropertyCarrier<T>.memberMatches: Boolean
         get() = value is T
