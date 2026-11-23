@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Include sparse CLR regex captures when iterating Kotlin match groups or reading `groupValues` (#1721).
+- Preserve the nullable value parameter of a native generic class: Kotlin can call both `Read(T)` and `Read(T?)` on a C# type with `where T : struct` (#1857).
 
 ## 0.9.32 (2026-11-23)
 

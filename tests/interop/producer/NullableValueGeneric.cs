@@ -22,6 +22,19 @@ using System.Collections.Generic;
 
 namespace NvGen
 {
+    public class ValueSlots<T> where T : struct
+    {
+        public string Read(T value) => $"plain:{value}";
+        public string Read(T? value) => value.HasValue ? $"nullable:{value.Value}" : "missing";
+    }
+
+#nullable enable
+    public class ReferenceSlot<T> where T : class
+    {
+        public bool IsMissing(T? value) => value is null;
+    }
+#nullable restore
+
     public static class Api
     {
         public static int OrElse(int? x, int d) => x ?? d;

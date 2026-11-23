@@ -71,6 +71,17 @@ class KotlinValueImageSibling : ValueImageBase(), KotlinBoolListSink {
 
 class NullableValueGenericInteropTests {
     @TestAttribute
+    fun openNativeNullableValueSlotKeepsItsDeclaration() {
+        val slots = NvGen.ValueSlots<Int>()
+        val present: Int? = 7
+        assertEquals("missing", slots.Read(null))
+        assertEquals("nullable:7", slots.Read(present))
+        assertEquals("plain:7", slots.Read(7))
+        val refs = NvGen.ReferenceSlot<String>()
+        check(refs.IsMissing(null) && !refs.IsMissing("present"))
+    }
+
+    @TestAttribute
     fun directNullableValueSlotsCrossUnchanged() {
         assertEquals(7, Api.OrElse(null, 7))            // 7    a direct int? PARAMETER takes a Kotlin null
         assertEquals(3, Api.OrElse(3, 7))               // 3

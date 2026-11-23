@@ -7108,7 +7108,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 => signatures.ApplyOuterNullability(result, bytes, contextByte),
             // A collection-identity carrier was captured after reference
             // nullability stripping, so ordinary NRT metadata fills its tree.
-            _ => signatures.ApplyNullability(result, bytes, contextByte),
+            _ => signatures.ApplyNullability(result, bytes, contextByte, physicalContext: exact is null ? context : null),
         };
         if (flowContract && _attrs.Has(slot, MetadataAttributes.MaybeNull, requireTrust: false))
             result = signatures.AsPlatform(result);
@@ -8518,7 +8518,8 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
     // Fold a declaration slot's NRT metadata over a decoded type, walking the tree in the SAME pre-order the emitting
     // compiler flattened it in (see [ConsumesNullability] for which nodes hold a byte). A node that holds no byte still
     // has its arguments walked, because the flattening does: `Dictionary<int, string?>` is `[1, 2]`, not `[1]`.
-    public KType ApplyNullability(KType source, byte[]? flags, byte context, bool preserveDecodedNullable = false)
+    public KType ApplyNullability(KType source, byte[]? flags, byte context, bool preserveDecodedNullable = false,
+        GenericContext? physicalContext = null)
     {
         var index = 0;
         return Walk(source);
@@ -8560,6 +8561,12 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
             // NRT on a native generic variable does not construct Nullable<T>.
             // Otherwise closing T at Int would change the callable ABI to int?.
             if (nativeSignature && copy.HasTypeParameter) return AsNonNull(copy);
+            // The raw slot already distinguishes T from Nullable<T>. NRT cannot
+            // turn a struct-constrained owner parameter into a platform type.
+            if (copy.HasTypeParameter && physicalContext is not null && physicalContext.TypeParameterIds.Any(pair =>
+                    pair.Value == copy.TypeParameter && (_md.GetGenericParameter(pair.Key).Attributes
+                        & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0))
+                return copy;
             // A VALUE type holds a byte position but never an annotation: its byte is always 0 (oblivious), and its
             // one nullable form is the structural `System.Nullable<T>` already folded in by the decoder. Reading the
             // byte — or, worse, the enclosing declaration's `[NullableContext]` — as an annotation is what turned
