@@ -77,19 +77,19 @@ static partial class ClrMemberResolution
             ?? throw new InvalidOperationException($"bir2cir: newClr owner '{owner.Name}' does not resolve to a .NET type");
         var signature = NativeArgumentTypes(argumentTypes).Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
         var ownerArguments = owner.Args?.Select(BirTypeLowering.CanonicalPhysicalSlotType).ToArray();
-        var constructors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+        List<ConstructorInfo> Candidates() => open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(constructor => constructor.GetParameters().Length == signature.Count).ToList();
         ConstructorInfo selected;
         // Only the real BirNew producer carries the selected constructor ID.
-        if (identity != null) selected = bindingReferences.SelectConstructorDeclaration(constructors, identity);
+        if (identity != null) selected = bindingReferences.SelectConstructorDeclaration(Candidates(), identity);
         else if (nativeKey != null) selected = bindingReferences.SelectedNativeConstructor(open, nativeKey);
         else if (selectedSignature != null)
         {
             var declaration = selectedSignature.Select(BirTypeLowering.CanonicalPhysicalSlotType).ToList();
-            selected = ClrDeclarationMatching.PickDeclaredConstructor(bindingReferences, constructors, declaration,
+            selected = ClrDeclarationMatching.PickDeclaredConstructor(bindingReferences, Candidates(), declaration,
                 $"selected constructor declaration on '{owner.Name}' ({DescArgs(declaration)})");
         }
-        else selected = ClrDeclarationMatching.PickUnique(bindingReferences, constructors, constructor => constructor.GetParameters(), signature, ownerArguments,
+        else selected = ClrDeclarationMatching.PickUnique(bindingReferences, Candidates(), constructor => constructor.GetParameters(), signature, ownerArguments,
             $"newClr owner={TypeNode.ToJson(owner)} ({DescArgs(signature)})");
 
         CoerceNativeConstructorViews(bindingReferences, arguments, selected.GetParameters(), signature, ownerArguments);

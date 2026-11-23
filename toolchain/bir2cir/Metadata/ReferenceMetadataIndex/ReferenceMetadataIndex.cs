@@ -929,12 +929,14 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     internal ConstructorInfo SelectedNativeConstructor(Type open, string key)
     {
         if (!_nativeConstructors.TryGetValue(open, out var declarations))
-            _nativeConstructors.Add(open, declarations = ReferenceMetadataReader.NativeConstructorDeclarations(open));
-        return declarations.TryGetValue(key, out var declaration) ? declaration
-            : throw new InvalidOperationException($"bir2cir: selected native constructor is missing from '{open.FullName}'");
+            _nativeConstructors.Add(open, declarations = ReferenceMetadataReader.NativeConstructorDeclarations(open, _universe.ModuleMetadata(open.Module)));
+        if (declarations.TryGetValue(key, out var declaration)) return declaration;
+        return declarations.Where(pair => RawSignatureTypeProvider<object>.SameConstructor(pair.Key, key, _universe.SameDefinition))
+            .Select(pair => pair.Value).SingleOrDefault()
+            ?? throw new InvalidOperationException($"bir2cir: selected native constructor is missing from '{open.FullName}'");
     }
 
-    internal Dictionary<int, IBirExpression> DefaultValuesForNativeBaseConstructor(TypeNode.Fqn owner, string key) =>
+    internal Dictionary<int, IBirExpression> DefaultValuesForNativeConstructor(TypeNode.Fqn owner, string key) =>
         key == null || owner == null ? null : CallableDefaultsOf(
             SelectedNativeConstructor(ClrMemberResolution.ResolveOwnerType(owner, this), key), _universe.CoreType);
 

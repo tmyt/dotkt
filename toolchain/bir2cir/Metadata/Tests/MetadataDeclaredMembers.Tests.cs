@@ -19,6 +19,7 @@ static class MetadataDeclaredMembersTests
     }
     class PrivateConstructor { private PrivateConstructor() { } }
     class ArgumentConstructor { public ArgumentConstructor(int value) { } }
+    class SequenceConstructor<T> { public SequenceConstructor(IEnumerable<T> items) { } }
     class MultipleConstructors
     {
         static MultipleConstructors() { }
@@ -67,6 +68,23 @@ static class MetadataDeclaredMembersTests
             if (MetadataDeclaredMembers.HasPublicParameterlessConstructor(type)
                 != (type.GetConstructor(Type.EmptyTypes) is ConstructorInfo { IsPublic: true }))
                 throw new Exception("public parameterless-constructor fact changed");
+        }
+        // A reference-compiled declaration encodes IEnumerable<T> through System.Runtime;
+        // CoreLib itself defines it. Require a real forwarding edge, not a name-only match.
+        var coreConstructor = typeof(List<>).GetConstructors().Single(c =>
+            c.GetParameters() is [{ ParameterType.IsGenericType: true }]);
+        var importedConstructor = typeof(SequenceConstructor<>).GetConstructors().Single();
+        using (var refs = new ReferenceMetadataUniverse(DotKt.Toolchain.ManagedReferenceCatalog.Create(
+            new[] { typeof(object).Assembly.Location, Assembly.Load("System.Runtime").Location }, "constructor-forwarder-test")))
+        {
+            string Key(ConstructorInfo ctor) => DotKt.Toolchain.RawSignatureTypeProvider<object>.ConstructorKey(
+                refs.ModuleMetadata(ctor.Module), (MethodDefinitionHandle)MetadataTokens.Handle(ctor.MetadataToken));
+            var coreKey = Key(coreConstructor);
+            var importedKey = Key(importedConstructor);
+            if (coreKey == importedKey || !DotKt.Toolchain.RawSignatureTypeProvider<object>.SameConstructor(
+                    coreKey, importedKey, refs.SameDefinition)
+                || DotKt.Toolchain.RawSignatureTypeProvider<object>.SameConstructor(coreKey, importedKey, (_, _, _) => false))
+                throw new Exception("constructor signature identity did not follow exactly the resolved nominal type");
         }
         MalformedEnumeration(paths);
         Console.Error.WriteLine("[declared metadata readers] self-test OK (generic contexts, inheritance, accessors, constructors)");

@@ -30,6 +30,8 @@ sealed partial class ReferenceMetadataUniverse
         Check(first.ResolveType("probe.Absent", 0) == null && first.types.Count == count,
             "a cache miss was not retained");
         var task = first.ResolveType("System.Threading.Tasks.Task", 0);
+        Check(ReferenceEquals(first.ModuleMetadata(text.Module), first.ModuleMetadata(task.Module))
+            && first.metadataImages.Count == 1, "two types in one module reloaded its metadata");
         var genericTask = first.ResolveType("System.Threading.Tasks.Task", 1);
         Check(task != null && !task.IsGenericType && genericTask?.IsGenericTypeDefinition == true
             && genericTask.GetGenericArguments().Length == 1,
@@ -51,6 +53,7 @@ sealed partial class ReferenceMetadataUniverse
         Closed(() => first.ResolveType("System.String", 0));
         Closed(() => first.ResolveTypeIn("System.String", assemblyName));
         Closed(() => first.CoreType("System.String"));
+        Closed(() => first.ModuleMetadata(text.Module));
         Closed(() => _ = first.Assemblies);
         Closed(() => _ = first.PhysicalStdlib);
         Check(second.ResolveType("System.String", 0) == otherText,

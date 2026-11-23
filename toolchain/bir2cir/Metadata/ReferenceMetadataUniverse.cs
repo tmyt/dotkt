@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using DotKt.Toolchain;
 
 // Owns the lazy reflection resources and type cache for ONE fixed compile set.
@@ -9,6 +11,7 @@ sealed partial class ReferenceMetadataUniverse : IDisposable
 {
     readonly ManagedReferenceCatalog catalog;
     readonly Dictionary<(string Name, int Arity), Type> types = new();
+    readonly Dictionary<Module, (PEReader Image, MetadataReader Reader)> metadataImages = new();
     MetadataLoadContext referencesContext;
     IReadOnlyList<Assembly> references = Array.Empty<Assembly>();
     bool referencesInitialized;
@@ -19,6 +22,21 @@ sealed partial class ReferenceMetadataUniverse : IDisposable
 
     internal ReferenceMetadataUniverse(ManagedReferenceCatalog catalog) =>
         this.catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+
+    internal MetadataReader ModuleMetadata(Module module)
+    {
+        RequireActive();
+        if (metadataImages.TryGetValue(module, out var cached)) return cached.Reader;
+        using var file = File.OpenRead(module.FullyQualifiedName);
+        var image = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+        try
+        {
+            var reader = image.GetMetadataReader();
+            metadataImages.Add(module, (image, reader));
+            return reader;
+        }
+        catch { image.Dispose(); throw; }
+    }
 
     internal IReadOnlyList<Assembly> Assemblies
     {
@@ -87,6 +105,23 @@ sealed partial class ReferenceMetadataUniverse : IDisposable
     {
         EnsureReferences();
         return referencesContext?.CoreAssembly is { } core ? TryType(core, name) : null;
+    }
+
+    internal bool SameDefinition(string name, string left, string right)
+    {
+        EnsureReferences();
+        Type Bound(string scope)
+        {
+            if (scope.StartsWith("module:", StringComparison.Ordinal)) return null;
+            var requested = new AssemblyName(scope);
+            if (!catalog.TryGet(requested, out var entry)) return null;
+            // The compile set selects the version. A simple-name hit alone must not
+            // impersonate the requested public key, culture or content type.
+            requested.Version = entry.Identity.Version;
+            return string.Equals(requested.FullName, entry.Identity.FullName, StringComparison.OrdinalIgnoreCase)
+                ? TryType(referencesContext.LoadFromAssemblyPath(entry.Path), name) : null;
+        }
+        return Bound(left) is { } type && type == Bound(right);
     }
 
     internal Assembly PhysicalStdlib
@@ -167,6 +202,8 @@ sealed partial class ReferenceMetadataUniverse : IDisposable
     {
         if (disposed) return;
         disposed = true;
+        foreach (var cached in metadataImages.Values) cached.Image.Dispose();
+        metadataImages.Clear();
         types.Clear(); references = Array.Empty<Assembly>(); physicalStdlib = null;
         Release(physicalContext); physicalContext = null;
         Release(referencesContext); referencesContext = null;

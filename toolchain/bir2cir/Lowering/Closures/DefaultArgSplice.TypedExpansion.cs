@@ -90,6 +90,7 @@ static partial class DefaultArgSplice
                 throw new InvalidOperationException(ConstructorDefaultPosition(((TypeNode.Fqn)calledOwner).Name, arguments.Length, signature.Length));
             var label = constructor == null ? method : ((TypeNode.Fqn)calledOwner).Name + " constructor";
             var defaults = constructor == null ? DefaultValuesForCall(facts, refs, out _)
+                : constructor.ConstructorNativeKey.OrDefault() is { } key ? refs.DefaultValuesForNativeConstructor((TypeNode.Fqn)calledOwner, key)
                 : refs.KotlinDefaultValuesFor(((TypeNode.Fqn)calledOwner).Name, method, signature.Length,
                     ReferenceMetadataIndex.SignatureKeyOf(signature), ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true));
             if (defaults == null)
@@ -121,7 +122,7 @@ static partial class DefaultArgSplice
                 bindings.FirstOrDefault(binding => binding.Id.OrDefault() == read.Id.OrDefault())?.Expr.OrDefault() is BirDefaultArgument)) return;
             var selected = constructor.DelegationDeclarationId.OrDefault();
             var defaults = selected != null ? refs.KotlinDefaultValuesForDeclarationIdentity(selected)
-                : refs.DefaultValuesForNativeBaseConstructor(baseOwner, constructor.DelegationNativeKey.OrDefault());
+                : refs.DefaultValuesForNativeConstructor(baseOwner, constructor.DelegationNativeKey.OrDefault());
             if (defaults == null) return;
             Fill(arguments.ToList(), bindings, arguments.Length, defaults, null, null, arguments.FirstOrDefault(), semantic, null, application,
                 calledOwner + " constructor");

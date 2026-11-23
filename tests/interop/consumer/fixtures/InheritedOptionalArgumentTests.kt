@@ -30,6 +30,8 @@ class InheritedOptionalArgumentTests {
     fun baseConstructorDefaultsFollowTheSelectedConstructedParameter() {
         assertEquals(3, IntChild().Result)
         assertEquals(8, TextChild().Result)
+        assertEquals(3, OverloadedDefaultBase(OptionalKey<Int>()).Result)
+        assertEquals(8, OverloadedDefaultBase(OptionalKey<String>()).Result)
         assertEquals("typed:3", TypedKeyChild().Result)
     }
 
