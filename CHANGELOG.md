@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Forward native span results through public Kotlin functions without boxing them for a null check (#1850).
+
 ## 0.9.32 (2026-11-23)
 
 - Support by-value `String` and `String?` inputs in Kotlin P/Invoke declarations using the standard .NET marshaler. Explicit UTF-8 is supported; `CharSet.Ansi` keeps its normal platform-dependent meaning. Unsupported signatures now report a source-located build error (#1822, #1825).

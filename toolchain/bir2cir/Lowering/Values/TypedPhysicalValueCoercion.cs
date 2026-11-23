@@ -629,6 +629,7 @@ static class TypedPhysicalValueCoercion
             return SelectNativeArray(allocation, new TypeNode.Array(componentType), scope, index, witness);
         }
         RewriteChildren(node, scope, index, resultUsed);
+        if (node is BirBinaryOperation { Op.Value: "===" } identity) return LowerIdentity(identity, scope, index);
         if (node is BirSpreadConcat { LogicalSpreadOperands: true } spread)
             return PackLogicalSpread(spread, index);
         if (location && node is BirArrayGet) return node;
@@ -1073,17 +1074,6 @@ static class TypedPhysicalValueCoercion
                 if (FunctionViewOperand(Graph(value.E.OrDefault()), ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault(), index) is { } converted)
                     value.E = Field(Expression(converted));
                 ValidateNativePointerConversion(ExprType(Graph(value.E.OrDefault()), scope, index), value.Type.OrDefault()); break;
-            case BirBinaryOperation { Op.HasValue: true, Op.Value: "===" } value:
-                var left = ExprType(Graph(value.Lhs.OrDefault()), scope, index);
-                var right = ExprType(Graph(value.Rhs.OrDefault()), scope, index);
-                if (left == null || right == null) throw new InvalidOperationException("bir2cir: identity comparison lacks a physical operand type");
-                if (left != right)
-                {
-                    ValidateNativePointerConversion(left, Object); ValidateNativePointerConversion(right, Object);
-                    value.Lhs = Cast(FunctionViewOperand(Graph(value.Lhs.Value), left, Object, index) ?? Graph(value.Lhs.Value), Object);
-                    value.Rhs = Cast(FunctionViewOperand(Graph(value.Rhs.Value), right, Object, index) ?? Graph(value.Rhs.Value), Object);
-                }
-                value.Op = "=="; break;
             case BirVariable value: value.Init = C(value.Init, value.Type.OrDefault()); break;
             case BirSetLocal value:
                 if (value.Name.HasValue && scope.Locals.TryGetValue(value.Name.Value, out var type)) value.Value = C(value.Value, type); break;
@@ -1206,6 +1196,31 @@ static class TypedPhysicalValueCoercion
             && !CollectionViewFaces.IsViewSeam(actual, declared)) return node;
         ReplaceResultStamps(node, actual);
         return Cast(FunctionViewOperand(node, actual, declared, index) ?? node, declared);
+    }
+
+    static BirGraphValue LowerIdentity(BirBinaryOperation value, Scope scope, Index index)
+    {
+        var lhs = value.Lhs.Value; var rhs = value.Rhs.Value;
+        var left = ExprType(Graph(lhs), scope, index); var right = ExprType(Graph(rhs), scope, index);
+        if (left == null || right == null) throw new InvalidOperationException("bir2cir: identity comparison lacks a physical operand type");
+        bool nullLeft = KotlinEqualityLowering.IsNull(lhs), nullRight = KotlinEqualityLowering.IsNull(rhs);
+        if ((nullLeft || nullRight) && (nullLeft ? right : left) is TypeNode.Fqn named && index.References?.IsByRefLikeFqn(named) == true)
+        {
+            // A stack-only value cannot be null or boxed, but its evaluation can throw or have side effects.
+            var operand = nullLeft ? rhs : lhs;
+            var flag = new TypeNode.Fqn("System.Boolean");
+            var result = new BirConstant { Type = flag, Value = new BirLiteral.BooleanLiteral(false) };
+            return operand is BirLocal ? result : new BirValueBlock { Type = flag,
+                Stmts = new IBirStatement[] { new BirExpressionStatement { Expr = Field(operand) } }, Result = result };
+        }
+        if (nullLeft || nullRight || left != right)
+        {
+            ValidateNativePointerConversion(left, Object); ValidateNativePointerConversion(right, Object);
+            value.Lhs = Cast(FunctionViewOperand(Graph(lhs), left, Object, index) ?? Graph(lhs), Object);
+            value.Rhs = Cast(FunctionViewOperand(Graph(rhs), right, Object, index) ?? Graph(rhs), Object);
+        }
+        value.Op = "==";
+        return value;
     }
 
     static void WidenNumericOperands(BirBinaryOperation node, Scope scope, Index index)
