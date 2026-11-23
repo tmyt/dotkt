@@ -294,12 +294,19 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return matches.Count == 1 ? matches[0] : null;
     }
 
-    internal ConstructorInfo UnsafeAccessorConstructor(TypeNode.Fqn owner, string identity)
+    internal ConstructorInfo SelectedReferenceConstructor(TypeNode.Fqn owner, string identity)
     {
         var definition = ClrMemberResolution.ResolveOwnerType(owner, this)
-            ?? throw new InvalidOperationException($"UnsafeAccessor constructor owner '{owner.Name}' has no referenced TypeDef");
+            ?? throw new InvalidOperationException($"Constructor owner '{owner.Name}' has no referenced TypeDef");
         return SelectConstructorDeclaration(definition.GetConstructors(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance), identity);
+    }
+
+    internal TypeNode[] ReferencedKotlinConstructorSlots(TypeNode.Fqn owner, string identity)
+    {
+        if (identity == null || IsLocalEmittedType(owner.Name) || !HasDotKtOwner(owner.Name)) return null;
+        return SelectedReferenceConstructor(owner, identity).GetParameters()
+            .Select(p => ClrDeclarationMatching.MemberSigOf(this, p.ParameterType)).ToArray();
     }
 
     // Resolve the exact MethodDef named by the frontend-selected Kotlin declaration identity. The identity selects;

@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <KotlinCompile Include="../consumer/fixtures/LocalSequenceResult.kt" />
+    <KotlinCompile Include="../consumer/fixtures/BuilderConstructorSnapshot.kt" />
     <ProjectReference Include="../upstream-stdlib-producer/UpstreamStdlibProducer.ktproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />

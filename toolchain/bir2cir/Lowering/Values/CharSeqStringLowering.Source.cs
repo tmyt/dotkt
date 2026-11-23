@@ -380,7 +380,7 @@ static partial class CharSeqStringLowering
         return SnapshotNullable(value);
     }
 
-    static BirCallStatic Snapshot(IBirExpression value) => new() {
+    internal static BirCallStatic Snapshot(IBirExpression value) => new() {
         Owner = SourceType("kotlin.LibraryKt"), Method = "toString", Sig = new[] { SourceType("object") },
         Ret = StringTn, Args = new[] { value },
     };

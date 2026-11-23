@@ -8,5 +8,7 @@ fun repeatedText(value: CharSequence, count: Int): String = value.repeat(count)
 fun capitalizedText(value: String): String = value.capitalize()
 fun controlCharacter(value: Char): Boolean = value.isISOControl()
 fun savedReplacement(): (String, String, String, Boolean) -> String = String::replace
+class SavedText(val value: CharSequence?)
+inline fun snapshotBuilder(read: () -> StringBuilder?) = SavedText(read())
 inline fun observeReplacement(value: String, old: String, new: String, block: (String) -> String): String =
     block(value.replace(old, new))

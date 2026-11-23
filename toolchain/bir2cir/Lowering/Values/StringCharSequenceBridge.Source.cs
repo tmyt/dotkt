@@ -52,7 +52,9 @@ static partial class StringCharSequenceBridge
         return new[] { adapter };
     }
 
-    internal delegate TypeNode[] ConstructorParameters(TypeNode.Fqn owner, string declaration, bool includeReferenceCapture);
+    // Only a new expression supplies a reference signature; delegation uses
+    // its own declared base edge when there is no selected local constructor.
+    internal delegate TypeNode[] ConstructorParameters(TypeNode.Fqn owner, string declaration, TypeNode[] referenceSignature = null);
     internal static ConstructorParameters ConstructorSlots(IReadOnlyList<BirFileDeclaration> files, ReferenceMetadataIndex refs)
     {
         // Read actual parameter slots after local String collapse; a use-site
@@ -65,16 +67,31 @@ static partial class StringCharSequenceBridge
                     if (ctor.DeclarationId.OrDefault() is string id && ctor.Params.OrDefault() is { } parameters
                         && parameters.Any(p => PotentialView(p.Type.OrDefault())))
                         local[(type.Name.Value, id)] = parameters.Select(p => p.Type.OrDefault()).ToArray();
-        return (owner, id, includeReferenceCapture) => {
+        var referenced = new Dictionary<(string, string), TypeNode[]>();
+        return (owner, id, referenceSignature) => {
             if (owner == null) return null;
             if (id != null && local.TryGetValue((owner.Name, id), out var slots))
                 return innerOrder.DeclarationArguments(owner) is { Length: > 0 } args
                     ? slots.Select(slot => SubstCallTvs(slot, args, Array.Empty<TypeNode>())).ToArray() : slots;
+            // A stripped reference exports an exact constructor identity. Do not
+            // use another overload's parameter types or reflect unrelated calls.
+            if (referenceSignature == null) return null;
+            if (id != null && referenceSignature.Any(t => IsScalarCharSequence(t) || IsSourceCharSeqT(t)))
+            {
+                if (!referenced.TryGetValue((owner.Name, id), out var open))
+                    referenced[(owner.Name, id)] = open = refs?.ReferencedKotlinConstructorSlots(owner, id);
+                if (open != null)
+                {
+                    var ownerArgs = innerOrder.DeclarationArguments(owner) ?? Array.Empty<TypeNode>();
+                    return open.Select(t => PreserveReferenceNull(SubstCallTvs(t, ownerArgs, Array.Empty<TypeNode>()))).ToArray();
+                }
+            }
             // Reflection supplies only the CLR type of a generated capture,
             // not its Kotlin nullability. Preserve null when adapting it.
-            return !includeReferenceCapture ? null : refs?.OwnerCtorParamTypes(owner.Name)?.Select(slot =>
-                IsScalarCharSequence(slot) || IsSourceCharSeqT(slot) ? new TypeNode.Nullable(slot) : slot).ToArray();
+            return refs?.OwnerCtorParamTypes(owner.Name)?.Select(PreserveReferenceNull).ToArray();
         };
+        static TypeNode PreserveReferenceNull(TypeNode slot) => slot is TypeNode.Fqn && (IsScalarCharSequence(slot) || IsSourceCharSeqT(slot))
+            ? new TypeNode.Nullable(slot) : slot;
         static bool PotentialView(TypeNode type) => type switch {
             TypeNode.Tv { Scope: "type" } => true,
             TypeNode.Nullable nullable => PotentialView(nullable.Of),
@@ -249,7 +266,7 @@ static partial class StringCharSequenceBridge
         var arguments = constructor.ThisArgs.OrDefault() ?? constructor.BaseArgs.OrDefault();
         if (arguments == null) return;
         var owner = constructor.ThisArgs.HasValue ? env.Owner.Self : env.Owner.Base;
-        var slots = env.ConstructorSlots?.Invoke(owner, constructor.DelegationDeclarationId.OrDefault(), includeReferenceCapture: false);
+        var slots = env.ConstructorSlots?.Invoke(owner, constructor.DelegationDeclarationId.OrDefault());
         // Local delegation uses the selected declaration after String collapse.
         // Otherwise keep the open signature, closing base arguments for super calls.
         var parameters = slots ?? constructor.DelegationSig.Value;
@@ -260,9 +277,8 @@ static partial class StringCharSequenceBridge
             var type = slots == null ? SubstCallTvs(parameters[index], ownerArgs, Array.Empty<TypeNode>()) : parameters[index];
             if (IsCharSeqT(type))
                 arguments[index] = SourceCoerceCharSeqArg(argument, env, type);
-            else if (index < constructor.DelegationSig.Value.Length && IsCharSeqT(constructor.DelegationSig.Value[index])
-                && (IsStringTokT(type) || type is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)))
-                arguments[index] = CharSeqStringLowering.SnapshotForStringSlot(argument, env.Vars, type is TypeNode.Nullable) ?? argument;
+            else if (index < constructor.DelegationSig.Value.Length)
+                arguments[index] = SourceCollapsedConstructorArgument(argument, env, constructor.DelegationSig.Value[index], type);
         }
     }
 
@@ -359,9 +375,9 @@ static partial class StringCharSequenceBridge
         var conversion = SelectCharSequenceConversion(source,
             target is TypeNode.Fqn, SourceIsNotNullAssertion(value), value is BirConditional);
         if (conversion == CharSequenceConversion.String) return SourceWrapAdapter(value);
-        if (conversion == CharSequenceConversion.StringBuilder)
-            return SourceWrapAdapter(new BirCallStatic { Owner = new TypeNode.Fqn("kotlin.LibraryKt"), Method = "toString",
-                Sig = new TypeNode[] { new TypeNode.Fqn("object") }, Args = new[] { value } });
+        if (conversion == CharSequenceConversion.StringBuilder) return SourceWrapBuilder(value);
+        if (conversion == CharSequenceConversion.NullableStringBuilder)
+            return SourceWrapAdapterNullable(value, source, SourceWrapBuilder);
         if (conversion == CharSequenceConversion.NullableString)
             return SourceWrapAdapterNullable(value, source);
         if (conversion == CharSequenceConversion.Branches && value is BirConditional conditional)
@@ -391,16 +407,29 @@ static partial class StringCharSequenceBridge
     static void SourceWrapNewCtorArgs(BirNew node, SourceBridgeEnv env)
     {
         if (!node.Args.HasValue) return;
-        var parameters = env.ConstructorSlots?.Invoke(node.Type.OrDefault() as TypeNode.Fqn, node.ConstructorDeclarationId.OrDefault(), includeReferenceCapture: true);
+        var signature = node.ArgTypes.OrEmpty();
+        var parameters = env.ConstructorSlots?.Invoke(node.Type.OrDefault() as TypeNode.Fqn, node.ConstructorDeclarationId.OrDefault(), signature);
         if (parameters == null || parameters.Length != node.Args.Value.Length) return;
         for (var index = 0; index < parameters.Length; index++)
-            if ((IsScalarCharSequence(parameters[index]) || IsSourceCharSeqT(parameters[index]))
-                && node.Args.Value[index] is { } argument)
-                node.Args.Value[index] = SourceCoerceCharSeqArg(argument, env, parameters[index]);
+        {
+            if (node.Args.Value[index] is not { } argument) continue;
+            var slot = parameters[index];
+            if (IsScalarCharSequence(slot) || IsSourceCharSeqT(slot))
+                node.Args.Value[index] = SourceCoerceCharSeqArg(argument, env, slot);
+            else if (index < signature.Length)
+                node.Args.Value[index] = SourceCollapsedConstructorArgument(argument, env, signature[index], slot);
+        }
     }
 
     internal static bool RestoresClosureReturn(string owner, BirFunctionDeclaration method, CharSeqStringLowering.CharSeqRetLambdas returns)
         => returns.Closures.Contains(owner) && method.Name.OrDefault() == "invoke" && IsStringTokT(method.Ret.OrDefault());
+
+    static IBirExpression SourceCollapsedConstructorArgument(IBirExpression value, SourceBridgeEnv env, TypeNode declared, TypeNode slot)
+        => (IsScalarCharSequence(declared) || IsSourceCharSeqT(declared))
+            && (IsStringTokT(slot) || slot is TypeNode.Nullable n && IsStringTokT(n.Of))
+            ? CharSeqStringLowering.SnapshotForStringSlot(value, env.Vars, slot is TypeNode.Nullable
+                || declared is TypeNode.Nullable or TypeNode.Oblivious
+                || BirGraphStaticType.Surface(value, env.Vars) is TypeNode.Nullable or TypeNode.Oblivious) ?? value : value;
 
     static void SourceRetypeLiftedRets(BirFileDeclaration file, CharSeqStringLowering.CharSeqRetLambdas returns)
     {
@@ -477,7 +506,9 @@ static partial class StringCharSequenceBridge
     internal static IBirExpression AdaptStringReturn(IBirExpression value, TypeNode source) =>
         source is TypeNode.Nullable or TypeNode.Oblivious ? SourceWrapAdapterNullable(value, source) : SourceWrapAdapter(value);
 
-    static IBirExpression SourceWrapAdapterNullable(IBirExpression value, TypeNode source)
+    static BirNew SourceWrapBuilder(IBirExpression value) => SourceWrapAdapter(CharSeqStringLowering.Snapshot(value));
+
+    static IBirExpression SourceWrapAdapterNullable(IBirExpression value, TypeNode source, Func<IBirExpression, BirNew> wrap = null)
     {
         IBirExpression read = value;
         BirVariable temp = null;
@@ -492,7 +523,7 @@ static partial class StringCharSequenceBridge
         BirConstant Null() => new() { Type = new TypeNode.Fqn(CharSeq), Value = new BirLiteral.NullLiteral() };
         var core = new BirConditional {
             Type = new TypeNode.Fqn(CharSeq), Cond = new BirBinaryOperation { Op = "===", Lhs = OptionalField<IBirExpression>.Of(CopyRead()), Rhs = Null() },
-            Then = Null(), Else = SourceWrapAdapter(CopyRead()),
+            Then = Null(), Else = (wrap ?? SourceWrapAdapter)(CopyRead()),
         };
         return temp == null ? core : new BirValueBlock { Stmts = new IBirStatement[] { temp }, Result = core };
     }
