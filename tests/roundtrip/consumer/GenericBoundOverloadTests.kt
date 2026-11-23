@@ -2,9 +2,17 @@ package roundtriptests.genericboundoverloads
 
 import NUnit.Framework.TestAttribute
 import kotlin.coroutines.*
+import mpp.app.DerivedChoice
 import roundtrip.genericboundoverloads.*
 
 private class MemorySink<T> : Sink<T>, Tag { override fun send(value: T) {} }
+
+private class LeftValue : LeftBound
+private class RightValue : RightBound
+private class Choice : DerivedChoice {
+    override fun <T : LeftBound> choose(value: T) = 11
+    override fun <T : RightBound> choose(value: T) = 22
+}
 
 private class ComparableValue(val order: Int) : Comparable<ComparableValue> {
     override fun compareTo(other: ComparableValue): Int = order - other.order
@@ -75,6 +83,12 @@ class GenericBoundOverloadTests {
 
     @TestAttribute
     fun importedBoundsSelectDistinctBodiesWithoutRenaming() {
+        val derived: DerivedChoice = Choice()
+        val base: BaseChoice = derived
+        check(derived.choose(LeftValue()) == 11)
+        check(derived.choose(RightValue()) == 22)
+        check(base.choose(LeftValue()) == 11)
+
         val source = Source<String?>(Pending())
         val collection = mutableListOf("collection")
         val sink = MemorySink<String>()

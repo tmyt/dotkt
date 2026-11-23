@@ -53,7 +53,10 @@ static partial class DeclarationSignatureIdentity
         bool Eligible(SignatureDeclaration method) => Authored(method)
             || method.Identity?.EndsWith("|cold", StringComparison.Ordinal) == true
                 && sourceMethods.TryGetValue(method.Identity[..^5], out var source) && Authored(source);
+        static bool InheritedSlot(SignatureDeclaration method) => method.Generated && method.Overrides.Length != 0
+            && method.Identity == DeclarationIdentityBinding.InheritedProjectionId(method.Owner, method.Overrides);
         var result = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
+        var families = new Dictionary<string, SignatureDeclaration[]>(StringComparer.Ordinal);
         static string PhysicalParameters(TypeNode[] parameters) => string.Join(";",
             parameters.Select(DeclarationIdentityBinding.PhysicalTypeSignature));
         foreach (var group in methods.GroupBy(item => (item.Owner, item.Name,
@@ -61,38 +64,90 @@ static partial class DeclarationSignatureIdentity
                          item.Parameters.Select(parameter => parameter.Type), item.Return))))
         {
             var candidates = group.ToArray();
-            if (candidates.Length < 2 || candidates.Any(item => !Eligible(item))) continue;
-            var projected = candidates.Select(item => (Method: item, Parameters: Project(item.Parameters))).ToArray();
+            if (candidates.Length < 2 || candidates.Any(item => !Eligible(item) && !InheritedSlot(item))) continue;
+            // An inherited interface view occupies a slot here, but has no
+            // new Kotlin declaration to which we could allocate a discriminator.
+            TypeNode[] Allocate(SignatureDeclaration item, bool nominal = false) => Eligible(item)
+                ? Project(item.Parameters, nominal) : item.Parameters.Select(p => p.Type).ToArray();
+            var projected = candidates.Select(item => (Method: item, Parameters: Allocate(item))).ToArray();
             if (projected.Select(item => PhysicalParameters(item.Parameters)).Distinct(StringComparer.Ordinal).Count() != candidates.Length)
-                projected = candidates.Select(item => (Method: item, Parameters: Project(item.Parameters, nominal: true))).ToArray();
+                projected = candidates.Select(item => (Method: item, Parameters: Allocate(item, nominal: true))).ToArray();
             if (projected.Select(item => PhysicalParameters(item.Parameters)).Distinct(StringComparer.Ordinal).Count() != candidates.Length) continue;
-            foreach (var (method, parameters) in projected) result.Add(method.Identity, parameters);
+            var inherits = candidates.All(Eligible) && candidates.Any(item => item.Overrides.Length != 0);
+            foreach (var (method, parameters) in projected)
+                if (Eligible(method))
+                {
+                    result.Add(method.Identity, parameters);
+                    if (inherits) families.Add(method.Identity, candidates);
+                }
         }
         var resolved = new HashSet<string>(StringComparer.Ordinal);
         void ResolveOverride(string id)
         {
             if (!resolved.Add(id) || !sourceMethods.TryGetValue(id, out var method)) return;
+            if (!families.TryGetValue(id, out var family))
+            {
+                ResolveMethod(method, null);
+                return;
+            }
+            foreach (var sibling in family) resolved.Add(sibling.Identity);
+            var selected = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
+            var inheritsAllocation = false;
+            foreach (var sibling in family) inheritsAllocation |= ResolveMethod(sibling, selected);
+            // Keep the selected parents' physical signatures, including a plain
+            // slot, when together they already distinguish every implementation.
+            // Independent parents can each own the same plain slot; those still
+            // need the locally allocated bodies and their separate MethodImpls.
+            if (inheritsAllocation && selected.Count != 0 && family.Select(sibling =>
+                    PhysicalParameters(selected.GetValueOrDefault(sibling.Identity) ?? result[sibling.Identity]))
+                    .Distinct(StringComparer.Ordinal).Count() == family.Length)
+                foreach (var row in selected) result[row.Key] = row.Value;
+        }
+        bool ResolveMethod(SignatureDeclaration method, Dictionary<string, TypeNode[]> selected)
+        {
+            var id = method.Identity;
+            TypeNode[] plain = null;
             foreach (var target in method.Overrides.OrderBy(value => value, StringComparer.Ordinal))
             {
                 if (target == null) continue;
                 ResolveOverride(target);
                 string selectedOwnerName;
-                if (result.TryGetValue(target, out var signature)) selectedOwnerName = sourceMethods[target].Owner;
-                else if (refs?.TryDeclarationSignatureSlot(target, out var referenced) == true && referenced.SignatureAllocated)
+                TypeNode[] signature;
+                bool allocated;
+                if (sourceMethods.TryGetValue(target, out var local))
                 {
+                    selectedOwnerName = local.Owner;
+                    allocated = result.TryGetValue(target, out signature);
+                    if (!allocated && selected == null) continue;
+                    signature ??= local.Parameters.Select(p => p.Type).ToArray();
+                }
+                else if (refs?.TryDeclarationSignatureSlot(target, out var referenced) == true)
+                {
+                    allocated = referenced.SignatureAllocated;
+                    if (!allocated && selected == null) continue;
                     signature = referenced.Parameters;
-                    foreach (var parameter in signature)
-                        for (var type = parameter; type is TypeNode.Mod modifier; type = modifier.Of)
-                            if (modifier.M is TypeNode.Fqn marker)
-                                ReferencedModifiers.Add((modifier.Req, marker.Name, marker.Args?.Length ?? 0));
+                    if (allocated)
+                        foreach (var parameter in signature)
+                            for (var type = parameter; type is TypeNode.Mod modifier; type = modifier.Of)
+                                if (modifier.M is TypeNode.Fqn marker)
+                                    ReferencedModifiers.Add((modifier.Req, marker.Name, marker.Args?.Length ?? 0));
                     selectedOwnerName = referenced.Owner;
                 }
                 else continue;
                 var selectedOwner = SelectedLocalOwner(definitions[method.Owner], selectedOwnerName, definitions, refs);
                 var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
-                result[id] = signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray();
-                break;
+                var closed = signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray();
+                if (!allocated)
+                {
+                    if (PhysicalParameters(closed) == PhysicalParameters(method.Parameters.Select(p => p.Type).ToArray()))
+                        plain = closed;
+                    continue;
+                }
+                result[id] = closed;
+                return true;
             }
+            if (plain != null) selected[id] = plain;
+            return false;
         }
         foreach (var id in sourceMethods.Keys) ResolveOverride(id);
         return result;
