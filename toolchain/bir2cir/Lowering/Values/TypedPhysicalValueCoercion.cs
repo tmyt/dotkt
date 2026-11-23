@@ -308,11 +308,18 @@ static class TypedPhysicalValueCoercion
             ManagedAddress(value is BirByRefOf address ? address.Inner.OrDefault() : value, scope, index) is { Of: TypeNode.Tv } from &&
             from.Of != to.Of)
             return CheckedAddressView(value, from, to, index);
-        // The source slot selects the Kotlin conversion; the actual CLR slot selects
-        // the cast. Their type arguments can differ, e.g. on imported base constructors.
-        if (FunctionSlot(target, selected, index) != target
-            && FunctionViewOperand(Graph(value), ExprType(Graph(value), scope, index), selected, index) is { } view)
-            return Cast(view, SignatureValueTypes.Of(target));
+        // A nominal function's ordinary callable view and the selected CLR
+        // parameter can be different constructed delegates, not merely different names.
+        if (FunctionSlot(target, selected, index) != target && Underlying(selected) is TypeNode.Fn selectedFunction
+            && Underlying(target) is TypeNode.Fqn slot && !index.ReferenceBuild)
+        {
+            var source = ExprType(Graph(value), scope, index);
+            if (Underlying(source) is TypeNode.Fn { Suspend: false } function
+                && function.DelegateParams.Length == selectedFunction.DelegateParams.Length)
+                return index.DelegateAdapters.AdaptFunctionView(index.Document, value, selectedFunction, slot, function);
+            if (FunctionViewOperand(Graph(value), source, selected, index) is IBirExpression view)
+                return index.DelegateAdapters.AdaptFunctionView(index.Document, view, selectedFunction, slot);
+        }
         return Expression(Coerce(Graph(value), target, scope, index));
     }
 

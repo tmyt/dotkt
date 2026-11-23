@@ -30,11 +30,26 @@ sealed class TypedPhysicalDelegateAdapter
     {
         var plan = ClrMemberResolution.UnitDelegateValuePlan(references, localCarriers, source, target, out var slot);
         if (plan == null) return null;
+        return AdaptValue(document, expression, source, target, slot, plan, null);
+    }
+
+    internal IBirExpression AdaptFunctionView(BirFileDeclaration document, IBirExpression view, TypeNode.Fn selected,
+        TypeNode.Fqn slot, TypeNode.Fn knownView = null)
+    {
+        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural);
+        if (plan == null) return new BirCast { Type = slot, E = OptionalField<IBirExpression>.Of(view) };
+        return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural);
+    }
+
+    IBirExpression AdaptValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
+        TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view)
+    {
         var temporary = declarations.FreshValueTemporary();
+        BirLocal Read() => new BirLocal { Name = temporary };
         var adapter = AdapterClass(document, plan);
         var adapted = new BirNewClosure {
             ClosureType = new TypeNode.Fqn(adapter), Method = "invoke",
-            Captures = new IBirExpression[] { new BirLocal { Name = temporary } }, FuncType = slot,
+            Captures = new IBirExpression[] { view == null ? Read() : new BirCast { Type = view, E = Read() } }, FuncType = slot,
             DelegateCtorRef = BirMemberReference.FromPhysical(
                 ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
         };
@@ -50,9 +65,11 @@ sealed class TypedPhysicalDelegateAdapter
             Result = new BirConditional {
                 Type = target,
                 Cond = new BirBinaryOperation {
-                    Op = "===", Lhs = new BirLocal { Name = temporary }, Rhs = Null(),
+                    Op = "==", Lhs = Read(), Rhs = Null(),
                 },
-                Then = Null(), Else = adapted,
+                Then = Null(), Else = view == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
+                    Type = target, Cond = new BirIsInstance { Type = slot, E = Read() },
+                    Then = new BirCast { Type = slot, E = Read() }, Else = adapted }),
             },
         };
     }

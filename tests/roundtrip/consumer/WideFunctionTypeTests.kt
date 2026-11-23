@@ -13,10 +13,20 @@ private class LastArgument : (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, 
 
 private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.NativeCallbackBase(op)
 
+private typealias WideIntCallback = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int
+private class FirstPlusLast : WideIntCallback {
+    override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
+                        j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): Int = a + q
+}
+private class NativeIntCallbackDerived(op: FirstPlusLast) : GenericValueInterop.NativeIntCallbackBase(op)
+private class NativeFunctionDerived(op: WideIntCallback) : GenericValueInterop.NativeIntCallbackBase(op)
+
 class WideFunctionTypeTests {
     @TestAttribute
     fun wideFunctionValuesCrossTheModuleBoundary() {
         assertEquals(17, NativeCallbackDerived(LastArgument()).Read())
+        assertEquals(18, NativeIntCallbackDerived(FirstPlusLast()).Read())
+        assertEquals(18, NativeFunctionDerived(FirstPlusLast()).Read())
         assertEquals(18, param17 { p1, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p17 -> p1 + p17 })
         assertEquals(18, ret17()(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
 

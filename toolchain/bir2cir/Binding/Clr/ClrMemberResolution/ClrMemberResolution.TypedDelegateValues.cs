@@ -17,6 +17,15 @@ static partial class ClrMemberResolution
     internal static void TypedDelegateValueSelfTest(Action<ReferenceMetadataIndex> test)
         => test(ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location }));
 
+    internal static DelegateAdapterPlan FunctionViewPlan(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes,
+        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural)
+    {
+        var view = knownView ?? FunctionValueRepresentation.OrdinaryView(selected, references.IsByRefLikeFqn);
+        natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
+        return SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot) ? null :
+            BoxedDelegateAdapterPlan(natural, PhysicalFunctionShape(references, slot, includeNominal: true));
+    }
+
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, string> localCarriers, TypeNode source, TypeNode target, out TypeNode.Fqn slot)
     {

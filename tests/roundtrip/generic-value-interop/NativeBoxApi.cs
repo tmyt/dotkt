@@ -84,6 +84,11 @@ public class NativeCallbackBase(DotKt.Runtime.CompilerServices.KFunc<object, obj
 {
     public object Read() => callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
+public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int,
+    int, int, int, int, int, int, int, int, int, int, int, int> callback)
+{
+    public int Read() => callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+}
 public delegate NativeBoxContainer<Box<string, string>> NativeBoxContainerFactory();
 public interface NativeBoxCreator { Box<string, string> Create(); }
 public interface NativeBoxArraySource { Box<string, string>[] Read(); }

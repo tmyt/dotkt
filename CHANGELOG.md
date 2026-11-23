@@ -11,6 +11,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Include sparse CLR regex captures when iterating Kotlin match groups or reading `groupValues` (#1721).
 - Keep bare `T` distinct from nullable `T?` in C# generic classes with `where T : struct`, including overloaded method parameters, their defaults, and nullable results as seen from Kotlin (#1857).
 - Preserve writes through `byref(local)` when Kotlin has smart-cast the local's value but the callee takes a reference to its declared type (#1837).
+- Allow Kotlin callable objects to fill native wide delegate parameters whose arguments and result are CLR value types (#1868).
 
 ## 0.9.32 (2026-11-23)
 

@@ -103,6 +103,11 @@ static partial class FunctionValueRepresentation
         return node is JsonArray array && array.Any(ContainsOrdinaryFunction);
     }
 
+    internal static TypeNode.Fn OrdinaryView(TypeNode.Fn function, ValueTypeOracle isByRefLike) =>
+        new(false, Carrier(function.Ret, isByRefLike),
+            function.Params.Select(parameter => Carrier(parameter, isByRefLike)).ToArray(),
+            function.Recv == null ? null : Carrier(function.Recv, isByRefLike));
+
     static TypeNode Carrier(TypeNode type, ValueTypeOracle isByRefLike) => type switch
     {
         // Changing the CLR value representation must not change the slot's nullability contract.
@@ -116,9 +121,7 @@ static partial class FunctionValueRepresentation
     // complete signature boundary, including any nested function types.
     static TypeNode RepresentType(TypeNode type, ValueTypeOracle isByRefLike) => type switch {
         TypeNode.Fqn { Name: FunctionPointerVocabulary.Pointer } => type,
-        TypeNode.Fn { Suspend: false, Clr: null } fn => new TypeNode.Fn(false,
-            Carrier(fn.Ret, isByRefLike), fn.Params.Select(parameter => Carrier(parameter, isByRefLike)).ToArray(),
-            fn.Recv == null ? null : Carrier(fn.Recv, isByRefLike)),
+        TypeNode.Fn { Suspend: false, Clr: null } fn => OrdinaryView(fn, isByRefLike),
         TypeNode.Fn => type,
         TypeNode.Fqn named => named with { Args = named.Args?.Select(argument => RepresentType(argument, isByRefLike)).ToArray() },
         TypeNode.Array array => array with { Elem = RepresentType(array.Elem, isByRefLike) },
