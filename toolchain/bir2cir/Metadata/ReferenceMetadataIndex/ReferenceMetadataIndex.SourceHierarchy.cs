@@ -79,7 +79,7 @@ sealed partial class ReferenceMetadataIndex
         baseType = physical.SourceFacts?["base"] is JsonNode sourceBase
             ? Restore(TypeJson.Read(sourceBase), source: true) as TypeNode.Fqn
             : Restore(physical.Base, source: false) as TypeNode.Fqn;
-        var replaced = (physical.SourceFacts?["interfaceAliasTargets"] as JsonArray)?.Select(target => (string)target)
+        var replaced = (physical.SourceFacts?["interfaceAliasTargets"] as JsonObject)?.Select(target => (string)target.Value)
             .ToHashSet(StringComparer.Ordinal);
         var restored = physical.Interfaces.Where(edge => replaced == null || !replaced.Contains(edge.Name)
                 && !(edge.Args is { Length: > 0 } args && replaced.Contains(edge.Name + "`" + args.Length)))

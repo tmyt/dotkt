@@ -16,7 +16,7 @@ sealed class SourceTypeFacts
 {
     enum Part { Base, Interfaces, Bounds, NullableFrame, Variances, InterfaceAliasTargets }
     readonly Part[] order;
-    readonly string[] interfaceAliasTargets;
+    readonly IReadOnlyDictionary<string, string> interfaceAliasTargets;
     internal static readonly SourceTypeFacts Empty = new(null, null, new Dictionary<int, TypeNode[]>(), Array.Empty<Part>());
     internal TypeNode Base { get; }
     internal IReadOnlyList<TypeNode> Interfaces { get; }
@@ -30,7 +30,7 @@ sealed class SourceTypeFacts
 
     SourceTypeFacts(TypeNode baseType, IReadOnlyList<TypeNode> interfaces,
         IReadOnlyDictionary<int, TypeNode[]> bounds, IReadOnlyList<Part> order,
-        NullableRepresentationFrame nullableFrame = null, IReadOnlyDictionary<int, string> variances = null, string[] aliasTargets = null)
+        NullableRepresentationFrame nullableFrame = null, IReadOnlyDictionary<int, string> variances = null, IReadOnlyDictionary<string, string> aliasTargets = null)
     {
         Base = baseType;
         Interfaces = interfaces?.ToArray();
@@ -44,15 +44,8 @@ sealed class SourceTypeFacts
 
     internal SourceTypeFacts Merge(IReadOnlyDictionary<int, TypeNode[]> bounds) => Merge(null, null, bounds);
 
-    internal SourceTypeFacts BindInterfaceAliases(IReadOnlyDictionary<string, string> aliases)
+    internal SourceTypeFacts WithInterfaceAliasTargets(IReadOnlyDictionary<string, string> targets)
     {
-        if (aliases == null || Interfaces == null) return this;
-        // A single native face can represent several source protocols. Freeze just
-        // the rows those declarations replace, while their source heads are intact.
-        var targets = Interfaces.OfType<TypeNode.Fqn>().Where(edge => aliases.ContainsKey(edge.Name))
-            .Select(edge => aliases[edge.Name] + (edge.Args is { Length: > 0 } args ? "`" + args.Length : ""))
-            .Distinct(StringComparer.Ordinal).ToArray();
-        if (targets.Length == 0 || interfaceAliasTargets?.SequenceEqual(targets) == true) return this;
         return new(Base, Interfaces, Bounds, interfaceAliasTargets == null ? order.Append(Part.InterfaceAliasTargets).ToArray() : order,
             NullableFrame, Variances, targets);
     }
@@ -158,7 +151,7 @@ sealed class SourceTypeFacts
         if (!inner.Read() || inner.TokenType != JsonTokenType.StartObject) throw new FormatException();
         TypeNode baseType = null;
         TypeNode[] interfaces = null;
-        string[] targets = null;
+        Dictionary<string, string> targets = null;
         var bounds = new Dictionary<int, TypeNode[]>();
         NullableRepresentationFrame nullableFrame = null;
         var variances = new Dictionary<int, string>();
@@ -179,7 +172,7 @@ sealed class SourceTypeFacts
             {
                 case Part.Base: baseType = TypeNode.ReadJson(ref inner); break;
                 case Part.Interfaces: interfaces = Types(ref inner); break;
-                case Part.InterfaceAliasTargets: targets = JsonSerializer.Deserialize<string[]>(ref inner); break;
+                case Part.InterfaceAliasTargets: targets = JsonSerializer.Deserialize<Dictionary<string, string>>(ref inner); break;
                 case Part.NullableFrame: nullableFrame = NullableRepresentationFrame.ReadJson(ref inner); break;
                 case Part.Variances:
                     if (inner.TokenType != JsonTokenType.StartObject) throw new FormatException();
@@ -240,9 +233,9 @@ sealed class SourceTypeFacts
                     foreach (var edge in Interfaces) TypeNode.WriteJson(writer, edge);
                     writer.WriteEndArray(); break;
                 case Part.InterfaceAliasTargets:
-                    writer.WriteStartArray("interfaceAliasTargets");
-                    foreach (var target in interfaceAliasTargets) writer.WriteStringValue(target);
-                    writer.WriteEndArray(); break;
+                    writer.WriteStartObject("interfaceAliasTargets");
+                    foreach (var (source, target) in interfaceAliasTargets) writer.WriteString(source, target);
+                    writer.WriteEndObject(); break;
                 case Part.NullableFrame:
                     writer.WritePropertyName("nullableFrame"); NullableFrame.WriteJson(writer); break;
                 case Part.Variances:
@@ -273,8 +266,8 @@ sealed class SourceTypeFacts
                 case Part.Interfaces:
                     writer.Write("interfaces"); WriteTypes(ref writer, facts.Interfaces); break;
                 case Part.InterfaceAliasTargets:
-                    writer.Write("interfaceAliasTargets"); writer.WriteArrayHeader(facts.interfaceAliasTargets.Length);
-                    foreach (var target in facts.interfaceAliasTargets) writer.Write(target);
+                    writer.Write("interfaceAliasTargets"); writer.WriteMapHeader(facts.interfaceAliasTargets.Count);
+                    foreach (var (source, target) in facts.interfaceAliasTargets) { writer.Write(source); writer.Write(target); }
                     break;
                 case Part.NullableFrame:
                     writer.Write("nullableFrame"); WriteFrame(ref writer, facts.NullableFrame); break;

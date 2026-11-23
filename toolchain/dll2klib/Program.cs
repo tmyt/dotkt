@@ -2357,8 +2357,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             }))
             .ToHashSet();
         using var sourceSupertypes = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
-        var aliasTargets = sourceSupertypes is not null && sourceSupertypes.RootElement.TryGetProperty("interfaceAliasTargets", out var targets)
-            ? targets.EnumerateArray().Select(target => target.GetString()!).ToHashSet(StringComparer.Ordinal) : null;
+        var aliasTargets = InterfaceAliasTargets(sourceSupertypes);
         void AddProjectedInterfaces()
         {
             var implementedInterfaces = ProjectedPublicInterfaces(def, names, signatures, typeContext, aliasTargets: aliasTargets).ToList();
@@ -3345,19 +3344,24 @@ internal sealed partial class AssemblyScanner : IDisposable
     // edge is omitted from Kotlin, walk through it and retain every reachable public interface with its constructed
     // arguments substituted. Otherwise `C : hidden H`, `H : public I` loses the valid CLR `C <: I` relation merely
     // because C# happens to emit a redundant C -> I row while another producer does not.
+    private static Dictionary<string, string>? InterfaceAliasTargets(JsonDocument? sourceFacts) =>
+        sourceFacts is not null && sourceFacts.RootElement.TryGetProperty("interfaceAliasTargets", out var targets)
+            ? targets.EnumerateObject().ToDictionary(binding => binding.Name, binding => binding.Value.GetString()!, StringComparer.Ordinal)
+            : null;
+
     private IEnumerable<KType> ProjectedPublicInterfaces(
         TypeDefinition definition,
         NameTable names,
         SignatureDecoder signatures,
         GenericContext context,
-        bool includePublicAncestors = false, IReadOnlySet<string>? aliasTargets = null)
+        bool includePublicAncestors = false, Dictionary<string, string>? aliasTargets = null)
     {
         var projected = new Dictionary<string, KType>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         foreach (var implementationHandle in definition.GetInterfaceImplementations())
         {
             var entity = _md.GetInterfaceImplementation(implementationHandle).Interface;
-            if (IsCurrentExistentialCarrier(_md, entity)) continue;
+            if (IsCurrentExistentialCarrier(_md, entity) || Replaced(_md, entity, aliasTargets)) continue;
             Visit(
                 _md,
                 entity,
@@ -3367,6 +3371,9 @@ internal sealed partial class AssemblyScanner : IDisposable
         }
         return projected.Values;
 
+        static bool Replaced(MetadataReader reader, EntityHandle row, Dictionary<string, string>? bindings) =>
+            bindings is not null && NativeSignatureReader.Type(reader, row) is TypeNode.Fqn face && bindings.ContainsValue(face.Name);
+
         void Visit(
             MetadataReader reader,
             EntityHandle entity,
@@ -3375,8 +3382,6 @@ internal sealed partial class AssemblyScanner : IDisposable
             string? definitionPath)
         {
             if (!surface.IsInterface) return;
-            if (aliasTargets is not null && NativeSignatureReader.Type(reader, entity) is TypeNode.Fqn face && aliasTargets.Contains(face.Name))
-                return; // the source edges replace this face, even when CLR metadata also lists it through an ancestor
             // A compiler-owned operational carrier and its physical parents are not Kotlin supertypes,
             // regardless of the carrier's CLR visibility.
             if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
@@ -3409,10 +3414,24 @@ internal sealed partial class AssemblyScanner : IDisposable
                 .ToImmutableArray();
             var inheritedSignatures = DecoderFor(
                 resolved.Reader, names, signatures, resolved.DefinitionPath);
+            // Flatten a hidden interface's accessible parents using its own Kotlin declaration.
+            // A replacement on the child must never suppress a different application inherited
+            // through that parent. MethodImpl matching still sees the physical CLR interfaces.
+            using var parentFacts = includePublicAncestors ? null
+                : (IsCurrentAssembly(resolved.Reader) ? _attrs : SignatureDecoderSeeds.Attributes(resolved.Reader))
+                    .CarrierDocument(resolved.Handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
+            var parentAliases = InterfaceAliasTargets(parentFacts);
+            if (parentAliases is not null)
+                foreach (var edge in parentFacts!.RootElement.GetProperty("interfaces").EnumerateArray())
+                    if (TypeNode.Read(edge) is TypeNode.Fqn source && parentAliases.ContainsKey(source.Name))
+                    {
+                        var inherited = SubstituteTypeParameters(inheritedSignatures.FromTypeNode(source), arguments);
+                        projected.TryAdd(TypeKey(inherited), inherited);
+                    }
             foreach (var parentHandle in inheritedDefinition.GetInterfaceImplementations())
             {
                 var parent = resolved.Reader.GetInterfaceImplementation(parentHandle).Interface;
-                if (IsCurrentExistentialCarrier(resolved.Reader, parent)) continue;
+                if (IsCurrentExistentialCarrier(resolved.Reader, parent) || Replaced(resolved.Reader, parent, parentAliases)) continue;
                 var parentType = SubstituteTypeParameters(
                     inheritedSignatures.DecodeEntity(parent, inheritedContext, platform: false),
                     arguments);

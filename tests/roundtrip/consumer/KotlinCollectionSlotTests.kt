@@ -26,6 +26,13 @@ import roundtrip.collslots.NativeFeed
 private class CrossModuleInheritedAddResult<T>(values: MutableList<T>) : ReplacingResultList<T>(values)
 private class ImportedNativeFeed(source: ClrEnumerable<Int>) : NativeFeed<Int>(source)
 
+// These are source conversions of imported declarations. The two element types
+// distinguish a restored hidden parent from the direct CLR face with the same head.
+private fun words(feed: roundtrip.collslots.MixedFeed): Iterable<String> = feed
+private fun nativeInts(feed: roundtrip.collslots.ThroughPrivate<Int>): ClrEnumerable<Int> = feed
+private fun bclInts(feed: roundtrip.collslots.BclFeed<Int>): System.Collections.Generic.IEnumerable<Int> = feed
+private abstract class ImportedMap : roundtrip.collslots.DeclaredMap<String, String>
+
 private class CrossModuleAddProvider<T>(private val values: MutableList<T>) :
     ExternalAddProvider<T>(values), MutableCollection<T> {
     override val size: Int get() = values.size

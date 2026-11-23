@@ -9,7 +9,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Dispatch Kotlin overrides of native virtual properties through the class and interface even when their CLR accessor names differ (#1872).
 - Forward native span results through public Kotlin functions without boxing them for a null check (#1850).
 - Include sparse CLR regex captures when iterating Kotlin match groups or reading `groupValues` (#1721).
-- Inheriting a Kotlin `ClrEnumerable<T>` implementation across DLLs no longer requires an unrelated `Iterable<T>.iterator()` override (#1865).
+- Across DLLs, Kotlin declarations keep their choice of protocol when multiple source interfaces share a CLR type. In particular, inheriting a native enumerable no longer adds an unrelated `Iterable<T>.iterator()` obligation (#1865).
 - Preserve array identity and writes when a Kotlin `Array<CharSequence>` uses CLR string-array storage (#1877).
 - Keep bare `T` distinct from nullable `T?` in C# generic classes with `where T : struct`, including overloaded method parameters, their defaults, and nullable results as seen from Kotlin (#1857).
 - Preserve writes through `byref(local)` when Kotlin has smart-cast the local's value but the callee takes a reference to its declared type (#1837).

@@ -396,6 +396,9 @@ sealed class Pipeline
         }
         var captured = DeclarationSignatureIdentity.Capture(TakeSources());
         for (var index = 0; index < captured.Length; index++) captured[index] = SourceOwnerClosure.Apply(captured[index]);
+        // Alias edges are source declarations. Once nullable representation has expanded
+        // generic applications, their arguments are no longer in the source owner's frame.
+        if (appBuild) CollectionIdentityRecord.RecordAliasedInterfaces(captured, refs.Aliases);
         UnsafeAccessorLowering.PrepareInlineSuper(captured, refs);
         var declarationParameters = new ReflectedDeclarationParameters(captured);
         captured = ComparableRepresentationLowering.Apply(captured, referenceBuild);
@@ -782,7 +785,7 @@ sealed class Pipeline
         // inner applications or erased element consumers rewrite those uses.
         if (!referenceBuild) ClrEventImplBinding.BindLocalSubscriptionsAll(captured);
         if (appBuild)
-            foreach (var source in captured) CollectionIdentityRecord.RecordTypeEdges(source, refs.Aliases);
+            foreach (var source in captured) CollectionIdentityRecord.RecordTypeEdges(source);
         if (!referenceBuild) KotlinCollectionIdentitySynthesis.ApplyAll(captured, refs);
         for (var index = 0; index < captured.Length; index++)
             BirTypeLowering.ValidatePointerVocabulary(captured[index], OutputNameFor(inputsWithSources[index].Path));
