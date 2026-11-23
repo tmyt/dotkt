@@ -10,6 +10,21 @@ public class BidirectionalTests
 {
     private static T EnumIdentity<T>(T value) where T : struct, Enum => value;
 
+    private sealed class IndependentHelper : PrivateHelperContract
+    {
+        public int toString(int value) => 99;
+    }
+
+    [Test]
+    public void KotlinDefaultMethodCallsItsOwnPrivateHelper()
+    {
+        PrivateHelperContract value = new IndependentHelper();
+        Assert.That(value.answer(), Is.EqualTo(17));
+        var helper = typeof(PrivateHelperContract).GetMethod("toString",
+            BindingFlags.DeclaredOnly | BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.That(helper is { IsPrivate: true, IsVirtual: false }, Is.True);
+    }
+
     private sealed class CSharpPropertyOverride : BidirectionalPropertyBase
     {
         private int storage;

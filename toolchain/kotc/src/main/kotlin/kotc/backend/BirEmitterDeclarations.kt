@@ -489,9 +489,11 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		val identity = if (inheritedSynthetic) null else declarationIdForPhysicalAllocation(fn)
 		val explicitName = explicitClrNameValue(fn)
 		val association = prop?.let { propertyAssociation(it) }
+		val visibility = sourceVisOf(fn)
 		return BirFunctionDeclaration(name = name, declarationId = identity, explicitClrName = explicitName,
 			propertyName = prop?.name?.asString(), propertyAccessor = accessorKind.takeIf { prop != null }, propertyAssociation = association,
-			isStatic = false, isOverride = false, isVirtual = true, isAbstract = abstract, fakeOverride = fakeOverride,
+			isStatic = false, isOverride = false, isVirtual = visibility != "private", isAbstract = abstract, fakeOverride = fakeOverride,
+			vis = visibility.takeUnless { it == "public" },
 			inheritedImplementation = inheritedImplementation, typeParams = typeParameterDeclarations(fn.typeParameters).takeIf { fn.typeParameters.isNotEmpty() },
 			params = params, ret = ret, retCtxFnType = returnContextFunctionCount(fn), mods = functionModifiers(fn),
 			suspendRet = if (fn.isSuspend) birType(fn.returnType) else null, body = body, attrs = memberAttrs, overrides = overrideDeclarations(fn))
@@ -500,7 +502,7 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
 		// System.Object already provides Equals/GetHashCode/ToString, so emitting them as interface members creates
 		// abstract slots no implementer fills (the lowercase Kotlin name never binds Object's) -> TypeLoadException.
-		.filterNot { it.name.asString() in setOf("equals", "hashCode", "toString") }
+		.filterNot { isAnySlotMethod(it) }
 		// A `companion { }` member is a static of the interface, not an abstract slot: it carries a body and no
 		// implementer overrides it. Emitted below alongside the interface's static fields.
 		.filterNot { isKotlinStaticFunction(it) }
