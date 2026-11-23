@@ -8,7 +8,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
         ReferenceMetadataIndex refs,
         Action<BirFileDeclaration, IBirTypeDeclaration, IReadOnlyList<BirFunctionDeclaration>> publishMethods,
         Action<BirFileDeclaration, IReadOnlyList<IBirTypeDeclaration>> publishTypes,
-        IReadOnlyDictionary<string, BottomSlot> bottom = null)
+        IReadOnlyDictionary<string, SlotReservation> reservations = null)
     {
         var definitions = SupertypeGraph.CollectSource(roots);
         var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -18,9 +18,18 @@ static partial class ReverseEnumeratorBridgeSynthesis
         foreach (var root in roots)
             foreach (var type in root.Types.OrEmpty())
             {
-                if (type.Kind.OrDefault() != "class" || string.IsNullOrEmpty(type.Name.OrDefault())
-                    || !type.Methods.HasValue || !definitions.TryGetValue(type.Name.Value, out var definition)
-                    || Plan(definition, definitions, refs, declarations, bottom) is not { } plan) continue;
+                if (type.Kind.OrDefault() is not ("class" or "interface") || string.IsNullOrEmpty(type.Name.OrDefault())
+                    || !type.Methods.HasValue || !definitions.TryGetValue(type.Name.Value, out var definition)) continue;
+                if (Plan(definition, definitions, refs, declarations, reservations) is not { } plan)
+                {
+                    if (NativeRawForwarder(type, definition, definitions, refs) is { } raw)
+                    {
+                        type.Methods = type.Methods.Value.Append(raw).ToArray();
+                        if (type.Kind.Value == "interface") raw.ClrInterfaceSlotBridge = true;
+                        publishMethods(root, type, [raw]);
+                    }
+                    continue;
+                }
                 var nameTaken = type.Methods.Value.Any(method => method.Name.OrDefault() == GetEnumeratorName
                     && !method.Static.OrDefault() && method.Params.HasValue && method.Params.Value.Length == 0
                     && method.TypeParams.OrEmpty().Length == 0);
@@ -52,15 +61,8 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 if (nameTaken) generic.Generated = true;
                 generic.ClrInterfaceImpls = new[] { SourceDescriptor(Constructed(IEnumerableT, element),
                     GetEnumeratorName, Constructed(IEnumeratorT, element)) };
-                var nonGeneric = SourceMethod(NonGenericBridgeName, "private", new TypeNode.Fqn(IEnumerator),
-                    new IBirStatement[] { SourceReturn(new BirCallInstance {
-                        OwnerType = SelfOwner(type.Name.Value, TypeParameterFrame.Count(type)), Virtual = true,
-                        Recv = E(new BirThis()), Method = genericName, Sig = Array.Empty<TypeNode>(),
-                        Ret = Constructed(IEnumeratorT, BirGraphValue.CopyType(element)), Args = Array.Empty<IBirExpression>(),
-                    }) });
-                nonGeneric.Generated = true;
-                nonGeneric.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerable),
-                    GetEnumeratorName, new TypeNode.Fqn(IEnumerator)) };
+                var nonGeneric = RawForwarder(SelfOwner(type.Name.Value, TypeParameterFrame.Count(type)), genericName,
+                    Constructed(IEnumeratorT, element));
                 var appended = new[] { generic, nonGeneric };
                 type.Methods = type.Methods.Value.Concat(appended).ToArray();
                 publishMethods(root, type, appended);
@@ -128,6 +130,43 @@ static partial class ReverseEnumeratorBridgeSynthesis
             } },
             Methods = new[] { moveNext, current, rawCurrent, reset, dispose },
         };
+    }
+
+    static BirFunctionDeclaration RawForwarder(TypeNode owner, string member, TypeNode result)
+    {
+        var raw = SourceMethod(NonGenericBridgeName, "private", new TypeNode.Fqn(IEnumerator),
+            [SourceReturn(new BirCallInstance {
+                OwnerType = BirGraphValue.CopyType(owner), Virtual = true, Recv = E(new BirThis()),
+                Method = member, Sig = Array.Empty<TypeNode>(), Ret = BirGraphValue.CopyType(result), Args = Array.Empty<IBirExpression>(),
+            })]);
+        raw.Generated = true;
+        raw.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerable), GetEnumeratorName, new TypeNode.Fqn(IEnumerator)) };
+        return raw;
+    }
+
+    // A Kotlin alias can expose just the generic enumerator. Its selected CLR slot also owes
+    // IEnumerable.GetEnumerator; call the generic slot rather than guessing a Kotlin body name.
+    static BirFunctionDeclaration NativeRawForwarder(IBirTypeDeclaration type, SupertypeGraph.Def definition,
+        IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs)
+    {
+        if (refs == null) return null;
+        var slots = type.Methods.Value.Where(m => !m.Abstract.OrDefault()).SelectMany(m => m.ClrInterfaceImpls.OrEmpty())
+            .Where(d => d.Member.OrDefault() == GetEnumeratorName && d.Params.OrEmpty().Length == 0
+                && d.Arity.OrDefault() == 0).ToArray();
+        if (slots.Any(d => d.Owner.OrDefault() is TypeNode.Fqn raw && Bare(raw.Name) == IEnumerable)) return null;
+        var generic = slots.Where(d => d.Owner.OrDefault() is TypeNode.Fqn { Args.Length: 1 } face
+            && Bare(face.Name) == IEnumerableT && d.Ret.OrDefault() is TypeNode.Fqn { Args.Length: 1 } result
+            && Bare(result.Name) == IEnumeratorT && ClrMemberResolution.SameInterfaceSlotType(face.Args[0], result.Args[0]))
+            .DistinctBy(d => d.Owner.Value).ToArray();
+        if (generic.Length != 1) return null;
+        string PhysicalName(TypeNode.Fqn spec) => Bare(refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0) ?? spec.Name);
+        if (definition.Base != null && SupertypeGraph.Reachable(new SupertypeGraph.Def { Base = definition.Base }, definitions, refs)
+            .Any(e => e.isInterface && PhysicalName(e.spec) is IEnumerable or IEnumerableT)) return null;
+        if (type.Methods.Value.Any(m => m.Name.OrDefault() == GetEnumeratorName && !m.Static.OrDefault()
+            && (m.Virtual.OrDefault() || m.Override.OrDefault())
+            && m.Vis.OrDefault() == "public" && m.Params.OrEmpty().Length == 0 && m.TypeParams.OrEmpty().Length == 0
+            && m.Ret.OrDefault() is TypeNode.Fqn ret && PhysicalName(ret) == IEnumerator)) return null;
+        return RawForwarder(generic[0].Owner.Value, GetEnumeratorName, generic[0].Ret.Value);
     }
 
     static OptionalField<IBirExpression> E(IBirExpression expression) => OptionalField<IBirExpression>.Of(expression);

@@ -18,12 +18,14 @@ static partial class KotlinOverrideSlotBridge
         internal readonly BirTypeLowering.PhysicalTypeContext MetadataProjection;
         internal readonly IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> Covariant;
         internal readonly Func<TypeNode, bool> HasClassifier;
+        internal Action<BirFileDeclaration> NeedNativeCursor;
+        internal Action CursorDemand(IBirTypeDeclaration owner) => NeedNativeCursor == null ? null : () => NeedNativeCursor(files[owner]);
         readonly IReadOnlyDictionary<string, string> carriers;
         readonly Dictionary<string, NullableRepresentationFrame> applications;
         readonly Dictionary<IBirTypeDeclaration, BirFileDeclaration> files = new(ReferenceEqualityComparer.Instance);
         readonly Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration, BirGraphValue> materialized;
         internal readonly Dictionary<BirFunctionDeclaration, string> ExactSources = new(ReferenceEqualityComparer.Instance);
-        internal readonly Dictionary<string, ReverseEnumeratorBridgeSynthesis.BottomSlot> BottomIterators = new(StringComparer.Ordinal);
+        internal readonly Dictionary<string, ReverseEnumeratorBridgeSynthesis.SlotReservation> IterationSlots = new(StringComparer.Ordinal);
 
         internal FinalSourceContext(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
             ReferenceMetadataIndex references, IReadOnlySet<string> localNames, bool referenceBuild,
@@ -89,15 +91,16 @@ static partial class KotlinOverrideSlotBridge
         }
     }
 
-    internal static IReadOnlyDictionary<string, ReverseEnumeratorBridgeSynthesis.BottomSlot> ApplyAll(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
+    internal static IReadOnlyDictionary<string, ReverseEnumeratorBridgeSynthesis.SlotReservation> ApplyAll(IReadOnlyList<BirFileDeclaration> roots, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeNames, bool refBuild,
         GenericRepresentationPolicy representations,
         IReadOnlySet<CovariantInterfaceReturnBridge.SourceBridgedSlot> covariantBridgedSlots,
         IReadOnlyDictionary<string, string> localCarriers, Func<TypeNode, bool> hasClassifier,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration, BirGraphValue> onMaterialized = null)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration, BirGraphValue> onMaterialized = null,
+        Action<BirFileDeclaration> needNativeCursor = null)
     {
         var context = new FinalSourceContext(roots, isValue, refs, localTypeNames, refBuild,
-            representations, covariantBridgedSlots, localCarriers, hasClassifier, onMaterialized);
+            representations, covariantBridgedSlots, localCarriers, hasClassifier, onMaterialized) { NeedNativeCursor = needNativeCursor };
         foreach (var definition in context.Index.Definitions.Values.Where(value => value.Kind is "class" or "interface").ToArray())
             ApplyFinalSourceOwner(definition, context);
         // Allocation on every interface must finish before any class consumes an exact DIM relation.
@@ -105,7 +108,7 @@ static partial class KotlinOverrideSlotBridge
             RepairFinalSourceDefaults(definition, context);
         foreach (var declaration in context.Index.Declarations.Values)
             foreach (var method in declaration.Methods.OrEmpty()) method.SuspendTaskOnlyBridge = default;
-        return context.BottomIterators;
+        return context.IterationSlots;
     }
 
     static void ApplyFinalSourceOwner(Def definition, FinalSourceContext context)
@@ -135,7 +138,7 @@ static partial class KotlinOverrideSlotBridge
         var claims = new Dictionary<(OverrideMethod Body, string Shape), List<OverrideMethod>>();
         var ordinal = 0;
         var enumeration = context.ReferenceBuild ? null : ReverseEnumeratorBridgeSynthesis.ReserveSlots(
-            definition, defs, refs, context.Index.Declarations, context.BottomIterators);
+            definition, defs, refs, context.Index.Declarations, context.IterationSlots);
         bool CanPassAsObject(TypeNode type, OverrideMethod method)
         {
             type = SignatureValueTypes.Of(context.Physical(type));
@@ -287,9 +290,9 @@ static partial class KotlinOverrideSlotBridge
                 var name = $"dotkt$ovslot${SafeName(slot.IdentityName)}${ordinal++}";
                 bridge = selectedBody == null
                     ? BuildBridgeSource(declaration,implementation.Source,slot.Parameters,slot.Return,name,isValue,refs,
-                        unitValueReturn:slot.UnitValueReturn,physicalImplementation:true)
+                        unitValueReturn:slot.UnitValueReturn,physicalImplementation:true,nativeCursor:context.CursorDemand(declaration))
                     : BuildBridgeSource(declaration,selectedBody,slot.Parameters,slot.Return,name,isValue,refs,
-                        unitValueReturn:slot.UnitValueReturn,physicalImplementation:true);
+                        unitValueReturn:slot.UnitValueReturn,physicalImplementation:true,nativeCursor:context.CursorDemand(declaration));
                 if (slot.Signature != null)
                     for (var i=0;i<slot.Signature.Length;i++)
                         if (slot.Signature[i] is TypeNode.Mod { Req:false } signature)

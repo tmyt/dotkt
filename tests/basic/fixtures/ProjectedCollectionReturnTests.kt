@@ -1,4 +1,6 @@
 import NUnit.Framework.TestAttribute
+import System.Collections.IEnumerable as RawEnumerable
+import System.Collections.Generic.IEnumerable as NativeEnumerable
 
 private fun <T> projectedCollectionReturnIdentity(value: T): T = value
 private fun projectedCollectionReturnConsume(items: List<Any>): Int = items.size
@@ -9,6 +11,15 @@ private fun projectedCollectionSame(left: Any, right: Any): Boolean = left === r
 private class ProjectedEnumeratorReturn<T>(private val source: ClrEnumerable<T>) {
     fun enumerator(): ClrEnumerator<T> = source.GetEnumerator()
 }
+private class DelegatedEnumerable<T>(source: ClrEnumerable<T>) : ClrEnumerable<T> by source {
+    fun iterator(): Iterator<T> = error("not an Iterable override")
+    @kotlin.clr.ClrName("GetEnumerator")
+    fun rawHelper(): System.Collections.IEnumerator = error("not the raw interface slot")
+}
+private interface DefaultNativeEnumerable : ClrEnumerable<Int> {
+    override fun GetEnumerator(): ClrEnumerator<Int> = (listOf(11) as Any as ClrEnumerable<Int>).GetEnumerator()
+}
+private class InheritedNativeEnumerable : DefaultNativeEnumerable
 private open class ProjectedConstructorReturn<T> {
     val result: String
     constructor(items: List<T>) { result = "list:" + items.size }
@@ -37,6 +48,21 @@ class ProjectedCollectionReturnTests {
         val generic = ProjectedEnumeratorReturn<Int>(source).enumerator()
         check(generic.MoveNext())
         check(generic.current() == 7)
+        val delegated: Any = DelegatedEnumerable(source)
+        val native = (delegated as NativeEnumerable<Int>).GetEnumerator()
+        check((native as System.Collections.IEnumerator).MoveNext() && native.Current == 7)
+        val raw = (delegated as RawEnumerable).GetEnumerator()
+        check(raw.MoveNext() && raw.Current == 7)
+        val wide: Any = DelegatedEnumerable(widened)
+        val wideNative = (wide as NativeEnumerable<Any>).GetEnumerator()
+        check((wideNative as System.Collections.IEnumerator).MoveNext() && wideNative.Current == 7)
+        val wideRaw = (wide as RawEnumerable).GetEnumerator()
+        check(wideRaw.MoveNext() && wideRaw.Current == 7)
+        val inherited = (InheritedNativeEnumerable() as Any as RawEnumerable).GetEnumerator()
+        check(inherited.MoveNext() && inherited.Current == 11)
+        val sequence = object : Sequence<Int> { override fun iterator(): Iterator<Int> = listOf(13).iterator() }
+        val fromSequence = (sequence as Any as NativeEnumerable<Int>).GetEnumerator()
+        check((fromSequence as System.Collections.IEnumerator).MoveNext() && fromSequence.Current == 13)
         check(ProjectedConstructorReturn<Int>(listOf(7)).result == "list:1")
         check(ProjectedConstructorReturn<Int>(7 as Any).result == "any:7")
         check(ProjectedConstructorReturn<Int>(listOf(7), "delegate").result == "list:1")

@@ -32,7 +32,7 @@ static partial class KotlinCollectionIdentitySynthesis
     const string MutableListIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableListClassifier";
     const string SetIdentity = "DotKt.Runtime.CompilerServices.KotlinSetClassifier";
     const string MutableSetIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier";
-    const string IterableIdentity = "DotKt.Runtime.CompilerServices.KotlinIterableClassifier";
+    internal const string IterableIdentity = "DotKt.Runtime.CompilerServices.KotlinIterableClassifier";
     const string MutableIterableIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableIterableClassifier";
 
     sealed record Def<T>(T Node, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces);
