@@ -489,9 +489,11 @@ internal fun BirEmitter.sourceInterfaceDefinition(iface: IrClass): BirInterfaceD
 		val identity = if (inheritedSynthetic) null else declarationIdForPhysicalAllocation(fn)
 		val explicitName = explicitClrNameValue(fn)
 		val association = prop?.let { propertyAssociation(it) }
+		val visibility = sourceVisOf(fn)
 		return BirFunctionDeclaration(name = name, declarationId = identity, explicitClrName = explicitName,
 			propertyName = prop?.name?.asString(), propertyAccessor = accessorKind.takeIf { prop != null }, propertyAssociation = association,
-			isStatic = false, isOverride = false, isVirtual = true, isAbstract = abstract, fakeOverride = fakeOverride,
+			isStatic = false, isOverride = false, isVirtual = visibility != "private", isAbstract = abstract, fakeOverride = fakeOverride,
+			vis = visibility.takeUnless { it == "public" },
 			inheritedImplementation = inheritedImplementation, typeParams = typeParameterDeclarations(fn.typeParameters).takeIf { fn.typeParameters.isNotEmpty() },
 			params = params, ret = ret, retCtxFnType = returnContextFunctionCount(fn), mods = functionModifiers(fn),
 			suspendRet = if (fn.isSuspend) birType(fn.returnType) else null, body = body, attrs = memberAttrs, overrides = overrideDeclarations(fn))
