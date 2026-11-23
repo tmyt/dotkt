@@ -245,6 +245,15 @@ class ConstrainedNullableBoundTests {
         fun witness() = NativeBoxApi.JointInterfaceWitness<A>()
     }
     private open class ExactStream : MemoryStream(), IProjectedMark
+    private class JointTag<T> : GenericValueInterop.IJointTag<T>
+        where T : MemoryStream, T : GenericValueInterop.ILeftMark, T : GenericValueInterop.IRightMark {
+        fun explicit(item: MarkedStream<*>) = NativeBoxApi.RightWitness<MarkedStream<*>, T>(item)
+        fun lexical(item: T) = NativeBoxApi.RightWitness<T, T>(item)
+    }
+    private fun <T> replaceLocation(item: MarkedStream<*>, target: ClrRef<T>, next: T)
+        where T : MemoryStream, T : IProjectedMark {
+        NativeBoxApi.ReplaceLocation<MarkedStream<*>, T>(item, target, next)
+    }
     private class DerivedStream : ExactStream()
     private class SharedBaseStream<T> : ExactStream(), IRichProjectedMark
     private class RichSlot<A> : NativeStreamBase<A>() where A : MemoryStream, A : IRichProjectedMark {
@@ -282,6 +291,8 @@ class ConstrainedNullableBoundTests {
         fun second(first: A, second: B): B = NativeBoxApi.SecondMarkedStream<A, B>(first, second)
         fun firstType(first: A, second: B) = NativeBoxApi.FirstMarkedType<A, B>(first, second, TwoMarkedTags())
         fun dependent(first: A, second: A): A = NativeBoxApi.DependentMarkedStream<A, A>(first, second)
+        fun independentType(first: A, second: A, independent: B) =
+            NativeBoxApi.IndependentType<A, A, B>(first, second, independent)
     }
 
     interface ChildMark : IMark<String>
@@ -473,6 +484,14 @@ class ConstrainedNullableBoundTests {
         native.other = second
         check(native.other === second)
         check(streams.dependent(LongStream(), first) === first)
+        val independent = StreamSlot<MarkedStream<*>, ExactStream>(first)
+        check(independent.independentType(LongStream(), first, DerivedStream()) == "ExactStream")
+        check(streams.independentType(LongStream(), first, second) == "MemoryStream")
+        val tag = JointTag<MarkedStream<*>>()
+        check(tag.explicit(first) == "IRightMark" && tag.lexical(first) == "IRightMark")
+        var location: MarkedStream<*> = first
+        replaceLocation<MarkedStream<*>>(first, byref(location), second)
+        check(location === second)
         val linked = LinkedSlot<MarkedStream<*>, MarkedStream<*>>()
         linked.value = second
         check(linked.value === second)

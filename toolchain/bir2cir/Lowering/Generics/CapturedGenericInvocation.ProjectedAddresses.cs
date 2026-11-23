@@ -12,16 +12,17 @@ static partial class CapturedGenericInvocation
         BirTypeParameter[] MethodFrame, bool ValueOwner, TypeNode[] Signature, bool[] TypedParameters,
         TypeNode Result, bool TypedResult)
     {
-        internal static AddressTarget FromReference(MethodInfo method, BirMemberReference reference)
+        internal static BirTypeParameter[] ReadFrame(System.Type[] frame) => frame.Select(p =>
+            ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
+
+        internal static AddressTarget FromReference(MethodInfo method, BirMemberReference reference, BirTypeParameter[] methodFrame = null)
         {
             var owner = method.DeclaringType;
             if (owner.IsConstructedGenericType) owner = owner.GetGenericTypeDefinition();
             var parameters = method.GetParameters();
-            BirTypeParameter[] Frame(System.Type[] frame) => frame.Select(p =>
-                ReferenceMetadataReader.GenericParamDeclaration(p, native: true)).ToArray();
             return new(method.Name, method.MetadataToken, parameters.Select(p =>
                 ReferenceMetadataIndex.ForeignStarRuntimeTypeKey(p.ParameterType)).ToArray(),
-                Frame(owner.GetGenericArguments()), Frame(method.GetGenericArguments()), owner.IsValueType,
+                ReadFrame(owner.GetGenericArguments()), methodFrame ?? ReadFrame(method.GetGenericArguments()), owner.IsValueType,
                 reference.ParameterTypes.Value, parameters.Select(p => RequiresTypedSlot(p.ParameterType)).ToArray(),
                 reference.ReturnType.Value, RequiresTypedSlot(method.ReturnType));
         }
@@ -96,15 +97,6 @@ static partial class CapturedGenericInvocation
         }
         var selectedSignature = lexical?.Method.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray() ??
             selected.Signature.Select(SignatureValueTypes.Of).ToArray();
-        if (fixedAddresses != null)
-        {
-            closureArguments = closureArguments.ToArray();
-            foreach (var (i, storage) in fixedAddresses)
-            {
-                var pointee = ((TypeNode.ByRef)SignatureValueTypes.Of(selected.Signature[i])).Of;
-                closureArguments[((TypeNode.Tv)pointee).I] = storage;
-            }
-        }
         for (var i = 0; i < selectedSignature.Length; i++)
         {
             var caller = fixedAddresses?.GetValueOrDefault(i) is { } location

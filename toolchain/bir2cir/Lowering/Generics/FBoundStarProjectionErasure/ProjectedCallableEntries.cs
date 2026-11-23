@@ -345,7 +345,7 @@ sealed class ProjectedCallableEntries
             if (node.MethodWitnessFacts.HasValue && CapturedGenericInvocation.Invocation.Admits(node) &&
                 invocations.FixedIntersection(new(node), owner?.Name.Value, owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(),
                     references, null, generated, classScope: ownerScope, methodScope: methodScope,
-                    allocate: allocate, lexicalDefinition: owner, projectingBody: true) is { } fixedCall) return fixedCall;
+                    allocate: allocate, lexicalDefinition: owner, projectingBody: true, locations: locations) is { } fixedCall) return fixedCall;
             return CapturedGenericInvocation.ProjectStorageCall(node, ownerScope, methodScope, references, allocate, generated, owner, helpers, locations);
         }
         Rewrite(root, default, null);

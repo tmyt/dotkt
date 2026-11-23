@@ -12,7 +12,7 @@ static partial class CapturedGenericInvocation
         readonly bool flattenMissingOwners;
         readonly Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType;
         internal bool HasDeferredFixedCalls { get; private set; }
-        readonly Dictionary<BirGraphValue, (CallableWitnessScope Owner, CallableWitnessScope Method)> resultScopes =
+        readonly Dictionary<BirGraphValue, (CallableWitnessScope Owner, CallableWitnessScope Method, IReadOnlyDictionary<string,TypeNode> Locations)> resultScopes =
             new(ReferenceEqualityComparer.Instance);
         readonly Func<TypeNode, TypeNode.Fqn> captureConstruction;
 
@@ -188,7 +188,7 @@ static partial class CapturedGenericInvocation
                     resultScopes.Remove(node, out var projectedScope);
                     if (FixedIntersection(new Invocation(node), lexicalOwner, ownerFrame, refs, emittedLocalTypes, generated,
                         deferVariableArguments: !finishFixedCalls, classScope: projectedScope.Owner,
-                        methodScope: projectedScope.Method, resultUse: resultUse) is { } fixedCall)
+                        methodScope: projectedScope.Method, resultUse: resultUse, locations: projectedScope.Locations) is { } fixedCall)
                     { slot.Replace(fixedCall); return; }
                 }
                 if (finishFixedCalls) return;
@@ -210,7 +210,7 @@ static partial class CapturedGenericInvocation
             HashSet<string> emitted, List<IBirTypeDeclaration> generated, bool deferVariableArguments = false,
             CallableWitnessScope classScope = default, CallableWitnessScope methodScope = default,
             Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null, LiveResultUse resultUse = null,
-            bool projectingBody = false)
+            bool projectingBody = false, IReadOnlyDictionary<string, TypeNode> locations = null)
         {
             var occurrence = call.Node;
             call = SelectedInvocation(call, out var access);
@@ -228,7 +228,7 @@ static partial class CapturedGenericInvocation
                 // expression. Keep its witnesses on the occurrence until
                 // both the producer and its consumer can be closed together.
                 HasDeferredFixedCalls = true;
-                resultScopes[occurrence] = (classScope, methodScope);
+                resultScopes[occurrence] = (classScope, methodScope, locations);
                 return occurrence;
             }
             // A physical copy may split a second argument that still names a lexical
@@ -267,19 +267,11 @@ static partial class CapturedGenericInvocation
             var signature = target.Signature;
             var ret = target.Result;
             var actual = call.TypeArguments.Value;
-            var authored = actual.ToArray();
             var proofs = occurrence.MethodWitnessFacts.Value;
-            foreach (var proof in proofs) authored[proof.Argument.Value] = proof.Primary.Value;
-            var lexicalSlots = LostLexicalSlots(Enumerable.Range(0, actual.Length)
-                .Where(i => CallableWitnessScope.For(actual[i], classScope, methodScope).Any()).ToArray(),
-                proofs.Select(p => p.Argument.Value),
-                i => target.MethodFrame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(t =>
-                    definitions.TryGetValue(t.Name, out var declaration) ? declaration.Type.Kind.OrDefault() == "interface" : refs.IsInterfaceType(t)),
-                (i, lost) => target.MethodFrame[i].Constraints.OrEmpty().Any(t => ContainsCapturedSlot(t, lost)));
-            var facets = proofs.SelectMany(p => p.Interfaces.Value.Select(bound => (p.Argument.Value, bound)))
-                .Concat(lexicalSlots.SelectMany(index => CallableWitnessScope.For(actual[index], classScope, methodScope).SelectMany(proof =>
-                        new (int, TypeNode)[] { (index, proof.Slot.Bound), (index, proof.Variable) })))
-                .Distinct().ToArray();
+            var fixedAddresses = FixedAddresses(signature, call.Arguments.OrDefault(), locations);
+            var application = BindFixedWitnesses(target.MethodFrame, signature, actual, proofs, LexicalCandidates(actual, classScope, methodScope),
+                classScope, methodScope, t => definitions.TryGetValue(t.Name, out var declaration)
+                    ? declaration.Type.Kind.OrDefault() == "interface" : refs.IsInterfaceType(t), fixedAddresses);
             var unit = IsVoid(ret);
             var typed = target.ValueOwner && call.Instance || target.TypedParameters.Contains(true) || target.TypedResult;
             LexicalTarget lexical = null;
@@ -304,10 +296,10 @@ static partial class CapturedGenericInvocation
                 do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
                 return name;
             }
-            return typed || access != null ? ProjectAddressCall(call, target, owner, facets, refs, allocate ?? Allocate, generated, lexical, access, authored,
-                captures: rows, capturedResult: capturedResult, resultUse: resultUse)
+            return typed || access != null ? ProjectAddressCall(call, target, owner, application.Facets, refs, allocate ?? Allocate, generated, lexical, access, application.Arguments,
+                fixedAddresses, captures: rows, capturedResult: capturedResult, resultUse: resultUse)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
-                    lexical?.Method.Name.Value ?? target.Name, target.Keys, authored, facets, result, unit, refs, rows);
+                    lexical?.Method.Name.Value ?? target.Name, target.Keys, application.Arguments, application.Facets, result, unit, refs, rows);
         }
 
         BirFunctionDeclaration LexicalForwarder(Invocation call, TypeNode.Fqn target, string lexicalOwner, BirTypeParameter[] frame,
