@@ -155,6 +155,31 @@ foreach (var shape in new[] { ("IAllDefaultEvent", false, false), ("IAddAbstract
     iface.CreateType();
 }
 assembly.Save(output);
+WritePropertySlots(args[1], args[2]);
+
+// This fixture is consumed through the SDK reference universe, not Private.CoreLib.
+static void WritePropertySlots(string path, string refPack)
+{
+    using var context = new MetadataLoadContext(new PathAssemblyResolver(Directory.GetFiles(refPack, "*.dll")), "System.Runtime");
+    var asm = new PersistedAssemblyBuilder(new AssemblyName("NativePropertySlots"), context.CoreAssembly);
+    var mod = asm.DefineDynamicModule("NativePropertySlots");
+    var integer = context.CoreAssembly.GetType("System.Int32", throwOnError: true)!;
+    const MethodAttributes slot = MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.NewSlot | MethodAttributes.SpecialName;
+    var face = mod.DefineType("PropertySlots.I", TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract);
+    var read = face.DefineMethod("ReadValue", slot | MethodAttributes.Abstract, integer, Type.EmptyTypes);
+    face.DefineProperty("Value", PropertyAttributes.None, integer, Type.EmptyTypes).SetGetMethod(read);
+    var owner = mod.DefineType("PropertySlots.Base", TypeAttributes.Public);
+    owner.AddInterfaceImplementation(face.CreateType());
+    owner.DefineDefaultConstructor(MethodAttributes.Public);
+    var getter = owner.DefineMethod("FetchValue", slot, integer, Type.EmptyTypes);
+    var il = getter.GetILGenerator();
+    il.Emit(OpCodes.Ldc_I4_1);
+    il.Emit(OpCodes.Ret);
+    owner.DefineProperty("Value", PropertyAttributes.None, integer, Type.EmptyTypes).SetGetMethod(getter);
+    owner.DefineMethodOverride(getter, read);
+    owner.CreateType();
+    asm.Save(path);
+}
 
 var loaded = Assembly.LoadFile(output);
 var loadedInterface = loaded.GetType("TransitiveSlotProbe.IPublic")!;

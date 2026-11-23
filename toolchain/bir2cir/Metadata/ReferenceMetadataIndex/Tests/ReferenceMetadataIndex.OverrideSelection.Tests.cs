@@ -6,6 +6,32 @@ using DotKt.Cir;
 
 sealed partial class ReferenceMetadataIndex
 {
+    static void NativePropertyAssociationSelfTest()
+    {
+        var index = Build(Array.Empty<string>());
+        var empty = Array.Empty<TypeNode>();
+        void Getter(string owner, string method)
+        {
+            var bare = ReferenceMetadataReader.StripGenericArity(owner);
+            index._membersByOwner[bare] = index._membersByPhysicalOwner[owner] = new() {
+                new(bare, method, 0, null, false, false, ParamTypeNodes: empty, DeclarationPhysicalOwner: owner,
+                    SourcePropertyName: "P", AccessorKind: "get", AssociatedPropertyName: "P")
+            };
+        }
+        Getter("NativeClass", "ReadClass");
+        Getter("NativeInterface", "ReadInterface");
+        Getter("Middle`1", "WrongArity");
+        index._referenceTypeShapes[new("NativeClass", 0)] = index._referenceTypeShapesByPhysicalOwner["NativeClass"] = new(
+            0, "class", null, new[] { new TypeNode.Fqn("NativeInterface") });
+        index._referenceTypeShapes[new("Middle", 0)] = index._referenceTypeShapesByPhysicalOwner["Middle"] = new(
+            0, "class", new TypeNode.Fqn("NativeClass"), new[] { new TypeNode.Fqn("NativeInterface") });
+        foreach (var (receiver, owner, method) in new[] { ("NativeClass", "NativeClass", "ReadClass"),
+                     ("Middle", "NativeClass", "ReadClass"), ("NativeInterface", "NativeInterface", "ReadInterface") })
+            if (!index.TryExternalPropertyAccessor(receiver, "P", "get", 0, 0, empty, null,
+                    out var declaring, out _, out var getter) || declaring != owner || getter != method)
+                throw new InvalidOperationException($"Expected {receiver}.P to bind to {owner}.{method}");
+    }
+
     static void SelectedSourceConstraintShapeSelfTest()
     {
         var index = Build(Array.Empty<string>());
