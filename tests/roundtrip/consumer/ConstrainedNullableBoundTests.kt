@@ -319,6 +319,12 @@ class ConstrainedNullableBoundTests {
     private class JoinedForward<T> where T : Base, T : ChildMark, T : IMarker<String> {
         fun factory() = JoinedFactory<T>()
     }
+    private class LocalJoinedValue<T>(val item: T) : RoundtripDependentNative.IJoined<T>
+        where T : IMark<String>, T : IMarker<String>
+    private class JoinedValueFactory<T> where T : Base, T : ChildMark, T : IMarker<String> {
+        fun local(value: T) = LocalJoinedValue<T>(value)
+        fun imported(value: T) = roundtrip.constrainedbound.JoinedValue<T>(value)
+    }
     private class JointSelection<A> : RoundtripDependentNative.IKey<RoundtripDependentNative.IJoined<A>>
         where A : Base, A : IMark<String>, A : IMarker<String> {
         fun select(value: A) = value
@@ -342,6 +348,9 @@ class ConstrainedNullableBoundTests {
     @TestAttribute
     fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
         val value = Child<Int>()
+        val exact = JoinedValueFactory<Child<*>>()
+        check(exact.local(value).item === value)
+        check(exact.imported(value).item === value)
         check(forwardMarker(value) === value)
         val through = Forward<Child<*>>()
         val local = through.local()

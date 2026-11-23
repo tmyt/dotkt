@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Bind direct calls to imported CLR constructors even when an array parameter contains a Kotlin generic type with additional CLR type arguments (#1867).
 - Return a valid CLR task for suspend functions whose Kotlin `CharSequence` result is represented as a string, including after suspension (#1878).
+- Preserve all required interface constraints when a Kotlin generic class forwards its type argument to a constructor, including one in another assembly (#1888).
 - Dispatch Kotlin overrides of native virtual properties through the class and interface even when their CLR accessor names differ (#1872).
 - Forward native span results through public Kotlin functions without boxing them for a null check (#1850).
 - Include sparse CLR regex captures when iterating Kotlin match groups or reading `groupValues` (#1721).

@@ -80,6 +80,9 @@ class NativeJoined<T> : RoundtripDependentNative.IJoined<T>
     where T : RoundtripDependentNative.Base, T : RoundtripDependentNative.Family.IMark<String>,
           T : RoundtripDependentNative.IMarker<String> { var item: T? = null }
 
+class JoinedValue<T>(val item: T) : RoundtripDependentNative.IJoined<T>
+    where T : RoundtripDependentNative.Family.IMark<String>, T : IMarker<String>
+
 fun <A> makeNativeJoined(): Any where A : RoundtripDependentNative.Base, A : RoundtripDependentNative.Family.IMark<String>,
                                       A : RoundtripDependentNative.IMarker<String> = NativeJoined<A>()
 

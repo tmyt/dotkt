@@ -308,6 +308,10 @@ static partial class FBoundStarProjectionErasure
                         var demands = imported != null
                             ? imported.Facets.Where(f => f.NativeArgument).SelectMany(f => f.Constraints.Select(c => (Primary: f.Primary, Bound: c)))
                             : (local?.Interfaces ?? []).Where(f => f.NativeArgument).Select(f => (Primary: f.OwnerIndex, f.Bound));
+                        if (use.Id != null && local == null && imported == null)
+                            demands = ProjectedConstructorPlan.InterfaceArguments(ConstraintParameters(use.Application.Name),
+                                    bound => BoundKind(bound) == "interface")
+                                .SelectMany(row => row.Bounds.Select(bound => (row.Primary, Bound: bound)));
                         var joint = fixedBase.Select(r => (r.Index, (TypeNode)r.Bound)).Concat(
                             imported != null ? JointPrimaryConstraints(imported.PrimaryParameters, use.Application.Name).Select(r => (r.Index, (TypeNode)r.Bound))
                                 : (local?.Interfaces ?? []).SelectMany(s => (s.PrimaryBounds ?? []).Select(b => (s.OwnerIndex, b))));
