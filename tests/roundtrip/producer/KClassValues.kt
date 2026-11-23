@@ -6,6 +6,10 @@ import kotlin.reflect.KClass
 import kotlin.reflect.KClassifier
 
 annotation class ImportedTyped(val type: KClass<*> = String::class)
+annotation class CollectionKey(val type: KClass<*> = Map::class)
+fun defaultCollectionKey(key: KClass<*> = Map::class): KClass<*> = key
+inline fun <reified T : Any> defaultReifiedKey(key: KClass<*> = T::class): KClass<*> = key
+inline fun <reified T> classifierAfter(block: () -> Unit): String? { block(); return T::class.simpleName }
 open class OrdinaryBase(val payload: String)
 open class ImportedManual : OrdinaryBase("base"), KClass<Any> {
     override val simpleName: String get() = "Imported"

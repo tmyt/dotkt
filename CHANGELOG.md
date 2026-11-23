@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve Kotlin collection class identity in class literals, reflected types and reified calls across assemblies (#1781).
+- Keep `this(...)` and `super(...)` string arguments in the representation selected by the delegated constructor (#1771).
 - Preserve the selected String result of a local Kotlin generic member declared to return `CharSequence` (#1875).
 
 - Preserve the selected CLR base constructor when an array parameter contains a Kotlin generic type with extra physical type arguments.

@@ -197,6 +197,7 @@ sealed partial class NullableWitnessDemand
             }
             node.VisitChildren(Walk);
             var tested = node switch {
+                BirClassReference literal when literal.ReifiedLiteral.OrDefault() => KotlinTypeWitness.Variable(literal.Type.OrDefault()),
                 BirIsInstance operation when KotlinTypeWitness.NeedsWitness("isInst", false) => operation.Type.OrDefault(),
                 BirInstanceOrNull operation when KotlinTypeWitness.NeedsWitness("isInstRef", operation.ReifiedTypeOperand.OrDefault()) => operation.Type.OrDefault(),
                 BirCast operation when KotlinTypeWitness.NeedsWitness("cast", operation.ReifiedTypeOperand.OrDefault()) => operation.Type.OrDefault(),

@@ -60,6 +60,11 @@ static class KClassMemberBinding
                 return new BirConstant { Type = new TypeNode.Fqn("kotlin.String"),
                     Value = new BirLiteral.TextLiteral(call.Method.Value == "simpleName" ? SimpleOf(name) : name) };
             node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value)));
+            if (node is BirClassReference source) {
+                ReflectedKotlinType.BindKnownLiteral(source);
+                if (source.ReifiedLiteral.OrDefault() && KotlinTypeWitness.Variable(source.Type.Value) != null)
+                    return source; // The witness pass owns a still-open reified argument.
+            }
             IBirExpression operand;
             if (node is BirRuntimeClass runtime) operand = runtime;
             else if (node is BirClassReference literal && (literal.ReifiedLiteral.OrDefault()
@@ -97,7 +102,8 @@ static class KClassMemberBinding
     // Null for any other token shape (tv/array/fn), which the caller routes to the run-time read instead of folding.
     static string FqnOf(TypeNode typeNode, ReferenceMetadataIndex refs) => typeNode switch
     {
-        TypeNode.Fqn f => refs?.TryExistentialPhysicalOwner(f.Name, out _) == true ? ReflectedKotlinType.SourceName(f) : f.Name,
+        TypeNode.Fqn f => ReflectedKotlinType.CollectionLiteralName(f.Name)
+            ?? (refs?.TryExistentialPhysicalOwner(f.Name, out _) == true ? ReflectedKotlinType.SourceName(f) : f.Name),
         TypeNode.Nullable nullable => FqnOf(nullable.Of, refs),
         _ => null,
     };

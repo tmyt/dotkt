@@ -52,38 +52,40 @@ static partial class StringCharSequenceBridge
         return new[] { adapter };
     }
 
-    internal static Func<BirNew, TypeNode[]> ConstructorSlots(IReadOnlyList<BirFileDeclaration> files, ReferenceMetadataIndex refs)
+    internal delegate TypeNode[] ConstructorParameters(TypeNode.Fqn owner, string declaration, bool includeReferenceCapture);
+    internal static ConstructorParameters ConstructorSlots(IReadOnlyList<BirFileDeclaration> files, ReferenceMetadataIndex refs)
     {
         // Read actual parameter slots after local String collapse; a use-site
         // signature still describes the original Kotlin declaration.
         var local = new Dictionary<(string, string), TypeNode[]>();
+        var innerOrder = new InnerApplicationOrder(files, refs);
         foreach (var file in files)
             foreach (var type in file.Types.OrEmpty())
                 foreach (var ctor in type.Ctors.OrEmpty())
                     if (ctor.DeclarationId.OrDefault() is string id && ctor.Params.OrDefault() is { } parameters
                         && parameters.Any(p => PotentialView(p.Type.OrDefault())))
                         local[(type.Name.Value, id)] = parameters.Select(p => p.Type.OrDefault()).ToArray();
-        return node => {
-            if (node.Type.OrDefault() is not TypeNode.Fqn owner) return null;
-            if (node.ConstructorDeclarationId.OrDefault() is string id && local.TryGetValue((owner.Name, id), out var slots))
-                return owner.Args is { Length: > 0 } args
+        return (owner, id, includeReferenceCapture) => {
+            if (owner == null) return null;
+            if (id != null && local.TryGetValue((owner.Name, id), out var slots))
+                return innerOrder.DeclarationArguments(owner) is { Length: > 0 } args
                     ? slots.Select(slot => SubstCallTvs(slot, args, Array.Empty<TypeNode>())).ToArray() : slots;
             // Reflection supplies only the CLR type of a generated capture,
             // not its Kotlin nullability. Preserve null when adapting it.
-            return refs?.OwnerCtorParamTypes(owner.Name)?.Select(slot =>
+            return !includeReferenceCapture ? null : refs?.OwnerCtorParamTypes(owner.Name)?.Select(slot =>
                 IsScalarCharSequence(slot) || IsSourceCharSeqT(slot) ? new TypeNode.Nullable(slot) : slot).ToArray();
         };
         static bool PotentialView(TypeNode type) => type switch {
             TypeNode.Tv { Scope: "type" } => true,
             TypeNode.Nullable nullable => PotentialView(nullable.Of),
             TypeNode.Oblivious platform => PotentialView(platform.Of),
-            _ => IsScalarCharSequence(type),
+            _ => IsScalarCharSequence(type) || IsStringTokT(type),
         };
     }
 
     // This entry owns the continuing source graph. Newly authored callback
     // ingredients are returned by their actual slots, not detached snapshots.
-    internal static SourceBridgeResult Apply(BirFileDeclaration file, Func<BirNew, TypeNode[]> constructorSlots,
+    internal static SourceBridgeResult Apply(BirFileDeclaration file, ConstructorParameters constructorSlots,
         CharSeqStringLowering.CharSeqRetLambdas retLambdas, CharSeqStringLowering.MemberSlots results = null)
     {
         _retLambdas = retLambdas;
@@ -104,20 +106,20 @@ static partial class StringCharSequenceBridge
     {
         internal IReadOnlyDictionary<string, TypeNode> Vars { get; }
         internal TypeNode RetType { get; }
-        internal TypeNode.Fqn BaseType { get; }
+        internal (TypeNode.Fqn Self, TypeNode.Fqn Base) Owner { get; }
         internal ClosureSynthesis.CaptureContext Context { get; }
-        internal Func<BirNew, TypeNode[]> ConstructorSlots { get; }
-        internal SourceBridgeEnv(ClosureSynthesis.CaptureContext context, Func<BirNew, TypeNode[]> constructorSlots = null)
-            : this(new Dictionary<string, TypeNode>(StringComparer.Ordinal), null, null, context, constructorSlots) { }
+        internal ConstructorParameters ConstructorSlots { get; }
+        internal SourceBridgeEnv(ClosureSynthesis.CaptureContext context, ConstructorParameters constructorSlots = null)
+            : this(new Dictionary<string, TypeNode>(StringComparer.Ordinal), null, default, context, constructorSlots) { }
         SourceBridgeEnv(IReadOnlyDictionary<string, TypeNode> vars, TypeNode ret,
-            TypeNode.Fqn baseType, ClosureSynthesis.CaptureContext context, Func<BirNew, TypeNode[]> constructorSlots)
-        { Vars = vars; RetType = ret; BaseType = baseType; Context = context; ConstructorSlots = constructorSlots; }
+            (TypeNode.Fqn, TypeNode.Fqn) owner, ClosureSynthesis.CaptureContext context, ConstructorParameters constructorSlots)
+        { Vars = vars; RetType = ret; Owner = owner; Context = context; ConstructorSlots = constructorSlots; }
 
         internal SourceBridgeEnv WithDecl(BirGraphValue node)
         {
             var context = ClosureSynthesis.ContextFor(node, Context);
             if (node is IBirTypeDeclaration type && type.Kind.OrDefault() is "class" or "interface" or "struct" or "enum")
-                return new(Vars, RetType, type.Base.OrDefault() as TypeNode.Fqn, context, ConstructorSlots);
+                return new(Vars, RetType, (new TypeNode.Fqn(type.Name.Value), type.Base.OrDefault() as TypeNode.Fqn), context, ConstructorSlots);
             var parametersPresent = node switch {
                 BirFunctionDeclaration value => value.Params.HasValue,
                 BirConstructor value => value.Params.HasValue,
@@ -127,15 +129,15 @@ static partial class StringCharSequenceBridge
                 BirInheritedClassMethod value => value.Params.HasValue,
                 _ => false,
             };
-            if (!parametersPresent) return new(Vars, RetType, BaseType, context, ConstructorSlots);
+            if (!parametersPresent) return new(Vars, RetType, Owner, context, ConstructorSlots);
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             node.VisitSourceParameters((name, type) => vars[name] = type);
             var ret = SourceBridgeOwnType(node, "ret");
-            return new(vars, ret ?? RetType, BaseType, context, ConstructorSlots);
+            return new(vars, ret ?? RetType, Owner, context, ConstructorSlots);
         }
 
         internal SourceBridgeEnv WithVar(string name, TypeNode type)
-            => new(new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type }, RetType, BaseType, Context, ConstructorSlots);
+            => new(new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type }, RetType, Owner, Context, ConstructorSlots);
     }
 
     static TypeNode SourceBridgeOwnType(BirGraphValue node, string field)
@@ -246,12 +248,21 @@ static partial class StringCharSequenceBridge
         if (!constructor.DelegationSig.HasValue) return;
         var arguments = constructor.ThisArgs.OrDefault() ?? constructor.BaseArgs.OrDefault();
         if (arguments == null) return;
-        var ownerArgs = constructor.ThisArgs.HasValue ? Array.Empty<TypeNode>() : env.BaseType?.Args ?? Array.Empty<TypeNode>();
-        for (var index = 0; index < Math.Min(arguments.Length, constructor.DelegationSig.Value.Length); index++)
+        var owner = constructor.ThisArgs.HasValue ? env.Owner.Self : env.Owner.Base;
+        var slots = env.ConstructorSlots?.Invoke(owner, constructor.DelegationDeclarationId.OrDefault(), includeReferenceCapture: false);
+        // Local delegation uses the selected declaration after String collapse.
+        // Otherwise keep the open signature, closing base arguments for super calls.
+        var parameters = slots ?? constructor.DelegationSig.Value;
+        var ownerArgs = owner?.Args ?? Array.Empty<TypeNode>();
+        for (var index = 0; index < Math.Min(arguments.Length, parameters.Length); index++)
         {
-            var type = SubstCallTvs(constructor.DelegationSig.Value[index], ownerArgs, Array.Empty<TypeNode>());
-            if (IsCharSeqT(type) && arguments[index] is { } argument)
+            if (arguments[index] is not { } argument) continue;
+            var type = slots == null ? SubstCallTvs(parameters[index], ownerArgs, Array.Empty<TypeNode>()) : parameters[index];
+            if (IsCharSeqT(type))
                 arguments[index] = SourceCoerceCharSeqArg(argument, env, type);
+            else if (index < constructor.DelegationSig.Value.Length && IsCharSeqT(constructor.DelegationSig.Value[index])
+                && (IsStringTokT(type) || type is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)))
+                arguments[index] = CharSeqStringLowering.SnapshotForStringSlot(argument, env.Vars, type is TypeNode.Nullable) ?? argument;
         }
     }
 
@@ -380,7 +391,7 @@ static partial class StringCharSequenceBridge
     static void SourceWrapNewCtorArgs(BirNew node, SourceBridgeEnv env)
     {
         if (!node.Args.HasValue) return;
-        var parameters = env.ConstructorSlots?.Invoke(node);
+        var parameters = env.ConstructorSlots?.Invoke(node.Type.OrDefault() as TypeNode.Fqn, node.ConstructorDeclarationId.OrDefault(), includeReferenceCapture: true);
         if (parameters == null || parameters.Length != node.Args.Value.Length) return;
         for (var index = 0; index < parameters.Length; index++)
             if ((IsScalarCharSequence(parameters[index]) || IsSourceCharSeqT(parameters[index]))

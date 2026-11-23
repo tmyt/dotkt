@@ -15,9 +15,19 @@ private class StringSource(private val text: String?) : SequenceSource() {
     override val source: String? get() { reads++; return text }
 }
 
+private open class CollapsedText(val value: CharSequence?) {
+    constructor(a: String, b: String) : this(a + b)
+}
+private class DerivedText(a: String, b: String) : CollapsedText(a + b)
+private class ImportedText(value: BoundarySequence?) : CollapsedText(value)
+
 class CharSequenceBoundaryTests {
     @TestAttribute
     fun importedReceiverBodiesAndInlineSplicesUseTheSelectedRepresentation() {
+        fun rawString(value: Any?) = value is String
+        check(rawString(CollapsedText("a", "b").value))
+        check(rawString(DerivedText("c", "d").value))
+        check(rawString(ImportedText(BoundarySequence("abc")).value) && ImportedText(null).value == null)
         var evaluations = 0
         var callbacks = 0
         fun stringOnce(): String { evaluations++; return "abc" }
