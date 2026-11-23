@@ -2,6 +2,7 @@ package roundtriptests.charsequenceboundaries
 
 import NUnit.Framework.TestAttribute
 import roundtriptests.builderconstruction.checkBuilderConstructorSnapshot
+import roundtrip.portabletext.snapshotBuilder
 import roundtrip.upstreamstdlib.BoundarySequence
 import roundtrip.upstreamstdlib.LibraryConstructorText
 import roundtrip.upstreamstdlib.SequenceSource
@@ -26,9 +27,12 @@ class CharSequenceBoundaryTests {
     fun importedReceiverBodiesAndInlineSplicesUseTheSelectedRepresentation() {
         checkBuilderConstructorSnapshot()
         val builder = StringBuilder("abc")
+        val frozenPresent = snapshotBuilder { builder }
+        val frozenAbsent = snapshotBuilder { null }
         fun imported(value: StringBuilder?) = LibraryConstructorText(value)
         val stored = imported(builder)
         builder.append('d')
+        check(frozenPresent.value?.length == 3 && frozenAbsent.value == null)
         check(stored.size() == 3 && imported(null).size() == -1)
         fun rawString(value: Any?) = value is String
         check(rawString(CollapsedText("a", "b").value))

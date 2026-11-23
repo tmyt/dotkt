@@ -417,7 +417,9 @@ static partial class StringCharSequenceBridge
     static IBirExpression SourceCollapsedConstructorArgument(IBirExpression value, SourceBridgeEnv env, TypeNode declared, TypeNode slot)
         => (IsScalarCharSequence(declared) || IsSourceCharSeqT(declared))
             && (IsStringTokT(slot) || slot is TypeNode.Nullable n && IsStringTokT(n.Of))
-            ? CharSeqStringLowering.SnapshotForStringSlot(value, env.Vars, slot is TypeNode.Nullable) ?? value : value;
+            ? CharSeqStringLowering.SnapshotForStringSlot(value, env.Vars, slot is TypeNode.Nullable
+                || declared is TypeNode.Nullable or TypeNode.Oblivious
+                || BirGraphStaticType.Surface(value, env.Vars) is TypeNode.Nullable or TypeNode.Oblivious) ?? value : value;
 
     static void SourceRetypeLiftedRets(BirFileDeclaration file, CharSeqStringLowering.CharSeqRetLambdas returns)
     {

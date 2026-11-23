@@ -105,7 +105,7 @@ static partial class StringCharSequenceBridge
         if (IsStringTokT(stringType)) return CharSequenceConversion.String;
         var builderType = type switch { TypeNode.Nullable n => n.Of, TypeNode.Oblivious o => o.Of, _ => type };
         if (builderType is TypeNode.Fqn { Args: null } builder && StringBuilderTokens.Contains(builder.Name))
-            return (type is TypeNode.Nullable or TypeNode.Oblivious) && !nonNullSlot && !notNullAssertion
+            return (type is TypeNode.Nullable or TypeNode.Oblivious) && !notNullAssertion
                 ? CharSequenceConversion.NullableStringBuilder : CharSequenceConversion.StringBuilder;
         if (!nonNullSlot && type is TypeNode.Nullable optional && IsStringTokT(optional.Of))
             return CharSequenceConversion.NullableString;
