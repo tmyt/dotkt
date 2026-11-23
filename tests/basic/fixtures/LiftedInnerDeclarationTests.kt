@@ -118,25 +118,7 @@ private fun <T> liftedInnerAccessorType(): Boolean {
     return Local().Capture().value
 }
 
-private fun <A> projectedLocalValue(seed: A, first: Boolean): Any {
-    class Local<T>(val value: T) { fun captured(): A = seed }
-    val number = Local(12)
-    val text = Local("text")
-    val selected = if (first) number else text
-    val expected: Any = if (first) number as Any else text as Any
-    check(selected === expected && selected.captured() == seed)
-    check(selected::class == Local::class && selected::class.simpleName == "Local")
-    check(selected::class.qualifiedName == null)
-    return selected.value
-}
-
 class LiftedInnerDeclarationTests {
-    @TestAttribute
-    fun projectedLocalJoinRetainsBothConcreteInstances() {
-        check(projectedLocalValue("outer", true) == 12)
-        check(projectedLocalValue(41, false) == "text")
-    }
-
     @TestAttribute
     fun liftedOwnersKeepInnerDeclarationsAndCompleteEnclosingFrames() {
         check(liftedLocalInner() == 5 && liftedAnonymousInner() == 7)

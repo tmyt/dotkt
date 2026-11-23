@@ -258,7 +258,7 @@ static partial class FBoundStarProjectionErasure
                 if (owners.TryGetValue(f.Name, out var owner)
                     && (runtimeClassifier || args.Any(IsExistentialArgument)
                         || owner.Kind is "class" or "interface"
-                            && (owner.SourceGeneric || owner.Inner && owner.OuterCount > 0)))
+                            && !owner.NamedLocal && (owner.SourceGeneric || owner.Inner && owner.OuterCount > 0)))
                     owner.Needed = true;
                 foreach (var a in args) MarkNeededType(a, owners, false);
                 break;

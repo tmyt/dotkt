@@ -201,6 +201,7 @@ static partial class FBoundStarProjectionErasure
         internal bool Inner => Definition?.Mods.OrDefault()?.Inner.OrDefault() == true;
         internal int OuterCount => Definition is BirClassDefinition type ? type.OuterTypeParamCount.OrDefault() : 0;
         internal bool SourceGeneric => Definition is { } type && IsSourceGeneric(type);
+        internal bool NamedLocal => Definition is BirClassDefinition local && local.LocalClassifierName.OrDefault() is { Length: > 0 };
         internal IReadOnlyList<string> Variances => Definition is { TypeParams.HasValue: true } type
             ? type.TypeParams.Value.Select(parameter => parameter.Variance.OrDefault()).ToArray() : null;
         internal TypeNode.Fqn BaseType => Definition?.Base.OrDefault() as TypeNode.Fqn;
