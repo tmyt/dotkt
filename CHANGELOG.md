@@ -6,10 +6,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Visit matches of an imported right-to-left CLR Regex in Kotlin input order for search, splitting, and transform replacement, without changing which matches the CLR engine chooses (#1722).
+- Format Kotlin primitive numbers with invariant culture in `toString()`, string templates, and `StringBuilder.append` (#1780).
 - Honor `STAThreadAttribute` and `MTAThreadAttribute` on the CLR entry point for Kotlin programs, including suspend main (#1921).
 - Inspect a runtime-backed Kotlin `KClass` via `kotlin.reflect.full.isInterface` and
   `companionObjectInstance`, including generic declarations imported from another DLL (#1925).
 - Allow a consumer to call members that a Kotlin companion object inherits from its superclass across an assembly boundary (#1893).
+- Keep raw strings intact when an inherited suspend implementation forwards its `CharSequence?`
+  result into an object slot across assemblies (#1898).
 
 ## 0.9.33 (2026-11-24)
 

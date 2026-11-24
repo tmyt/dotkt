@@ -595,11 +595,12 @@ sealed class Pipeline
         // Enum values now state their array type. Derive array elements and
         // realize constructors before any type erasure or suspend spill owner.
         foreach (var source in captured) ArrayConstructionLowering.Apply(source, refs);
+        var numericText = new NumericTextOperands(collectionInputs.Helpers);
         foreach (var source in captured)
         {
             // This late recognition deliberately runs outside helper binding:
             // its calls retain the existing subsequent exact-resolution path.
-            FaithfulHintRecognition.Apply(source, inventory.LocalTopLevelFunctions);
+            FaithfulHintRecognition.Apply(source, inventory.LocalTopLevelFunctions, numericText);
             CharCodeInvokeLowering.Apply(source);
         }
         // Native binding consumes the same owning operations. Reference builds

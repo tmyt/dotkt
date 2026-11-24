@@ -41,6 +41,7 @@ import System.Threading.Tasks.TaskCompletionSource1
 import System.Type
 import dotkt.support.blockOn
 import dotkt.support.SuspendTextSource
+import dotkt.support.SuspendTextAncestor
 
 // A real suspension on every path — a defect that only shows once the outer call genuinely returns
 // COROUTINE_SUSPENDED is invisible without one.
@@ -258,8 +259,38 @@ private class SuspendStringSource : SuspendTextSource() {
 }
 private open class LocalSuspendText { open suspend fun read(): CharSequence? = "text" }
 private class NarrowSuspendText : LocalSuspendText() { override suspend fun read(): String = "narrow" }
+private interface RequiredSuspendText { suspend fun inheritedText(gate: Task, text: String?): CharSequence? }
+private class InheritedSuspendText : SuspendTextAncestor(), RequiredSuspendText
+
+suspend fun suspendResultTypeInheritedTextLength(gate: Task, text: String?): Int {
+    val source: RequiredSuspendText = InheritedSuspendText()
+    val result = source.inheritedText(gate, text)
+    return when (result) {
+        null -> -1
+        is String -> result.length
+        else -> -2
+    }
+}
 
 class SuspendResultTypePrecedenceTests {
+    @TestAttribute
+    fun inheritedAndLiftedColdResultsKeepTheKotlinValue() {
+        val caller = Type.GetType("SuspendResultTypePrecedenceTestsKt")!!.GetMethod("suspendResultTypeInheritedTextLength")!!
+        for (immediate in listOf(true, false)) for (text in listOf("hello", null)) {
+            val gate = TaskCompletionSource1<Int>()
+            if (immediate) gate.SetResult(1)
+            val task = caller.Invoke(null, arrayOf<Any?>(gate.Task, text)) as Task1<Int>
+            assertEquals(immediate, task.IsCompleted)
+            if (!immediate) gate.SetResult(1)
+            check(task.Wait(10000))
+            assertEquals(text?.length ?: -1, task.Result)
+        }
+        assertEquals(5, blockOn {
+            suspend fun lifted(): CharSequence? = "hello"
+            lifted()!!.length
+        })
+    }
+
     @TestAttribute
     fun nullableCharSequenceTaskUsesTheSelectedStringResult() {
         // Calling from Kotlin normally selects the cold continuation entry.

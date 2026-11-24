@@ -2,6 +2,24 @@
 
 package DotKt.Runtime.CompilerServices
 
+@kotlin.clr.ClrTypeAlias("System.IFormatProvider")
+private interface NumberFormatProvider
+
+@kotlin.clr.ClrIntrinsic("System.Globalization.CultureInfo.get_InvariantCulture")
+private fun invariantNumberCulture(): NumberFormatProvider = error("CLR binding")
+
+@kotlin.clr.ClrIntrinsic("System.Convert.ToString")
+private fun formatNumber(value: Any, provider: NumberFormatProvider): String = error("CLR binding")
+
+// Leave nonnumeric receivers intact: CLR virtual ToString (including user overrides)
+// and concatenation keep their existing dispatch, null handling and evaluation order.
+@PublishedApi
+internal fun invariantTextOperand(value: Any?): Any? = when (value) {
+    is Byte, is Short, is Int, is Long, is Float, is Double,
+    is UByte, is UShort, is UInt, is ULong -> formatNumber(value, invariantNumberCulture())
+    else -> value
+}
+
 // Kotlin implementations carry real nominal slots without claiming that native numeric
 // boxes inherit a runtime base class. This compiler-owned face is not semantic Number.
 @PublishedApi

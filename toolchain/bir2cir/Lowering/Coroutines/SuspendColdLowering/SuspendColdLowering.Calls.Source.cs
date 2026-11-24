@@ -29,12 +29,15 @@ static partial class SuspendColdLowering
             Type = type, E = SourceOperandField(value),
         };
 
-        IBirExpression EmitSuspensionPoint(BirGraphValue callNode, List<IBirStatement> output)
+        IBirExpression EmitSuspensionPoint(BirGraphValue callNode, List<IBirStatement> output, TypeNode destination)
         {
             var method = SourceOperandMethod(callNode);
             var resultType = TypedCallEvalLowering.StaticTypeOf(callNode)
                 ?? (_calleeRet.TryGetValue(method ?? "", out var declared) ? declared : null) ?? AnyTn;
-            if (IsUnitTn(resultType)) resultType = AnyTn;
+            // An object destination can carry the original Kotlin value. In particular a
+            // forwarding return must not replace a String with its CharSequence interface adapter.
+            if (IsUnitTn(resultType) || StringCharSequenceBridge.CanRestoreMaterializedValue(destination, resultType))
+                resultType = AnyTn;
             var state = ++_state;
             var resume = NextLabel();
             RegisterResume(state, resume);
