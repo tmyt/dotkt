@@ -129,6 +129,24 @@ sealed partial class GenericRepresentationPolicy
         return proofs != 0 && (bounds.Any(IsNominalStorageBound) || nativeApplication && proofs == 2);
     }
 
+    // A virtual implementation may be compiled after the declaring assembly. When a
+    // class bound is separated from multiple storage-safe interface proofs, publish
+    // one storage witness for their conjunction independently of the current body.
+    internal bool NeedsVirtualStorageWitness(IEnumerable<TypeNode.Fqn> constraints)
+    {
+        var bounds = constraints.Select(StorageConstraint)
+            .Where(bound => bound != null).Distinct().ToArray();
+        if (!bounds.Any(IsNominalStorageBound)) return false;
+        // An interface can supply both proofs through inheritance. The virtual
+        // convention must not depend on whether its parents were spelled out.
+        var contracts = bounds.OfType<TypeNode.Fqn>().Where(b => !IsNominalStorageBound(b)
+            && !NeedsNativeWitness(b) && CanReferenceStorageProof(b)).ToArray();
+        return SupertypeGraph.Reachable(new SupertypeGraph.Def { Interfaces = contracts }, _sourceHierarchy, _references, sourceFrames: true)
+            .Where(edge => edge.isInterface).Select(edge => StorageConstraint(edge.spec)).OfType<TypeNode.Fqn>()
+            .Where(proof => !NeedsNativeWitness(proof) && CanReferenceStorageProof(proof))
+            .Distinct().Take(2).Count() == 2;
+    }
+
     // Closed native interfaces (and invariant native applications even when open)
     // are proven by the native argument, not by the Kotlin value's storage type.
     internal bool NeedsNativeWitness(TypeNode proof)

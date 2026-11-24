@@ -348,6 +348,30 @@ class ConstrainedNullableBoundTests {
     }
     private interface LeftChild : RoundtripDependentNative.ILeft
     private class JoinedChild<T> : Base(), LeftChild, RoundtripDependentNative.IRight
+    private class JoinedProduct<A> : RoundtripDependentNative.IJoinedValue<A>
+        where A : Base, A : RoundtripDependentNative.ILeft, A : RoundtripDependentNative.IRight
+    private class ParameterlessFactory : roundtrip.constrainedbound.JoinedFactoryContract() {
+        override fun <A> make(): Any where A : Base, A : RoundtripDependentNative.ILeft, A : RoundtripDependentNative.IRight =
+            JoinedProduct<A>()
+    }
+    private class DependentFactory<K> : roundtrip.constrainedbound.DependentJoinedContract<K>()
+        where K : Base, K : RoundtripDependentNative.ILeft, K : RoundtripDependentNative.IRight {
+        override fun <A : K> make(): Any = JoinedProduct<A>()
+    }
+    private open class JointRoot : Base(), roundtrip.constrainedbound.JointProof
+    private class FixedFactory : roundtrip.constrainedbound.DependentJoinedContract<JointRoot>() {
+        override fun <A : JointRoot> make(): Any = JoinedProduct<A>()
+    }
+    private open class FactoryRelay {
+        open fun <S> relay(f: roundtrip.constrainedbound.JoinedFactoryContract): Any
+            where S : Base, S : roundtrip.constrainedbound.JointProof = f.make<S>()
+    }
+    private class Outer<X>(val x: X) {
+        open inner class Factory<B, K, Z> where B : K, K : Base, K : RoundtripDependentNative.ILeft,
+            K : RoundtripDependentNative.IRight, Z : Base, Z : RoundtripDependentNative.IMarker<String> {
+            open fun <A : B> make(): Any = "ok"
+        }
+    }
     private class LocalJoinedValue<T>(val item: T, val nativeItems: System.Collections.Generic.List<T>) : RoundtripDependentNative.IJoinedValue<T>
         where T : RoundtripDependentNative.ILeft, T : RoundtripDependentNative.IRight
     private class JoinedValueFactory<T> where T : Base, T : LeftChild, T : RoundtripDependentNative.IRight {
@@ -372,6 +396,20 @@ class ConstrainedNullableBoundTests {
     private class JoinedOverride : JoinedParent(), JoinedSurface {
         override fun <A> make(value: A): Any where A : Base, A : IMark<String>, A : IMarker<String> =
             super<JoinedParent>.make(value)
+    }
+
+    @TestAttribute
+    fun parameterlessVirtualFactoriesUseTheDeclaredJointWitness() {
+        val factory: roundtrip.constrainedbound.JoinedFactoryContract = ParameterlessFactory()
+        check(factory.make<JoinedChild<Int>>() is RoundtripDependentNative.IJoinedValue<*>)
+        check(factory.make<JoinedChild<*>>() is RoundtripDependentNative.IJoinedValue<*>)
+        val dependent: roundtrip.constrainedbound.DependentJoinedContract<JoinedChild<Int>> = DependentFactory<JoinedChild<Int>>()
+        check(dependent.make<JoinedChild<Int>>() is RoundtripDependentNative.IJoinedValue<*>)
+        val fixed: roundtrip.constrainedbound.DependentJoinedContract<JointRoot> = FixedFactory()
+        check(fixed.make<JointRoot>() is RoundtripDependentNative.IJoinedValue<*>)
+        check(FixedFactory().make<JointRoot>() is RoundtripDependentNative.IJoinedValue<*>)
+        check(FactoryRelay().relay<JointRoot>(factory) is RoundtripDependentNative.IJoinedValue<*>)
+        check(Outer("x").Factory<JointRoot, JointRoot, Child<Int>>().make<JointRoot>() == "ok")
     }
 
     @TestAttribute
