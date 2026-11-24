@@ -11,6 +11,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Preserve object identity when reading a generic Kotlin value through an erased collection view, without weakening concrete CLR casts (#1862).
 - Preserve the actual element type of a projected CLR collection when another argument to the same generic method is a literal null (#1860).
 - Return a valid CLR task for suspend functions whose Kotlin `CharSequence` result is represented as a string, including after suspension (#1878).
+- Preserve local functions and references to them when a generic virtual method needs a private helper for its body (#1846).
 - Preserve all required interface constraints when a Kotlin generic class forwards its type argument to a constructor, including one in another assembly (#1888).
 - Preserve a single CLR type satisfying multiple interface constraints across Kotlin virtual factory calls, even when no value argument is passed and the override lives in another assembly (#1854).
 - Dispatch Kotlin overrides of native virtual properties through the class and interface even when their CLR accessor names differ (#1872).

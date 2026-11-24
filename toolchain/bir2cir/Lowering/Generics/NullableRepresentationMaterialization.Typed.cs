@@ -166,8 +166,16 @@ static partial class NullableRepresentationMaterialization
                         || method.Body.For("method", NullableRepresentationFrame.Role.Element).Except(methodFrame.ElementIndices).Any()
                         || method.Body.For("method", NullableRepresentationFrame.Role.NullableElement).Except(methodFrame.NullableElementIndices).Any();
                     var entry = method.View.Function;
-                    var source = split ? (BirFunctionDeclaration)entry.DeepClone() : null;
-                    if (split) entry.Body = Array.Empty<IBirStatement>();
+                    BirFunctionDeclaration source = null;
+                    if (split)
+                    {
+                        // Move the bound body to its terminal helper. Local declarations and
+                        // uses are already keyed by node identity; clone only the signature.
+                        var body = entry.Body;
+                        entry.Body = Array.Empty<IBirStatement>();
+                        source = (BirFunctionDeclaration)entry.DeepClone();
+                        source.Body = body;
+                    }
                     Rewrite(entry, methodMapping, methods, DeclarationMapping, captureStorage: CaptureIn(entry));
                     AppendParameters(entry, methodFrame, policy: policy, enclosingParameters: view.Parameters.OrDefault(), enclosingFrame: frame);
                     if (methodFrame.RequiresMetadata) entry.NullableRepresentationFrame = methodFrame;
