@@ -16,6 +16,9 @@ static partial class FunctionValueRepresentation
     {
         if (node is IBirExecutablePayload) return node;
         CaptureCallSignature(node);
+        if (node is BirSamConversion or BirNewClosure or BirNewDelegate or BirNewBoundDelegate or BirBoundClrDelegate or BirClrStaticDelegate
+            && node.FunctionTypeStamp is TypeNode.Fn functionType)
+            node.SourceFunctionResult = ClrMemberResolution.ReturnedFunctionType(functionType);
         var invocationResult = node is BirDelegateInvoke { FuncType.HasValue: true } invoke
             && invoke.FuncType.Value is TypeNode.Fn { Suspend: false, Clr: null } function
                 ? function.Ret : null;

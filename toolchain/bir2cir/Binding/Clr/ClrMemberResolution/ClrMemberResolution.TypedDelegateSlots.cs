@@ -45,7 +45,8 @@ static partial class ClrMemberResolution
             // A function-bounded source TV is a generic value, so the declared
             // function view is crossed explicitly before natural delegate storage.
             var captured = new BirCast { Type = function, E = conversion.E };
-            return Adapt(captured, slot, BoxedDelegateAdapterPlan(function, signature) with {
+            return Adapt(captured, slot, ReturnedFunctionPlan(refs, conversion.SourceFunctionResult, function, signature)
+                ?? BoxedDelegateAdapterPlan(function, signature) with {
                 PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(signature.Ret, refs) }, alwaysArguments: true);
         }
 
@@ -66,7 +67,8 @@ static partial class ClrMemberResolution
             return Adapt((IBirExpression)value, target, VoidDelegateAdapterPlan(refs, localCarriers, natural, target, result), alwaysArguments: false);
         if (PhysicalFunctionShape(refs, target, includeNominal: true) is TypeNode.Fn signatureType
             && NeedsSlotAdapter(refs, localCarriers, natural, signatureType))
-            return Adapt((IBirExpression)value, target, BoxedDelegateAdapterPlan(natural, signatureType), alwaysArguments: true);
+            return Adapt((IBirExpression)value, target, ReturnedFunctionPlan(refs, value.SourceFunctionResult, natural, signatureType)
+                ?? BoxedDelegateAdapterPlan(natural, signatureType), alwaysArguments: true);
 
         // Only the constructor binding follows this retarget operation. Target
         // method/Invoke facts already selected for the natural callable stay intact.

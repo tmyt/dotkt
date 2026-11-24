@@ -13,13 +13,20 @@ private class LastArgument : (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, 
 
 private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.NativeCallbackBase(op)
 
-private typealias WideIntCallback = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int
+private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
+private typealias WideIntCallback = WideCallback<Int>
 private class FirstPlusLast : WideIntCallback {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): Int = a + q
 }
 private class NativeIntCallbackDerived(op: FirstPlusLast) : GenericValueInterop.NativeIntCallbackBase(op)
 private class NativeFunctionDerived(op: WideIntCallback) : GenericValueInterop.NativeIntCallbackBase(op)
+private class CallbackFactory : WideCallback<WideIntCallback> {
+    override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
+                        j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): WideIntCallback =
+        { first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last -> a + q + first + last }
+}
+private class NestedCallbackDerived(op: CallbackFactory) : GenericValueInterop.NestedCallbackBase(op)
 private class NativeGetterDerived : GenericValueInterop.NativeCallbackBase(GenericValueInterop.NativeWideCallbacks.IntResult)
 private class NativeArrayDerived(op: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any)
     : GenericValueInterop.NativeArrayCallbackBase(op)
@@ -53,6 +60,21 @@ class WideFunctionTypeTests {
         var seen = 0
         retAction17 { seen = it }(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
         assertEquals(18, seen)
+    }
+
+    @TestAttribute
+    fun aNativeConsumerCanInvokeTheReturnedFunction() {
+        val factory = CallbackFactory()
+        assertEquals(36, NestedCallbackDerived(factory).Read())
+        val stored: WideCallback<WideIntCallback> = factory
+        assertEquals(36, GenericValueInterop.NativeWideCallbacks.ReadNested(stored))
+        assertEquals(18, GenericValueInterop.NativeWideCallbacks.ReadNested { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ ->
+            FirstPlusLast()
+        })
+        var calls = 0
+        val make: () -> WideIntCallback = { calls++; FirstPlusLast() }
+        assertEquals(18, GenericValueInterop.NativeWideCallbacks.ReadFactory(GenericValueInterop.WideFactory(make)))
+        assertEquals(1, calls)
     }
 
     @TestAttribute

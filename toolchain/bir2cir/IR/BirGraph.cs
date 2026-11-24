@@ -27,7 +27,10 @@ internal abstract record BirGraphValue
     internal bool SourceClrBoundary { get; set; }
     // A source function parameter requires callable adaptation, unlike a nominal
     // delegate parameter. Its closed CLR type is always read from the memberRef.
-    internal bool[]? NativeFunctionParameters { get; set; }
+    internal TypeNode.Fn?[]? NativeFunctionParameters { get; set; }
+    // A callable construction can return another Kotlin function. Its Invoke
+    // result in ordinary delegate storage may have already been erased to object.
+    internal TypeNode.Fn? SourceFunctionResult { get; set; }
     // Reference spreads keep their array operands until physical value lowering.
     internal bool LogicalSpreadOperands { get; set; }
     // A phase-local block carrying a fresh allocation and its ordinary CLR

@@ -395,11 +395,12 @@ static class TypedPhysicalValueCoercion
             Result = view };
     }
     static void CoerceVector(IBirExpression[] values, TypeNode[] targets, Scope scope, Index index,
-        TypeNode[] selected = null, bool[] nativeFunctions = null)
+        TypeNode[] selected = null, BirGraphValue nativeCall = null)
     {
         if (values == null || targets == null || values.Length != targets.Length) return;
         for (var i = 0; i < values.Length; i++) values[i] = CoerceExpression(values[i], targets[i], scope, index,
-            nativeFunctions?[i] == true ? ClrMemberResolution.PhysicalFunctionShape(index.References, targets[i])
+            nativeCall?.NativeFunctionParameters?[i] is {} function
+                ? Close(function, OwnerArgs(Member(nativeCall)), MethodArgs(nativeCall))
                 : selected?.Length == values.Length ? selected[i] : null);
     }
     static void CoerceArray(IBirExpression[] values, TypeNode target, Scope scope, Index index)
@@ -1152,7 +1153,7 @@ static class TypedPhysicalValueCoercion
             case BirReturnExpression value: value.Value = Cross(value.Value, scope.Return, scope.NativeArrayReturn); break;
             case BirValueBlock value: value.Result = C(value.Result, value.Type.OrDefault()); break;
             case BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance:
-                CoerceVector(Arguments(node), ParameterTypes(node), scope, index, Signature(node), node.NativeFunctionParameters); break;
+                CoerceVector(Arguments(node), ParameterTypes(node), scope, index, Signature(node), node); break;
             case BirNew or BirNewClr: CoerceConstructorArguments(node, scope, index); break;
             case BirNewClosure value: CoerceVector(value.Captures.OrDefault(), index.ClosureParameters(value), scope, index); break;
             case BirDelegateInvoke value: CoerceDelegateArguments(value, scope, index); break;

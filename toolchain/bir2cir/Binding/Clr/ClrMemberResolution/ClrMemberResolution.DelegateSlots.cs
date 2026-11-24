@@ -122,6 +122,12 @@ static partial class ClrMemberResolution
             invoke.GetParameters().Select(p => SubstOwnerParams(bindingReferences, p.ParameterType, args)).ToArray(), null, family);
     }
 
+    static TypeNode DelegateSlotCore(TypeNode type) => type switch {
+        TypeNode.Nullable nullable => DelegateSlotCore(nullable.Of),
+        TypeNode.Oblivious oblivious => DelegateSlotCore(oblivious.Of),
+        _ => type,
+    };
+
     static bool HasRepresentationSlotSeam(ReferenceMetadataIndex bindingReferences, IReadOnlyDictionary<string, string> localCarriers,
         TypeNode.Fn natural, TypeNode.Fn target)
     {
@@ -131,15 +137,10 @@ static partial class ClrMemberResolution
             // because they represent the same source parameter. Native witnesses
             // and storage companions cross through the ordinary value adapter.
             && (IsObject(left) || IsObject(right) || left is TypeNode.Tv || right is TypeNode.Tv);
-        static TypeNode Core(TypeNode type) => type switch {
-            TypeNode.Nullable nullable => Core(nullable.Of),
-            TypeNode.Oblivious oblivious => Core(oblivious.Of),
-            _ => type,
-        };
         static bool NeedsNominalDowncast(ReferenceMetadataIndex references, IReadOnlyDictionary<string, string> localCarriers,
             TypeNode value, TypeNode destination) =>
-            Core(destination) is TypeNode.Fqn { Args: { Length: > 0 } } exact
-            && Core(value) is TypeNode.Fqn carrier
+            DelegateSlotCore(destination) is TypeNode.Fqn { Args: { Length: > 0 } } exact
+            && DelegateSlotCore(value) is TypeNode.Fqn carrier
             && (localCarriers?.TryGetValue(exact.Name, out var local) == true && local == carrier.Name
                 || references?.TryExistentialPhysicalOwner(exact.Name, out var referenced) == true
                     && referenced == carrier.Name);
@@ -163,7 +164,9 @@ static partial class ClrMemberResolution
     // crosses each representation seam explicitly. Generic parameters stand for complete slot types rather
     // than borrowing the enclosing method's frame or reproducing its constraints.
     internal sealed record DelegateAdapterPlan(TypeNode.Fn Frame, int Arity, TypeNode Return,
-        TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments, bool PublishReturn = false);
+        TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments, bool PublishReturn = false,
+        ReturnedFunction ResultFunction = null);
+    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source);
 
     // This is representation policy over immutable TypeNodes, shared by the
     // owning construction and final value-flow consumers.
@@ -279,6 +282,7 @@ static partial class ClrMemberResolution
 
     internal static string DelegateAdapterKey(DelegateAdapterPlan plan) =>
         DelegateAdapterKey(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity)
+        + (plan.ResultFunction is {} result ? "|function-result:" + TypeNode.ToJson(result.Selected) : "")
         + (plan.PublishReturn ? "|native-array-return" : "");
 
     static string DelegateAdapterKey(TypeNode.Fn frame, int arity, TypeNode slotReturn,
