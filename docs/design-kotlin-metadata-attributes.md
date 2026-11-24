@@ -188,7 +188,10 @@ constraint rows; their order is not a contract. This does not add a source const
 
 A projected generic method carries `KotlinProjectedMethod` on its physical MethodDef. Its
 MessagePack record's `facets` array identifies the primary CLR method parameter for each appended interface
-witness, in projected-entry order. The following location slots are identified by `addresses`,
+witness, in projected-entry order. Next, `nativeArguments` lists the primary parameter indices whose
+actual CLR type arguments must be preserved inside native generic containers. Their slots carry the
+constraints of those CLR constructions, including dependencies between their arguments, rather than
+the primary Kotlin class witness. Finally, location slots are identified by `addresses`,
 the zero-based operand indices whose actual managed pointees supply the invariant CLR arguments.
 These slots describe storage, not class or interface proofs. Its declaring owner and method keep separate binders. The
 mapping comes from the selected reference declaration; the constraints come from the shipped

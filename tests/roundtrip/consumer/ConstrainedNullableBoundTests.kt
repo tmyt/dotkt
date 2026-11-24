@@ -28,6 +28,7 @@ import roundtrip.constrainedbound.makeNativeJoined
 import roundtrip.constrainedbound.keepMarker
 import roundtrip.constrainedbound.appendMarked
 import roundtrip.constrainedbound.keepNativeOwner
+import roundtrip.constrainedbound.keepNativeRelation
 import RoundtripDependentNative.IMarker
 import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
@@ -506,10 +507,21 @@ class ConstrainedNullableBoundTests {
         val nullableItems = ClrList<ClientItem<*>?>()
         val projectedItems = ClrList<ClientItem<*>>()
         check(appendMarked<ClientItem<*>>(number, projectedItems) === projectedItems && projectedItems[0] === number)
+        check(projectedItems.Count == 2 && projectedItems[1] === number)
         val exactItems = ClrList<ClientItem<String>>()
         check(appendMarked(text, exactItems) === exactItems && exactItems[0] === text)
         val owner = RoundtripDependentNative.Owner<String, NativeChoice<*>>()
         check(keepNativeOwner<String, NativeChoice<*>>(owner) === owner)
+        val relation = RoundtripDependentNative.NullableListSink<ClientItem<*>, ClientItem<*>>()
+        check(keepNativeRelation<ClientItem<*>, ClientItem<*>>(relation, relation) === relation)
+        val writer: MarkedWriter = object : MarkedWriter() {
+            override fun <A> append(value: A, items: ClrList<A>): ClrList<A> where A : PendingItems.Item, A : Mark {
+                items.Clear()
+                return appendMarked(value, items)
+            }
+        }
+        check(writer.append<ClientItem<*>>(text, projectedItems) === projectedItems)
+        check(projectedItems.Count == 2 && projectedItems[0] === text)
         check(keepMarked<ClientItem<*>>(number, null) === number)
         check(keepMarked<ClientItem<*>>(text, nullableItems) === text)
         check(nullableItems[0] == null && nullableItems[1] === text && nullableItems[2] === text)

@@ -410,7 +410,10 @@ def outputs(root, definitions):
         model += [f"internal sealed record {name} : " + ", ".join(bases), "{"]
         # Live binding facts consumed after physical placement. They are not wire-format BIR fields.
         if name in {"BirCallStatic", "BirCallInstance", "BirConstrainedCall", "BirNewDelegate", "BirNewBoundDelegate"}:
-            model += ["    internal override string? SelectedGenericCallable { get; set; }"]
+            model += ["    internal override string? SelectedGenericCallable { get; set; }",
+                      "    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }"]
+        if name == "BirParameter":
+            model += ["    internal TypeNode? DelegateRestorationType { get; set; }"]
         if name == "BirNew":
             model += ["    internal string? ReferencedProjectedFactoryId { get; set; }"]
         if name == "BirCallStatic":

@@ -13,21 +13,27 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         argument is TypeNode.Tv { Scope: "method" } tv && Array.IndexOf(NativeIndices, tv.I) is var i && i >= 0
             ? new TypeNode.Tv("method", PrimaryArity + Facets.Length + i) : argument;
 
-    static TypeNode NativeUses(TypeNode type, ReferenceMetadataIndex references, Func<TypeNode.Tv, TypeNode> variable,
-        Action<TypeNode, Type, TypeNode[]> observeArgument = null) =>
+    // Select at the declaring CLR slot, not recursively from an outer container:
+    // e.g. an inner nominally constrained slot keeps its class witness even if
+    // the outer container is invariant.
+    internal static TypeNode NativeUses(TypeNode type, ReferenceMetadataIndex references,
+        Func<TypeNode.Tv, BirTypeParameter, TypeNode[], bool, TypeNode> variable) =>
         SourceDeclarationSignature.RewriteType(type, owner => {
             if (owner.Args is not { Length: > 0 } args || references?.ResolveForeignProjectionType(owner.Name, args)
                 is not { IsGenericTypeDefinition: true } foreign) return owner;
             var rows = foreign.GetGenericArguments();
             return owner with { Args = args.Select((arg, i) => {
-                if ((rows[i].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask) != 0) return arg;
-                observeArgument?.Invoke(arg, rows[i], args);
-                return TypedExecutableFrames.RewriteType(arg, variable);
+                if (arg is not TypeNode.Tv v) return arg;
+                var row = ReferenceMetadataReader.GenericParamDeclaration(rows[i], native: true);
+                if (row.Constraints.OrEmpty().Select(c => SupertypeGraph.SubstOwnerTvs(c, args))
+                    .OfType<TypeNode.Fqn>().Any(c => !FBoundStarProjectionErasure.IsObjectish(c) && references.IsClassType(c))) return arg;
+                return variable(v, row, args, (rows[i].GenericParameterAttributes &
+                    System.Reflection.GenericParameterAttributes.VarianceMask) == 0) ?? arg;
             }).ToArray() };
         });
 
     internal TypeNode NativeUse(TypeNode type, ReferenceMetadataIndex references) =>
-        type == null || NativeIndices.Length == 0 ? type : NativeUses(type, references, v => NativeArgument(v));
+        type == null || NativeIndices.Length == 0 ? type : NativeUses(type, references, (v, _, _, _) => NativeArgument(v));
 
     internal static bool HasMethodLocation(BirParameter parameter, ReferenceMetadataIndex references)
     {
@@ -41,8 +47,11 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         return dependsOnMethod;
     }
 
+    internal static IEnumerable<TypeNode> MaterialSignature(BirParameter[] operands, TypeNode result) =>
+        operands.Select(p => p.DelegateRestorationType ?? p.Type.OrDefault()).Append(result).Where(t => t != null);
+
     internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands,
-        ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result = null)
+        ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result, Func<int, bool> nominal)
     {
         var formals = frame.Declare().ToList();
         // Only the projected entry separates the nominal class witness from the
@@ -61,14 +70,26 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
                 Evidence = formals[frame.PrimaryArity + i].Constraints.OrEmpty() }).ToArray();
         var native = new SortedSet<int>();
         var requirements = new List<(int Source, BirTypeParameter Row, TypeNode[] Arguments)>();
-        foreach (var type in operands.Select(p => p.Type.OrDefault()).Append(result))
-            if (type != null && facets.Length != 0) NativeUses(type, references, v => {
-                if (v.Scope == "method" && facets.Any(f => f.OwnerIndex == v.I)) native.Add(v.I);
+        foreach (var type in MaterialSignature(operands, result))
+            NativeUses(type, references, (v, row, args, invariant) => {
+                if (v.Scope != "method") return null;
+                if (invariant && (facets.Any(f => f.OwnerIndex == v.I) || nominal(v.I))) native.Add(v.I);
+                requirements.Add((v.I, row, args));
                 return null;
-            }, (arg, row, args) => {
-                if (arg is TypeNode.Tv { Scope: "method" } tv && facets.Any(f => f.OwnerIndex == tv.I))
-                    requirements.Add((tv.I, ReferenceMetadataReader.GenericParamDeclaration(row, native: true), args));
             });
+        // A dependent native row B : A must stay in the same frame as A.
+        // The nominal B : A edge remains on the original Kotlin formals.
+        bool changed;
+        do {
+            changed = false;
+            foreach (var r in requirements)
+                if (!native.Contains(r.Source) && r.Row.Constraints.OrEmpty().Any(c => {
+                    bool depends = false;
+                    BirGraphNameFields.VisitTypeNodes(SupertypeGraph.SubstOwnerTvs(c, r.Arguments), t =>
+                        depends |= t is TypeNode.Tv { Scope: "method" } v && native.Contains(v.I));
+                    return depends;
+                })) changed |= native.Add(r.Source);
+        } while (changed);
         // These formals carry the invariant argument, not the class witness.
         // Their constraints belong to the CLR constructions that use them.
         var firstNative = formals.Count;
@@ -81,7 +102,8 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             var uses = requirements.Where(r => r.Source == index).ToArray();
             var row = new BirTypeParameter { Name = "$native$" + index };
             var bounds = uses.SelectMany(r => r.Row.Constraints.OrEmpty().Select(c =>
-                SupertypeGraph.SubstOwnerTvs(c, r.Arguments.Select(InNativeFrame).ToArray()))).Distinct().ToArray();
+                SupertypeGraph.SubstOwnerTvs(c, r.Arguments.Select(InNativeFrame).ToArray()))).Where(c =>
+                    c != new TypeNode.Tv("method", formals.Count)).Distinct().ToArray();
             var special = uses.SelectMany(r => r.Row.SpecialConstraints.OrEmpty())
                 .Where(s => s != "allowsRefStruct").Distinct().ToArray();
             if (bounds.Length != 0) row.Constraints = bounds;
@@ -184,6 +206,20 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             }
         var proofs = Facets.Select(Facet).ToArray();
         if (proofs.All(p => p == null) && !requireProjectedEntry) return new(false, arguments);
+        // Nominal and material arguments close independently. For B : A,
+        // if A's class witness changed, B's nominal row can use that same
+        // witness; its more precise CLR container argument remains separate.
+        var closedNominal = new HashSet<int>();
+        void CloseNominal(int i)
+        {
+            if (!closedNominal.Add(i) || Parameters[i].Constraints.OrEmpty() is not
+                [TypeNode.Tv { Scope: "method" } upper] || !NativeIndices.Contains(upper.I)) return;
+            CloseNominal(upper.I);
+            if (arguments[upper.I] != actual[upper.I] && arguments[i] != arguments[upper.I] &&
+                !declares(arguments[i], arguments[upper.I]) && !proves(arguments[i], arguments[upper.I]))
+                arguments[i] = arguments[upper.I];
+        }
+        foreach (var i in NativeIndices) CloseNominal(i);
         // A projected callee may need just the interface, not the class.
         // Bind its ordinary parameter to evidence for the constraints on
         // that selected entry, leaving its independent nullable slot alone.

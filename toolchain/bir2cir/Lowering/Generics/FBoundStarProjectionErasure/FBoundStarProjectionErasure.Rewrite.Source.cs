@@ -324,6 +324,13 @@ static partial class FBoundStarProjectionErasure
             return projected;
         }
         var result = proof?.Class ?? projected;
+        if (result != projected && identity != null && call is (BirCallStatic or BirCallInstance or
+            BirNewDelegate or BirNewBoundDelegate or BirConstrainedCall))
+        {
+            var material = call.MaterialMethodArguments?.ToDictionary() ?? [];
+            material[index] = projected;
+            call.MaterialMethodArguments = material;
+        }
         if (result != projected && result is TypeNode.Fqn { Args.Length: > 0 })
         {
             if (byIndex == null) state.MethodWitnesses[call] = byIndex = new();
