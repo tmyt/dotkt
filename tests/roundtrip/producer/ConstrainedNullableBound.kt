@@ -220,5 +220,11 @@ fun localItemResult(): Long {
 }
 
 class StreamChunk<T>(val data: T) : System.IO.MemoryStream()
+private fun <T : System.IO.Stream> streamIdentity(value: T): Any = value
+fun <V : System.IO.Stream> forwardStream(make: () -> V): Any = streamIdentity<V>(make())
+fun <V : System.IO.Stream> deferredStream(make: () -> V): () -> Any = { streamIdentity<V>(make()) }
+class StreamFactory<V : System.IO.Stream>(private val make: () -> V) {
+    fun read(): Any = forwardStream(make)
+}
 class ChunkList<A : System.IO.MemoryStream>(val items: ClrList<A>)
 fun firstChunk(items: ClrList<StreamChunk<*>>): StreamChunk<*> = ChunkList<StreamChunk<*>>(items).items[0]

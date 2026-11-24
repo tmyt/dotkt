@@ -6,7 +6,8 @@ static partial class NullableBodyDispatch
 {
     internal static void Build(NullableRepresentationViews.Owner owner, BirFunctionDeclaration source, BirFunctionDeclaration entry,
         NullableRepresentationFrame ownerFrame, NullableRepresentationFrame entryFrame,
-        NullableRepresentationDemand.Variables bodyDemand, Action<BirFunctionDeclaration, NullableRepresentationFrame> prepare)
+        NullableRepresentationDemand.Variables bodyDemand, Action<BirFunctionDeclaration, NullableRepresentationFrame> prepare,
+        Action<Action> finishStorage = null)
     {
         var roles = Enum.GetValues<NullableRepresentationFrame.Role>().Where(role => role != NullableRepresentationFrame.Role.Ordinary);
         IEnumerable<int> Declared(NullableRepresentationFrame.Role role) => role switch {
@@ -78,7 +79,21 @@ static partial class NullableBodyDispatch
                 };
             }
             if (role is NullableRepresentationFrame.Role.Storage or NullableRepresentationFrame.Role.NullableStorage)
-                current.Body = new IBirStatement[] { new BirReturn { Value = Call(new TypeNode.Fqn("object")) } };
+            {
+                var call = Call(new TypeNode.Fqn("object"));
+                if (role == NullableRepresentationFrame.Role.Storage && finishStorage != null)
+                {
+                    // A body-only slot defaults to erased storage. Use its ordinary
+                    // witness only if the private helper actually needs a physical proof.
+                    var variable = new TypeNode.Tv("method", index);
+                    var slot = targetFrame.Variable(variable, role).I;
+                    finishStorage(() => {
+                        if (target.TypeParams.Value[slot].Constraints.OrEmpty().Length != 0)
+                            call.TypeArgs.Value[slot] = currentFrame.Variable(variable, NullableRepresentationFrame.Role.Ordinary);
+                    });
+                }
+                current.Body = new IBirStatement[] { new BirReturn { Value = call } };
+            }
             else
             {
                 var ordinary = currentFrame.Variable(new TypeNode.Tv("method", index), NullableRepresentationFrame.Role.Ordinary);
