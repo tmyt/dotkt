@@ -180,6 +180,11 @@ static partial class FBoundStarProjectionErasure
         // parameters require the original, unprovable joint constraint.
         var throughOuter = BindOuter();
         if (!ReferenceEquals(throughOuter, node)) return throughOuter;
+        if (state.Projection.InterfaceCarrierConstruction(owner) is { } closed)
+        {
+            construction.Type = closed;
+            return construction;
+        }
         if (signature.Any(type => type == null) || !ConstructionHasHiddenWitnessSource(owner, state, signature)) return node;
         var result = state.Projection.Rewrite(owner);
         if (result is TypeNode.Fqn projected && projected.Name == owner.Name) return node;

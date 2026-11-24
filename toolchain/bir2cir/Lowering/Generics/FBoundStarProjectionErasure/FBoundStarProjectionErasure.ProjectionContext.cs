@@ -483,6 +483,53 @@ static partial class FBoundStarProjectionErasure
             return arguments;
         }
 
+        internal TypeNode.Fqn InterfaceCarrierConstruction(TypeNode.Fqn owner)
+        {
+            RequireSourceClock();
+            if (!TryExistentialCarrier(owner.Name, out _)) return null;
+            var application = SelectPhysicalClassApplication(owner);
+            if (application.Parameters == null) return null;
+            var proposed = (TypeNode[])owner.Args.Clone();
+            var constrained = false;
+            for (int i = 0; i < proposed.Length; i++)
+            {
+                if (!ContainsExistentialProjection(proposed[i])) continue;
+                if (StripSourceNullability(proposed[i]) is not TypeNode.Fqn arg || !TryExistentialCarrier(arg.Name, out var name)
+                    || application.Parameters[i].SpecialConstraints.OrEmpty().Any(s => s != "class")) return null;
+                proposed[i] = new TypeNode.Fqn(name);
+                constrained |= application.Parameters[i].Constraints.OrEmpty().Any(b => b is TypeNode.Fqn f && !IsObjectish(f));
+            }
+            if (!constrained) return null;
+            // Only a native obligation needs the carrier as the CLR primary
+            // argument. Pure Kotlin bounds keep their established witness and
+            // value slots; replacing a usable witness can erase a use-site bound.
+            var native = NativeSupertypeConstraints(owner.Name, proposed.Length);
+            if (!Enumerable.Range(0, proposed.Length).Any(i => proposed[i] != owner.Args[i]
+                && (NativeProofs.ExactTypeArgument(owner.Name, i) || native.Native.Contains(i)
+                    || native.Fixed.Any(row => row.Index == i)))) return null;
+            // Proof and newobj must name the same arguments, including the slot
+            // assigned to a sibling bound. An operand's runtime class is not
+            // the type argument of an invariant native interface.
+            var selected = owner with { Args = proposed };
+            var physical = ((TypeNode.Fqn)Rewrite(selected, preserveConstructedHead: true)).Args;
+            synthesizedHierarchy ??= SupertypeGraph.CollectSource(Preparation.Bindings.SourceRoots.Select(r => (BirFileDeclaration)r.Source));
+            Preparation.Bindings.SourceDefinitions.TryGetValue(owner.Name, out var local);
+            for (int i = 0; i < physical.Length; i++)
+                foreach (var constraint in application.Parameters[i].Constraints.OrEmpty())
+                {
+                    // Unchanged slots may contain the caller's open type variables.
+                    // Only constraints affected by this substitution need a new proof.
+                    var changed = proposed[i] != owner.Args[i];
+                    if (!changed) BirGraphNameFields.VisitTypeNodes(constraint, part =>
+                        changed |= part is TypeNode.Tv { Scope: "type" } tv && proposed[tv.I] != owner.Args[tv.I]);
+                    if (!changed) continue;
+                    var bound = local == null ? constraint : Rewrite(constraint, NativeProofs.IsPhysicalConstraint(local, i, constraint));
+                    var closed = SupertypeGraph.SubstOwnerTvs(bound, physical);
+                    if (!IsObjectish(closed) && !ProjectedConstructorPlan.Proves(physical[i], closed, synthesizedHierarchy, References)) return null;
+                }
+            return selected;
+        }
+
         internal StorageWitness ClassStorageWitness(WitnessSlot slot,
             Func<int, TypeNode> closeArgument, bool allowIntersection, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
         {
