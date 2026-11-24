@@ -20,8 +20,12 @@ static partial class FunctionValueRepresentation
             && invoke.FuncType.Value is TypeNode.Fn { Suspend: false, Clr: null } function
                 ? function.Ret : null;
         var declaredDelegate = node.HasDeclaredDelegateSlot;
+        // A native declaration is not Kotlin function-value storage. Its open
+        // parameter types are still needed for exact member selection.
+        var nativeMethod = node.SourceClrBoundary && node is BirNativeStatic or BirNativeInstance;
         node.RewriteOwnTypeFieldsInPlace((field, _, type) =>
-            PreserveField(field) || field == "funcType" && declaredDelegate ? type : RepresentType(type, isByRefLike));
+            PreserveField(field) || field == "funcType" && declaredDelegate ||
+            field == "resolvedMemberParams" && nativeMethod ? type : RepresentType(type, isByRefLike));
         node.VisitOwnChildSlots((field, _, slot) => {
             if (PreserveField(field)) return;
             var child = slot.Value;

@@ -174,10 +174,17 @@ static partial class ClrMemberResolution
         var plan = NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
         WriteNativeMethodSelection(node, plan);
         StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        // MemberRef owns CLR linkage. Keep the function slot for argument
+        // adaptation after the open member descriptor has been consumed.
+        OptionalField<TypeNode[]> functionSlots = selectedSignature?.Any(t => t is TypeNode.Fn) == true
+            ? OptionalField<TypeNode[]>.Of(selectedSignature) : default;
         switch (node)
         {
-            case BirNativeStatic call: call.ArgTypes = default; call.ResolvedMemberParams = default; break;
+            case BirNativeStatic call:
+                if (!call.Sig.IsPresent) call.Sig = functionSlots;
+                call.ArgTypes = default; call.ResolvedMemberParams = default; break;
             case BirNativeInstance call:
+                if (!call.Sig.IsPresent) call.Sig = functionSlots;
                 call.ArgTypes = default; call.ResolvedMemberParams = default; call.Dispatch = plan.Dispatch; break;
         }
     }
