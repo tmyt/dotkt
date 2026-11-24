@@ -31,6 +31,8 @@ static class TypedPhysicalValueCoercion
             LocalFunctionRuntime = roots.Any(root => root.FileClass.OrDefault() == FunctionValueRepresentation.FunctionRuntime),
             LocalArrayRuntime = roots.Any(root => root.FileClass.OrDefault() == ArrayRuntime),
         };
+        if (localCarriers != null)
+            foreach (var (owner, carrier) in localCarriers) index.CarrierClasses[carrier] = owner;
         foreach (var root in roots)
         {
             index.Document = root;
@@ -141,6 +143,28 @@ static class TypedPhysicalValueCoercion
             || nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
         internal bool PlainLocalClass(TypeNode component) => component is TypeNode.Fqn { Args: null } owner
             && nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
+        internal readonly Dictionary<string, string> CarrierClasses = new(StringComparer.Ordinal);
+        readonly Dictionary<(TypeNode, TypeNode), bool> classBases = new();
+        internal bool CarrierTarget(TypeNode.Fqn target, TypeNode.Fqn carrier) =>
+            HasDeclaredCarrier(target, carrier) || CarrierClassBase(target, carrier);
+
+        bool CarrierClassBase(TypeNode.Fqn target, TypeNode.Fqn carrier)
+        {
+            if (classBases.TryGetValue((target, carrier), out var cached)) return cached;
+            // The interface itself does not establish this class on the CLR stack.
+            // Prove the base from the carrier's recorded class, leaving every
+            // unknown argument open rather than inventing a closed application.
+            static TypeNode.Fqn Open(string name, int arity) =>
+                new(name, arity == 0 ? null : Enumerable.Repeat<TypeNode>(new TypeNode.Star(), arity).ToArray());
+            TypeNode.Fqn owner = null;
+            if (CarrierClasses.TryGetValue(carrier.Name, out var name) && types.TryGetValue(name, out var def))
+                owner = Open(name, def.Arity);
+            else if (References?.ExistentialSourceType(carrier.Name) is { } source)
+                owner = Open(References.RecordedPhysicalTypeName(source.Name), source.Args?.Length ?? 0);
+            return classBases[(target, carrier)] = owner != null && !IsValue(target) &&
+                (types.TryGetValue(target.Name, out var dest) ? dest.Kind == "class" : References?.IsClassType(target) == true)
+                && SupertypeGraph.Reaches(owner, target, types, References);
+        }
         internal bool IsStackOnly(TypeNode type) => type is TypeNode.Fqn named
             && !(types.TryGetValue(named.Name, out var local) && local.Arity == (named.Args?.Length ?? 0))
             && References?.IsByRefLikeFqn(named) == true;
@@ -372,7 +396,7 @@ static class TypedPhysicalValueCoercion
     }
     static bool NeedsConversion(TypeNode source, TypeNode target, Index index) =>
         PhysicalValueCoercion.NeedsConversion(source, target, index.IsValue,
-            index.IsExistentialOwner, index.IsNativeReference, index.HasDeclaredCarrier)
+            index.IsExistentialOwner, index.IsNativeReference, index.CarrierTarget)
         || index.NarrowsReference(source, target);
 
     static BirGraphValue Coerce(BirGraphValue value, TypeNode target, Scope scope, Index index)

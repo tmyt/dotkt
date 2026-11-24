@@ -9,7 +9,7 @@ static partial class PhysicalValueCoercion
 {
     internal static bool NeedsConversion(TypeNode source, TypeNode target, ValueTypeOracle isValue,
         Func<TypeNode.Fqn, bool> isExistentialOwner, Func<TypeNode.Fqn, bool> isNativeReference,
-        Func<TypeNode.Fqn, TypeNode.Fqn, bool> hasDeclaredCarrier)
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> isCarrierTarget)
     {
         source = SignatureValueTypes.Of(source);
         target = SignatureValueTypes.Of(target);
@@ -23,9 +23,9 @@ static partial class PhysicalValueCoercion
         || source is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
             && IsReferenceSlot(target, isValue)
             && target is not TypeNode.Fqn { Args: null, Name: "object" or "System.Object" }
-        || source is TypeNode.Fqn carrier && target is TypeNode.Fqn native
+        || source is TypeNode.Fqn carrier && target is TypeNode.Fqn slot
             && isExistentialOwner(carrier)
-            && (isNativeReference(native) || hasDeclaredCarrier(native, carrier))
+            && (isNativeReference(slot) || isCarrierTarget(slot, carrier))
         || CollectionViewFaces.IsViewSeam(source, target)
         || source is TypeNode.Fqn { Name: "System.Array" } && target is TypeNode.Array
         // A concrete value or generic stack slot is not a reference, even when its boxed value implements the

@@ -86,7 +86,9 @@ fun <E : Element> echoCapturedKey(key: Key<E>): Key<E> = key
 fun readCapturedKeyResult(key: Key<*>): Key<*> = echoCapturedKey(key)
 
 open class NativeListRoot
-class NativeListLeaf<T>(val value: T) : NativeListRoot()
+class NativeListLeaf<T>(val value: T) : NativeListRoot() {
+    class Nested<U> : NativeListRoot()
+}
 fun <A : NativeListRoot> takeNativeHead(xs: CsList<A>): A {
     val head = xs[0]
     xs.RemoveAt(0)
