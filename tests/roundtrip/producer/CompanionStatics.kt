@@ -159,6 +159,11 @@ fun updateRestrictedTag(value: Int) {
     Tag.restricted = value
 }
 private var computedTagState: Int = 3
+var lastPayload: Any? = null
+    set(value) { field = value }
+companion var Tag.payload: Any?
+    get() = lastPayload
+    set(value) { lastPayload = value }
 companion var Tag.computed: Int
     get() = computedTagState
     set(value) { computedTagState = value + 1 }
