@@ -4,6 +4,7 @@ namespace GenericValueInterop;
 
 public interface ICollectionOverloadSlot { string Pick(object value); }
 public class CollectionOverloadBase { public virtual string Pick(object value) => "base"; }
+public sealed class CaptureBox<T> where T : allows ref struct { }
 
 public static class CollectionStorageApi
 {
@@ -24,8 +25,12 @@ public static class CollectionStorageApi
 
 #nullable enable
     public static void Append<T>(List<T> items, T? value) where T : notnull => items.Add(value!);
+    public static object NullableIntList() => new List<int?>();
     public static int CountWith<T, W>(List<T> items, W witness)
         where T : System.IO.Stream where W : allows ref struct => items.Count;
+    public static string IdentifyWith<T>(CaptureBox<T> box, T? value, System.ReadOnlySpan<char> tag)
+        where T : System.IDisposable, allows ref struct => value is null ? typeof(T).Name + ":" + tag.ToString()
+            : throw new System.InvalidOperationException("Expected the supplied null");
 #nullable restore
 }
 

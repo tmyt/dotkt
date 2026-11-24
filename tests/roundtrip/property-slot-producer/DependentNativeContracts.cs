@@ -32,6 +32,10 @@ public class Selector
     public virtual T Choose<T>(T first, T last) where T : Base, IMarker<string> => first;
     public virtual Y Pair<X,Y>(X first, Y second) where X : Base, IMarker<string> where Y : Base, IMarker<string> => second;
     public virtual IKey<Y> Capture<X,Y>(X value, IKey<Y> key) where X : Base, IMarker<string> => key;
+#nullable enable
+    public void AppendNullable<X,Y>(X witness, System.Collections.Generic.List<Y> items, Y? value)
+        where X : Base, IMarker<string> => items.Add(value!);
+#nullable restore
     public virtual IKey<Y> Capture<X,Y>(X value, IKey<Y> key, ref int visits) where X : Base, IMarker<string>
     { visits++; return key; }
     public virtual T Apply<T>(T value, System.Action callback) where T : Base, IMarker<string>

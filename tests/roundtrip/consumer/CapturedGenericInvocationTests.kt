@@ -10,11 +10,15 @@ private fun lookupHere(context: Lookup, element: Element): Element? = context.lo
 private fun takeProjected(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = takeNativeHead(xs)
 private fun readWithNull(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = optionalNativeHead(xs, null)
 private fun appendNull(xs: CsList<out Any>) = GenericValueInterop.CollectionStorageApi.Append(xs, null)
+private fun appendJoint(witness: roundtrip.constrainedbound.NativeChoice<*>, xs: CsList<out Any>) =
+    RoundtripDependentNative.Selector().AppendNullable(witness, xs, null)
 private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
 private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Long>) = xs.Add(leaf)
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
+private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
+    GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
     inner class Caller {
         fun clear(items: CsList<out System.IO.Stream>): Unit =
@@ -38,10 +42,22 @@ class CapturedGenericInvocationTests {
     @TestAttribute fun nullCannotBecomeAValueOfTheCapturedNativeType() {
         val ints = CsList<Int>()
         var rejected = false
-        try { appendNull(ints) } catch (_: Throwable) { rejected = true }
+        try { appendNull(ints) } catch (_: ClassCastException) { rejected = true }
         check(rejected && ints.Count == 0)
+        val witness = roundtrip.constrainedbound.NativeChoice("joint")
+        rejected = false
+        try { appendJoint(witness, ints) } catch (_: ClassCastException) { rejected = true }
+        check(rejected && ints.Count == 0)
+        val strings = CsList<String>()
+        appendNull(strings)
+        appendJoint(witness, strings)
+        check(strings.Count == 2)
+        val nullableInts = GenericValueInterop.CollectionStorageApi.NullableIntList() as CsList<out Any>
+        appendNull(nullableInts)
+        check(nullableInts.Count == 1)
     }
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
+        check(identifyWithSpan(GenericValueInterop.CaptureBox<System.IO.MemoryStream>()) == "MemoryStream:value")
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
         val derived = CsList<System.IO.MemoryStream>()
         derived.Add(System.IO.MemoryStream())
