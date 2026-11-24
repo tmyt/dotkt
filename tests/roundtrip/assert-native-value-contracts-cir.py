@@ -33,7 +33,10 @@ getter = next(item for item in carrier["methods"]
               in facts(item, "KotlinPropertyAccessor"))
 replace = next(item for item in native["methods"] if item["name"] == "replaceExportedField")
 assert replace["params"][0]["type"] == {"t": "fqn", "name": carrier["name"]}
-call = next(item for item in nodes(replace["body"]) if item.get("k") == "clrGenericStatic")
+call, = (item for item in nodes(replace["body"])
+         if item.get("k") == "clrGenericStatic"
+         and item["memberRef"]["declaringType"]["name"] == "GenericValueInterop.GenericFrameApi"
+         and item["memberRef"]["name"] == "SetAndObserve")
 tv = {"t": "tv", "scope": "method", "i": 0}
 assert call["typeArgs"] == [tv]
 assert call["memberRef"]["parameterTypes"][:2] == [{"t": "byRef", "of": tv}] * 2
