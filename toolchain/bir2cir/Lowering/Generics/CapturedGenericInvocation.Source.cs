@@ -436,7 +436,12 @@ static partial class CapturedGenericInvocation
             // existing edge with a verifier-green but uncallable thunk.
             var rows = CaptureRows(capture, declarationParameters, refs);
             var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
-            if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, closedSlots))) return call.Node;
+            // A literal null supplies no independent construction and is not a capture witness.
+            static bool IsNullLiteral(IBirExpression operand) => operand is BirConstant c
+                && (c.Value.IsNull || c.Value.OrDefault() is BirLiteral.NullLiteral);
+            for (var i = 0; i < arguments.Length; i++)
+                if (!captureIndices.Contains(i) && !IsNullLiteral(arguments[i])
+                    && ContainsCapturedSlot(declarationParameters[i], closedSlots)) return call.Node;
 
             if (typedInput)
             {
