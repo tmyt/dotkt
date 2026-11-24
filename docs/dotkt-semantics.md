@@ -75,7 +75,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   encode Kotlin's nominal read-only/mutable classifier. `bir2cir` therefore derives type-witness demand from operations such as `is T`
   and checked reified casts, and propagates it structurally through exact calls and lifted frames. Only demanded
   method type parameters receive one hidden witness tuple separate from generic storage. It carries
-  nullability/nominal flags, the runtime classifier, an optional classifier predicate, and the reflected Kotlin shape when needed.
+  nullability/nominal flags, the runtime classifier, an optional classifier predicate, and an object slot
+  for the reflected Kotlin shape. For example, `typeOf<T>()` can need a full Kotlin type descriptor, whereas
+  `T::class` only needs the class token to distinguish erased collection declarations. When neither shape
+  nor collection token is supplied, the fourth slot is null.
   The predicate expresses a Kotlin superclass whose native CLR values cannot inherit its runtime class.
   Thus `is Int?` accepts null and boxed integers,
   but not an unrelated value merely because its storage fits `Object`. Opaque foreign generic classifiers carry
@@ -85,7 +88,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   operation still owns null rejection: checked casts governed by the witness, including direct casts to Kotlin
   collection classifiers, throw `NullPointerException` for null when the target is non-null, while a non-null value
   with the wrong classifier throws `ClassCastException`. Nullable targets accept null.
-  A `reified T` used only by `T::class`, for example, receives no witness. Calls construct a witness from a concrete source
+  A reified class literal can itself demand a witness; it does not require a full type descriptor. Calls construct a witness from a concrete source
   type and forward it when the argument is another reified parameter. The facts
   are separate compiler-internal ABI: `[KotlinDeclarationIdentity]` carries semantic `reified` indices and physical
   witness indices across a DLL boundary; `dll2klib` restores the former and hides the latter. If the
