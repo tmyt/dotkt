@@ -37,7 +37,8 @@ class CapturedGenericInvocationTests {
         check(narrow.Count == 0)
 
         val broad = CsList<NativeListRoot>()
-        broad.Add(NativeListRoot())
+        broad.Add(leaf)
+        check(broad[0] === leaf)
         clearProjected(broad)
         check(broad.Count == 0)
     }
