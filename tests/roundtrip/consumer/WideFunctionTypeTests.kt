@@ -34,6 +34,8 @@ class WideFunctionTypeTests {
         native.Callback = FirstPlusLast()
         assertEquals(18, native.Read())
         assertEquals(18, NativeFunctionDerived(FirstPlusLast()).Read())
+        assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read(FirstPlusLast()))
+        assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read<String>(FirstPlusLast()))
         assertEquals(18, NativeGetterDerived().Read())
         val array = arrayOf(CallbackBox("text"))
         val returning = NativeArrayDerived { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> array }

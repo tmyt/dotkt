@@ -25,6 +25,9 @@ internal abstract record BirGraphValue
     // keep it until final value coercion; it is not source or wire metadata.
     // Compiler-authored runtime operations are not source CLR publication sites.
     internal bool SourceClrBoundary { get; set; }
+    // A source function parameter requires callable adaptation, unlike a nominal
+    // delegate parameter. Its closed CLR type is always read from the memberRef.
+    internal bool[]? NativeFunctionParameters { get; set; }
     // Reference spreads keep their array operands until physical value lowering.
     internal bool LogicalSpreadOperands { get; set; }
     // A phase-local block carrying a fresh allocation and its ordinary CLR

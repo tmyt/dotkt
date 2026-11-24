@@ -174,9 +174,11 @@ static partial class ClrMemberResolution
         var plan = NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args, instance ? Dispatch(selected, open, superCall) : null);
         WriteNativeMethodSelection(node, plan);
         StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        MarkFunctionParameters(node, selectedSignature);
         switch (node)
         {
-            case BirNativeStatic call: call.ArgTypes = default; call.ResolvedMemberParams = default; break;
+            case BirNativeStatic call:
+                call.ArgTypes = default; call.ResolvedMemberParams = default; break;
             case BirNativeInstance call:
                 call.ArgTypes = default; call.ResolvedMemberParams = default; call.Dispatch = plan.Dispatch; break;
         }
@@ -211,7 +213,14 @@ static partial class ClrMemberResolution
             call.Dispatch = plan.Dispatch; call.ReceiverMode = open.IsValueType ? "address" : "value";
         }
         StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, node.ApplicationTypeArguments.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        MarkFunctionParameters(node, signature);
         ClearNativeGenericDescriptor(node);
+    }
+
+    static void MarkFunctionParameters(BirGraphValue node, TypeNode[] signature)
+    {
+        if (signature?.Any(type => type is TypeNode.Fn) == true)
+            node.NativeFunctionParameters = signature.Select(type => type is TypeNode.Fn).ToArray();
     }
 
     static void ClearNativeGenericDescriptor(BirGraphValue node)

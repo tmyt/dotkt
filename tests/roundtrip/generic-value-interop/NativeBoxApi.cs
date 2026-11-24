@@ -93,6 +93,15 @@ public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int
 }
 public static class NativeWideCallbacks
 {
+    public static int Read<T>(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int, int> callback) => Read(callback);
+    public static int Read<T>(DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+        object, object, object, object, object, object, object, object, object, object, object, object> callback) => -1;
+    public static int Read(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int, int> callback) =>
+        callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+    public static int Read(DotKt.Runtime.CompilerServices.KFunc<string, string, string, string, string, string,
+        string, string, string, string, string, string, string, string, string, string, string, int> callback) => -1;
     public static DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object, object,
         object, object, object, object, object, object, object, object, object, object, int> IntResult =>
         (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q) => (int)a + (int)q;

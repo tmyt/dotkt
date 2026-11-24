@@ -31,41 +31,41 @@ static class ClrDeclarationMatching
         {
             var parameters = constructor.GetParameters();
             return parameters.Length == declaration.Count && parameters.Select((parameter, index) =>
-                DeclaredConstructorSlotMatches(references, declaration[index],
+                DeclaredSlotMatches(references, declaration[index],
                     references.FunctionSignatureDiscriminator(parameter) ?? parameter.ParameterType)).All(match => match);
         }).ToList();
         return exact.Count == 1 ? exact[0] : throw new InvalidOperationException(
             $"bir2cir: {context} resolves to {exact.Count} constructor declarations, expected exactly one");
     }
 
-    internal static bool DeclaredConstructorSlotMatches(ReferenceMetadataIndex references, TypeNode selected, Type parameter)
+    internal static bool DeclaredSlotMatches(ReferenceMetadataIndex references, TypeNode selected, Type parameter)
     {
         selected = BirTypeLowering.CanonicalPhysicalSlotType(selected);
         if (selected is TypeNode.Oblivious oblivious)
-            return DeclaredConstructorSlotMatches(references, oblivious.Of, parameter);
+            return DeclaredSlotMatches(references, oblivious.Of, parameter);
         parameter = AliasResolve(references, parameter);
         if (parameter.IsGenericParameter)
             return selected is TypeNode.Tv tv && tv.I == parameter.GenericParameterPosition
                 && tv.Scope == (parameter.DeclaringMethod == null ? "type" : "method");
         if (parameter.IsByRef)
-            return selected is TypeNode.ByRef byref && DeclaredConstructorSlotMatches(references, byref.Of, parameter.GetElementType());
+            return selected is TypeNode.ByRef byref && DeclaredSlotMatches(references, byref.Of, parameter.GetElementType());
         if (parameter.IsPointer)
-            return selected is TypeNode.Ptr pointer && DeclaredConstructorSlotMatches(references, pointer.Of, parameter.GetElementType());
+            return selected is TypeNode.Ptr pointer && DeclaredSlotMatches(references, pointer.Of, parameter.GetElementType());
         if (parameter.IsArray)
             return selected is TypeNode.Array array && array.Rank == SafeArrayRank(parameter)
                 && array.SzArray == parameter.IsSZArray
-                && DeclaredConstructorSlotMatches(references, array.Elem, parameter.GetElementType());
+                && DeclaredSlotMatches(references, array.Elem, parameter.GetElementType());
         if (selected is TypeNode.Nullable nullable)
             return parameter.IsGenericType && SafeDef(parameter) == NullableDef(references)
-                && DeclaredConstructorSlotMatches(references, nullable.Of, parameter.GetGenericArguments()[0]);
+                && DeclaredSlotMatches(references, nullable.Of, parameter.GetGenericArguments()[0]);
         if (selected is TypeNode.Fn function)
         {
             if (!IsDelegateType(parameter) || function.Clr != DelegateFamily(parameter)) return false;
             var invoke = parameter.GetMethod("Invoke");
             var delegateParameters = function.DelegateParams;
             return invoke != null && delegateParameters.Length == invoke.GetParameters().Length
-                && delegateParameters.Select((p, i) => DeclaredConstructorSlotMatches(references, p, invoke.GetParameters()[i].ParameterType)).All(match => match)
-                && DeclaredConstructorSlotMatches(references, function.Ret, invoke.ReturnType);
+                && delegateParameters.Select((p, i) => DeclaredSlotMatches(references, p, invoke.GetParameters()[i].ParameterType)).All(match => match)
+                && DeclaredSlotMatches(references, function.Ret, invoke.ReturnType);
         }
         if (selected is not TypeNode.Fqn named) return false;
         var arguments = named.Args ?? Array.Empty<TypeNode>();
@@ -73,7 +73,7 @@ static class ClrDeclarationMatching
         if (definition == null || SafeDef(definition) != SafeDef(parameter)) return false;
         var parameters = parameter.IsGenericType ? parameter.GetGenericArguments() : Type.EmptyTypes;
         return arguments.Length == parameters.Length
-            && arguments.Select((arg, i) => DeclaredConstructorSlotMatches(references, arg, parameters[i])).All(match => match);
+            && arguments.Select((arg, i) => DeclaredSlotMatches(references, arg, parameters[i])).All(match => match);
     }
 
     internal static MethodInfo SelectedGenericDeclaration(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, Type owner, string name, int arity, bool instance,
@@ -104,7 +104,7 @@ static class ClrDeclarationMatching
         // Call descriptors are open declaration vectors. Override descriptors instead belong to the implementer's
         // frame; substitute the explicitly selected native owner before exact comparison, never accept either frame.
         var exact = candidates.Where(candidate => parameterOwnerArguments == null
-            ? Match(references, candidate.GetParameters(), signature, null) == MatchKind.Exact
+            ? Match(references, candidate.GetParameters(), signature, null, selectedDeclaration: true) == MatchKind.Exact
             : (references.NativeMethodSignature(candidate)?.Parameters
                 ?? candidate.GetParameters().Select(parameter => RefTypeOf(references, localTypes, parameter.ParameterType)).ToArray())
                 .Select(parameter => CanonicalNativeFormalType(references,
@@ -179,14 +179,17 @@ static class ClrDeclarationMatching
         try { return derived.GetInterfaces().Any(i => SafeDef(i) == SafeDef(baseIface)); } catch { return false; }
     }
 
-    internal static MatchKind Match(ReferenceMetadataIndex references, ParameterInfo[] ps, List<TypeNode> argNodes, TypeNode[] ownerArgs)
+    internal static MatchKind Match(ReferenceMetadataIndex references, ParameterInfo[] ps, List<TypeNode> argNodes, TypeNode[] ownerArgs,
+        bool selectedDeclaration = false)
     {
         if (ps.Length != argNodes.Count) return MatchKind.No;
         var acc = MatchKind.Exact;
         for (int i = 0; i < ps.Length; i++)
         {
             MatchKind m;
-            if (NativeSignatureReader.ContainsPointer(ps[i].ParameterType)
+            if (selectedDeclaration && argNodes[i] is TypeNode.Fn { Clr: not null } function)
+                m = DeclaredSlotMatches(references, function, ps[i].ParameterType) ? MatchKind.Exact : MatchKind.No;
+            else if (NativeSignatureReader.ContainsPointer(ps[i].ParameterType)
                 && references.NativeMethodSignature((MethodBase)ps[i].Member) is { } native)
             {
                 var actual = BirTypeLowering.LowerPhysicalType(argNodes[i], references.Aliases,

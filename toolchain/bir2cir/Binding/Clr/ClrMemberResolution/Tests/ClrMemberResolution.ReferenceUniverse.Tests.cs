@@ -16,7 +16,7 @@ static partial class ClrMemberResolution
             {
                 var integer = references.ResolveRefType("System.Int32");
                 var nullable = references.ResolveRefType("System.Nullable", 1).MakeGenericType(integer);
-                if (!ClrDeclarationMatching.DeclaredConstructorSlotMatches(references, new TypeNode.Nullable(new TypeNode.Fqn("System.Int32")), nullable))
+                if (!ClrDeclarationMatching.DeclaredSlotMatches(references, new TypeNode.Nullable(new TypeNode.Fqn("System.Int32")), nullable))
                     throw new InvalidOperationException("Native nullable selection retained another reference universe's Type handle");
                 if (ClrDeclarationMatching.SystemArrayMlc(references) != references.ResolveRefType("System.Array"))
                     throw new InvalidOperationException("Native array selection retained another reference universe's Type handle");
