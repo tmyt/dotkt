@@ -17,6 +17,11 @@ public sealed class NullableListSink<T,Y> where T : Y
     public void Append<X>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);
 }
 public interface IJoinedValue<T> where T : ILeft, IRight { }
+public static class JoinedSlot
+{
+    public static bool Holds<T>(IJoinedValue<T> owner, object item) where T : ILeft, IRight =>
+        owner != null && item is T;
+}
 public class Base { }
 public class MarkedBase : Base, IMarker<string> { }
 public class FixedJoint : Base, Family.IMark<string> { }

@@ -351,6 +351,13 @@ class ConstrainedNullableBoundTests {
     }
     private interface LeftChild : RoundtripDependentNative.ILeft
     private class JoinedChild<T> : Base(), LeftChild, RoundtripDependentNative.IRight
+    private class JoinedPair<A, B : A, Extra : Base>(val first: A, val second: A, val extra: Extra) : RoundtripDependentNative.IJoinedValue<A>
+        where A : LeftChild, A : RoundtripDependentNative.IRight
+    private fun <E : Base> checkDirectPair(first: JoinedChild<Int>, second: JoinedChild<String>, extra: E) {
+        val pair = JoinedPair<JoinedChild<*>, JoinedChild<*>, E>(first, second, extra)
+        check(pair.first === first && pair.second === second && pair.extra === extra)
+        check(RoundtripDependentNative.JoinedSlot.Holds<JoinedChild<*>>(pair, second))
+    }
     private class JoinedProduct<A> : RoundtripDependentNative.IJoinedValue<A>
         where A : Base, A : RoundtripDependentNative.ILeft, A : RoundtripDependentNative.IRight
     private class ParameterlessFactory : roundtrip.constrainedbound.JoinedFactoryContract() {
@@ -419,6 +426,9 @@ class ConstrainedNullableBoundTests {
     fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
         val value = Child<Int>()
         val item = JoinedChild<Int>()
+        val projected = roundtrip.constrainedbound.JoinedValue<JoinedChild<*>>(item)
+        check(projected.item === item && RoundtripDependentNative.JoinedSlot.Holds<JoinedChild<*>>(projected, item))
+        checkDirectPair(item, JoinedChild<String>(), item)
         val exact = JoinedValueFactory<JoinedChild<*>>()
         val localValue = exact.local(item)
         check(localValue.item === item && localValue.nativeItems.Count == 0)
