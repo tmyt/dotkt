@@ -1082,24 +1082,33 @@ sealed partial class Emitter
             deterministicIdProvider: _deterministic ? DeterministicPeId : null);
         var blob = new BlobBuilder();
         var imageId = peBuilder.Serialize(blob);
-        var imageBytes = blob.ToArray();
-        if (_deterministic)
+        Action<FileStream> writeImage;
+        if (!_deterministic && _portablePdbPath == null)
         {
-            imageId.Guid.TryWriteBytes(imageBytes.AsSpan(ModuleVersionIdOffset(imageBytes), 16));
-            if (_portablePdbPath != null)
-            {
-                symbolsId = imageId;
-                SetSymbolsId(imageBytes, symbolsId);
-            }
+            writeImage = blob.WriteContentTo;
         }
-        if (_portablePdbPath != null)
-            WritePortablePdb(imageBytes, metadata.GetRowCounts(), entryPoint, symbolsId);
+        else
+        {
+            var imageBytes = blob.ToArray();
+            if (_deterministic)
+            {
+                imageId.Guid.TryWriteBytes(imageBytes.AsSpan(ModuleVersionIdOffset(imageBytes), 16));
+                if (_portablePdbPath != null)
+                {
+                    symbolsId = imageId;
+                    SetSymbolsId(imageBytes, symbolsId);
+                }
+            }
+            if (_portablePdbPath != null)
+                WritePortablePdb(imageBytes, metadata.GetRowCounts(), entryPoint, symbolsId);
+            writeImage = fs => fs.Write(imageBytes);
+        }
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
         // reader (dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
         // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,
         // so a reader always sees either the whole old file or the whole new one — never a torn write.
         var dllPath = _referenceAssemblyPath ?? Path.Combine(_outDir, _asmName + ".dll");
-        AtomicFile.Write(dllPath, fs => fs.Write(imageBytes));
+        AtomicFile.Write(dllPath, writeImage);
         Console.WriteLine(_referenceAssemblyPath == null ? $"emitted {_asmName}.dll" : $"emitted reference assembly {dllPath}");
     }
 
