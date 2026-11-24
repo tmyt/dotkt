@@ -436,12 +436,22 @@ static partial class CapturedGenericInvocation
             // existing edge with a verifier-green but uncallable thunk.
             var rows = CaptureRows(capture, declarationParameters, refs);
             var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
-            // A literal null supplies no independent construction and is not a capture witness.
+            // Null can inhabit a reference construction for every closing of its arguments.
+            // A bare captured variable is different: reflection silently turns null into
+            // default(T) for a non-nullable value type.
             static bool IsNullLiteral(IBirExpression operand) => operand is BirConstant c
                 && (c.Value.IsNull || c.Value.OrDefault() is BirLiteral.NullLiteral);
+            bool AcceptsNullConstruction(TypeNode formal) => formal switch {
+                TypeNode.Oblivious o => AcceptsNullConstruction(o.Of),
+                TypeNode.Nullable n => n.Of is TypeNode.Fqn || AcceptsNullConstruction(n.Of),
+                TypeNode.Array or TypeNode.Fn => true,
+                TypeNode.Fqn f => !(definitions.TryGetValue(f.Name, out var d)
+                    ? d.Type.Kind.OrDefault() is "struct" or "enum" : refs.IsValueType(f)),
+                _ => false,
+            };
             for (var i = 0; i < arguments.Length; i++)
-                if (!captureIndices.Contains(i) && !IsNullLiteral(arguments[i])
-                    && ContainsCapturedSlot(declarationParameters[i], closedSlots)) return call.Node;
+                if (!captureIndices.Contains(i) && ContainsCapturedSlot(declarationParameters[i], closedSlots)
+                    && !(IsNullLiteral(arguments[i]) && AcceptsNullConstruction(declarationParameters[i]))) return call.Node;
 
             if (typedInput)
             {
