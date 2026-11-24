@@ -12,7 +12,8 @@ sealed class PhysicalDelegateDeclarations
     internal string FreshValueTemporary() => $"dotkt$unitDelegateValue{nextValue++}";
 
     internal BirClassDefinition CreateAdapter(IReadOnlySet<string> localTypes, string scope, ClrMemberResolution.DelegateAdapterPlan plan,
-        ReferenceMetadataIndex references, Func<IBirExpression> unitValue)
+        ReferenceMetadataIndex references, Func<IBirExpression> unitValue,
+        Func<IBirExpression, ClrMemberResolution.ReturnedFunction, IBirExpression> adaptResult)
     {
         var name = $"dotkt${scope}$UnitDelegateAdapter{nextAdapter++}";
         var self = new TypeNode.Fqn(name);
@@ -44,7 +45,8 @@ sealed class PhysicalDelegateDeclarations
             };
         else
             body = new IBirStatement[] { new BirReturn {
-                Value = plan.Frame.Ret.Equals(plan.Return) ? call : new BirCast { Type = plan.Return, E = call },
+                Value = OptionalField<IBirExpression>.Of(plan.ResultFunction is {} result ? adaptResult(call, result)
+                    : plan.Frame.Ret.Equals(plan.Return) ? call : new BirCast { Type = plan.Return, E = call }),
             } };
         var invoke = new BirFunctionDeclaration {
             Name = "invoke", Static = false, Override = false, Virtual = false,

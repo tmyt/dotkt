@@ -24,6 +24,24 @@ static partial class ClrMemberResolution
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
         if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
         var target = PhysicalFunctionShape(references, slot, includeNominal: true);
+        if (DelegateSlotCore(selected.Ret) is TypeNode.Fn { Suspend: false } result
+            && DelegateSlotCore(target.Ret) is TypeNode.Fqn resultSlot && references.IsClrDelegate(resultSlot))
+        {
+            // This Invoke constructs a delegate, so its return shape cannot be hidden
+            // behind a single type variable. Bind only free variables into the adapter's
+            // own frame; a caller's !0 and !!0 are different captures.
+            var captures = new List<TypeNode>();
+            TypeNode Bind(TypeNode type) => TypedExecutableFrames.RewriteType(type, variable => {
+                var i = captures.IndexOf(variable);
+                if (i < 0) { i = captures.Count; captures.Add(variable); }
+                return new TypeNode.Tv("type", i);
+            });
+            var frame = (TypeNode.Fn)Bind(natural);
+            var parameters = target.DelegateParams.Select(Bind).ToArray();
+            var ret = (TypeNode.Fqn)Bind(resultSlot);
+            var nested = new ReturnedFunction((TypeNode.Fn)Bind(result), ret);
+            return new(frame, parameters.Length, ret, parameters, captures.Count, captures.ToArray(), ResultFunction: nested);
+        }
         return BoxedDelegateAdapterPlan(natural, target) with {
             PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
                 && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references) };

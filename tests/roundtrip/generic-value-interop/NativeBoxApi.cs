@@ -1,5 +1,7 @@
 using roundtrip.genericvalueinterop;
 using roundtrip.invariantstorage;
+using WideIntCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+    int, int, int, int, int, int, int, int, int>;
 
 namespace GenericValueInterop;
 
@@ -90,6 +92,12 @@ public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int
     public DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
         int, int, int, int, int, int, int, int, int> Callback { get; set; } = callback;
     public int Read() => Callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+}
+public class NestedCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+    int, int, int, int, int, int, int, int, WideIntCallback> callback)
+{
+    public int Read() => callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)(
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
 public static class NativeWideCallbacks
 {

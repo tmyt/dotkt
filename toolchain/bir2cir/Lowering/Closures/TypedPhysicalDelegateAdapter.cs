@@ -91,7 +91,8 @@ sealed class TypedPhysicalDelegateAdapter
         }
         var key = ClrMemberResolution.DelegateAdapterKey(plan);
         if (adapters.TryGetValue(key, out var existing)) return existing;
-        var declaration = declarations.CreateAdapter(localTypes, scope, plan, references, unitValue);
+        var declaration = declarations.CreateAdapter(localTypes, scope, plan, references, unitValue,
+            (value, result) => AdaptFunctionView(document, value, result.Selected, result.Slot));
         var name = declaration.Name.Value;
         document.Types = document.Types.OrEmpty().Append(declaration).ToArray();
         adapters[key] = name;

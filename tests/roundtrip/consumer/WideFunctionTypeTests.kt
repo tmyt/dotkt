@@ -13,13 +13,20 @@ private class LastArgument : (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, 
 
 private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.NativeCallbackBase(op)
 
-private typealias WideIntCallback = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int
+private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
+private typealias WideIntCallback = WideCallback<Int>
 private class FirstPlusLast : WideIntCallback {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): Int = a + q
 }
 private class NativeIntCallbackDerived(op: FirstPlusLast) : GenericValueInterop.NativeIntCallbackBase(op)
 private class NativeFunctionDerived(op: WideIntCallback) : GenericValueInterop.NativeIntCallbackBase(op)
+private class CallbackFactory : WideCallback<WideIntCallback> {
+    override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
+                        j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): WideIntCallback =
+        { first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last -> a + q + first + last }
+}
+private class NestedCallbackDerived(op: CallbackFactory) : GenericValueInterop.NestedCallbackBase(op)
 private class NativeGetterDerived : GenericValueInterop.NativeCallbackBase(GenericValueInterop.NativeWideCallbacks.IntResult)
 private class NativeArrayDerived(op: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any)
     : GenericValueInterop.NativeArrayCallbackBase(op)
@@ -34,6 +41,7 @@ class WideFunctionTypeTests {
         native.Callback = FirstPlusLast()
         assertEquals(18, native.Read())
         assertEquals(18, NativeFunctionDerived(FirstPlusLast()).Read())
+        assertEquals(36, NestedCallbackDerived(CallbackFactory()).Read())
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read(FirstPlusLast()))
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read<String>(FirstPlusLast()))
         assertEquals(18, NativeGetterDerived().Read())
