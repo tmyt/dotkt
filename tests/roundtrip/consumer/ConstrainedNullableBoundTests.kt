@@ -26,6 +26,8 @@ import roundtrip.constrainedbound.JoinedFactory
 import roundtrip.constrainedbound.JoinedParent
 import roundtrip.constrainedbound.makeNativeJoined
 import roundtrip.constrainedbound.keepMarker
+import roundtrip.constrainedbound.appendMarked
+import roundtrip.constrainedbound.keepNativeOwner
 import RoundtripDependentNative.IMarker
 import roundtrip.constrainedbound.CapturedBoundOwner
 import RoundtripDependentNative.Base
@@ -502,6 +504,12 @@ class ConstrainedNullableBoundTests {
         val number = ClientItem(42L)
         val text = ClientItem("text")
         val nullableItems = ClrList<ClientItem<*>?>()
+        val projectedItems = ClrList<ClientItem<*>>()
+        check(appendMarked<ClientItem<*>>(number, projectedItems) === projectedItems && projectedItems[0] === number)
+        val exactItems = ClrList<ClientItem<String>>()
+        check(appendMarked(text, exactItems) === exactItems && exactItems[0] === text)
+        val owner = RoundtripDependentNative.Owner<String, NativeChoice<*>>()
+        check(keepNativeOwner<String, NativeChoice<*>>(owner) === owner)
         check(keepMarked<ClientItem<*>>(number, null) === number)
         check(keepMarked<ClientItem<*>>(text, nullableItems) === text)
         check(nullableItems[0] == null && nullableItems[1] === text && nullableItems[2] === text)

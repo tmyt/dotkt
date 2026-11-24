@@ -5,7 +5,8 @@ using DotKt.Cir;
 // A lexical !i and !!i never refer to the same binder. Keep the producer's
 // ordering: each appended formal is evidence for a particular ordinary slot.
 readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Slots,
-    NullableRepresentationFrame Representations = null, IReadOnlyDictionary<int, TypeNode.Tv> CapturedNullable = null)
+    NullableRepresentationFrame Representations = null, IReadOnlyDictionary<int, TypeNode.Tv> CapturedNullable = null,
+    ProjectedMethodPlan NativePlan = null)
 {
     internal static TypeNode.Tv SplitNullable(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
     {
