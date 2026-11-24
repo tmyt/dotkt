@@ -192,6 +192,9 @@ class PortableBuilderTests {
                 val i = -5
                 val d = -1.5
                 val boxed: Any = d
+                val bound: () -> String = boxed::toString
+                val unbound: (Any) -> String = Any::toString
+                check(bound() == "-1.5" && unbound(boxed) == "-1.5")
                 check(i.toString() == "-5" && d.toString() == "-1.5" && boxed.toString() == "-1.5")
                 check("i=$i d=$d boxed=$boxed" == "i=-5 d=-1.5 boxed=-1.5")
                 check(StringBuilder().append(i).append(' ').append(d).append(' ').append(boxed).toString() == "-5 -1.5 -1.5")
