@@ -10,6 +10,7 @@ import roundtrip.classnature.Square
 import roundtrip.classnature.runHandler
 import roundtrip.dispatchsurface.Animal
 import roundtrip.dispatchsurface.Dog
+import roundtrip.dispatchsurface.SelfDispatch
 import roundtrip.dispatchsurface.Greeter
 import roundtrip.dispatchsurface.ConstrainedGenericOwnerCompanionHost
 import roundtrip.dispatchsurface.CompanionMarker
@@ -413,6 +414,16 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual("woof", dog.sound())
         ClassicAssert.AreEqual("a:generic", animal.describe())
         ClassicAssert.AreEqual("d:woof", dog.describe())
+        ClassicAssert.AreEqual("companion:generic", Dog.describe())
+        ClassicAssert.AreEqual("self", SelfDispatch.describe())
+        ClassicAssert.AreEqual("self", SelfDispatch.Named.name)
+        var reads = 0
+        fun receiver(): SelfDispatch.Named {
+            reads++
+            return SelfDispatch.Named
+        }
+        ClassicAssert.AreEqual("self", receiver().describe())
+        ClassicAssert.AreEqual(1, reads)
 
         ClassicAssert.AreEqual("Anon", Greeter.Companion.DEFAULT)
         ClassicAssert.AreEqual("Hi, Vec", Greeter.Companion.create().greet("Vec"))
