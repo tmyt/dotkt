@@ -419,6 +419,8 @@ class ConstrainedNullableBoundTests {
     fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
         val value = Child<Int>()
         val item = JoinedChild<Int>()
+        val projected = roundtrip.constrainedbound.JoinedValue<JoinedChild<*>>(item)
+        check(projected.item === item && RoundtripDependentNative.JoinedSlot.Holds<JoinedChild<*>>(projected, item))
         val exact = JoinedValueFactory<JoinedChild<*>>()
         val localValue = exact.local(item)
         check(localValue.item === item && localValue.nativeItems.Count == 0)

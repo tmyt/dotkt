@@ -200,7 +200,7 @@ static partial class FBoundStarProjectionErasure
                     Type = text, Value = new BirLiteral.TextLiteral(ProjectedConstructorTypeKey(state.Projection.Rewrite(type), state.References, locals)),
                 }).ToArray() },
                 new BirNewArray { Elem = systemType, Elems = owner.Args.Select((argument, index) => (IBirExpression)new BirClassReference {
-                    Type = ProjectedConstructionFallback(SharedProjectedClassWitness(owner, index, state)
+                    Type = ProjectedConstructionFallback(SharedConstructionWitness(owner, index, state, allowCarrier: true)
                         ?? argument, state.References, locals),
                 }).ToArray() },
                 new BirNewArray { Elem = any, Elems = construction.Args.Value.ToArray() },
@@ -219,7 +219,7 @@ static partial class FBoundStarProjectionErasure
         return owner.Args.Where((argument, index) => (frame == null || frame.PhysicalSlot(index).Representation
                 is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable)
             && ContainsExistentialProjection(argument)
-            && (SharedProjectedClassWitness(owner, index, state) == null
+            && (SharedConstructionWitness(owner, index, state, allowCarrier: false) == null
                 || signature?.Any(parameter => NeedsOperandWitness(parameter, index)) == true)
             && (state.Demand.NativeProofs.ExactTypeArgument(owner.Name, index)
                 || StripSourceNullability(argument) is not TypeNode.Fqn nominal
@@ -235,8 +235,14 @@ static partial class FBoundStarProjectionErasure
         return used;
     }
 
-    static TypeNode.Fqn SharedProjectedClassWitness(TypeNode.Fqn owner, int index, SourceRewriteState state)
-        => StripSourceNullability(owner.Args[index]) is TypeNode.Fqn constructed && ContainsExistentialProjection(constructed)
-            && state.Projection.TryExistentialCarrier(constructed.Name, out _)
-                ? state.Projection.ClassStorageWitness(state.Projection.SelectPhysicalClassApplication(owner).Slot(index), null, false)?.Class : null;
+    static TypeNode.Fqn SharedConstructionWitness(TypeNode.Fqn owner, int index, SourceRewriteState state, bool allowCarrier)
+    {
+        if (StripSourceNullability(owner.Args[index]) is not TypeNode.Fqn constructed || !ContainsExistentialProjection(constructed)
+            || !state.Projection.TryExistentialCarrier(constructed.Name, out var carrier)) return null;
+        var slot = state.Projection.SelectPhysicalClassApplication(owner).Slot(index);
+        // A carrier can close a runtime fallback slot. It cannot authorize an
+        // ordinary newobj, which retains the exact constructed head instead.
+        return state.Projection.ClassStorageWitness(slot, null, false)?.Class
+            ?? (allowCarrier ? state.Projection.ProvenInterfaceCarrier(slot, new TypeNode.Fqn(carrier)) : null);
+    }
 }

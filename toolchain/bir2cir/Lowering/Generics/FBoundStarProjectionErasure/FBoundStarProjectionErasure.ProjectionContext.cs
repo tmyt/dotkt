@@ -483,6 +483,20 @@ static partial class FBoundStarProjectionErasure
             return arguments;
         }
 
+        internal TypeNode.Fqn ProvenInterfaceCarrier(WitnessSlot slot, TypeNode.Fqn carrier)
+        {
+            // The synthesized value interface, not the source class, must prove
+            // the complete interface constraint set of this physical argument.
+            var formal = slot.Formal;
+            if (formal == null || formal.SpecialConstraints.OrEmpty().Any(s => s != "class")) return null;
+            var bounds = formal.Constraints.OrEmpty();
+            TypeNode[] closed = null;
+            TypeNode Close(int i) => (closed ??= ((TypeNode.Fqn)Rewrite(slot.Entry.Owner, preserveConstructedHead: true)).Args)[i];
+            return bounds.Length != 0 && bounds.All(bound =>
+                slot.CloseBound(bound, Close) is TypeNode.Fqn required && BoundKind(required) == "interface"
+                    && HasPhysicalSupertype(carrier, required)) ? carrier : null;
+        }
+
         internal StorageWitness ClassStorageWitness(WitnessSlot slot,
             Func<int, TypeNode> closeArgument, bool allowIntersection, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
         {
