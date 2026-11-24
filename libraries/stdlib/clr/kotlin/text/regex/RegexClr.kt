@@ -147,8 +147,27 @@ public actual class Regex {
     // First match at or after [startIndex], wrapped by the [ClrMatchResult] adapter over System...Match.
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun find(input: CharSequence, startIndex: Int = 0): MatchResult? {
-        val match = nativeMatch(input.toString(), startIndex)
-        return if (match.success) ClrMatchResult(match, lazy { nativeGroupNumbers() }) else null
+        val text = input.toString()
+        if (startIndex < 0 || startIndex > text.length)
+            throw IndexOutOfBoundsException("Start index out of bounds: $startIndex, input length: ${text.length}")
+        return findFrom(text, startIndex)
+    }
+
+    private fun findFrom(text: String, startIndex: Int): MatchResult? {
+        if (!nativeRightToLeft) {
+            val match = nativeMatch(text, startIndex)
+            return if (match.success) ClrMatchResult(match, lazy { nativeGroupNumbers() }) else null
+        }
+        // The engine owns overlaps, zero-width advancement and capture selection.
+        // Prepending its actual matches exposes Kotlin source order without recompiling or slicing the input.
+        var match = nativeMatch(text, text.length)
+        val groups = lazy { nativeGroupNumbers() }
+        var first: MatchResult? = null
+        while (match.success && match.index >= startIndex) {
+            first = InputOrderMatchResult(match, groups, first)
+            match = match.nextMatch()
+        }
+        return first
     }
 
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
@@ -185,8 +204,7 @@ public actual class Regex {
     @kotlin.clr.ClrIntrinsic("Options")
     private val nativeOptions: ClrRegexOptions get() = TODO("clr binding should be implemented")
 
-    // System...Regex.Match(input, index) searches forward from [index] over the full string (lookbehind transparent, `^`
-    // not anchored to index) — a faithful realization of matchAt; require the match to start exactly at [index].
+    // Keep the full input for lookbehind and anchors; only accept a match starting at the requested index.
     @SinceKotlin("1.7")
     @WasExperimental(ExperimentalStdlibApi::class)
     public actual fun matchAt(input: CharSequence, index: Int): MatchResult? {
@@ -194,8 +212,7 @@ public actual class Regex {
         if (index < 0 || index > text.length) {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
-        val match = nativeMatch(text, index)
-        return if (match.success && match.index == index) ClrMatchResult(match, lazy { nativeGroupNumbers() }) else null
+        return findFrom(text, index)?.takeIf { it.range.first == index }
     }
 
     @SinceKotlin("1.7")
@@ -205,6 +222,7 @@ public actual class Regex {
         if (index < 0 || index > text.length) {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
+        if (nativeRightToLeft) return findFrom(text, index)?.range?.first == index
         val match = nativeMatch(text, index)
         return match.success && match.index == index
     }
@@ -323,13 +341,16 @@ public actual class Regex {
     @kotlin.clr.ClrIntrinsic("Match")
     private fun nativeMatch(input: String, startat: Int): ClrMatch = TODO("@Clr System.Text.RegularExpressions.Regex.Match(string,int)")
 
+    @kotlin.clr.ClrIntrinsic("RightToLeft")
+    private val nativeRightToLeft: Boolean get() = TODO("clr binding should be implemented")
+
     @Suppress("ACTUAL_FUNCTION_WITH_DEFAULT_ARGUMENTS")
     public actual fun split(input: CharSequence, limit: Int = 0): List<String> {
         requireNonNegativeLimit(limit)
 
+        if (limit == 1) return listOf(input.toString())
         var match: MatchResult? = find(input)
-
-        if (match == null || limit == 1) return listOf(input.toString())
+        if (match == null) return listOf(input.toString())
 
         val result = ArrayList<String>(if (limit > 0) limit.coerceAtMost(10) else 10)
         var lastStart = 0
@@ -353,8 +374,8 @@ public actual class Regex {
         requireNonNegativeLimit(limit)
 
         return sequence {
-            var match = find(input)
-            if (match == null || limit == 1) {
+            var match = if (limit == 1) null else find(input)
+            if (match == null) {
                 yield(input.toString())
                 return@sequence
             }
@@ -490,8 +511,13 @@ internal class ClrMatch {
     fun nextMatch(): ClrMatch = TODO("clr binding should be implemented")
 }
 
+private class InputOrderMatchResult(match: ClrMatch, groups: Lazy<IntArray>, private val following: MatchResult?) :
+    ClrMatchResult(match, groups) {
+    override fun next(): MatchResult? = following
+}
+
 /** Kotlin `MatchResult` over a System...Match. Real emitted class (not @ClrIntrinsic). */
-internal class ClrMatchResult(private val nativeMatch: ClrMatch, private val groupNumbers: Lazy<IntArray>) : MatchResult {
+internal open class ClrMatchResult(private val nativeMatch: ClrMatch, private val groupNumbers: Lazy<IntArray>) : MatchResult {
     override val range: IntRange
         get() = nativeMatch.index until (nativeMatch.index + nativeMatch.length)
     override val value: String

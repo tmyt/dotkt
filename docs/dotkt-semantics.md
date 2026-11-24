@@ -1009,6 +1009,14 @@ references use the actual CLR group numbers, which may have gaps. A native
 right-to-left regex replaces its rightmost match first. A terminal empty match
 is included: replacing `a|$` in `a` with `<$0>` produces `<a><>`.
 
+For an imported right-to-left Regex, Kotlin search keeps the matches and captures chosen by that
+CLR instance over the full input, then visits them from left to right. `startIndex` is a lower
+bound on their start positions, not the native right-to-left search cursor. For example, `aa`
+in `aaa` yields only `1..2`, even though a left-to-right engine would choose `0..1`.
+`MatchResult.next()`, splitting and transform callbacks use this input order. This requires
+buffering the eligible matches on a right-to-left search; a forward Regex still streams its
+matches. String-replacement `replaceFirst` keeps the native rightmost-first rule above.
+
 `match.groups[n]` also uses the CLR group number. Iteration and `groupValues`, however,
 visit only declared groups in number order. For group numbers 0, 1, and 10,
 `groupValues[2]` is the value of group 10. An optional group that did not match
