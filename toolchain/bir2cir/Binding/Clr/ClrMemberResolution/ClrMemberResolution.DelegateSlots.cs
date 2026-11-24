@@ -166,7 +166,7 @@ static partial class ClrMemberResolution
     internal sealed record DelegateAdapterPlan(TypeNode.Fn Frame, int Arity, TypeNode Return,
         TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments, bool PublishReturn = false,
         ReturnedFunction ResultFunction = null);
-    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot);
+    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source);
 
     // This is representation policy over immutable TypeNodes, shared by the
     // owning construction and final value-flow consumers.

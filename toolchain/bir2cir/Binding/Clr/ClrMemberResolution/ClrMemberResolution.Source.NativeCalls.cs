@@ -219,8 +219,8 @@ static partial class ClrMemberResolution
 
     static void MarkFunctionParameters(BirGraphValue node, TypeNode[] signature)
     {
-        if (signature?.Any(type => type is TypeNode.Fn) == true)
-            node.NativeFunctionParameters = signature.Select(type => type is TypeNode.Fn).ToArray();
+        if (signature?.Any(type => DelegateSlotCore(type) is TypeNode.Fn) == true)
+            node.NativeFunctionParameters = signature.Select(type => DelegateSlotCore(type) as TypeNode.Fn).ToArray();
     }
 
     static void ClearNativeGenericDescriptor(BirGraphValue node)

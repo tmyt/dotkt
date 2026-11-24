@@ -24,27 +24,47 @@ static partial class ClrMemberResolution
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
         if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
         var target = PhysicalFunctionShape(references, slot, includeNominal: true);
-        if (DelegateSlotCore(selected.Ret) is TypeNode.Fn { Suspend: false } result
+        return ReturnedFunctionPlan(references, ReturnedFunctionType(selected), natural, target) ?? BoxedDelegateAdapterPlan(natural, target) with {
+            PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
+                && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references) };
+    }
+
+    internal static TypeNode.Fn ReturnedFunctionType(TypeNode.Fn function) =>
+        DelegateSlotCore(function?.Ret) as TypeNode.Fn;
+
+    static DelegateAdapterPlan ReturnedFunctionPlan(ReferenceMetadataIndex references, TypeNode.Fn result, TypeNode.Fn natural, TypeNode.Fn target)
+    {
+        if (result is { Suspend: false }
             && DelegateSlotCore(target.Ret) is TypeNode.Fqn resultSlot && references.IsClrDelegate(resultSlot))
         {
-            // This Invoke constructs a delegate, so its return shape cannot be hidden
-            // behind a single type variable. Bind only free variables into the adapter's
-            // own frame; a caller's !0 and !!0 are different captures.
+            // Keep the delegate shapes that Invoke must construct, but capture
+            // complete slots: Box<T> must not become Box<!0> without T's constraints.
             var captures = new List<TypeNode>();
-            TypeNode Bind(TypeNode type) => TypedExecutableFrames.RewriteType(type, variable => {
-                var i = captures.IndexOf(variable);
-                if (i < 0) { i = captures.Count; captures.Add(variable); }
+            TypeNode Bind(TypeNode type)
+            {
+                if (type == null) return null;
+                if (type is TypeNode.Fn fn) return fn with { Ret = Bind(fn.Ret), Params = fn.Params.Select(Bind).ToArray(),
+                    Recv = Bind(fn.Recv), Ctx = fn.Ctx?.Select(Bind).ToArray() };
+                if (type is TypeNode.Nullable n) return n with { Of = Bind(n.Of) };
+                if (type is TypeNode.Oblivious o) return o with { Of = Bind(o.Of) };
+                if (type is TypeNode.ByRef b) return b with { Of = Bind(b.Of) };
+                if (type is TypeNode.Fqn { Args: not null } f && references.IsClrDelegate(f))
+                    return f with { Args = f.Args.Select(Bind).ToArray() };
+                var open = false;
+                BirGraphNameFields.VisitTypeNodes(type, part => open |= part is TypeNode.Tv);
+                if (!open) return type;
+                var i = captures.IndexOf(type);
+                if (i < 0) { i = captures.Count; captures.Add(type); }
                 return new TypeNode.Tv("type", i);
-            });
+            }
             var frame = (TypeNode.Fn)Bind(natural);
             var parameters = target.DelegateParams.Select(Bind).ToArray();
             var ret = (TypeNode.Fqn)Bind(resultSlot);
-            var nested = new ReturnedFunction((TypeNode.Fn)Bind(result), ret);
+            var source = PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret));
+            var nested = new ReturnedFunction((TypeNode.Fn)Bind(result), ret, (TypeNode.Fn)Bind(source));
             return new(frame, parameters.Length, ret, parameters, captures.Count, captures.ToArray(), ResultFunction: nested);
         }
-        return BoxedDelegateAdapterPlan(natural, target) with {
-            PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
-                && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references) };
+        return null;
     }
 
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,

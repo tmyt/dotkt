@@ -41,7 +41,6 @@ class WideFunctionTypeTests {
         native.Callback = FirstPlusLast()
         assertEquals(18, native.Read())
         assertEquals(18, NativeFunctionDerived(FirstPlusLast()).Read())
-        assertEquals(36, NestedCallbackDerived(CallbackFactory()).Read())
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read(FirstPlusLast()))
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read<String>(FirstPlusLast()))
         assertEquals(18, NativeGetterDerived().Read())
@@ -61,6 +60,21 @@ class WideFunctionTypeTests {
         var seen = 0
         retAction17 { seen = it }(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
         assertEquals(18, seen)
+    }
+
+    @TestAttribute
+    fun aNativeConsumerCanInvokeTheReturnedFunction() {
+        val factory = CallbackFactory()
+        assertEquals(36, NestedCallbackDerived(factory).Read())
+        val stored: WideCallback<WideIntCallback> = factory
+        assertEquals(36, GenericValueInterop.NativeWideCallbacks.ReadNested(stored))
+        assertEquals(18, GenericValueInterop.NativeWideCallbacks.ReadNested { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ ->
+            FirstPlusLast()
+        })
+        var calls = 0
+        val make: () -> WideIntCallback = { calls++; FirstPlusLast() }
+        assertEquals(18, GenericValueInterop.NativeWideCallbacks.ReadFactory(GenericValueInterop.WideFactory(make)))
+        assertEquals(1, calls)
     }
 
     @TestAttribute
