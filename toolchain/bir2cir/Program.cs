@@ -581,10 +581,12 @@ sealed class Pipeline
             RangeConstructionLowering.Apply(source);
         }
         var enumRuntimeLookup = false;
+        var numericText = new NumericTextOperands(collectionInputs.Helpers);
         foreach (var source in captured)
         {
             // Range realization can produce further primitive operations.
-            PrimitiveOperatorLowering.Apply(source, refs);
+            SourceGraphRewrite.Rewrite(source, (node, scope) =>
+                numericText.Bind(PrimitiveOperatorLowering.RewriteNode(node, scope), scope));
             // Resolve enum values before array element derivation. EnumEntries
             // already denotes a cached list and must not become an array value.
             EnumIntrinsicLowering.Apply(source, richEnums, inventory.LocalTopLevelFunctions, appBuild, refs,

@@ -733,7 +733,9 @@ encoding, which the JIT honors and which a single-threaded run cannot itself obs
   **.NET-native** rendering: `println(true)` → `True` (not the JVM's `true`), `println(4.0)` → `4` (not `4.0`). This
   is a *choice within unspecified behavior*, not a deviation from the Kotlin language — the JVM's `true`/`4.0` are
   themselves just `java.lang.Boolean`/`Double.toString` implementation details, not language essence.
-- NUnit tests assert the chosen CLR-native forms directly.
+- Kotlin numeric `toString()`, string templates and `StringBuilder.append` use that CLR spelling with
+  the invariant culture: `-1.5` and `Infinity` do not change with the process locale. This is not a
+  change to native CLR formatting APIs or to user-defined `toString()` overrides.
 - Memory `clr-native-primitive-formatting`.
 - **`String.format` exists on DotKt as platform API (like the JVM has its own; Native/JS have none), but uses the
   .NET composite format (`"{0} items"`, `"{0:D5}"`, `"{0,-4}"`), not Java printf (`"%d"`)** — the same
