@@ -47,5 +47,8 @@ abstract class SuspendTextSource {
 }
 
 open class SuspendTextAncestor {
-    suspend fun inheritedText(): CharSequence? = "hello"
+    suspend fun inheritedText(gate: Task, text: String?): CharSequence? {
+        gate.await()
+        return text
+    }
 }
