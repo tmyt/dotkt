@@ -5,6 +5,12 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.reflect.KClass
 import kotlin.reflect.KClassifier
+import kotlin.reflect.full.companionObjectInstance
+import kotlin.reflect.full.isInterface
+import roundtrip.companionreceiver.GenericHost
+import roundtrip.companionreceiver.OuterHost
+import roundtrip.kclassvalues.CompanionFace
+import roundtrip.kclassvalues.CompanionEnum
 import roundtrip.kclassvalues.ImportedTyped
 import roundtrip.kclassvalues.ImportedManual
 import roundtrip.kclassvalues.makeTyped
@@ -40,6 +46,23 @@ class KClassValueImportedDerived : ImportedManual() {
 }
 
 class KClassValueRoundtripTests {
+    @TestAttribute
+    fun declarationReflectionUsesTheSourceOwnerAcrossAssemblies() {
+        val token = GenericHost<Int>()::class
+        check(token == GenericHost::class && !token.isInterface)
+        check(token.companionObjectInstance === GenericHost.Named)
+        check(OuterHost.NestedHost::class.companionObjectInstance === OuterHost.NestedHost.Companion)
+        check(roundtrip.companionstatics.Box::class.companionObjectInstance == null)
+        check(CompanionFace::class.isInterface && CompanionFace::class.companionObjectInstance === CompanionFace.Named)
+        check(CompanionEnum::class.companionObjectInstance === CompanionEnum.Companion)
+        check(ImportedPlainBase::class.companionObjectInstance == null)
+        check(List::class.isInterface && !ArrayList::class.isInterface)
+        check(!System.Random::class.isInterface && System.Random::class.companionObjectInstance == null)
+        check(Int::class.companionObjectInstance === Int.Companion && String::class.companionObjectInstance === String.Companion)
+        check(!Annotation::class.isInterface && Any::class.companionObjectInstance == null)
+        check(runCatching { ImportedManual().isInterface }.exceptionOrNull() is UnsupportedOperationException)
+    }
+
     private fun checkImportedGenericClassifier() {
         fun token(value: Any) = value::class
         val literal = ImportedPlainBase::class

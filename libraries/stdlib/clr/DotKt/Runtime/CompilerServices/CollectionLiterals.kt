@@ -2,7 +2,7 @@ package DotKt.Runtime.CompilerServices
 
 // An erased Kotlin collection declaration still needs a distinct System.Type for reflection
 // and for CLR attribute arguments. These tokens describe declarations, never value storage.
-@PublishedApi internal sealed class CollectionLiteralDescriptor(val sourceName: String) {
+@PublishedApi internal sealed class CollectionLiteralDescriptor(val sourceName: String, val isInterface: Boolean = true) {
     abstract fun accepts(value: Any?): Boolean
 }
 
@@ -36,10 +36,10 @@ package DotKt.Runtime.CompilerServices
 @PublishedApi internal object MutableMapLiteral : CollectionLiteralDescriptor("kotlin.collections.MutableMap") {
     override fun accepts(value: Any?) = value is MutableMap<*, *>
 }
-@PublishedApi internal object ArrayListLiteral : CollectionLiteralDescriptor("kotlin.collections.ArrayList") {
+@PublishedApi internal object ArrayListLiteral : CollectionLiteralDescriptor("kotlin.collections.ArrayList", false) {
     override fun accepts(value: Any?) = value is ArrayList<*>
 }
-@PublishedApi internal object HashSetLiteral : CollectionLiteralDescriptor("kotlin.collections.HashSet") {
+@PublishedApi internal object HashSetLiteral : CollectionLiteralDescriptor("kotlin.collections.HashSet", false) {
     override fun accepts(value: Any?) = value is HashSet<*>
 }
 

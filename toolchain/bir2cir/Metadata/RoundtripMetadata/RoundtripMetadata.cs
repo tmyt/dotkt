@@ -45,6 +45,8 @@ static partial class RoundtripMetadata
     const string AKEnumRuntimeApi = Ns + "KotlinEnumRuntimeApiAttribute";
     const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
     internal const string RuntimeClassifierAttribute = Ns + "KotlinClassifierIdentityAttribute";
+    internal const string RuntimeCompanionAttribute = Ns + "KotlinCompanionInstanceAttribute";
+    internal const string RuntimeAliasedCompanionAttribute = Ns + "KotlinAliasedCompanionInstanceAttribute";
     const string AKBasicEnum    = Ns + "KotlinBasicEnumAttribute";
     const string AKBasicEnumOrdinal = Ns + "KotlinBasicEnumOrdinalAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
@@ -112,7 +114,7 @@ static partial class RoundtripMetadata
     // (not projected as Kotlin source), so keeping them keeps rt consistent with app/ref; a retention-aware filter
     // (SOURCE-retention annotations should ship on NO binary) is a broader downstream policy, deliberately NOT folded here.
     static bool IsRuntimeStrippable(string fqn) =>
-        (fqn.StartsWith(Ns, StringComparison.Ordinal) && fqn != RuntimeClassifierAttribute)
+        (fqn.StartsWith(Ns, StringComparison.Ordinal) && fqn is not (RuntimeClassifierAttribute or RuntimeCompanionAttribute or RuntimeAliasedCompanionAttribute))
         || fqn.StartsWith("kotlin.clr.", StringComparison.Ordinal)  // @Clr* binding surface (ref-side only)
         || fqn == ANullable || fqn == ANullableCtx;           // NRT [Nullable]/[NullableContext]
 
@@ -227,6 +229,7 @@ static partial class RoundtripMetadata
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
             AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
+            AttrClass(RuntimeCompanionAttribute, Ctor(Param("System.Type"))),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(DefaultBirCarrier.AttributeName, Ctor(Param("System.Int32"), Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKReadOnly, Ctor()),
@@ -271,7 +274,9 @@ static partial class RoundtripMetadata
             AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
         if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias), AssemblySourceAttribute(AKDslScope),
+            SourceAttributeDefinition(RuntimeAliasedCompanionAttribute, refs, Ctor(Param("System.Type"), Param("System.Type"))),
             AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
+            AttrClass(RuntimeCompanionAttribute, Ctor(Param("System.Type"))),
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKData, Ctor()),
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),

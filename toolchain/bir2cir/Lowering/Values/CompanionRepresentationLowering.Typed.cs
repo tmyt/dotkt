@@ -16,7 +16,7 @@ static partial class CompanionRepresentationLowering
         });
     }
 
-    public static LocalIndex Apply(IReadOnlyList<BirFileDeclaration> roots)
+    public static LocalIndex Apply(IReadOnlyList<BirFileDeclaration> roots, IReadOnlyDictionary<string, string> stdlibAliases = null)
     {
         var types = roots.SelectMany(root => root.Types.OrEmpty()).ToArray();
         var byName = types.ToDictionary(type => type.Name.Value, StringComparer.Ordinal);
@@ -57,6 +57,19 @@ static partial class CompanionRepresentationLowering
             placing.Remove(semanticName);
         }
         foreach (var name in unplaced.Keys.ToArray()) ResolveOwner(name);
+        // A bound stdlib declaration cannot stamp the actual type in a framework assembly.
+        // Publish its exact native token and the very same carrier in the trusted stdlib instead.
+        if (stdlibAliases != null)
+        {
+            // Two exported declarations can erase to one token (e.g. Enum and Any).
+            // The token then identifies neither declaration's singleton.
+            var unique = types.Where(t => t.Vis.OrDefault() is not ("private" or "internal") && stdlibAliases.ContainsKey(t.Name.Value))
+                .GroupBy(t => stdlibAliases[t.Name.Value], StringComparer.Ordinal).Where(g => g.Count() == 1)
+                .Select(g => g.Single().Name.Value).ToHashSet(StringComparer.Ordinal);
+            var external = associations.Where(a => unique.Contains(a.OwnerName)).Select(a =>
+                CompanionLink(RoundtripMetadata.RuntimeAliasedCompanionAttribute, stdlibAliases[a.OwnerName], a.PhysicalName)).ToArray();
+            if (external.Length != 0) roots[0].AssemblyAttrs = roots[0].AssemblyAttrs.OrEmpty().Concat(external).ToArray();
+        }
         var moved = associations.Select(association => association.SemanticName).ToHashSet(StringComparer.Ordinal);
         foreach (var type in types)
             if (type.SemanticOwner.HasValue && moved.Contains(type.SemanticOwner.Value)
@@ -71,6 +84,14 @@ static partial class CompanionRepresentationLowering
 
     static string Required(string value, string key) => value
         ?? throw new InvalidOperationException($"malformed companion fact: '{key}' is required");
+
+    static BirAttribute CompanionLink(string name, params string[] types) => new() {
+        Attr = new TypeNode.Fqn(name),
+        ArgTypes = types.Select(_ => (TypeNode)new TypeNode.Fqn("System.Type")).ToArray(),
+        Args = types.Select(type => (IBirAttributeValue)new BirClassReference {
+            Type = new TypeNode.Fqn(type), DefinitionToken = true,
+        }).ToArray(),
+    };
 
     static string PhysicalMetadataName(IBirTypeDeclaration type, Func<string, IBirTypeDeclaration> resolveOwner)
     {
@@ -102,6 +123,7 @@ static partial class CompanionRepresentationLowering
             Name = association.SourceName, Visibility = association.Visibility,
             PhysicalOwner = association.PhysicalOwner, PhysicalOwnerArity = association.PhysicalOwnerArity,
         };
+        owner.Attrs = owner.Attrs.OrEmpty().Append(CompanionLink(RoundtripMetadata.RuntimeCompanionAttribute, association.PhysicalName)).ToArray();
         if (owner.Kind.OrDefault() == "enum") return;
         if (owner.Fields.OrEmpty().Any(field => field.Name.OrDefault() == association.SourceName))
             throw new InvalidOperationException($"companion value accessor '{association.OwnerName}.{association.SourceName}' collides with an existing field");

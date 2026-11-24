@@ -144,6 +144,9 @@ private interface EnumRuntimeMethod {
 
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface EnumRuntimeType {
+    @kotlin.clr.ClrIntrinsic("GetField")
+    fun getField(name: String, flags: EnumRuntimeBindingFlags): EnumRuntimeField?
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "FullName")
     val fullName: String?
 
@@ -372,6 +375,43 @@ internal fun readClassifierIdentity(token: StarProjectionType): KotlinClassifier
             args[2].value as String, args[3].value as Boolean)
     }
     return null
+}
+
+internal fun readCompanionInstance(declaration: StarProjectionType): Any? {
+    val type = declaration as EnumRuntimeType
+    aliasedCompanions[type]?.let { return it.companionSingleton() }
+    val name = "DotKt.Runtime.CompilerServices.KotlinCompanionInstanceAttribute"
+    if (type.assembly.findType(name) == null) return null
+    val attributes = type.getCustomAttributesData()
+    for (index in 0 until attributes.count) {
+        val attr = attributes[index]
+        if (!attr.isCompilerCarrier(name, type.assembly)) continue
+        if (!type.assembly.isCompilerAssembly()) return null
+        val carrier = attr.constructorArguments[0].value as EnumRuntimeType
+        // The producer links the closed carrier; its singleton field is a compiler-owned slot.
+        return carrier.companionSingleton()
+    }
+    return null
+}
+
+private fun EnumRuntimeType.companionSingleton(): Any =
+    getField("\$INSTANCE", EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC)!!.getValue(null)!!
+
+// Only the compiler's stdlib can bind a Kotlin declaration to a foreign CLR type.
+// Index its declared links once without running any companion initializer.
+private val aliasedCompanions: Map<EnumRuntimeType, EnumRuntimeType> by lazy {
+    val assembly = (KotlinClassifierIdentity::class as EnumRuntimeType).assembly
+    val name = "DotKt.Runtime.CompilerServices.KotlinAliasedCompanionInstanceAttribute"
+    val rows = assembly.getCustomAttributesData()
+    val links = mutableMapOf<EnumRuntimeType, EnumRuntimeType>()
+    for (i in 0 until rows.count) {
+        val row = rows[i]
+        if (row.isCompilerCarrier(name, assembly)) {
+            val args = row.constructorArguments
+            links[args[0].value as EnumRuntimeType] = args[1].value as EnumRuntimeType
+        }
+    }
+    links
 }
 
 private fun EnumRuntimeAttribute.isCompilerCarrier(name: String, owner: EnumRuntimeAssembly): Boolean {
