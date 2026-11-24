@@ -23,6 +23,7 @@ sealed class TypeInfo
     public ICirContainer Def;
     public CirTypeDeclaration TypeDeclaration => Def as CirTypeDeclaration;
     public bool IsFileClass;
+    public OptionalField<AttributeApplication[]> EntryPointAttrs;
     public string BaseName;                 // the base's bare FQN name (for _types lookup / chain-walk)
     public DotKt.Bir.TypeNode.Fqn BaseFqn;  // the base as a structured Fqn (with args), for constructing a generic base
     public Type ClrBase;   // set when the base is a REFERENCED .NET type; resolved by reflection, not in _types

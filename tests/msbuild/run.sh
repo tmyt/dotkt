@@ -120,7 +120,7 @@ KTPROJ
 # so a build/run that prints "12" then fails is not silently accepted.)
 cat > "$incr/App.kt" <<'KOTLIN'
 @System.STAThreadAttribute
-fun main(args: Array<String>) {
+fun main(args: Array<out String>) {
     val entry = System.Reflection.Assembly.GetEntryAssembly()!!.EntryPoint!!
     check(entry.GetCustomAttributes(false).any { it is System.STAThreadAttribute })
     if (System.OperatingSystem.IsWindows())

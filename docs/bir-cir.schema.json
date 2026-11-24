@@ -1752,7 +1752,8 @@
         "independentAliasSlot": { "type": "boolean" }, "physicalSlotBridge": { "type": "boolean" },
         "inlineBir": { "type": "string", "contentEncoding": "base64", "x-dotkt-csharp-type": "byte[]" },
         "retNothing": { "type": "boolean" }, "retNullableFlags": { "type": "array", "items": { "type": "integer" } },
-        "retSuspendFnType": { "$ref": "#/$defs/type" }, "suspendRet": { "$ref": "#/$defs/type" }, "retCtxFnType": { "type": "integer" }
+        "retSuspendFnType": { "$ref": "#/$defs/type" }, "suspendRet": { "$ref": "#/$defs/type" }, "retCtxFnType": { "type": "integer" },
+        "entryPointAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } }
       }, "required": ["name", "static", "override", "virtual", "params", "ret"], "additionalProperties": false
     },
     "cirConstructor": {

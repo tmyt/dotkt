@@ -288,6 +288,8 @@ public sealed partial record CirMethod : ICirCallable
     public OptionalField<TypeNode> SuspendRet { get; init; }
     [JsonPropertyName("retCtxFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> RetCtxFnType { get; init; }
+    [JsonPropertyName("entryPointAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
+    public OptionalField<AttributeApplication[]> EntryPointAttrs { get; init; }
 }
 
 public sealed partial record CirConstructor : ICirCallable
@@ -461,7 +463,7 @@ internal static class DeclarationWireContract
         ("CirTypeDeclaration", ["name", "kind", "vis", "generated", "abstract", "final", "specialName", "beforeFieldInit", "nestedIn", "base", "interfaces", "typeParams", "capturedTypeParams", "fields", "ctors", "methods", "properties", "attrs", "mods", "pos", "interfaceSlotRefs", "clrEvents", "underlying", "entries", "params", "ret", "retAttrs"]),
         ("CirTypeParameter", ["name", "variance", "constraints", "specialConstraints"]),
         ("CirParameter", ["name", "type", "mods", "default", "attrs", "nullableFlags", "suspendFnType", "ctxFnType"]),
-        ("CirMethod", ["name", "static", "override", "virtual", "abstract", "vis", "params", "ret", "body", "typeParams", "attrs", "retAttrs", "mods", "pos", "generated", "objectOverride", "clrFinal", "specialName", "suspendBridge", "clrInterfaceSlotBridge", "requiresClrOverride", "clrOverrideRef", "clrInterfaceImpls", "clrBaseImpls", "extern", "pinvoke", "bodyTerminates", "independentAliasSlot", "physicalSlotBridge", "inlineBir", "retNothing", "retNullableFlags", "retSuspendFnType", "suspendRet", "retCtxFnType"]),
+        ("CirMethod", ["name", "static", "override", "virtual", "abstract", "vis", "params", "ret", "body", "typeParams", "attrs", "retAttrs", "mods", "pos", "generated", "objectOverride", "clrFinal", "specialName", "suspendBridge", "clrInterfaceSlotBridge", "requiresClrOverride", "clrOverrideRef", "clrInterfaceImpls", "clrBaseImpls", "extern", "pinvoke", "bodyTerminates", "independentAliasSlot", "physicalSlotBridge", "inlineBir", "retNothing", "retNullableFlags", "retSuspendFnType", "suspendRet", "retCtxFnType", "entryPointAttrs"]),
         ("CirConstructor", ["vis", "params", "baseArgs", "thisArgs", "delegationSig", "body", "baseCtorRef", "localCtorIndex", "attrs", "preStmts", "pos"]),
         ("CirField", ["name", "type", "static", "readOnly", "initOnly", "vis", "init", "constant", "volatile", "const", "lateinit", "attrs", "nullableFlags", "suspendFnType", "pos"]),
         ("CirProperty", ["name", "type", "get", "getSig", "getRet", "getMethodArity", "set", "setSig", "setRet", "setMethodArity", "attrs", "nullableFlags", "suspendFnType", "mods", "vis", "recv", "pos"]),

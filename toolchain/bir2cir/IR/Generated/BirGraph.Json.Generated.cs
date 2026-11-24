@@ -4078,6 +4078,7 @@ internal static partial class BirGraphJson
         OptionalField<bool> field89 = default;
         OptionalField<int[]> field90 = default;
         OptionalField<TypeNode> field91 = default;
+        OptionalField<BirAttribute[]> field92 = default;
         while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
         {
             Require(reader, JsonTokenType.PropertyName);
@@ -4453,6 +4454,10 @@ internal static partial class BirGraphJson
                     Seen(ref seen, (UInt128)1 << 91);
                     field91 = reader.TokenType == JsonTokenType.Null ? OptionalField<TypeNode>.Null : OptionalField<TypeNode>.Of(TypeNode.ReadJson(ref reader));
                     break;
+                case "entryPointAttrs":
+                    Seen(ref seen, (UInt128)1 << 92);
+                    field92 = reader.TokenType == JsonTokenType.Null ? OptionalField<BirAttribute[]>.Null : OptionalField<BirAttribute[]>.Of(ReadArray(ref reader, (ref Utf8JsonReader reader) => ReadBirAttribute(ref reader)));
+                    break;
                 default: throw new FormatException($"Unknown lowering field {key}");
             }
         }
@@ -4551,6 +4556,7 @@ internal static partial class BirGraphJson
             RetNothing = field89,
             RetNullableFlags = field90,
             RetSuspendFnType = field91,
+            EntryPointAttrs = field92,
         };
     }
 

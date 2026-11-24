@@ -1807,6 +1807,7 @@ internal static class BirGraphDom
                 case "retNothing": break;
                 case "retNullableFlags": break;
                 case "retSuspendFnType": break;
+                case "entryPointAttrs": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirFunctionDeclaration at {source.GetPath()}");
             }
         return new BirFunctionDeclaration
@@ -1903,6 +1904,7 @@ internal static class BirGraphDom
             RetNothing = Field<bool>(fields, "retNothing", value => value!.GetValue<bool>()),
             RetNullableFlags = Field<int[]>(fields, "retNullableFlags", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
             RetSuspendFnType = Field<TypeNode>(fields, "retSuspendFnType", value => TypeNode.Read(value) ?? throw new FormatException()),
+            EntryPointAttrs = Field<BirAttribute[]>(fields, "entryPointAttrs", value => ((JsonArray)value!).Select(item0 => ReadBirAttribute(item0!)).ToArray()),
         };
     }
 

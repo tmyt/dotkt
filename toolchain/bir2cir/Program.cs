@@ -1369,7 +1369,11 @@ sealed class Pipeline
         ForeignNullableGenericCrossing.CheckImplementedSlots(physicalRoots, refs);
         // Consume CLR attribute origin and select each external constructor from
         // its declaration, retaining the shared foreign-parameter validation.
-        foreach (var (root, file) in physicalRoots) TypedAttributeBinding.Apply(emittedLocalTypes, root, refs, file);
+        foreach (var (root, file) in physicalRoots)
+        {
+            TypedAttributeBinding.Apply(emittedLocalTypes, root, refs, file);
+            EntryPointApartment.Bind(root, refs);
+        }
         // Native import lowering owns the MethodDef/ImplMap descriptor. Attribute
         // identity and generic-crossing validation remain authoritative.
         foreach (var root in physicalDocuments) PInvokeLowering.Apply(root, refs, localBasicEnums);

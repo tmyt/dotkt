@@ -157,19 +157,7 @@ static partial class SuspendColdLowering
             return new BirFunctionDeclaration { Name = "main", Static = true, Override = false, Virtual = false,
                 Abstract = false, ObjectOverride = false, Vis = "public", Params = CloneNamedParameters(),
                 Ret = UnitTn, Body = body.ToArray(),
-                Attrs = _m.Attrs.OrEmpty().Where(IsApartmentAttribute).Select(a => (BirAttribute)a.DeepClone()).ToArray() };
-
-            // This synchronous method, not the cold coroutine body, is started by the CLR.
-            bool IsApartmentAttribute(BirAttribute attribute)
-            {
-                if (!attribute.AttrClr.OrDefault() || attribute.Attr.OrDefault() is not TypeNode.Fqn
-                    { Name: "System.STAThreadAttribute" or "System.MTAThreadAttribute" } marker) return false;
-                var selected = attribute.AttrAssembly.OrDefault() is string scope
-                    ? _refs.ResolveRefTypeIn(marker.Name, scope) : _refs.ResolveRefType(marker.Name);
-                var framework = _refs.ResolveRefTypeIn(marker.Name, "System.Runtime")
-                    ?? _refs.ResolveRefTypeIn(marker.Name, typeof(object).Assembly.GetName().Name);
-                return selected != null && selected == framework;
-            }
+                Attrs = EntryPointApartment.ForDrain(_m, _refs) };
         }
     }
 }
