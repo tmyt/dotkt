@@ -16,6 +16,7 @@ sealed class ProjectedCallableEntries
     readonly Dictionary<string, (IBirTypeDeclaration Owner, BirFunctionDeclaration Method)> originalSlots = new(StringComparer.Ordinal);
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
+    readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
     readonly ReferenceMetadataIndex references;
@@ -347,9 +348,9 @@ sealed class ProjectedCallableEntries
     // both scopes live, before either kind of argument can be erased.
     internal void RewriteBody(BirGraphValue root, IBirTypeDeclaration owner, BirTypeParameter[] ownerParameters,
         ProjectedClassStorageFrame.InterfaceSlot[] ownerSlots, Func<string,string> allocate,
-        List<IBirTypeDeclaration> generated, List<BirFunctionDeclaration> helpers)
+        List<IBirTypeDeclaration> generated, List<BirFunctionDeclaration> helpers, IReadOnlyDictionary<int, TypeNode.Tv> capturedNullable = null)
     {
-        var ownerScope = new Scope(ownerParameters, ownerSlots);
+        var ownerScope = new Scope(ownerParameters, ownerSlots, CapturedNullable: capturedNullable);
         BirGraphValue Rewrite(BirGraphValue node, Scope methodScope, Dictionary<string, TypeNode> locations)
         {
             if (node is IBirExecutablePayload or BirMemberReference) return node;
@@ -360,7 +361,16 @@ sealed class ProjectedCallableEntries
                 locations = entry?.Plan.AddressOperands is { Length: > 0 } positions ? positions.ToDictionary(
                     i => method.Params.Value[i].Name.Value, i => ((TypeNode.ByRef)method.Params.Value[i].Type.Value).Of) : null;
             }
-            node.VisitChildSlots(slot => slot.Replace(Rewrite(slot.Value, methodScope, locations)));
+            bool splitUse = node is BirGraphNode && (methodScope.Representations?.NullableIndices.Count > 0 || capturedNullable != null);
+            TypeNode Close(TypeNode type) => SourceDeclarationSignature.RewriteType(type, f => CloseDependentOwner(f, ownerScope, methodScope));
+            if (splitUse) node.RewriteOwnTypeFieldsInPlace((_, role, t) => role == BirGenericFrameRole.Lexical ? Close(t) : t);
+            node.VisitChildSlots(slot => {
+                // The executable use supplies the owner. The parameter/result
+                // vectors and declaration-side override descriptors are foreign.
+                if (splitUse && slot.Value is BirMemberReference member && member.DeclaringType.HasValue)
+                    member.DeclaringType = Close(member.DeclaringType.Value);
+                else slot.Replace(Rewrite(slot.Value, methodScope, locations));
+            });
             if (node is BirNew construction)
             {
                 if (ReferencedConstruction(construction, ownerScope, methodScope) is { } factory) return factory;
@@ -375,7 +385,7 @@ sealed class ProjectedCallableEntries
             if (node is BirNewClosure or BirNewSam)
                 ProjectClosureCreation(node, ownerScope, methodScope, allocate, generated);
             if (Bind(node, ownerScope, methodScope, locations != null)) return node;
-            if (invocations.CloseForwardedNullable(node, ownerScope, methodScope, references, out var dependency)) return node;
+            var dependency = invocations.NeedsNullableRecovery(node, ownerScope, methodScope, references);
             if ((node.MethodWitnessFacts.HasValue || dependency) && CapturedGenericInvocation.Invocation.Admits(node) &&
                 invocations.FixedIntersection(new(node), owner?.Name.Value, owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(),
                     references, null, generated, classScope: ownerScope, methodScope: methodScope,
@@ -384,6 +394,25 @@ sealed class ProjectedCallableEntries
             return CapturedGenericInvocation.ProjectStorageCall(node, ownerScope, methodScope, references, allocate, generated, owner, helpers, locations);
         }
         Rewrite(root, default, null);
+    }
+
+    TypeNode.Fqn CloseDependentOwner(TypeNode.Fqn application, Scope owner, Scope method)
+    {
+        if (application.Args is not { Length: > 1 } args) return application;
+        TypeNode[] closed = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (Scope.ReferenceValue(args[i], owner, method, b => kinds.TryGetValue(b.Name, out var kind)
+                ? kind == "class" : references.IsClassType(b)) is not { } value || !args.Contains(value)) continue;
+            if (!ownerConstraints.TryGetValue(application.Name, out var rows))
+                ownerConstraints[application.Name] = rows = classes.TryGetValue(application.Name, out var local)
+                    ? TypeParameterFrame.Declarations(local).ToArray() : references.PhysicalOwnerTypeParametersInPhysicalFrame(application.Name, nativeNames: true);
+            if (rows?.Length != args.Length || rows[i].SpecialConstraints.OrEmpty().Length != 0 ||
+                rows[i].Constraints.OrEmpty().Where(b => !FBoundStarProjectionErasure.IsObjectish(b)).ToArray() is not
+                    [TypeNode.Tv { Scope: "type" } upper] || args[upper.I] != value) continue;
+            (closed ??= args.ToArray())[i] = value;
+        }
+        return closed == null ? application : application with { Args = closed };
     }
 
     Entry MethodEntry(BirFunctionDeclaration method) =>
@@ -505,25 +534,40 @@ sealed class ProjectedCallableEntries
     void ProjectClosureCreation(BirGraphValue node, Scope owner, Scope method, Func<string,string> allocate,
         List<IBirTypeDeclaration> generated)
     {
-        if (method.Slots is not { Length: > 0 } && owner.Slots is not { Length: > 0 }) return;
+        if (method.Slots is not { Length: > 0 } && owner.Slots is not { Length: > 0 } &&
+            method.Representations?.NullableIndices.Count is not > 0 && owner.CapturedNullable == null) return;
         var target = node is BirNewClosure c ? c.ClosureType.OrDefault() : ((BirNewSam)node).SamType.OrDefault();
         if (target is not TypeNode.Fqn named || node.ApplicationTypeArguments.OrDefault() is not { } args) return;
         BirClassDefinition Definition(string name) => classes.GetValueOrDefault(name)
             ?? generated.OfType<BirClassDefinition>().FirstOrDefault(t => t.Name.OrDefault() == name);
         if (Definition(named.Name) is not { } original) return;
         var parameters = TypeParameterFrame.Declarations(original).ToArray();
-        if (parameters.Length != args.Length || Frame(parameters) is not { } frame) return;
+        if (parameters.Length != args.Length) return;
+        // Capture placement has re-bound the lexical frame to this closure's
+        // TypeDef. Re-bind each split edge too, using the creation's actual
+        // arguments; the exact closure keeps its original constraints.
+        Dictionary<int,TypeNode.Tv> lost = null;
+        for (int i = 0; i < args.Length; i++)
+            if (Scope.SplitNullable(args[i], owner, method) is { } companion)
+                foreach (var upper in parameters[i].Constraints.OrEmpty().OfType<TypeNode.Tv>())
+                    if (upper.Scope == "type" && upper.I < args.Length && args[upper.I] == companion)
+                        (lost ??= new())[i] = upper;
+        if (Frame(parameters, lost != null) is not { } frame) return;
         var prefix = original.CapturedTypeParams.OrEmpty().Length;
         var split = frame.Interfaces.Where(s => s.OwnerIndex >= prefix && Proof(args[s.OwnerIndex],
             SupertypeGraph.SubstOwnerTvs(s.Bound, args), owner, method) != null).ToArray();
-        if (split.Length == 0) return;
+        if (split.Length == 0 && lost == null) return;
         var copy = (BirClassDefinition)original.DeepClone();
         copy.Name = allocate("closure");
         copy.RoundtripTypeHeaderPending = default;
         copy.RoundtripSupertypesPre = default;
         var full = ProjectedClassStorageFrame.Declare(parameters, split);
+        if (lost != null)
+            foreach (var (ordinary, nullable) in lost)
+                full[ordinary].Constraints = full[ordinary].Constraints.OrEmpty().Where(b => b != nullable).ToArray();
         split = split.Select((s, i) => s with { Evidence = full[parameters.Length + i].Constraints.OrEmpty() }).ToArray();
         copy.TypeParams = full[prefix..];
+        if (prefix != 0) copy.CapturedTypeParams = full[..prefix];
         var children = new List<IBirTypeDeclaration>();
         FBoundStarProjectionErasure.ProjectLexicalClosures(copy, named.Name, split.Length, full, Definition, allocate, children);
         copy.Visit(n => n.RewriteOwnTypeFieldsInPlace((field, _, type) =>
@@ -535,7 +579,7 @@ sealed class ProjectedCallableEntries
         {
             classes.Add(closure.Name.Value, closure);
             var helpers = new List<BirFunctionDeclaration>();
-            RewriteBody(closure, closure, parameters, split, allocate, generated, helpers);
+            RewriteBody(closure, closure, full[..parameters.Length], split, allocate, generated, helpers, lost);
             if (helpers.Count != 0) closure.Methods = closure.Methods.OrEmpty().Concat(helpers).ToArray();
             generated.Add(closure);
         }

@@ -126,13 +126,18 @@ interface MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark {
 fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.Item, A : ResultSource.Mark =
     if (first) left else right
 fun <A> keepMarked(value: A, items: ClrList<A?>?): A where A : PendingItems.Item, A : ResultSource.Mark {
-    if (items != null) appendItem(value, items)
+    if (items != null) appendItem<A, A>(value, items)
     return value
 }
-private fun <B : PendingItems.Item> appendItem(value: B, items: ClrList<B?>) {
+private fun <A : PendingItems.Item, B : A> appendItem(value: B, items: ClrList<A?>) {
     items.Add(null)
-    RoundtripDependentNative.NullableListWriter.Append<B, B?>(value, items)
+    RoundtripDependentNative.NullableListWriter.Append<B, A?>(value, items)
+    RoundtripDependentNative.NullableListSink<A, A?>().Append<B>(value, items)
 }
+fun <A> captureMarked(value: A, items: ClrList<A?>): () -> A where A : PendingItems.Item, A : ResultSource.Mark =
+    { items.Add(value); value }
+fun <A> emptyMarked(items: ClrList<A?>): Any where A : PendingItems.Item, A : ResultSource.Mark =
+    RoundtripDependentNative.NullableListWriter.Empty<A, A?>()
 interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
 }

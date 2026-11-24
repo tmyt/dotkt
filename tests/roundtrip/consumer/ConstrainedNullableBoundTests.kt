@@ -35,6 +35,8 @@ import roundtrip.constrainedbound.MarkedWriter
 import roundtrip.constrainedbound.absentMarked
 import roundtrip.constrainedbound.pickMarked
 import roundtrip.constrainedbound.keepMarked
+import roundtrip.constrainedbound.captureMarked
+import roundtrip.constrainedbound.emptyMarked
 import roundtrip.constrainedbound.AbstractMarkedSlot
 import roundtrip.constrainedbound.MarkedItemOwner
 import roundtrip.constrainedbound.JointOuter
@@ -492,7 +494,9 @@ class ConstrainedNullableBoundTests {
         val nullableItems = ClrList<ClientItem<*>?>()
         check(keepMarked<ClientItem<*>>(number, null) === number)
         check(keepMarked<ClientItem<*>>(text, nullableItems) === text)
-        check(nullableItems[0] == null && nullableItems[1] === text)
+        check(nullableItems[0] == null && nullableItems[1] === text && nullableItems[2] === text)
+        check(captureMarked<ClientItem<*>>(number, nullableItems)() === number && nullableItems[3] === number)
+        check((emptyMarked<ClientItem<*>>(nullableItems) as ClrList<ClientItem<*>>).Count == 0)
         val concrete = object : AbstractMarkedSlot<ClientItem<String>>(text) {}
         check(concrete.value === text)
         val slot = MarkedItemSlot<ClientItem<*>>()

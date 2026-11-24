@@ -209,40 +209,53 @@ static partial class CapturedGenericInvocation
             site.Owner is TypeNode.Fqn owner && declarations.TryGetValue(id, out var matches)
                 ? matches.SingleOrDefault(m => m.Owner == owner.Name && m.Method.Name.OrDefault() == site.Method)?.Method : null;
 
-        internal bool CloseForwardedNullable(BirGraphValue node, CallableWitnessScope owner, CallableWitnessScope method,
-            ReferenceMetadataIndex references, out bool recover)
+        internal bool NeedsNullableRecovery(BirGraphValue node, CallableWitnessScope owner, CallableWitnessScope method,
+            ReferenceMetadataIndex references)
         {
-            recover = false;
-            if (method.Representations == null || !Invocation.Admits(node) ||
+            if (method.Representations == null && owner.CapturedNullable == null || !Invocation.Admits(node) ||
                 node.ApplicationTypeArguments.OrDefault() is not { Length: > 0 } actual ||
-                !actual.Any(t => CallableWitnessScope.SplitNullable(t, owner, method) != null)) return false;
+                !actual.Any(t => CallableWitnessScope.LostNullableBounds(t, owner, method).Length != 0)) return false;
             var site = new Invocation(node);
             var id = node.SelectedGenericCallable ?? node.DeclarationIdentityFact.OrDefault();
-            if (id == null) return false;
             var local = LocalConsumer(site);
             var frame = local?.TypeParams.OrDefault()
-                ?? references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
+                ?? (id != null ? references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true) : null);
+            if (frame == null && site.Member?.DeclaringType.OrDefault() is TypeNode.Fqn native &&
+                TrySelectedMethod(site, native, references, out var selected))
+                frame = AddressTarget.ReadFrame(selected.GetGenericArguments());
             if (frame == null || frame.Length != actual.Length) return false;
+            var ownerArgs = ((site.Member?.DeclaringType.OrDefault() ?? site.Owner) as TypeNode.Fqn)?.Args ?? [];
             var revised = actual;
+            bool needsRecovery = false;
             for (var i = 0; i < actual.Length; i++)
             {
-                if (CallableWitnessScope.SplitNullable(actual[i], owner, method) is not { } nullable) continue;
+                var lost = CallableWitnessScope.LostNullableBounds(actual[i], owner, method);
+                if (LostDependencies(frame[i], ownerArgs, actual, lost).FirstOrDefault() is not { } nullable) continue;
                 var bounds = frame[i].Constraints.OrEmpty().Where(c => !FBoundStarProjectionErasure.IsObjectish(c)).ToArray();
-                if (!bounds.OfType<TypeNode.Tv>().Any(b => b.Scope == "method" && actual[b.I] == nullable)) continue;
-                var signature = local != null ? local.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).Append(local.Ret.Value)
-                    : site.Member?.ParameterTypes.OrEmpty().Append(site.Member.ReturnType.Value);
+                var operands = local != null ? local.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType)
+                    : site.Member?.ParameterTypes.OrEmpty();
+                var result = local?.Ret.OrDefault() ?? site.Member?.ReturnType.OrDefault();
+                // With no input fixing X, an invariant CLR return can be
+                // constructed with the value representation of X. For a
+                // class-bounded source its own nullable witness is that same
+                // representation; a nullable witness of a supertype is not.
+                bool IsClass(TypeNode.Fqn b) => definitions.TryGetValue(b.Name, out var definition)
+                    ? definition.Type.Kind.OrDefault() == "class" : references.IsClassType(b);
                 // Only an erased, otherwise free argument can collapse onto the
                 // upper witness. An invariant operand can fix it independently.
-                if (bounds.Length != 1 || frame[i].SpecialConstraints.OrEmpty().Length != 0 || signature == null ||
-                    signature.Any(t => ContainsCapturedSlot(t, [i])) ||
+                if (bounds.Length != 1 || frame[i].SpecialConstraints.OrEmpty().Length != 0 || operands == null || result == null ||
+                    operands.Any(t => ContainsCapturedSlot(t, [i])) ||
+                    ContainsCapturedSlot(result, [i]) && CallableWitnessScope.ReferenceValue(actual[i], owner, method, IsClass) != nullable ||
                     frame.Any(p => p.Constraints.OrEmpty().Any(t => ContainsCapturedSlot(t, [i]))))
-                { recover = true; return false; }
+                {
+                    needsRecovery = true;
+                    continue;
+                }
                 if (ReferenceEquals(revised, actual)) revised = actual.ToArray();
                 revised[i] = nullable;
             }
-            if (ReferenceEquals(revised, actual)) return false;
-            node.ApplicationTypeArguments = revised;
-            return true;
+            if (!ReferenceEquals(revised, actual)) node.ApplicationTypeArguments = revised;
+            return needsRecovery;
         }
 
         internal BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
@@ -309,7 +322,7 @@ static partial class CapturedGenericInvocation
             var actual = call.TypeArguments.Value;
             var proofs = occurrence.MethodWitnessFacts.OrEmpty();
             var fixedAddresses = FixedAddresses(signature, call.Arguments.OrDefault(), locations);
-            var application = BindFixedWitnesses(target.MethodFrame, signature, actual, proofs, LexicalCandidates(actual, classScope, methodScope),
+            var application = BindFixedWitnesses(target.MethodFrame, signature, owner.Args ?? [], actual, proofs, LexicalCandidates(actual, classScope, methodScope),
                 classScope, methodScope, t => definitions.TryGetValue(t.Name, out var declaration)
                     ? declaration.Type.Kind.OrDefault() == "interface" : refs.IsInterfaceType(t), fixedAddresses);
             var unit = IsVoid(ret);

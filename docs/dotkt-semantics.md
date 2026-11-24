@@ -2761,7 +2761,7 @@ Frame demand is structural, not inferred by chasing upper bounds. A nullable arg
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
 are implementation parameters, not new Kotlin parameters or a requirement that users add a `reified` modifier.
 
-On an exact entry, an ordinary physical parameter also carries a CLR upper bound naming its nullable-argument companion, when present.
+In an exact physical frame (including an exact closure), an ordinary parameter also carries a CLR upper bound naming its nullable-argument companion, when present.
 The companion closes to the same reference type or to boxed `object` for nullable values; it is not the scalar
 `Nullable<V>` representation. This states the physical relation needed when Kotlin supplies `T` and `T?` to a
 declaration with a dependent type-parameter bound. No such relation is inferred for storage companions. The original
@@ -2775,6 +2775,9 @@ native `List<A?>` must retain its actual element type, the Kotlin value interfac
 does not require `Root` to implement that interface. Forwarding to another Kotlin method uses the constraints of
 the selected entry; calling a fixed CLR method must still satisfy its authored constraints. Neither the native list
 nor its elements are copied, and the caller need not add a cast.
+An open Kotlin member with independently required class and nullable witnesses follows the same single-slot rule as
+other projected virtual methods: C# callers can use the exact entry, but overrides and interface implementations use
+the projected entry. Both paths dispatch to that implementation.
 
 Each frame records its source arity, the source indices requiring nullable companions and the physical slot order.
 Nested types preserve the entire enclosing CLR parameter prefix using that explicit correspondence. Owned TypeDefs
