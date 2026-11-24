@@ -11,6 +11,12 @@ static partial class ExternalGenericConstraintValidation
         public void ApplyResolvedMembers(BirGraphValue root) => WalkResolvedSource(root, null,
             Array.Empty<ParameterFacts>(), Array.Empty<ParameterFacts>());
 
+        internal void ValidateUncapturedArguments(BirGraphValue call, int[] captured, BirTypeParameter[] owners, BirTypeParameter[] methods)
+        {
+            if (ResolvedUseOf(call) is { } use)
+                CheckResolvedUse(use, ReadSourceParameterFacts(owners), ReadSourceParameterFacts(methods), captured);
+        }
+
         void WalkResolvedSource(BirGraphValue node, string incomingField, ParameterFacts[] typeParameters,
             ParameterFacts[] methodParameters)
         {
@@ -25,26 +31,32 @@ static partial class ExternalGenericConstraintValidation
 
             if (ResolvedUseOf(node) is { } use)
             {
-                if (!use.Arguments.HasValue || use.Arguments.Value.Length != use.Declarations.Length)
-                    throw new InvalidDataException(
-                        "bir2cir: resolved generic member constraint carrier does not match its type arguments");
-                var declaringType = use.Member?.DeclaringType.OrDefault();
-                var member = use.Member?.Name.OrDefault() ?? use.Method ?? "<unknown>";
-                var name = declaringType == null ? member : Display(declaringType) + "." + member;
-                for (var index = 0; index < use.Arguments.Value.Length; index++)
-                {
-                    var argument = use.Arguments.Value[index];
-                    ValidateType(argument, nextTypes, nextMethods, _refs, _isValueFqn, _localEnums,
-                        _localTypes, _declarationCache);
-                    ValidateArgument(name, index, argument, SourceConstraintDeclaration(use.Declarations[index]),
-                        nextTypes, nextMethods, _refs, _isValueFqn, _localEnums, _localTypes);
-                }
+                CheckResolvedUse(use, nextTypes, nextMethods, []);
                 use.Clear();
             }
             node.VisitOwnChildSlots((field, _, slot) => {
                 if (UseSiteTypeField(field, node is BirNew))
                     WalkResolvedSource(slot.Value, field, nextTypes, nextMethods);
             });
+        }
+
+        void CheckResolvedUse(ResolvedUse use, ParameterFacts[] nextTypes, ParameterFacts[] nextMethods, int[] captured)
+        {
+            if (!use.Arguments.HasValue || use.Arguments.Value.Length != use.Declarations.Length)
+                throw new InvalidDataException(
+                    "bir2cir: resolved generic member constraint carrier does not match its type arguments");
+            var declaringType = use.Member?.DeclaringType.OrDefault();
+            var member = use.Member?.Name.OrDefault() ?? use.Method ?? "<unknown>";
+            var name = declaringType == null ? member : Display(declaringType) + "." + member;
+            for (var index = 0; index < use.Arguments.Value.Length; index++)
+            {
+                if (Array.IndexOf(captured, index) >= 0) continue;
+                var argument = use.Arguments.Value[index];
+                ValidateType(argument, nextTypes, nextMethods, _refs, _isValueFqn, _localEnums,
+                    _localTypes, _declarationCache);
+                ValidateArgument(name, index, argument, SourceConstraintDeclaration(use.Declarations[index]),
+                    nextTypes, nextMethods, _refs, _isValueFqn, _localEnums, _localTypes);
+            }
         }
 
         ParameterFacts[] ReadSourceParameterFacts(IEnumerable<BirTypeParameter> parameters) =>

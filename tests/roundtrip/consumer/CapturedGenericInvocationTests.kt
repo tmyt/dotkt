@@ -13,6 +13,12 @@ private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Lo
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
+private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
+    inner class Caller {
+        fun clear(items: CsList<out System.IO.Stream>): Unit =
+            ClearWith(items, System.MemoryExtensions.AsSpan("value"))
+    }
+}
 
 private class EvaluationOrder {
     var order = ""
@@ -29,6 +35,11 @@ private class ThrowingElement : CoroutineContext.Element {
 class CapturedGenericInvocationTests {
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
+        val derived = CsList<System.IO.MemoryStream>()
+        derived.Add(System.IO.MemoryStream())
+        check(countWithSpan(derived) == 1)
+        check(SpanCallOwner().Caller().clear(derived) === Unit)
+        check(derived.Count == 0)
     }
     @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
         val leaf = NativeListLeaf(42L)

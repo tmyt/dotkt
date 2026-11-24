@@ -102,7 +102,8 @@ static partial class CapturedGenericInvocation
     // owning records. Validate the original complete vectors before releasing
     // any staged anchor; a metadata ID is not permission to replace a record.
     internal static PreparedInvocation BindPhysicalDeclarations(PendingDeclarations pending,
-        IReadOnlyList<BirFileDeclaration> typedRoots, Func<TypeNode, TypeNode.Fqn> captureConstruction = null)
+        IReadOnlyList<BirFileDeclaration> typedRoots, Func<TypeNode, TypeNode.Fqn> captureConstruction = null,
+        ExternalGenericConstraintValidation.Prepared constraintValidation = null)
     {
         if (pending.Roots == null || pending.Roots.Length != typedRoots.Count) throw FrontierMismatch();
         var occurrences = new HashSet<BirGraphValue>(ReferenceEqualityComparer.Instance);
@@ -140,7 +141,8 @@ static partial class CapturedGenericInvocation
         }
         pending.Roots = null;
         return new PreparedInvocation(pending.Declarations, pending.Types, pending.FlattenMissingOwners,
-            TypedPhysicalValueCoercion.ResultTypeOracle(typedRoots), captureConstruction);
+            TypedPhysicalValueCoercion.ResultTypeOracle(typedRoots), captureConstruction, constraintValidation,
+            new(() => SupertypeGraph.CollectSource(typedRoots)));
 
         void Validate(ContainerBinding original)
         {

@@ -15,12 +15,15 @@ static partial class CapturedGenericInvocation
         readonly Dictionary<BirGraphValue, (CallableWitnessScope Owner, CallableWitnessScope Method, IReadOnlyDictionary<string,TypeNode> Locations)> resultScopes =
             new(ReferenceEqualityComparer.Instance);
         readonly Func<TypeNode, TypeNode.Fqn> captureConstruction;
+        readonly ExternalGenericConstraintValidation.Prepared constraintValidation;
+        readonly Lazy<Dictionary<string, SupertypeGraph.Def>> classGraph;
 
         internal PreparedInvocation(Dictionary<string, List<MethodBinding>> declarations,
             Dictionary<string, ContainerBinding> definitions, bool flatten,
-            Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType, Func<TypeNode, TypeNode.Fqn> captureConstruction)
+            Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> physicalType, Func<TypeNode, TypeNode.Fqn> captureConstruction,
+            ExternalGenericConstraintValidation.Prepared constraintValidation, Lazy<Dictionary<string, SupertypeGraph.Def>> classGraph)
         { this.declarations = declarations; this.definitions = definitions; flattenMissingOwners = flatten; this.physicalType = physicalType;
-            this.captureConstruction = captureConstruction; }
+            this.captureConstruction = captureConstruction; this.constraintValidation = constraintValidation; this.classGraph = classGraph; }
 
         internal void Apply(BirFileDeclaration file, ReferenceMetadataIndex refs, HashSet<string> emittedLocalTypes,
             bool finishFixedCalls = false)
@@ -284,19 +287,9 @@ static partial class CapturedGenericInvocation
             occurrence.MethodWitnessFacts = default;
             if (access == null && (call.Super || typed && lexicalAccess))
             {
-                var formals = signature.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? [])).ToArray();
-                var returns = SupertypeGraph.SubstOwnerTvs(ret, owner.Args ?? []);
-                var thunk = LexicalForwarder(call, owner, lexicalOwner, target.MethodFrame.Select(p => CloneParameter(p,
-                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null, typed, lexicalDefinition);
-                lexical = new(new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
-                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, thunk);
+                lexical = LexicalAdapter(call, target, owner, lexicalOwner, ownerFrame, local != null, typed, lexicalDefinition);
             }
-            string Allocate(string role) {
-                string name;
-                do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
-                return name;
-            }
-            return typed || access != null ? ProjectAddressCall(call, target, owner, application.Facets, refs, allocate ?? Allocate, generated, lexical, access, application.Arguments,
+            return typed || access != null ? ProjectAddressCall(call, target, owner, application.Facets, refs, allocate ?? (role => AllocateAdapter(lexicalOwner, emitted, role)), generated, lexical, access, application.Arguments,
                 fixedAddresses, captures: rows, capturedResult: capturedResult, resultUse: resultUse)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
                     lexical?.Method.Name.Value ?? target.Name, target.Keys, application.Arguments, application.Facets, result, unit, refs, rows);
@@ -311,10 +304,33 @@ static partial class CapturedGenericInvocation
             while (definition.Methods.OrEmpty().Any(method => method.Name.OrDefault() == name));
             var forward = call.Instance ? call.SuperForward(parameters, result, frame.Length, local)
                 : call.Forward(target, frame.Length, parameters, result, local);
+            if (call.Instance && !local)
+            {
+                new Invocation(forward).Member.DeclaringType = target;
+                if (forward is BirGenericInstance instance) instance.Type = target;
+                if (forward is BirCallInstance virtualCall) virtualCall.OwnerType = target;
+            }
             var method = Method(name, frame, parameters, result,
                 Body(forward, IsVoid(result), objectResult: false), isStatic: !call.Instance, visibility: adapterAccess ? "internal" : "private");
             definition.Methods = definition.Methods.OrEmpty().Append(method).ToArray();
             return method;
+        }
+
+        static string AllocateAdapter(string lexicalOwner, HashSet<string> emitted, string role)
+        {
+            string name;
+            do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
+            return name;
+        }
+
+        LexicalTarget LexicalAdapter(Invocation call, AddressTarget target, TypeNode.Fqn owner, string lexicalOwner,
+            BirTypeParameter[] ownerFrame, bool local, bool typed, IBirTypeDeclaration definition = null)
+        {
+            TypeNode Close(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, owner.Args ?? []);
+            var thunk = LexicalForwarder(call, owner, lexicalOwner, target.MethodFrame.Select(p => CloneParameter(p, Close)).ToArray(),
+                target.Signature.Select(Close).ToArray(), Close(target.Result), local, typed, definition);
+            return new(new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
+                .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, thunk);
         }
 
         static void Declare(BirGraphValue node, Dictionary<string, TypeNode> scope)
@@ -412,13 +428,50 @@ static partial class CapturedGenericInvocation
                 return HasAddress(type) || ByRefLike(type, refs) || type is TypeNode.Tv v &&
                     (v.Scope == "method" ? methodFrame : ownerFrame)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct");
             }
-            if (declarationParameters.Any(RequiresTypedTransport) || RequiresTypedTransport(declaredReturn)) return call.Node;
+            var typedInput = declarationParameters.Any(RequiresTypedTransport);
+            if (RequiresTypedTransport(declaredReturn) || typedInput && (local || declarationParameters.Any(HasAddress) ||
+                captureIndices.Any(i => RequiresTypedTransport(declarationParameters[i])))) return call.Node;
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.
             var rows = CaptureRows(capture, declarationParameters, refs);
             var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
             if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, closedSlots))) return call.Node;
+
+            if (typedInput)
+            {
+                // Close the invariant operand from its runtime witness, but pass
+                // independent stack-only values through the typed Invoke signature.
+                if (rows.Length == 0) return call.Node;
+                if (!TrySelectedMethod(call, owner, refs, out var method))
+                    throw new InvalidOperationException("Captured invocation lost its selected MethodDef");
+                var target = AddressTarget.FromReference(method, call.Member, selectedFrame);
+                constraintValidation.ValidateUncapturedArguments(call.Node, closedSlots, ownerFrame, methodFrame);
+                LexicalTarget lexical = null;
+                if (!method.IsPublic || call.Super)
+                {
+                    if (call.Instance && !call.Super && call.Receiver is not BirThis)
+                    {
+                        // A nested caller can invoke a family member on its enclosing derived
+                        // instance. The instance forwarder belongs to that receiver, not the caller.
+                        var receiver = (TypeNode.Fqn)physicalType((BirGraphValue)call.Receiver, scope);
+                        var definition = definitions[receiver.Name].Type;
+                        var frame = TypeParameterFrame.Declarations(definition).ToArray();
+                        var open = new TypeNode.Fqn(receiver.Name, frame.Length == 0 ? null : Enumerable.Range(0, frame.Length)
+                            .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+                        var declaring = SupertypeGraph.ReachableFromClass(open, classGraph.Value, refs)
+                            .First(e => !e.isInterface && SupertypeGraph.SameDeclaration(e.spec,owner,refs.PhysicalTypeNames)).spec;
+                        lexical = LexicalAdapter(call, target, declaring, receiver.Name, frame, false, true, definition) with { Owner = receiver };
+                    }
+                    else lexical = LexicalAdapter(call, target, owner, lexicalOwner, ownerFrame, false, true);
+                }
+                var projected = ProjectAddressCall(call, target, owner, [], refs, role => AllocateAdapter(lexicalOwner, emitted, role), generated, lexical, null,
+                    call.TypeArguments.Value, captures: rows, capturedResult: IsVoid(declaredReturn) ? null : result);
+                return IsVoid(declaredReturn) && result != null && !IsVoid(result)
+                    ? new BirValueBlock { Type = result, Stmts = new IBirStatement[] { new BirExpressionStatement {
+                        Expr = OptionalField<IBirExpression>.Of((IBirExpression)projected) } }, Result = ClrMemberResolution.UnitSingletonRead(emitted, refs) }
+                    : projected;
+            }
 
             if (call.Super)
             {

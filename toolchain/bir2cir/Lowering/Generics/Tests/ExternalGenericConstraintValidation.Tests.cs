@@ -76,6 +76,18 @@ static partial class ExternalGenericConstraintValidation
             throw new InvalidOperationException("Resolved generic validation accepted a violated " + requirement + " constraint");
         }
         Accept(text, Parameter("T", "class"));
+        var capturedCall = Call(text, Parameter("W", "new")) with {
+            MemberRef = reference with { GenericArity = 2 },
+            _resolvedMethodTypeParams = new[] { Parameter("Captured", "new"), Parameter("Independent", "new") },
+            TypeArgs = new TypeNode[] { text, integer },
+        };
+        prepared.ValidateUncapturedArguments(capturedCall, [0], [], []);
+        capturedCall.TypeArgs = new TypeNode[] { integer, text };
+        try {
+            prepared.ValidateUncapturedArguments(capturedCall, [0], [], []);
+            throw new InvalidOperationException("A projected call lost an independent constructor constraint");
+        }
+        catch (InvalidOperationException error) when (error.Message.Contains("requires a public parameterless constructor", StringComparison.Ordinal)) { }
         Reject(integer, Parameter("T", "class"), "reference type");
         Accept(integer, Parameter("T", "struct"));
         Reject(new TypeNode.Nullable(integer), Parameter("T", "struct"), "non-nullable CLR value type");
