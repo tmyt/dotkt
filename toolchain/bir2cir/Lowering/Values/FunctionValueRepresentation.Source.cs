@@ -22,7 +22,7 @@ static partial class FunctionValueRepresentation
         var declaredDelegate = node.HasDeclaredDelegateSlot;
         // A native declaration is not Kotlin function-value storage. Its open
         // parameter types are still needed for exact member selection.
-        var nativeMethod = node.SourceClrBoundary && node is BirNativeStatic or BirNativeInstance;
+        var nativeMethod = node.SourceClrBoundary && node is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance;
         node.RewriteOwnTypeFieldsInPlace((field, _, type) =>
             PreserveField(field) || field == "funcType" && declaredDelegate ||
             field == "resolvedMemberParams" && nativeMethod ? type : RepresentType(type, isByRefLike));
