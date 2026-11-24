@@ -413,6 +413,9 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual("woof", dog.sound())
         ClassicAssert.AreEqual("a:generic", animal.describe())
         ClassicAssert.AreEqual("d:woof", dog.describe())
+        ClassicAssert.AreEqual("companion:generic", Dog.describe())
+        ClassicAssert.AreEqual("self", roundtrip.dispatchsurface.SelfDispatch.describe())
+        ClassicAssert.AreEqual("self", roundtrip.dispatchsurface.SelfDispatch.Named.describe())
 
         ClassicAssert.AreEqual("Anon", Greeter.Companion.DEFAULT)
         ClassicAssert.AreEqual("Hi, Vec", Greeter.Companion.create().greet("Vec"))

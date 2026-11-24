@@ -10,6 +10,12 @@ open class Animal(private val name: String) {
 
 class Dog(name: String) : Animal(name) {
     override fun sound(): String = "woof"
+    companion object : Animal("companion")
+}
+
+sealed class SelfDispatch(val name: String) {
+    fun describe(): String = name
+    companion object Named : SelfDispatch("self")
 }
 
 interface Greeter {
