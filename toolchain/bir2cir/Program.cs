@@ -1316,7 +1316,7 @@ sealed class Pipeline
         // declaration inventory. Both invocation and receiver materialization
         // now consume these same owning typed records before dispatch metadata.
         var physicalCapturedInvocations = CapturedGenericInvocation.BindPhysicalDeclarations(
-            capturedInvocations, physicalDocuments, valueRepresentations.CaptureConstruction);
+            capturedInvocations, physicalDocuments, valueRepresentations.CaptureConstruction, externalGenericConstraintValidation);
         loweredRoots.Clear();
         foreach (var root in physicalDocuments)
             physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes);

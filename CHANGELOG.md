@@ -5,8 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Pass a projected CLR list with its actual element type when another argument to the same generic method is a span (#1861).
-
+- Preserve a projected CLR container's actual element type when the same call takes an independent stack-only argument, such as a span (#1861).
 - Bind direct calls to imported CLR constructors even when an array parameter contains a Kotlin generic type with additional CLR type arguments (#1867).
 - Preserve object identity when reading a generic Kotlin value through an erased collection view, without weakening concrete CLR casts (#1862).
 - Return a valid CLR task for suspend functions whose Kotlin `CharSequence` result is represented as a string, including after suspension (#1878).

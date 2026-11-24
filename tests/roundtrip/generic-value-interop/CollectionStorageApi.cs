@@ -27,3 +27,13 @@ public static class CollectionStorageApi
         where T : System.IO.Stream where W : allows ref struct => items.Count;
 #nullable restore
 }
+
+#nullable enable
+public class ProjectedListConsumer
+{
+    protected void ClearWith<T>(List<T> items, System.ReadOnlySpan<char> label) where T : System.IO.Stream
+    {
+        if (label.Length != 5 || label[0] != 'v') throw new System.ArgumentException(nameof(label));
+        items.Clear();
+    }
+}

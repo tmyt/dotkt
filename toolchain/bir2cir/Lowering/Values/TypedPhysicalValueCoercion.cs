@@ -92,6 +92,21 @@ static class TypedPhysicalValueCoercion
         BirMemberReference isValueType;
         internal BirNativeInstance IsValueType(TypeNode variable) =>
             PhysicalTypeKindTest.IsValueType(variable, isValueType ??= PhysicalTypeKindTest.Bind(References));
+        BirMemberReference asReference;
+        internal BirGenericStatic ReferenceView(TypeNode from, TypeNode to, IBirExpression address)
+        {
+            const string owner = "System.Runtime.CompilerServices.Unsafe";
+            if (asReference == null)
+            {
+                TypeNode[] signature = [new TypeNode.ByRef(new TypeNode.Tv("method", 0))];
+                if (!References.TryResolveStaticMemberSignature(owner, "As", 2, true, signature, null,
+                        out _, out var method, out var declaring))
+                    throw new InvalidOperationException("Missing CLR managed-reference identity conversion");
+                asReference = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, References, method, "method", declaring, null));
+            }
+            return new() { Type = new TypeNode.Fqn(owner), Method = "As", TypeArgs = new[] { from, to },
+                MemberRef = asReference, Args = new[] { address } };
+        }
         internal IReadOnlyDictionary<string, string> LocalCarriers;
         internal BirFileDeclaration Document;
         internal BirTemporaryNames ArrayNames;
@@ -336,12 +351,6 @@ static class TypedPhysicalValueCoercion
     static IBirExpression CheckedAddressView(IBirExpression value, TypeNode.ByRef from, TypeNode.ByRef to, Index index)
     {
         var refs = index.References;
-        const string owner = "System.Runtime.CompilerServices.Unsafe";
-        TypeNode[] signature = [new TypeNode.ByRef(new TypeNode.Tv("method", 0))];
-        if (!refs.TryResolveStaticMemberSignature(owner, "As", 2, true, signature, null,
-                out _, out var method, out var declaring))
-            throw new InvalidOperationException("Missing CLR managed-reference identity conversion");
-        var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, method, "method", declaring, null));
         var failure = refs.ResolveRefType("System.InvalidCastException");
         var mismatch = new BirBinaryOperation { Op = "!=", Lhs = new BirClassReference { Type = from.Of },
             Rhs = new BirClassReference { Type = to.Of } };
@@ -357,8 +366,7 @@ static class TypedPhysicalValueCoercion
             value = new BirLocal { Name = name };
         }
         statements.Add(new BirIf { Branches = new[] { new BirBranch { Cond = mismatch, Body = new IBirStatement[] { fail } } } });
-        var view = new BirGenericStatic { Type = new TypeNode.Fqn(owner), Method = "As",
-            TypeArgs = new[] { from.Of, to.Of }, MemberRef = member, Args = new[] { value } };
+        var view = index.ReferenceView(from.Of, to.Of, value);
         return new BirValueBlock { Type = to, Stmts = statements.ToArray(),
             Result = view };
     }
@@ -852,11 +860,15 @@ static class TypedPhysicalValueCoercion
         }
         BirLocal Address(IBirExpression value, TypeNode.ByRef pointer) =>
             Retain(value is BirByRefOf ? value : new BirByRefOf { Inner = Field(value) }, pointer);
-        // A value-type instantiation cannot itself be an array; in particular,
-        // an allows-ref-struct instantiation must never execute a box.
+        // Only reference instantiations can hold an array. Read their reference
+        // slot without a box instruction: even unreachable box !T is invalid
+        // for a ref-like T under the unoptimized CLR JIT.
         IBirExpression ExposureCandidate(BirGraphValue value, TypeNode type) => type is not TypeNode.Tv ? Expression(value)
             : new BirConditional { Type = Object, Cond = index.IsValueType(type),
-                Then = new BirConstant { Type = Object, Value = new BirLiteral.NullLiteral() }, Else = Cast(value, Object) };
+                Then = new BirConstant { Type = Object, Value = new BirLiteral.NullLiteral() },
+                Else = new BirByRefLoad { Elem = Object, Ptr = index.ReferenceView(type, Object,
+                    value is BirByRefLoad load ? load.Ptr.OrDefault() ?? new BirLocal { Name = load.Local } :
+                        Expression(value)) } };
         if (receiver != null)
         {
             if (receiverType == null) return null;
