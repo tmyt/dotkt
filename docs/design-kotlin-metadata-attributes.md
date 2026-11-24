@@ -340,8 +340,12 @@ From the **consumer surface**, an imported inline body and a reified type parame
 - **CLR generics carry the runtime type**, so a Kotlin `inline fun <reified T>` remains an ordinary CLR generic
   method `M<T>()`. CLR does not carry Kotlin's nullable-instantiation bit, so `bir2cir` computes a module-wide
   structural demand set from nullable-sensitive operations and exact call/lift correspondences, then appends hidden
-  `ValueTuple<Int32, System.Type, Func<object, object>>` witnesses only for demanded positions. The tuple
-  carries nullability/nominal flags, the runtime classifier, and an optional classifier predicate.
+  `ValueTuple<Int32, System.Type, Func<object, object>, object>` witnesses only for demanded positions. The
+  fields are nullability/nominal flags, the runtime classifier, an optional classifier predicate, and the
+  reflected Kotlin type. The last slot carries a Kotlin type descriptor when its structure is needed
+  (for example by `typeOf<T>()`). Without that demand it can still carry an erased collection's class
+  token for `T::class`; otherwise a newly constructed witness leaves the slot null. Forwarding preserves
+  the caller's shape rather than reconstructing it from the CLR storage type.
   This preserves Kotlin identity when CLR storage is erased or native values cannot inherit a Kotlin class. `[KotlinDeclarationIdentity]` records semantic `reified` indices
   and physical nullable-witness indices separately; `dll2klib` restores the former and hides the latter, while
   consumer `bir2cir` uses the trusted physical indices to pass or forward each witness. Consequently the ordinary
