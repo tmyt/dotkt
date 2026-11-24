@@ -148,6 +148,9 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   from the start. An output-only `out` argument replacing an array variable does not publish its previous vector.
   Captured generic calls retain their declaration-owned construction witnesses independently of carrier parameters;
   erasing a value slot must not replace the selected method's captured type frame with its upper bound.
+  When a native call takes a literal `null` for a captured scalar `T`, the actual closed CLR parameter
+  must accept null (a reference type or `Nullable<U>`). Otherwise the call throws `ClassCastException`
+  before entering the native method; null does not become the default value of a non-nullable struct.
 - When a Kotlin virtual method needs separate CLR type parameters to represent a class bound and an
   interface bound, both Kotlin and C# dispatch through **one** virtual method. Ordinary C# calls still use
   the source-named entry with both original constraints; this non-overridable entry forwards to the virtual

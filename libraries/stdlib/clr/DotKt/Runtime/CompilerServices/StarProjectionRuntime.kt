@@ -529,6 +529,12 @@ internal fun starProjectionInvokeIntersection(
 ): Any? {
     val target = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
         authored, slots, facets, arguments, null, captureOwners, capturePlan)
+    // MethodInfo.Invoke would silently substitute default(T) for a null value-type argument.
+    if (null in arguments) {
+        val parameters = target.getParameters()
+        for (index in arguments.indices)
+            if (arguments[index] == null) requireClosedNullParameter(parameters[index].parameterType)
+    }
     try {
         return target.invoke(receiver, arguments)
     } catch (failure: StarProjectionInvocationException) {
@@ -664,8 +670,7 @@ internal fun starProjectionIntersectionAdapter(
     if (scalarNulls != null) {
         val parameters = selected.getParameters()
         for (index in scalarNulls) {
-            if (!starProjectionTypeAcceptsNull(parameters[index].parameterType))
-                throw ClassCastException("Null cannot be passed to the closed CLR parameter")
+            requireClosedNullParameter(parameters[index].parameterType)
         }
     }
     val owner = declaringType.getGenericArguments()
@@ -675,6 +680,11 @@ internal fun starProjectionIntersectionAdapter(
     }
     return adapter.makeGenericType(frame).getConstructors(StarProjectionBindingFlags.INSTANCE_PUBLIC_NON_PUBLIC)
         .single().invoke(emptyArray<Any?>())
+}
+
+private fun requireClosedNullParameter(type: StarProjectionType) {
+    if (!starProjectionTypeAcceptsNull(type))
+        throw ClassCastException("Null cannot be passed to the closed CLR parameter")
 }
 
 @PublishedApi
