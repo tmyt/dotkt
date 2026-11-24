@@ -378,6 +378,7 @@ sealed partial class TypedCirProjection
             RetSuspendFnType = ProjectOptional(value.RetSuspendFnType, item => item, allowNull: false),
             SuspendRet = ProjectOptional(value.SuspendRet, item => item, allowNull: false),
             RetCtxFnType = ProjectOptional(value.RetCtxFnType, item => item, allowNull: false),
+            EntryPointAttrs = ProjectOptional(value.EntryPointAttrs, item => item.Where(AdmitAttribute).Select(item0 => ProjectAttribute(item0)).ToArray(), allowNull: false),
         };
     }
 

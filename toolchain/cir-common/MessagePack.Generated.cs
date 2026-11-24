@@ -333,6 +333,7 @@ public static class CirMessagePack
         OptionalField<TypeNode> field_retSuspendFnType = default!;
         OptionalField<TypeNode> field_suspendRet = default!;
         OptionalField<int> field_retCtxFnType = default!;
+        OptionalField<AttributeApplication[]> field_entryPointAttrs = default!;
         for (var i = 0; i < count; i++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -477,19 +478,23 @@ public static class CirMessagePack
                     Seen(ref seen, 17179869184UL);
                     field_retCtxFnType = OptionalField<int>.Of(Read_value28(ref reader));
                     break;
+                case "entryPointAttrs":
+                    Seen(ref seen, 34359738368UL);
+                    field_entryPointAttrs = OptionalField<AttributeApplication[]>.Of(Read_value7(ref reader));
+                    break;
                 default: throw new FormatException();
             }
         }
         if ((seen & 207UL) != 207UL) throw new FormatException();
         reader.Depth--;
-        var value = new CirMethod { Name = field_name, Static = field_static, Override = field_override, Virtual = field_virtual, Abstract = field_abstract, Vis = field_vis, Params = field_params, Ret = field_ret, Body = field_body, TypeParams = field_typeParams, Attrs = field_attrs, RetAttrs = field_retAttrs, Mods = field_mods, Pos = field_pos, Generated = field_generated, ObjectOverride = field_objectOverride, ClrFinal = field_clrFinal, SpecialName = field_specialName, SuspendBridge = field_suspendBridge, ClrInterfaceSlotBridge = field_clrInterfaceSlotBridge, RequiresClrOverride = field_requiresClrOverride, ClrOverrideRef = field_clrOverrideRef, ClrInterfaceImpls = field_clrInterfaceImpls, ClrBaseImpls = field_clrBaseImpls, Extern = field_extern, Pinvoke = field_pinvoke, BodyTerminates = field_bodyTerminates, IndependentAliasSlot = field_independentAliasSlot, PhysicalSlotBridge = field_physicalSlotBridge, InlineBir = field_inlineBir, RetNothing = field_retNothing, RetNullableFlags = field_retNullableFlags, RetSuspendFnType = field_retSuspendFnType, SuspendRet = field_suspendRet, RetCtxFnType = field_retCtxFnType };
+        var value = new CirMethod { Name = field_name, Static = field_static, Override = field_override, Virtual = field_virtual, Abstract = field_abstract, Vis = field_vis, Params = field_params, Ret = field_ret, Body = field_body, TypeParams = field_typeParams, Attrs = field_attrs, RetAttrs = field_retAttrs, Mods = field_mods, Pos = field_pos, Generated = field_generated, ObjectOverride = field_objectOverride, ClrFinal = field_clrFinal, SpecialName = field_specialName, SuspendBridge = field_suspendBridge, ClrInterfaceSlotBridge = field_clrInterfaceSlotBridge, RequiresClrOverride = field_requiresClrOverride, ClrOverrideRef = field_clrOverrideRef, ClrInterfaceImpls = field_clrInterfaceImpls, ClrBaseImpls = field_clrBaseImpls, Extern = field_extern, Pinvoke = field_pinvoke, BodyTerminates = field_bodyTerminates, IndependentAliasSlot = field_independentAliasSlot, PhysicalSlotBridge = field_physicalSlotBridge, InlineBir = field_inlineBir, RetNothing = field_retNothing, RetNullableFlags = field_retNullableFlags, RetSuspendFnType = field_retSuspendFnType, SuspendRet = field_suspendRet, RetCtxFnType = field_retCtxFnType, EntryPointAttrs = field_entryPointAttrs };
         return value;
     }
 
     private static void Write_cirMethod(ref MessagePackWriter writer, CirMethod node, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(6 + (node.Abstract.IsPresent ? 1 : 0) + (node.Vis.IsPresent ? 1 : 0) + (node.Body.IsPresent ? 1 : 0) + (node.TypeParams.IsPresent ? 1 : 0) + (node.Attrs.IsPresent ? 1 : 0) + (node.RetAttrs.IsPresent ? 1 : 0) + (node.Mods.IsPresent ? 1 : 0) + (node.Pos.IsPresent ? 1 : 0) + (node.Generated.IsPresent ? 1 : 0) + (node.ObjectOverride.IsPresent ? 1 : 0) + (node.ClrFinal.IsPresent ? 1 : 0) + (node.SpecialName.IsPresent ? 1 : 0) + (node.SuspendBridge.IsPresent ? 1 : 0) + (node.ClrInterfaceSlotBridge.IsPresent ? 1 : 0) + (node.RequiresClrOverride.IsPresent ? 1 : 0) + (node.ClrOverrideRef.IsPresent ? 1 : 0) + (node.ClrInterfaceImpls.IsPresent ? 1 : 0) + (node.ClrBaseImpls.IsPresent ? 1 : 0) + (node.Extern.IsPresent ? 1 : 0) + (node.Pinvoke.IsPresent ? 1 : 0) + (node.BodyTerminates.IsPresent ? 1 : 0) + (node.IndependentAliasSlot.IsPresent ? 1 : 0) + (node.PhysicalSlotBridge.IsPresent ? 1 : 0) + (node.InlineBir.IsPresent ? 1 : 0) + (node.RetNothing.IsPresent ? 1 : 0) + (node.RetNullableFlags.IsPresent ? 1 : 0) + (node.RetSuspendFnType.IsPresent ? 1 : 0) + (node.SuspendRet.IsPresent ? 1 : 0) + (node.RetCtxFnType.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(6 + (node.Abstract.IsPresent ? 1 : 0) + (node.Vis.IsPresent ? 1 : 0) + (node.Body.IsPresent ? 1 : 0) + (node.TypeParams.IsPresent ? 1 : 0) + (node.Attrs.IsPresent ? 1 : 0) + (node.RetAttrs.IsPresent ? 1 : 0) + (node.Mods.IsPresent ? 1 : 0) + (node.Pos.IsPresent ? 1 : 0) + (node.Generated.IsPresent ? 1 : 0) + (node.ObjectOverride.IsPresent ? 1 : 0) + (node.ClrFinal.IsPresent ? 1 : 0) + (node.SpecialName.IsPresent ? 1 : 0) + (node.SuspendBridge.IsPresent ? 1 : 0) + (node.ClrInterfaceSlotBridge.IsPresent ? 1 : 0) + (node.RequiresClrOverride.IsPresent ? 1 : 0) + (node.ClrOverrideRef.IsPresent ? 1 : 0) + (node.ClrInterfaceImpls.IsPresent ? 1 : 0) + (node.ClrBaseImpls.IsPresent ? 1 : 0) + (node.Extern.IsPresent ? 1 : 0) + (node.Pinvoke.IsPresent ? 1 : 0) + (node.BodyTerminates.IsPresent ? 1 : 0) + (node.IndependentAliasSlot.IsPresent ? 1 : 0) + (node.PhysicalSlotBridge.IsPresent ? 1 : 0) + (node.InlineBir.IsPresent ? 1 : 0) + (node.RetNothing.IsPresent ? 1 : 0) + (node.RetNullableFlags.IsPresent ? 1 : 0) + (node.RetSuspendFnType.IsPresent ? 1 : 0) + (node.SuspendRet.IsPresent ? 1 : 0) + (node.RetCtxFnType.IsPresent ? 1 : 0) + (node.EntryPointAttrs.IsPresent ? 1 : 0));
         writer.Write("name");
         Write_value1(ref writer, node.Name, depth + 1);
         writer.Write("static");
@@ -646,6 +651,11 @@ public static class CirMessagePack
         {
             writer.Write("retCtxFnType");
             Write_value28(ref writer, node.RetCtxFnType.Value, depth + 1);
+        }
+        if (node.EntryPointAttrs.IsPresent)
+        {
+            writer.Write("entryPointAttrs");
+            Write_value7(ref writer, node.EntryPointAttrs.Value, depth + 1);
         }
     }
 

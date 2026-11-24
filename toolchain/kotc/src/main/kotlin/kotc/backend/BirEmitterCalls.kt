@@ -1535,12 +1535,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 		// The selected declaration's owner and descriptor must use the same frame.
 		val callee = selectedDeclaration ?: if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
 		val recv = dispatchReceiver(call)
-		// A restored external Kotlin companion is an instance singleton: keep its IrGetObjectValue receiver in BIR
-		// (`Owner.INSTANCE`) and
-		// let bir2cir decide whether the referenced owner is actually a CLR static class or an emitted Kotlin object.
-		// Treating every object receiver as CLR static here erased the receiver of cross-module `Dispatchers.Default`.
-		val isExternalCompanion = declaringClass?.isCompanion == true && clrName(declaringClass) != null
-		val companionCall = true.takeIf { isExternalCompanion }
+		// The receiver may be a companion singleton without the selected member being declared on it.
+		// Keep that operand; mark only companion declarations for bir2cir's companion-member binding.
+		val memberOwner = callee.parent as? IrClass
+		val companionCall = true.takeIf { memberOwner?.isCompanion == true && clrName(memberOwner) != null }
 		val isStatic = recv == null
 		// A NON-static callInstance emitted here is normally reshaped to a `clrInstance` by bir2cir's
 		// NetInteropBinding (which resolves the owner off the .NET refs) — where `virtual` is irrelevant. But a

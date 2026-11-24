@@ -619,16 +619,15 @@ sealed partial class Emitter
         }
         _curTypeParams = null;
 
-        // Pass 5: synthesize entry point on the file class that has `main`.
+        // The public startup wrapper always takes string[], even if the Kotlin target takes System.Array.
         MethodBuilder entry = null;
         foreach (var ti in _types.Values)
-            if (ti.Def is CirFileDeclaration { HasMain: true } && ti.Methods.ContainsKey("main"))
+            if (ti.Def is CirFileDeclaration { HasMain: true } && ti.Methods.TryGetValue("main", out var mainMb))
             {
                 entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
+                StampMemberAttrs(entry.SetCustomAttribute, ti.EntryPointAttrs);
                 var il = entry.GetILGenerator();
                 if (EmitReferenceStub(il)) continue;
-                var mainMb = ti.Methods["main"];
-                // `fun main(args: Array<String>)` -> forward the CLR args; `fun main()` -> call with none.
                 if (_mparams.TryGetValue(mainMb, out var mp) && mp.Length > 0) il.Emit(OpCodes.Ldarg_0);
                 EmitMethod(il, OpCodes.Call, mainMb);
                 il.Emit(OpCodes.Ret);
@@ -926,6 +925,7 @@ sealed partial class Emitter
         if (m.Generated.OrDefault())
             StampCompilerGenerated(mb);
         ti.Methods[name] = mb;
+        if (ti.IsFileClass && name == "main") ti.EntryPointAttrs = m.EntryPointAttrs;
         ti.MethodsBySig[DefinitionSigKey(name, m)] = mb;
         ti.MethodDeclarationReturns[mb] = DefinitionSigKey(name, m).Return;
         // Keep a partial call-side alias only while it is unique. Return-distinct definitions must never
