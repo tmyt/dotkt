@@ -13,9 +13,9 @@ class Dog(name: String) : Animal(name) {
     companion object : Animal("companion")
 }
 
-sealed class SelfDispatch(val name: String) {
-    fun describe(): String = name
-    companion object Named : SelfDispatch("self")
+sealed class SelfDispatch<T>(val name: T) {
+    fun describe(): T = name
+    companion object Named : SelfDispatch<String>("self")
 }
 
 interface Greeter {
