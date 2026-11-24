@@ -18,7 +18,8 @@ public class DurationFormatTests
             void Check(double x) => Assert.That(format(x, d), Is.EqualTo(Reference(x, d)),
                 $"bits=0x{BitConverter.DoubleToUInt64Bits(x):x16}, decimals={d}");
             foreach (double value in new[] { 0.0, double.Epsilon, Math.BitDecrement(Math.ScaleB(1.0, -1022)),
-                         double.MaxValue, 1e27, 999_999_999.5, 9.96875, double.PositiveInfinity, double.NaN })
+                         double.MaxValue, 1e27, 999_999_999.5, 1_999_999_999.5, 9.96875,
+                         Math.BitDecrement(1.0005e-9), 1.0005e-9, double.PositiveInfinity, double.NaN })
             {
                 Check(value);
                 Check(-value);
