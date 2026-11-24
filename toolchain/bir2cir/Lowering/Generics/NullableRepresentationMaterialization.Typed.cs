@@ -17,7 +17,12 @@ static partial class NullableRepresentationMaterialization
         void FindCalls(BirGraphValue node)
         {
             if (node is BirAttribute or IBirExecutablePayload) return;
-            if (node is BirGraphNode && node.DeclarationIdentityFact.OrDefault() is string id && references != null)
+            var referencedDeclaration = node switch {
+                BirOverride edge => edge.DeclarationId.OrDefault(),
+                BirGraphNode => node.DeclarationIdentityFact.OrDefault(),
+                _ => null,
+            };
+            if (referencedDeclaration is string id && references != null)
             {
                 if (references.NullableMethodFrame(id) is { } frame) importedMethods[id] = frame;
                 if (references.TryDeclarationIdentity(id, out _, out var owner, out _, out _) && !importedTypes.ContainsKey(owner))

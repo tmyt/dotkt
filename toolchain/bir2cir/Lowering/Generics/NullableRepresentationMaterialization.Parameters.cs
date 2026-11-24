@@ -13,25 +13,8 @@ static partial class NullableRepresentationMaterialization
         var expanded = ExpandParameters(source, frame, scope);
         foreach (var sourceIndex in frame.StorageIndices)
         {
-            var seen = new HashSet<int>();
-            IEnumerable<TypeNode> Bounds(int index)
-            {
-                if (!seen.Add(index) || !source[index].Constraints.HasValue) yield break;
-                foreach (var bound in source[index].Constraints.Value)
-                    if (bound is TypeNode.Tv variable && variable.Scope == scope)
-                    {
-                        var slot = frame.PhysicalSlot(variable.I);
-                        foreach (var inherited in Bounds(slot.SourceIndex)) yield return inherited;
-                    }
-                    else if (bound is TypeNode.Tv { Scope: "type" } enclosing && scope == "method"
-                        && enclosingFrame != null && enclosingParameters != null)
-                    {
-                        var ownerVariable = new TypeNode.Tv("type", enclosingFrame.PhysicalSlot(enclosing.I).SourceIndex);
-                        foreach (var inherited in OwnerConstrainedMethodLowering.IndependentBounds(ownerVariable, enclosingParameters)) yield return inherited;
-                    }
-                    else if (bound != null) yield return bound;
-            }
-            var projected = Bounds(sourceIndex).OfType<TypeNode.Fqn>().Select(bound => policy?.StorageConstraint(bound))
+            var projected = StorageClassifierBounds(source, sourceIndex, scope, frame, enclosingParameters, enclosingFrame)
+                .Select(bound => policy?.StorageConstraint(bound))
                 .Where(bound => bound != null).Distinct().ToArray();
             if (projected.Length == 0) continue;
             var variable = frame.Variable(new TypeNode.Tv(scope, sourceIndex), NullableRepresentationFrame.Role.Storage);
@@ -70,6 +53,31 @@ static partial class NullableRepresentationMaterialization
             else expanded[variable.I].ErasedInnerConstraints = projected;
         }
         NullableRepresentationViews.SetTypeParameters(declaration, expanded);
+    }
+
+    // Before materialization Tv indices are source positions; afterwards they
+    // are in the bound's physical frame. Both phases must follow the same bounds.
+    internal static IEnumerable<TypeNode.Fqn> StorageClassifierBounds(IReadOnlyList<BirTypeParameter> rows, int start,
+        string scope, NullableRepresentationFrame frame, IReadOnlyList<BirTypeParameter> enclosingRows,
+        NullableRepresentationFrame enclosingFrame)
+    {
+        var seen = new HashSet<int>();
+        IEnumerable<TypeNode> Visit(int index)
+        {
+            if (!seen.Add(index)) yield break;
+            foreach (var bound in rows[index].Constraints.OrEmpty())
+                if (bound is TypeNode.Tv v && v.Scope == scope)
+                {
+                    foreach (var inherited in Visit(frame?.PhysicalSlot(v.I).SourceIndex ?? v.I)) yield return inherited;
+                }
+                else if (bound is TypeNode.Tv { Scope: "type" } o && scope == "method" && enclosingRows != null)
+                {
+                    var owner = new TypeNode.Tv("type", enclosingFrame?.PhysicalSlot(o.I).SourceIndex ?? o.I);
+                    foreach (var inherited in OwnerConstrainedMethodLowering.IndependentBounds(owner, enclosingRows)) yield return inherited;
+                }
+                else yield return bound;
+        }
+        return Visit(start).OfType<TypeNode.Fqn>();
     }
 
     static IEnumerable<BirGraphValue> PublishedSlots(BirGraphValue declaration)

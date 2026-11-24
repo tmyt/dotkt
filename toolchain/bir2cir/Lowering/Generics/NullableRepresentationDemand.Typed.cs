@@ -101,13 +101,21 @@ static partial class NullableRepresentationDemand
             for (var cursor = owner; cursor != null; cursor = cursor.CapturedOwner)
                 if (!seen.Add(cursor.Declaration)) throw new InvalidOperationException("Cyclic semantic owner capture");
         }
-        foreach (var method in owners.SelectMany(owner => owner.Methods).Where(method => !method.IsLocal))
+        foreach (var owner in owners)
+        foreach (var method in owner.Methods.Where(method => !method.IsLocal))
+        {
+            if (!method.View.CanExtendBodyFrame && method.View.Overrides.Length == 0 && method.View.OwnsValueSlots(policy))
+                for (var index = 0; index < method.TypeParameters.Length; index++)
+                    if (policy.NeedsVirtualStorageWitness(NullableRepresentationMaterialization.StorageClassifierBounds(
+                        method.TypeParameters, index, "method", null, owner.View.Parameters.OrEmpty(), null)))
+                        method.Signature.Add(new TypeNode.Tv("method", index), RepresentationRole.Storage);
             if (method.View.Id is string id && declaredMethods?.GetValueOrDefault(id) is { } declared)
             {
                 if (declared.SourceArity != method.TypeParameters.Length)
                     throw new InvalidOperationException("Published method frame has a different source arity");
                 foreach (var slot in declared.Companions) method.Signature.Add(new TypeNode.Tv("method", slot.SourceIndex), slot.Representation);
             }
+        }
         bool changed;
         do
         {
@@ -168,6 +176,12 @@ static partial class NullableRepresentationDemand
                         Visit(resultArray.Elem, true, method.Signature, types, policy, element: true);
                     if (method.View.OwnsValueSlots(policy))
                     {
+                        // The selected virtual slot owns its calling convention. A more
+                        // concrete spelling of an inherited bound cannot remove its storage witness.
+                        foreach (var edge in method.View.Overrides)
+                            if (edge.DeclarationId.OrDefault() is string id && methods.TryGetValue(id, out var inherited))
+                                foreach (var i in inherited.StorageIndices)
+                                    method.Signature.Add(new TypeNode.Tv("method", i), RepresentationRole.Storage);
                         void DemandValue(TypeNode value) { if (value is TypeNode.Tv { Scope: "method" } variable) method.Signature.Add(variable, RepresentationRole.Storage); }
                         foreach (var parameter in method.View.ValueParameters) { DemandValue(parameter.Type.OrDefault()); DemandValue(parameter.KotlinType.OrDefault()); }
                         DemandValue(method.View.Return);

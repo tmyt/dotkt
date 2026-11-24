@@ -129,6 +129,17 @@ sealed partial class GenericRepresentationPolicy
         return proofs != 0 && (bounds.Any(IsNominalStorageBound) || nativeApplication && proofs == 2);
     }
 
+    // A virtual implementation may be compiled after the declaring assembly. When a
+    // class bound is separated from multiple storage-safe interface proofs, publish
+    // one storage witness for their conjunction independently of the current body.
+    internal bool NeedsVirtualStorageWitness(IEnumerable<TypeNode.Fqn> constraints)
+    {
+        var bounds = constraints.Select(StorageConstraint)
+            .Where(bound => bound != null).Distinct().ToArray();
+        return bounds.Any(IsNominalStorageBound) && bounds.Count(b => !IsNominalStorageBound(b)
+            && !NeedsNativeWitness(b) && CanReferenceStorageProof(b)) >= 2;
+    }
+
     // Closed native interfaces (and invariant native applications even when open)
     // are proven by the native argument, not by the Kotlin value's storage type.
     internal bool NeedsNativeWitness(TypeNode proof)

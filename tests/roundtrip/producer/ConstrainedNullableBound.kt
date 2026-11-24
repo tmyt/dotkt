@@ -83,6 +83,13 @@ class NativeJoined<T> : RoundtripDependentNative.IJoined<T>
 class JoinedValue<T>(val item: T) : RoundtripDependentNative.IJoinedValue<T>
     where T : RoundtripDependentNative.ILeft, T : RoundtripDependentNative.IRight
 
+abstract class JoinedFactoryContract {
+    abstract fun <A> make(): Any where A : Base, A : RoundtripDependentNative.ILeft, A : RoundtripDependentNative.IRight
+}
+abstract class DependentJoinedContract<K> where K : Base, K : RoundtripDependentNative.ILeft, K : RoundtripDependentNative.IRight {
+    abstract fun <A : K> make(): Any
+}
+
 fun <A> makeNativeJoined(): Any where A : RoundtripDependentNative.Base, A : RoundtripDependentNative.Family.IMark<String>,
                                       A : RoundtripDependentNative.IMarker<String> = NativeJoined<A>()
 

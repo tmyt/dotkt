@@ -224,6 +224,15 @@ sealed class ProjectedCallableEntries
             var plan = DeclarationPlan(owner, m, frame);
             var entry = new Entry(name, plan, parameters, bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault(),
                 AddressSignature(plan, m));
+            if (m.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
+                foreach (var sourceIndex in representations.StorageIndices)
+                {
+                    // The exact forwarder passes its storage unchanged to the inherited
+                    // projected slot. Its constraints belong to that slot, not to the
+                    // overriding source spelling (which may now name one concrete class).
+                    var row = representations.Variable(new TypeNode.Tv("method", sourceIndex), NullableRepresentationFrame.Role.Storage).I;
+                    parameters[row].Constraints = plan.Parameters[row].Constraints;
+                }
             entries.Add(id, entry);
             emittedEntries.Add(EntryId(id), entry);
             var copy = (BirFunctionDeclaration)m.DeepClone();
