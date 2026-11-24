@@ -639,6 +639,9 @@ static partial class CapturedGenericInvocation
                 parameterTypes.Insert(0, LiftCaller(receiverType));
             }
             var forwardCall = call.Forward(liftedOwner, arity, declarationParameters, CloseDeclaration(declaredReturn), local);
+            // These slots now bind to the actual CLR container's element,
+            // not the erased Kotlin star at the original call site.
+            ForgetReopenedMaterial(forwardCall, closedSlots.Contains);
             string name;
             do { name = lexicalOwner + ".dotkt$captured$" + _next++; } while (emitted.Contains(name));
             var returnsVoid = IsVoid(declaredReturn);

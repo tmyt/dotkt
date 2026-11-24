@@ -12,6 +12,12 @@ static partial class CapturedGenericInvocation
         new TypeNode.Array(Int), new TypeNode.Array(Type), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Int), new TypeNode.Array(Object) };
 
     internal static BirLocal Local(int index) => new() { Name = "p" + index };
+    static void ForgetReopenedMaterial(BirGraphValue call, Func<int, bool> reopened)
+    {
+        if (call.MaterialMethodArguments is not { } prior) return;
+        var remaining = prior.Where(pair => !reopened(pair.Key)).ToDictionary();
+        call.MaterialMethodArguments = remaining.Count == 0 ? null : remaining;
+    }
     internal static BirCast Cast(TypeNode type, IBirExpression value) => new() { Type = type, E = OptionalField<IBirExpression>.Of(value) };
     static BirClassReference ClassRef(TypeNode type) => new() { Type = type };
     static BirConstant Number(int value) => new() { Type = Int, Value = new BirLiteral.IntegerLiteral(value) };
