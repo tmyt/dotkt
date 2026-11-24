@@ -9,19 +9,6 @@ sealed record ProjectedConstructorPlan(BirTypeParameter[] PrimaryParameters, Bir
     internal sealed record Facet(int Primary, TypeNode Bound, bool NativeArgument, TypeNode[] Constraints);
     internal int PrimaryArity => WitnessParameters.Length;
 
-    // On an unsplit declaring type one CLR argument must satisfy the entire
-    // interface conjunction. A class or dependent bound is a different contract.
-    internal static IEnumerable<(int Primary, TypeNode[] Bounds)> InterfaceArguments(
-        BirTypeParameter[] formals, Func<TypeNode.Fqn, bool> isInterface)
-    {
-        for (int i = 0; i < (formals?.Length ?? 0); i++)
-        {
-            var bounds = formals[i].Constraints.OrEmpty();
-            if (formals[i].SpecialConstraints.OrEmpty().Length == 0 && bounds.Length > 0 &&
-                bounds.All(b => b is TypeNode.Fqn f && isInterface(f))) yield return (i, bounds);
-        }
-    }
-
     internal static bool Proves(TypeNode available, TypeNode required,
         IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy, ReferenceMetadataIndex references)
     {

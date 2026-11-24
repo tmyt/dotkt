@@ -5,6 +5,9 @@ public interface IKey<T> { }
 public sealed class StringKey : IKey<string> { }
 public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
+public interface ILeft { }
+public interface IRight { }
+public interface IJoinedValue<T> where T : ILeft, IRight { }
 public class Base { }
 public class MarkedBase : Base, IMarker<string> { }
 public class FixedJoint : Base, Family.IMark<string> { }

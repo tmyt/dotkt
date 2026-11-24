@@ -338,7 +338,6 @@ sealed class ProjectedCallableEntries
                     storageOwners.TryGetValue(selected.Name, out var destination) &&
                     ForwardConstructor(destination.Entry, arguments, ownerScope, methodScope) is { } closed)
                     construction.Type = new TypeNode.Fqn(destination.Implementation, closed);
-                else BindExactConstructor(construction, ownerScope, methodScope);
             }
             if (node is BirNewClosure or BirNewSam)
                 ProjectClosureCreation(node, ownerScope, methodScope, allocate, generated);
@@ -416,33 +415,6 @@ sealed class ProjectedCallableEntries
 
     bool Proves(TypeNode source, TypeNode target) =>
         ProjectedConstructorPlan.Proves(source, target, classHierarchy.Value, references);
-
-    void BindExactConstructor(BirNew creation, Scope owner, Scope method)
-    {
-        if (creation.ReferencedProjectedFactoryId != null ||
-            creation.Type.OrDefault() is not TypeNode.Fqn { Args: { } actual } exact ||
-            storageOwners.ContainsKey(exact.Name) || !actual.Any(a => Scope.For(a, owner, method).Any())) return;
-        var parameters = classes.TryGetValue(exact.Name, out var declaration)
-            ? TypeParameterFrame.Declarations(declaration).ToArray()
-            : references.HasDotKtOwner(exact.Name) ? references.PhysicalOwnerTypeParametersInPhysicalFrame(exact.Name, nativeNames: true) : null;
-        if (parameters?.Length != actual.Length) return;
-        TypeNode[] closed = null;
-        foreach (var (i, bounds) in ProjectedConstructorPlan.InterfaceArguments(parameters,
-                     b => kinds.TryGetValue(b.Name, out var kind) ? kind == "interface" : references.IsInterfaceType(b)))
-        {
-            var required = bounds.Select(b => SupertypeGraph.SubstOwnerTvs(b, actual)).ToArray();
-            var witness = Scope.For(actual[i], owner, method).FirstOrDefault(row =>
-                row.Slot.NativeArgument && required.All(b => row.Slot.Proves(b, Proves))).Variable;
-            if (witness != null) (closed ??= actual.ToArray())[i] = witness;
-        }
-        if (closed == null) return;
-        var application = exact with { Args = closed };
-        creation.Type = application;
-        // The MemberRef's parent is a caller-frame application, but its signature
-        // still binds !i to the selected constructor's original declaring type.
-        if (creation.MemberRef.OrDefault() is { } member)
-            creation.MemberRef = member with { DeclaringType = application };
-    }
 
     TypeNode[] ForwardConstructor(ProjectedConstructorPlan plan, TypeNode[] actual, Scope owner, Scope method)
     {

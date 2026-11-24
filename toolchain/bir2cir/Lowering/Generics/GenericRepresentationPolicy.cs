@@ -119,11 +119,15 @@ sealed partial class GenericRepresentationPolicy
             : _references?.IsClassType(named) == true;
     }
 
-    // A joint class/interface constraint has distinct nominal and storage
-    // witnesses. Its storage proof is part of the declared generic frame,
-    // including when an open caller merely passes that frame on.
-    internal bool HasJointStorageBounds(TypeNode[] bounds) => bounds.Any(IsNominalStorageBound)
-        && bounds.OfType<TypeNode.Fqn>().Any(b => !IsNominalStorageBound(b) && CanReferenceStorageProof(b));
+    // A native generic argument needs one witness for the conjunction, even
+    // when the Kotlin declaration has only interface bounds. Publish that
+    // storage demand so a generic caller can forward it without a value operand.
+    internal bool HasJointStorageBounds(TypeNode[] bounds, bool nativeApplication = false)
+    {
+        var proofs = bounds.OfType<TypeNode.Fqn>().Where(b => !IsNominalStorageBound(b) &&
+            CanReferenceStorageProof(b)).Distinct().Take(2).Count();
+        return proofs != 0 && (bounds.Any(IsNominalStorageBound) || nativeApplication && proofs == 2);
+    }
 
     // Closed native interfaces (and invariant native applications even when open)
     // are proven by the native argument, not by the Kotlin value's storage type.
