@@ -1737,11 +1737,15 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 			val externalPropertyOwner = clrExternalOwner(p)
 			if (declaringClass == null) externalPropertyOwner?.let { fileClass ->
 				val companionReceiver = companionReceiverCallType(p, call)
-				val ta = typeArguments(call)
+				val setter = callee === p.setter
+				// Operand types belong to the caller; only the selected accessor defines its signature.
+				fun accessor(operands: List<IrExpression>, result: TypeNode, companion: TypeNode? = null) =
+					BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(),
+						prop = if (setter) "set" else "get", sig = overloadSignature(callee), typeArgs = typeArguments(call),
+						ret = result, args = operands.map { expr(it) }, companionReceiver = companion)
 				// A projected companion extension has no runtime receiver. Keep its Kotlin source identity in BIR;
 				// bir2cir binds that identity to the trusted producer carrier's exact CLR member.
 				if (isCompanionExtensionCallee(p) || companionReceiver != null) {
-					val setter = callee === p.setter
 					// Context parameters remain ordinary physical accessor arguments even though the companion receiver
 					// itself has no runtime value. A lazy cross-module setter can still retain its source `value` in the
 					// phantom extension-receiver slot; append that last argument only when the regular positional projection
@@ -1756,12 +1760,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 							BirStaticFieldSet(TypeNode.Fqn(fileClass), p.name.asString(), expr(values.first()), companionReceiver = companionReceiver)
 						else BirStaticFieldGet(TypeNode.Fqn(fileClass), p.name.asString(), companionReceiver = companionReceiver)
 					}
-					val argTypes = values.map { birType(it.type) }
-					val args = values.map { expr(it) }
 					val ret = if (setter) TypeNode.Fqn("kotlin.Unit") else birType(callee.returnType)
-					return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(),
-						prop = if (setter) "set" else "get", sig = overloadSignature(callee), typeArgs = ta,
-						argTypes = argTypes, ret = ret, args = args, companionReceiver = companionReceiver)
+					return accessor(values, ret, companionReceiver)
 				}
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
 				// method on the file class, never a static field: route it to the accessor path
@@ -1771,30 +1771,20 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): BirExpressi
 					// A FIR-default accessor can still have an exported MethodDef (e.g. its other half
 					// is custom). A carried ID binds this role to that method, not to private storage.
 					val methodSurface = carriedDeclarationId(callee) != null
-					if (callee === p.setter) {
+					if (setter) {
 						return if (methodSurface || !hasDefaultSetter(p))
-							BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "set",
-								sig = overloadSignature(callee), typeArgs = ta, argTypes = listOf(birType(regularArgs(call).first().type)),
-								ret = TypeNode.Fqn("kotlin.Unit"), args = listOf(expr(regularArgs(call).first())))
+							accessor(regularArgs(call), TypeNode.Fqn("kotlin.Unit"))
 						else kotc.bir.BirStaticFieldSet(ownerType = TypeNode.Fqn(fileClass), name = p.name.asString(), value = expr(regularArgs(call).first()))
 					}
 					return if (methodSurface || !hasDefaultGetter(p))
-						BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(), prop = "get",
-							sig = overloadSignature(callee), typeArgs = ta, argTypes = emptyList(), ret = birType(callee.returnType), args = emptyList())
+						accessor(emptyList(), birType(callee.returnType))
 					else kotc.bir.BirStaticFieldGet(ownerType = TypeNode.Fqn(fileClass), name = p.name.asString())
 				}
 				val recv = extensionReceiver(call)
 				// A2 (#61 / step 3): a top-level extension property accessor is a static method receiving `__self`
 				// on the referenced file class (NOT a .NET property) -> emit the plain static call by identity carrying
 				// the accessor role; bir2cir finds no matching .NET property/field and applies the shared forward allocation.
-				val setter = callee === p.setter
-				// The accessor signature belongs to its declaration. Receiver, context and value
-				// expressions (and their instantiated types) belong to this call's lexical frame.
-				val operands = listOfNotNull(recv) + regularArgs(call)
-				return BirCallStatic(ownerType = TypeNode.Fqn(fileClass), method = p.name.asString(),
-					prop = if (setter) "set" else "get", sig = overloadSignature(callee), typeArgs = ta,
-					ret = birType(call.type),
-					args = operands.map { expr(it) })
+				return accessor(listOfNotNull(recv) + regularArgs(call), birType(call.type))
 			}
 		}
 

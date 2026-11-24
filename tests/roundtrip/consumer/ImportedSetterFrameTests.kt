@@ -1,6 +1,9 @@
 package roundtrip.setterframe
 
 import NUnit.Framework.TestAttribute
+import roundtrip.companionstatics.Tag
+import roundtrip.companionstatics.lastPayload
+import roundtrip.companionstatics.payload
 import roundtrip.extpropref.RefBox
 import roundtrip.extpropref.auditValue
 import roundtrip.nullableselfbound.Cell
@@ -34,6 +37,12 @@ private class Owner<T> {
         node.disposer!!.put(array, value)
         node.disposer = null
         check(node.disposer == null)
+        lastPayload = value
+        check(Tag.payload === value)
+        lastPayload = null
+        Tag.payload = value
+        check(lastPayload === value)
+        Tag.payload = null
     }
 }
 

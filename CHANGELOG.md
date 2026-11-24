@@ -15,6 +15,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Across DLLs, Kotlin declarations keep their choice of protocol when multiple source interfaces share a CLR type. In particular, inheriting a native enumerable no longer adds an unrelated `Iterable<T>.iterator()` obligation (#1865).
 - Preserve array identity and writes when a Kotlin `Array<CharSequence>` uses CLR string-array storage (#1877).
 - Keep bare `T` distinct from nullable `T?` in C# generic classes with `where T : struct`, including overloaded method parameters, their defaults, and nullable results as seen from Kotlin (#1857).
+- Allow a generic Kotlin caller to assign its value to a custom top-level or companion extension property imported from another assembly (#1843).
 - Pass a Kotlin generic subclass from another assembly to a native collection expecting its base class without emitting unverifiable IL (#1859).
 - Fix intermittent `dll2klib` failures when projecting generic classes in parallel from different namespaces in the same assembly (#1908).
 - Preserve writes through `byref(local)` when Kotlin has smart-cast the local's value but the callee takes a reference to its declared type (#1837).
