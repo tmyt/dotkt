@@ -1887,7 +1887,7 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
     var semantic = birTypes.OfType<JsonObject>()
         .Where(t => t["kotlinCompanion"] is JsonObject)
         .ToArray();
-    Require(semantic.Length == 17, "producer BIR has an unexpected semantic companion declaration set");
+    Require(semantic.Length == 19, $"expected 19 semantic companion declarations in producer BIR, found {semantic.Length}");
     foreach (var companion in semantic)
     {
         var name = Text(companion["name"]);
