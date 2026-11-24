@@ -1026,7 +1026,7 @@ static partial class FBoundStarProjectionErasure
         _ => t,
     };
 
-    static bool IsObjectish(TypeNode t) => t switch
+    internal static bool IsObjectish(TypeNode t) => t switch
     {
         TypeNode.Nullable n => IsObjectish(n.Of),
         TypeNode.Oblivious o => IsObjectish(o.Of),

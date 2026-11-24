@@ -7,6 +7,15 @@ public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
 public interface ILeft { }
 public interface IRight { }
+public static class NullableListWriter
+{
+    public static void Append<X,Y>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);
+    public static System.Collections.Generic.List<X> Empty<X,Y>() where X : Y => new();
+}
+public sealed class NullableListSink<T,Y> where T : Y
+{
+    public void Append<X>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);
+}
 public interface IJoinedValue<T> where T : ILeft, IRight { }
 public class Base { }
 public class MarkedBase : Base, IMarker<string> { }

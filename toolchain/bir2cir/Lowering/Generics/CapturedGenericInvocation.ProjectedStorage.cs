@@ -16,11 +16,17 @@ static partial class CapturedGenericInvocation
         ? NewArray(Int, rows.SelectMany(r => new[] { r.Argument, r.Position, r.Slot, r.Nullable }).Select(Number)) : Null();
 
     static int[] LexicalCandidates(TypeNode[] actual, CallableWitnessScope owner, CallableWitnessScope method) =>
-        Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()).ToArray();
+        Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()
+            || CallableWitnessScope.LostNullableBounds(actual[i], owner, method).Length != 0).ToArray();
 
     sealed record FixedApplication(TypeNode[] Arguments, (int Slot, TypeNode Bound)[] Facets);
 
-    static FixedApplication BindFixedWitnesses(BirTypeParameter[] frame, TypeNode[] signature, TypeNode[] actual, BirMethodWitness[] explicitProofs,
+    static IEnumerable<TypeNode> LostDependencies(BirTypeParameter row, TypeNode[] ownerArgs, TypeNode[] actual,
+        TypeNode.Tv[] lost) => lost.Length == 0 ? [] : row.Constraints.OrEmpty().OfType<TypeNode.Tv>()
+            .Select(v => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(v, ownerArgs, actual))
+            .Where(t => t is TypeNode.Tv v && lost.Contains(v)).Distinct();
+
+    static FixedApplication BindFixedWitnesses(BirTypeParameter[] frame, TypeNode[] signature, TypeNode[] ownerArgs, TypeNode[] actual, BirMethodWitness[] explicitProofs,
         int[] candidates, CallableWitnessScope owner, CallableWitnessScope method, Func<TypeNode.Fqn,bool> isInterface,
         Dictionary<int, TypeNode> locations = null)
     {
@@ -36,6 +42,15 @@ static partial class CapturedGenericInvocation
         // or a dependency on a recovered argument (Y : X).
         var lost = explicitProofs.Select(p => p.Argument.Value).Concat(candidates.Where(i =>
             frame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(isInterface))).ToHashSet();
+        var dependent = new List<(int Slot, TypeNode Bound)>();
+        foreach (var i in candidates)
+        {
+            foreach (var upper in LostDependencies(frame[i], ownerArgs, actual, CallableWitnessScope.LostNullableBounds(actual[i], owner, method)))
+            {
+                lost.Add(i);
+                dependent.Add((i, upper));
+            }
+        }
         int previous;
         do {
             previous = lost.Count;
@@ -49,7 +64,7 @@ static partial class CapturedGenericInvocation
         // that none of the individual declared bounds satisfies.
         var facets = explicitProofs.SelectMany(p => p.Interfaces.Value.Select(b => (p.Argument.Value, b)))
             .Concat(lexical.Select(p => (p.i, p.proof.Slot.Bound)))
-            .Concat(lexical.Select(p => (p.i, (TypeNode)p.proof.Variable))).Distinct().ToArray();
+            .Concat(lexical.Select(p => (p.i, (TypeNode)p.proof.Variable))).Concat(dependent).Distinct().ToArray();
         return new(arguments, facets);
     }
 
@@ -116,7 +131,7 @@ static partial class CapturedGenericInvocation
         var candidates = LexicalCandidates(arguments, ownerScope, methodScope);
         if ((candidates.Length == 0 && fixedAddresses == null) || !TrySelectedMethod(site, owner, refs, out var selected)) return call;
         var methodFrame = AddressTarget.ReadFrame(selected.GetGenericArguments());
-        var application = BindFixedWitnesses(methodFrame, member.ParameterTypes.Value, arguments, [], candidates, ownerScope, methodScope, t => refs.IsInterfaceType(t), fixedAddresses);
+        var application = BindFixedWitnesses(methodFrame, member.ParameterTypes.Value, owner.Args ?? [], arguments, [], candidates, ownerScope, methodScope, t => refs.IsInterfaceType(t), fixedAddresses);
         if (application.Facets.Length == 0 && fixedAddresses == null) return call;
         var target = AddressTarget.FromReference(selected, member, methodFrame);
         bool typed = (receiver != null && target.ValueOwner) || target.TypedParameters.Contains(true) || target.TypedResult;

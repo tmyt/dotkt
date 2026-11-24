@@ -20,9 +20,21 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         return dependsOnMethod;
     }
 
-    internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands, ReferenceMetadataIndex references)
+    internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands,
+        ReferenceMetadataIndex references, NullableRepresentationFrame representations)
     {
         var formals = frame.Declare().ToList();
+        // Only the projected entry separates the nominal class witness from the
+        // value's representation inside a nullable native argument. The nominal
+        // witness need not implement that representation; source bounds remain.
+        if (representations != null)
+            foreach (var index in representations.NullableIndices)
+            {
+                var ordinary = representations.SourcePosition(index);
+                var nullable = representations.NullableVariable(new TypeNode.Tv("method", index));
+                var row = formals[ordinary];
+                row.Constraints = row.Constraints.OrEmpty().Where(bound => bound != nullable).ToArray();
+            }
         var facets = frame.Interfaces.Select((slot, i) =>
             new ProjectedClassStorageFrame.WitnessSlot(slot.OwnerIndex, slot.Bound, slot.NativeArgument) {
                 Evidence = formals[frame.PrimaryArity + i].Constraints.OrEmpty() }).ToArray();
@@ -118,7 +130,18 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
                 else if (!declares(actual[i], bound) && declares(actual[source], bound)) arguments[i] = actual[source];
             }
         var proofs = Facets.Select(Facet).ToArray();
-        return proofs.All(p => p == null) && !requireProjectedEntry ? new(false, arguments) :
-            new(true, arguments.Concat(proofs.Select((p, i) => p ?? actual[Facets[i].OwnerIndex])).ToArray());
+        if (proofs.All(p => p == null) && !requireProjectedEntry) return new(false, arguments);
+        // A projected callee may need just the interface, not the class.
+        // Bind its ordinary parameter to evidence for the constraints on
+        // that selected entry, leaving its independent nullable slot alone.
+        if (representations != null)
+            foreach (var source in representations.NullableIndices)
+            {
+                var i = representations.SourcePosition(source);
+                var bounds = Parameters[i].Constraints.OrEmpty().Select(Closed).ToArray();
+                if (actual[i] is TypeNode.Tv && bounds.Length != 0 && !bounds.All(c => declares(actual[i], c)) &&
+                    lexicalProof(actual[i], bounds[0], bounds) is { } witness) arguments[i] = witness;
+            }
+        return new(true, arguments.Concat(proofs.Select((p, i) => p ?? actual[Facets[i].OwnerIndex])).ToArray());
     }
 }
