@@ -134,6 +134,7 @@ static partial class UnsafeAccessorLowering
         if (edge.TypeArgs.HasValue) {
             replacement.TypeArgs = CopySourceTypes(edge.TypeArgs.Value);
             replacement.MethodWitnessFacts = node.MethodWitnessFacts;
+            replacement.MaterialMethodArguments = node.MaterialMethodArguments;
         }
         replacement.Sty = CopySourceType(result);
         return replacement;
@@ -182,6 +183,7 @@ static partial class UnsafeAccessorLowering
         if (access.TypeArgs.HasValue) {
             replacement.TypeArgs = CopySourceTypes(access.TypeArgs.Value);
             replacement.MethodWitnessFacts = access.MethodWitnessFacts;
+            replacement.MaterialMethodArguments = access.MaterialMethodArguments;
         }
         return replacement;
     }

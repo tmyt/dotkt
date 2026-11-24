@@ -18,6 +18,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Allow a consumer to call members that a Kotlin companion object inherits from its superclass across an assembly boundary (#1893).
 - Keep raw strings intact when an inherited suspend implementation forwards its `CharSequence?`
   result into an object slot across assemblies (#1898).
+- Keep the actual CLR element type of an invariant container passed to a Kotlin method with class and interface bounds. Writes affect the original container, including for star-projected elements (#1926).
 
 ## 0.9.33 (2026-11-24)
 

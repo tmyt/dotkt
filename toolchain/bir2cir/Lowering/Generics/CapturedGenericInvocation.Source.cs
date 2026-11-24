@@ -209,6 +209,55 @@ static partial class CapturedGenericInvocation
             site.Owner is TypeNode.Fqn owner && declarations.TryGetValue(id, out var matches)
                 ? matches.SingleOrDefault(m => m.Owner == owner.Name && m.Method.Name.OrDefault() == site.Method)?.Method : null;
 
+        // The caller's invariant container fixes an ordinary callee's method
+        // argument. A dependent X : Y must follow the material frame of Y too;
+        // neither the live list nor the selected MethodDef changes.
+        internal bool BindMaterialArguments(BirGraphValue node, CallableWitnessScope owner, CallableWitnessScope method,
+            ReferenceMetadataIndex refs)
+        {
+            if (!Invocation.Admits(node) || node.ApplicationTypeArguments.OrDefault() is not { Length: > 0 } actual ||
+                !actual.Any(t => CallableWitnessScope.MaterialFact(t, owner, method) != null)) return false;
+            var site = SelectedInvocation(new Invocation(node), out _);
+            var local = LocalConsumer(site);
+            var signature = local?.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray()
+                ?? site.Member?.ParameterTypes.OrDefault();
+            if (signature == null) return false;
+            var result = local?.Ret.OrDefault() ?? site.Member?.ReturnType.OrDefault();
+            var wanted = new HashSet<int>();
+            foreach (var type in signature.Append(result))
+                if (type != null) ProjectedMethodPlan.NativeUses(type, refs, (v, _, _, _) => {
+                    if (v.Scope == "method" && CallableWitnessScope.MaterialFact(actual[v.I], owner, method) != null) wanted.Add(v.I);
+                    return null;
+                });
+            if (wanted.Count == 0) return false;
+            var frame = local?.TypeParams.OrEmpty() ?? site.SelectedFrame;
+            if (frame == null && site.Member?.DeclaringType.OrDefault() is TypeNode.Fqn declaring &&
+                TrySelectedMethod(site, declaring, refs, out var selected))
+                frame = AddressTarget.ReadFrame(selected.GetGenericArguments());
+            if (frame?.Length != actual.Length) return false;
+            int count;
+            do {
+                count = wanted.Count;
+                for (int i = 0; i < frame.Length; ++i)
+                    if (CallableWitnessScope.MaterialFact(actual[i], owner, method) != null &&
+                        frame[i].Constraints.OrEmpty().Any(bound => ContainsCapturedSlot(bound, wanted))) wanted.Add(i);
+            } while (count != wanted.Count);
+            var closed = actual.ToArray();
+            foreach (var i in wanted) closed[i] = CallableWitnessScope.Material(actual[i], owner, method);
+            node.ApplicationTypeArguments = closed;
+            // A fixed CLR declaration cannot split its own MethodDef. If
+            // its constraint is not proven by the material slot, close that
+            // MethodDef at the existing checked boundary, not in open IL.
+            var ownerArgs = ((site.Member?.DeclaringType.OrDefault() ?? site.Owner) as TypeNode.Fqn)?.Args ?? [];
+            return wanted.Any(i => {
+                var material = CallableWitnessScope.MaterialFact(actual[i], owner, method);
+                return frame[i].SpecialConstraints.OrEmpty().Except(material.Formal.SpecialConstraints.OrEmpty())
+                    .Any(s => s != "allowsRefStruct") || frame[i].Constraints.OrEmpty().Select(c =>
+                    FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(c, ownerArgs, closed)).Any(c =>
+                        c != closed[i] && !FBoundStarProjectionErasure.IsObjectish(c) && !material.Formal.Constraints.OrEmpty().Contains(c));
+            });
+        }
+
         internal bool NeedsNullableRecovery(BirGraphValue node, CallableWitnessScope owner, CallableWitnessScope method,
             ReferenceMetadataIndex references)
         {
@@ -590,6 +639,9 @@ static partial class CapturedGenericInvocation
                 parameterTypes.Insert(0, LiftCaller(receiverType));
             }
             var forwardCall = call.Forward(liftedOwner, arity, declarationParameters, CloseDeclaration(declaredReturn), local);
+            // These slots now bind to the actual CLR container's element,
+            // not the erased Kotlin star at the original call site.
+            ForgetReopenedMaterial(forwardCall, closedSlots.Contains);
             string name;
             do { name = lexicalOwner + ".dotkt$captured$" + _next++; } while (emitted.Contains(name));
             var returnsVoid = IsVoid(declaredReturn);

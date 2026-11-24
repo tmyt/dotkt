@@ -206,6 +206,7 @@ static partial class CapturedGenericInvocation
         var call = site.Forward(owner, args.Length,
             site.Node is BirCallStatic { NativeAccessorTarget: not null } thunk ? thunk.Sig.Value : formals,
             result, site.Member == null);
+        ForgetReopenedMaterial(call, i => opened[i]);
         if (site.Node.MethodWitnessFacts.HasValue)
         {
             var remaining = site.Node.MethodWitnessFacts.Value.Where(fact => !opened[fact.Argument.Value]).ToArray();

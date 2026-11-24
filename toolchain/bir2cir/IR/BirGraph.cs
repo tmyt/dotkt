@@ -21,6 +21,12 @@ internal abstract record BirGraphValue
         get => null;
         set => throw new InvalidOperationException("Not a generic call occurrence");
     }
+    // If a nominal method constraint selected a class different from the
+    // physical Kotlin value, keep both facts until the entry has been chosen.
+    internal virtual IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments {
+        get => null;
+        set => throw new InvalidOperationException("Not a generic call occurrence");
+    }
     // Occurrence-local selection made by native interop binding. Record clones
     // keep it until final value coercion; it is not source or wire metadata.
     // Compiler-authored runtime operations are not source CLR publication sites.

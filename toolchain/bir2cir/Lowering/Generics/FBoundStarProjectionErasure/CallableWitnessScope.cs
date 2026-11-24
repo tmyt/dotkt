@@ -5,8 +5,20 @@ using DotKt.Cir;
 // A lexical !i and !!i never refer to the same binder. Keep the producer's
 // ordering: each appended formal is evidence for a particular ordinary slot.
 readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Slots,
-    NullableRepresentationFrame Representations = null, IReadOnlyDictionary<int, TypeNode.Tv> CapturedNullable = null)
+    NullableRepresentationFrame Representations = null, IReadOnlyDictionary<int, TypeNode.Tv> CapturedNullable = null,
+    ProjectedMethodPlan NativePlan = null, IReadOnlyDictionary<int, CallableWitnessScope.MaterialWitness> CapturedNative = null)
 {
+    internal sealed record MaterialWitness(TypeNode.Tv Variable, BirTypeParameter Formal);
+    internal static MaterialWitness MaterialFact(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
+    {
+        if (argument is not TypeNode.Tv v) return null;
+        if (v.Scope == "type") return owner.CapturedNative?.GetValueOrDefault(v.I);
+        return method.NativePlan?.NativeArgument(v) is TypeNode.Tv n && n != v
+            ? new(n, method.NativePlan.Parameters[n.I]) : null;
+    }
+    internal static TypeNode Material(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method) =>
+        MaterialFact(argument, owner, method)?.Variable ?? argument;
+
     internal static TypeNode.Tv SplitNullable(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
     {
         if (argument is not TypeNode.Tv v) return null;
