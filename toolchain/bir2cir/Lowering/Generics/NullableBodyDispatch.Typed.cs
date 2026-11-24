@@ -42,8 +42,7 @@ static partial class NullableBodyDispatch
                 Params = source.Params.HasValue ? source.Params.Value.Select(parameter => (BirParameter)parameter.DeepClone()).ToArray() : source.Params,
                 Ret = source.Ret, TypeParams = source.TypeParams.HasValue
                     ? source.TypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray() : source.TypeParams,
-                Attrs = Array.Empty<BirAttribute>(), Body = demand == missing[^1] ? source.Body.OrEmpty()
-                    .Select(statement => (IBirStatement)((BirGraphValue)statement).DeepClone()).ToArray() : Array.Empty<IBirStatement>(),
+                Attrs = Array.Empty<BirAttribute>(), Body = demand == missing[^1] ? source.Body.OrEmpty() : Array.Empty<IBirStatement>(),
                 DeclarationId = DeclarationIdentityBinding.PhysicalOnlyId(source.DeclarationId.OrDefault() ?? "nullable-body:" + owner.Name, name),
                 SuspendRet = source.SuspendRet, SuspendResult = source.SuspendResult,
             };

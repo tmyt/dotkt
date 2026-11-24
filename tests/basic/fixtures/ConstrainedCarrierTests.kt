@@ -125,6 +125,15 @@ private fun <V : System.IO.Stream> captureNativeStorage(factory: () -> V): Any {
     val capture = { CarrierPayload(factory()) }
     return capture().payload
 }
+private open class VirtualCarrierFactory {
+    open fun <V : System.IO.Stream> capture(factory: () -> V): Any {
+        fun next(n: Int) = n + 1
+        val indirect: (Int) -> Int = ::next
+        check(indirect(next(0)) == 2)
+        val capture = { CarrierPayload(factory()) }
+        return capture().payload
+    }
+}
 private inline fun <T : System.IO.Stream> defaultNativeCapture(
     noinline factory: () -> T, noinline read: () -> Any = { CarrierPayload(factory()).payload },
 ): () -> Any = read
@@ -140,6 +149,7 @@ class ConstrainedCarrierTests {
         assertEquals(7, captureCarrier(payload)())
         val stream = System.IO.MemoryStream()
         check(captureNativeStorage { stream } === stream)
+        check(VirtualCarrierFactory().capture { stream } === stream)
         check(forwardDefaultCapture { stream }() === stream)
         assertEquals("open", openCarrier("open"))
         val tagged = OwnerBoundTagged()
