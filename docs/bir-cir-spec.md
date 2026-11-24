@@ -391,6 +391,12 @@ properties, and enum entries; delegate declarations also carry parameter and ret
 bir2cir projects these declaration-owned sites explicitly, after the complete emitted declaration set
 is known. Executable bodies and embedded source payloads are not metadata traversal edges.
 
+For a Kotlin program, the CLR starts the public `Main(string[])` wrapper. The selected target's
+`entryPointAttrs` are the resolved framework `STAThreadAttribute` or `MTAThreadAttribute`
+applications to emit on that wrapper. Other method attributes remain on the target. For
+`suspend main`, bir2cir carries the apartment declaration through the synchronous startup method;
+it does not change where a coroutine resumes after suspension.
+
 Values use the closed `a`-discriminated `cirAttributeArgument` union in the schema, not executable
 `k` nodes: `null`, `bool`, `char`, signed/unsigned 8/16/32/64-bit integers, `f32`/`f64` integer IEEE
 `bits`, `text`, `utf16` code `units`, opaque `bytes`, `type`, recursive `array`, and `enum` physical

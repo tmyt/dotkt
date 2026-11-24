@@ -11277,6 +11277,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<bool> RetNothing { get; set; }
     public OptionalField<int[]> RetNullableFlags { get; set; }
     public OptionalField<TypeNode> RetSuspendFnType { get; set; }
+    public OptionalField<BirAttribute[]> EntryPointAttrs { get; set; }
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void ConsumeFinalPropertyFacts(Func<string?, string?, bool> hasIdentity)
     {
@@ -11343,6 +11344,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; visit("clrBaseImpls", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { visit("pinvoke", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
         if (RetSuspendFnType.HasValue) RetSuspendFnType = OptionalField<TypeNode>.Of(rewrite("retSuspendFnType", BirGenericFrameRole.Lexical, RetSuspendFnType.Value));
+        if (EntryPointAttrs.HasValue) { for (var index0 = 0; index0 < EntryPointAttrs.Value.Length; index0++) { var at0 = index0; var child0 = EntryPointAttrs.Value[at0]; visit("entryPointAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)EntryPointAttrs.Value[at0]!, replacement => EntryPointAttrs.Value[at0] = (BirAttribute)replacement)); } }
     }
     public override void RewritePhysicalFieldsInPlace(
         Func<string, BirPhysicalTypeRole, TypeNode, TypeNode> type,
@@ -11369,6 +11371,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; child("clrBaseImpls", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { child("pinvoke", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
         if (RetSuspendFnType.HasValue) RetSuspendFnType = OptionalField<TypeNode>.Of(type("retSuspendFnType", BirPhysicalTypeRole.Structural, RetSuspendFnType.Value));
+        if (EntryPointAttrs.HasValue) { for (var index0 = 0; index0 < EntryPointAttrs.Value.Length; index0++) { var at0 = index0; var child0 = EntryPointAttrs.Value[at0]; child("entryPointAttrs", BirPhysicalTypeRole.Structural, new BirGraphSlot(() => (BirGraphValue)EntryPointAttrs.Value[at0]!, replacement => EntryPointAttrs.Value[at0] = (BirAttribute)replacement)); } }
     }
     public override void ConsumePhysicalSourceFacts()
     {
@@ -11449,6 +11452,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrInterfaceImpls.HasValue) { foreach (var item0 in ClrInterfaceImpls.Value) { visit((BirGraphValue)item0); } }
         if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { visit((BirGraphValue)item0); } }
         if (Pinvoke.HasValue) { visit((BirGraphValue)Pinvoke.Value); }
+        if (EntryPointAttrs.HasValue) { foreach (var item0 in EntryPointAttrs.Value) { visit((BirGraphValue)item0); } }
     }
     public override void VisitChildSlots(Action<BirGraphSlot> visit)
     {
@@ -11468,6 +11472,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrInterfaceImpls.HasValue) { for (var index0 = 0; index0 < ClrInterfaceImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrInterfaceImpls.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)ClrInterfaceImpls.Value[at0]!, replacement => ClrInterfaceImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { visit(new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
+        if (EntryPointAttrs.HasValue) { for (var index0 = 0; index0 < EntryPointAttrs.Value.Length; index0++) { var at0 = index0; var child0 = EntryPointAttrs.Value[at0]; visit(new BirGraphSlot(() => (BirGraphValue)EntryPointAttrs.Value[at0]!, replacement => EntryPointAttrs.Value[at0] = (BirAttribute)replacement)); } }
     }
     public override void VisitOwnChildSlots(
         Action<string, BirGenericFrameRole, BirGraphSlot> visit)
@@ -11488,6 +11493,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrInterfaceImpls.HasValue) { for (var index0 = 0; index0 < ClrInterfaceImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrInterfaceImpls.Value[at0]; visit("clrInterfaceImpls", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ClrInterfaceImpls.Value[at0]!, replacement => ClrInterfaceImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; visit("clrBaseImpls", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { visit("pinvoke", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
+        if (EntryPointAttrs.HasValue) { for (var index0 = 0; index0 < EntryPointAttrs.Value.Length; index0++) { var at0 = index0; var child0 = EntryPointAttrs.Value[at0]; visit("entryPointAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)EntryPointAttrs.Value[at0]!, replacement => EntryPointAttrs.Value[at0] = (BirAttribute)replacement)); } }
     }
     public override void VisitSourceParameters(Action<string, TypeNode> visit)
     {
@@ -11513,6 +11519,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrInterfaceImpls.HasValue) { for (var index0 = 0; index0 < ClrInterfaceImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrInterfaceImpls.Value[at0]; child("clrInterfaceImpls", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ClrInterfaceImpls.Value[at0]!, replacement => ClrInterfaceImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (ClrBaseImpls.HasValue) { for (var index0 = 0; index0 < ClrBaseImpls.Value.Length; index0++) { var at0 = index0; var child0 = ClrBaseImpls.Value[at0]; child("clrBaseImpls", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)ClrBaseImpls.Value[at0]!, replacement => ClrBaseImpls.Value[at0] = (BirMethodImpl)replacement)); } }
         if (Pinvoke.HasValue) { child("pinvoke", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)Pinvoke.Value!, replacement => Pinvoke = OptionalField<BirPInvoke>.Of((BirPInvoke)replacement))); }
+        if (EntryPointAttrs.HasValue) { for (var index0 = 0; index0 < EntryPointAttrs.Value.Length; index0++) { var at0 = index0; var child0 = EntryPointAttrs.Value[at0]; child("entryPointAttrs", BirGenericFrameRole.Lexical, new BirGraphSlot(() => (BirGraphValue)EntryPointAttrs.Value[at0]!, replacement => EntryPointAttrs.Value[at0] = (BirAttribute)replacement)); } }
     }
     public override void VisitCurrentFrameSlots(Action<BirGraphSlot> visit)
     {
@@ -11535,6 +11542,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         ClrInterfaceImpls = ClrInterfaceImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrInterfaceImpls.Value.Select(item0 => (BirMethodImpl)rewrite((BirGraphValue)item0)).ToArray()) : ClrInterfaceImpls,
         ClrBaseImpls = ClrBaseImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrBaseImpls.Value.Select(item0 => (BirMethodImpl)rewrite((BirGraphValue)item0)).ToArray()) : ClrBaseImpls,
         Pinvoke = Pinvoke.HasValue ? OptionalField<BirPInvoke>.Of((BirPInvoke)rewrite((BirGraphValue)Pinvoke.Value)) : Pinvoke,
+        EntryPointAttrs = EntryPointAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(EntryPointAttrs.Value.Select(item0 => (BirAttribute)rewrite((BirGraphValue)item0)).ToArray()) : EntryPointAttrs,
     };
     public override BirGraphValue DeepClone() => this with
     {
@@ -11576,6 +11584,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         InlineBir = InlineBir.HasValue ? OptionalField<byte[]>.Of(InlineBir.Value.ToArray()) : InlineBir,
         RetNullableFlags = RetNullableFlags.HasValue ? OptionalField<int[]>.Of(RetNullableFlags.Value.Select(item0 => item0).ToArray()) : RetNullableFlags,
         RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnType.Value)) : RetSuspendFnType,
+        EntryPointAttrs = EntryPointAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(EntryPointAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone()).ToArray()) : EntryPointAttrs,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
     {
@@ -11619,6 +11628,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             InlineBir = InlineBir.HasValue ? OptionalField<byte[]>.Of(InlineBir.Value.ToArray()) : InlineBir,
             RetNullableFlags = RetNullableFlags.HasValue ? OptionalField<int[]>.Of(RetNullableFlags.Value.Select(item0 => item0).ToArray()) : RetNullableFlags,
             RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(CopyType(RetSuspendFnType.Value)) : RetSuspendFnType,
+            EntryPointAttrs = EntryPointAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(EntryPointAttrs.Value.Select(item0 => (BirAttribute)((BirGraphValue)item0).DeepClone(born)).ToArray()) : EntryPointAttrs,
         };
         born(this, result);
         return result;
@@ -11671,6 +11681,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         ClrBaseImpls = ClrBaseImpls.HasValue ? OptionalField<BirMethodImpl[]>.Of(ClrBaseImpls.Value.Select(item0 => (BirMethodImpl)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : ClrBaseImpls,
         Pinvoke = Pinvoke.HasValue ? OptionalField<BirPInvoke>.Of((BirPInvoke)child(BirGenericFrameRole.Lexical, (BirGraphValue)Pinvoke.Value)) : Pinvoke,
         RetSuspendFnType = RetSuspendFnType.HasValue ? OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RetSuspendFnType.Value)) : RetSuspendFnType,
+        EntryPointAttrs = EntryPointAttrs.HasValue ? OptionalField<BirAttribute[]>.Of(EntryPointAttrs.Value.Select(item0 => (BirAttribute)child(BirGenericFrameRole.Lexical, (BirGraphValue)item0)).ToArray()) : EntryPointAttrs,
     };
     public override void RewriteTypeFieldsInPlace(Func<TypeNode, TypeNode> rewrite)
     {
@@ -11720,6 +11731,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (Pinvoke.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Pinvoke.Value); }
         if (RetSuspendFnType.HasValue) { type(BirGenericFrameRole.Lexical, (TypeNode)RetSuspendFnType.Value); }
+        if (EntryPointAttrs.HasValue) { foreach (var item0 in EntryPointAttrs.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteGenericFrameInPlace(
         Func<BirGenericFrameRole, TypeNode, TypeNode> type,
@@ -11757,6 +11769,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
         if (Pinvoke.HasValue) { child(BirGenericFrameRole.Lexical, (BirGraphValue)Pinvoke.Value); }
         if (RetSuspendFnType.HasValue) { RetSuspendFnType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, RetSuspendFnType.Value)); }
+        if (EntryPointAttrs.HasValue) { foreach (var item0 in EntryPointAttrs.Value) { child(BirGenericFrameRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteRepresentationInPlace(
         Func<BirGenericFrameRole, BirRepresentationRole, TypeNode, TypeNode> type,
@@ -11787,6 +11800,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
         if (Pinvoke.HasValue) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)Pinvoke.Value); }
         if (RetSuspendFnType.HasValue) { RetSuspendFnType = OptionalField<TypeNode>.Of(type(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, RetSuspendFnType.Value)); }
+        if (EntryPointAttrs.HasValue) { foreach (var item0 in EntryPointAttrs.Value) { child(BirGenericFrameRole.Lexical, BirRepresentationRole.Lexical, (BirGraphValue)item0); } }
     }
     public override void RewriteOwnershipInPlace(
         Func<BirOwnershipRole, TypeNode, TypeNode> type,
@@ -11824,6 +11838,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (ClrBaseImpls.HasValue) { foreach (var item0 in ClrBaseImpls.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
         if (Pinvoke.HasValue) { child(BirOwnershipRole.Lexical, (BirGraphValue)Pinvoke.Value); }
         if (RetSuspendFnType.HasValue) { RetSuspendFnType = OptionalField<TypeNode>.Of(type(BirOwnershipRole.Lexical, RetSuspendFnType.Value)); }
+        if (EntryPointAttrs.HasValue) { foreach (var item0 in EntryPointAttrs.Value) { child(BirOwnershipRole.Lexical, (BirGraphValue)item0); } }
     }
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirFunctionDeclaration value
@@ -11918,7 +11933,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(InlineBir, value.InlineBir, (left, right) => left.AsSpan().SequenceEqual(right))
             && EqualField(RetNothing, value.RetNothing, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(RetNullableFlags, value.RetNullableFlags, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)))
-            && EqualField(RetSuspendFnType, value.RetSuspendFnType, (left, right) => TypeNodeDataEquality.Equal(left, right));
+            && EqualField(RetSuspendFnType, value.RetSuspendFnType, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(EntryPointAttrs, value.EntryPointAttrs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -12014,6 +12030,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "retNothing", RetNothing, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "retNullableFlags", RetNullableFlags, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "retSuspendFnType", RetSuspendFnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "entryPointAttrs", EntryPointAttrs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -12111,6 +12128,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (RetNothing.IsPresent) result["retNothing"] = RetNothing.IsNull ? null : JsonValue.Create(RetNothing.Value);
         if (RetNullableFlags.IsPresent) result["retNullableFlags"] = RetNullableFlags.IsNull ? null : new JsonArray(RetNullableFlags.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         if (RetSuspendFnType.IsPresent) result["retSuspendFnType"] = RetSuspendFnType.IsNull ? null : TypeNode.Write(RetSuspendFnType.Value);
+        if (EntryPointAttrs.IsPresent) result["entryPointAttrs"] = EntryPointAttrs.IsNull ? null : new JsonArray(EntryPointAttrs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         projected?.Invoke(this, result);
         return result;
     }

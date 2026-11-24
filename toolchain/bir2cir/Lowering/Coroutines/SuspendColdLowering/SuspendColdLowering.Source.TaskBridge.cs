@@ -156,7 +156,8 @@ static partial class SuspendColdLowering
             body.Add(Label(skip));
             return new BirFunctionDeclaration { Name = "main", Static = true, Override = false, Virtual = false,
                 Abstract = false, ObjectOverride = false, Vis = "public", Params = CloneNamedParameters(),
-                Ret = UnitTn, Body = body.ToArray(), Attrs = Array.Empty<BirAttribute>() };
+                Ret = UnitTn, Body = body.ToArray(),
+                Attrs = EntryPointApartment.ForDrain(_m, _refs) };
         }
     }
 }
