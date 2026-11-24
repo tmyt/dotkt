@@ -97,13 +97,13 @@ static partial class NullableRepresentationMaterialization
             return ownerType is TypeNode.Fqn owner && types.TryGetValue(owner.Name, out var ownerFrame)
                 ? Mapping(ownerFrame, null, owner.Name) : null;
         }
+        var captures = new List<(BirTypeParameter Destination, BirGraphValue Declaration, int Slot)>();
         foreach (var owner in demands)
         {
             var view = owner.View;
             var frame = owners[owner.Declaration];
             var mapping = Mapping(frame, empty, view.Name);
             // The capture is rewritten before the enclosing declaration's physical parameter rows exist.
-            var captures = new List<(BirTypeParameter Destination, BirGraphValue Declaration, int Slot)>();
             Action<BirTypeParameter, TypeNode.Tv> CaptureIn(BirGraphValue method) => (destination, actual) =>
                 captures.Add((destination, actual.Scope == "type" ? view.Node : method, actual.I));
             try
@@ -173,12 +173,6 @@ static partial class NullableRepresentationMaterialization
                     });
                 }
                 AppendParameters(view.Node, frame, "type", policy);
-                foreach (var (destination, declaration, slot) in captures)
-                {
-                    var actual = (BirTypeParameter)NullableRepresentationViews.TypeParameters(declaration).Value[slot].DeepClone();
-                    destination.Constraints = actual.Constraints;
-                    destination.ErasedInnerConstraints = actual.ErasedInnerConstraints;
-                }
                 if (owner.CapturedOwner != null && view.Node is BirClassDefinition captured)
                 {
                     captured.OuterTypeParamCount = owners[owner.CapturedOwner.Declaration].PhysicalArity;
@@ -188,6 +182,13 @@ static partial class NullableRepresentationMaterialization
             }
             catch (Exception error) when (error is ArgumentException or InvalidOperationException)
             { throw new InvalidOperationException("Nullable owner " + view.Name + ": " + error.Message, error); }
+        }
+        ForwardStorageProofs(demands, methodFrames, owners, references, policy);
+        foreach (var (destination, declaration, slot) in captures)
+        {
+            var actual = (BirTypeParameter)NullableRepresentationViews.TypeParameters(declaration).Value[slot].DeepClone();
+            destination.Constraints = actual.Constraints;
+            destination.ErasedInnerConstraints = actual.ErasedInnerConstraints;
         }
         return methods;
     }

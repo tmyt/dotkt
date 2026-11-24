@@ -43,6 +43,9 @@ import roundtrip.constrainedbound.localItemResult
 import roundtrip.constrainedbound.keepItem
 import roundtrip.constrainedbound.checkLocalMethodBounds
 import roundtrip.constrainedbound.StreamChunk
+import roundtrip.constrainedbound.forwardStream
+import roundtrip.constrainedbound.deferredStream
+import roundtrip.constrainedbound.StreamFactory
 import roundtrip.constrainedbound.firstChunk
 import roundtrip.constrainedbound.UsableBound
 import roundtrip.constrainedbound.keepBound
@@ -65,6 +68,14 @@ import GenericValueInterop.NativeResultProbe
 import System.IO.MemoryStream
 
 private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T): String = t.accept(2)
+private fun <V : System.IO.Stream> readStream(make: () -> V): Any = StreamFactory(make).read()
+private fun <V : System.IO.Stream> relayStream(make: () -> V): Any = forwardStream(make)
+private fun readProjectedChunk(value: StreamChunk<*>): Any = relayStream { value }
+private fun <T> erase(value: T): Any? = value
+private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(make())
+private class UnconstrainedForwarder<A : System.IO.Stream>(val make: () -> A) {
+    fun read(): Any? = eraseFrom(make)
+}
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
 
 private class ForeignBoundHolder<T : VisibleBoundBase>(val element: T) {
@@ -554,6 +565,10 @@ class ConstrainedNullableBoundTests {
         check(queue.get(1) === text && queue.get(1).result == "text")
         val exact = ClrList<StreamChunk<Long>>()
         val chunk = StreamChunk(42L)
+        check(readStream { chunk } === chunk)
+        check(readProjectedChunk(chunk) === chunk)
+        check(deferredStream { chunk }() === chunk)
+        check(UnconstrainedForwarder { chunk }.read() === chunk)
         exact.Add(chunk)
         @Suppress("UNCHECKED_CAST")
         check(firstChunk(exact as ClrList<StreamChunk<*>>) === chunk)
