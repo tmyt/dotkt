@@ -499,11 +499,19 @@ static partial class CapturedGenericInvocation
                     ? d.Type.Kind.OrDefault() is "struct" or "enum" : refs.IsValueType(f)),
                 _ => false,
             };
+            List<int> scalarNulls = null;
             for (var i = 0; i < arguments.Length; i++)
+            {
                 if (!captureIndices.Contains(i) && ContainsCapturedSlot(declarationParameters[i], closedSlots)
-                    && !(IsNullLiteral(arguments[i]) && AcceptsNullConstruction(declarationParameters[i]))) return call.Node;
+                    && !(IsNullLiteral(arguments[i]) && AcceptsNullConstruction(declarationParameters[i])))
+                {
+                    if (local || !IsNullLiteral(arguments[i]) || declarationParameters[i] is not TypeNode.Tv { Scope: "method" })
+                        return call.Node;
+                    (scalarNulls ??= []).Add(i);
+                }
+            }
 
-            if (typedInput)
+            if (typedInput || scalarNulls != null)
             {
                 // Close the invariant operand from its runtime witness, but pass
                 // independent stack-only values through the typed Invoke signature.
@@ -531,7 +539,7 @@ static partial class CapturedGenericInvocation
                     else lexical = LexicalAdapter(call, target, owner, lexicalOwner, ownerFrame, false, true);
                 }
                 var projected = ProjectAddressCall(call, target, owner, [], refs, role => AllocateAdapter(lexicalOwner, emitted, role), generated, lexical, null,
-                    call.TypeArguments.Value, captures: rows, capturedResult: IsVoid(declaredReturn) ? null : result);
+                    call.TypeArguments.Value, captures: rows, capturedResult: IsVoid(declaredReturn) ? null : result, scalarNulls: scalarNulls);
                 return IsVoid(declaredReturn) && result != null && !IsVoid(result)
                     ? new BirValueBlock { Type = result, Stmts = new IBirStatement[] { new BirExpressionStatement {
                         Expr = OptionalField<IBirExpression>.Of((IBirExpression)projected) } }, Result = ClrMemberResolution.UnitSingletonRead(emitted, refs) }

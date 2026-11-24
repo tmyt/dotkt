@@ -15,6 +15,8 @@ private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Lo
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
+private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
+    GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
     inner class Caller {
         fun clear(items: CsList<out System.IO.Stream>): Unit =
@@ -42,6 +44,7 @@ class CapturedGenericInvocationTests {
         check(rejected && ints.Count == 0)
     }
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
+        check(identifyWithSpan(GenericValueInterop.CaptureBox<System.IO.MemoryStream>()) == "MemoryStream:value")
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
         val derived = CsList<System.IO.MemoryStream>()
         derived.Add(System.IO.MemoryStream())

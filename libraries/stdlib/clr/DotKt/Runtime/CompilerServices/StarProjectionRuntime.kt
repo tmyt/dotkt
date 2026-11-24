@@ -657,10 +657,17 @@ internal fun starProjectionIntersectionAdapter(
     adapter: StarProjectionType, declaringType: StarProjectionType, metadataToken: Int, memberName: String,
     parameterTypeKeys: Array<String>, authored: Array<StarProjectionType>, slots: IntArray, facets: Array<StarProjectionType>,
     arguments: Array<Any?>, physicalSlots: Array<StarProjectionType?>,
-    captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?,
+    captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?, scalarNulls: IntArray?,
 ): Any? {
     val selected = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
         authored, slots, facets, arguments, physicalSlots, captureOwners, capturePlan)
+    if (scalarNulls != null) {
+        val parameters = selected.getParameters()
+        for (index in scalarNulls) {
+            if (!starProjectionTypeAcceptsNull(parameters[index].parameterType))
+                throw ClassCastException("Null cannot be passed to the closed CLR parameter")
+        }
+    }
     val owner = declaringType.getGenericArguments()
     val method = selected.getGenericArguments()
     val frame = Array<StarProjectionType>(owner.size + method.size) {
