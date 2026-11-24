@@ -5530,6 +5530,7 @@ internal sealed record BirOverride : BirGraphValue
 internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     internal override string? SelectedGenericCallable { get; set; }
+    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
     internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }
     public override string Tag => "callStatic";
     public OptionalField<bool> CompanionCall { get; set; }
@@ -6356,6 +6357,7 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
 internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     internal override string? SelectedGenericCallable { get; set; }
+    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
     public override string Tag => "callInstance";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
@@ -10285,6 +10287,7 @@ internal sealed record BirAttribute : BirGraphValue
 
 internal sealed record BirParameter : BirGraphValue
 {
+    internal TypeNode? DelegateRestorationType { get; set; }
     public OptionalField<string> Name { get; set; }
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<bool> Outer { get; set; }
@@ -18031,6 +18034,7 @@ internal sealed record BirNewClosure : BirGraphNode, IBirExpression, IBirAttribu
 internal sealed record BirNewDelegate : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     internal override string? SelectedGenericCallable { get; set; }
+    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
     public override string Tag => "newDelegate";
     public OptionalField<string> Method { get; set; }
     public OptionalField<TypeNode> FuncType { get; set; }
@@ -20960,6 +20964,7 @@ internal sealed record BirCallInline : BirGraphNode, IBirExpression, IBirAttribu
 internal sealed record BirNewBoundDelegate : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     internal override string? SelectedGenericCallable { get; set; }
+    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
     public override string Tag => "newBoundDelegate";
     public OptionalField<TypeNode> OwnerType { get; set; }
     public OptionalField<string> Method { get; set; }
@@ -29921,6 +29926,7 @@ internal sealed record BirNewClr : BirGraphNode, IBirExpression, IBirAttributeVa
 internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAttributeValue
 {
     internal override string? SelectedGenericCallable { get; set; }
+    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
     public override string Tag => "constrainedCall";
     public OptionalField<string> Method { get; set; }
     public OptionalField<TypeNode> Iface { get; set; }

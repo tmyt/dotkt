@@ -125,6 +125,19 @@ class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 interface MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark { fun accept(value: A): A }
 fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.Item, A : ResultSource.Mark =
     if (first) left else right
+private fun <T : PendingItems.Item> appendExact(value: T, items: ClrList<T>) { items.Add(value) }
+fun <A> appendMarked(value: A, items: ClrList<A>): ClrList<A> where A : PendingItems.Item, A : ResultSource.Mark {
+    val put: (A, ClrList<A>) -> Unit = ::appendExact
+    val append = { put(value, items) }
+    append()
+    RoundtripDependentNative.NullableListWriter.Append<A, A>(value, items)
+    return items
+}
+fun <K, A> keepNativeOwner(box: RoundtripDependentNative.Owner<K, A>): RoundtripDependentNative.Owner<K, A>
+    where A : Base, A : IMarker<K> = box
+fun <A, B : A> keepNativeRelation(repeated: RoundtripDependentNative.NullableListSink<A, A>,
+                                   related: RoundtripDependentNative.NullableListSink<B, A>)
+    where A : PendingItems.Item, A : ResultSource.Mark = related
 fun <A> keepMarked(value: A, items: ClrList<A?>?): A where A : PendingItems.Item, A : ResultSource.Mark {
     if (items != null) appendItem<A, A>(value, items)
     return value
@@ -142,6 +155,8 @@ interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
 }
 open class MarkedWriter {
+    open fun <A> append(value: A, items: ClrList<A>): ClrList<A> where A : PendingItems.Item, A : ResultSource.Mark =
+        appendMarked(value, items)
     fun <A> writeElement(xs: Array<A>, index: Int, value: A): A where A : PendingItems.Item, A : ResultSource.Mark =
         write(byref(xs[index]), byref(xs[index]), value, false)
     fun <A> exchange(slot: ClrRef<ReferenceBox<A>>, next: () -> ReferenceBox<A>)

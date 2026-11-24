@@ -81,6 +81,7 @@ static partial class DelegateTargetSlotAlignment
         {
             var parameter = parameters[index];
             var sourceType = parameter.Type.Value;
+            parameter.DelegateRestorationType = sourceType;
             if (method.Body.HasValue && parameter.Name.HasValue)
             {
                 var sourceName = parameter.Name.Value;

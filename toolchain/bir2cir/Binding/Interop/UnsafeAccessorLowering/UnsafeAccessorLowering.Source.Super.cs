@@ -217,6 +217,7 @@ static partial class UnsafeAccessorLowering
         {
             replacement.SelectedGenericCallable = localEntry;
             replacement.MethodWitnessFacts = node.MethodWitnessFacts;
+            replacement.MaterialMethodArguments = node.MaterialMethodArguments;
         }
         if (publishedIdentity != null)
         {
