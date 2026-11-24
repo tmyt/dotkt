@@ -16,7 +16,8 @@ static partial class CapturedGenericInvocation
         ? NewArray(Int, rows.SelectMany(r => new[] { r.Argument, r.Position, r.Slot, r.Nullable }).Select(Number)) : Null();
 
     static int[] LexicalCandidates(TypeNode[] actual, CallableWitnessScope owner, CallableWitnessScope method) =>
-        Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()).ToArray();
+        Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()
+            || CallableWitnessScope.SplitNullable(actual[i], owner, method) != null).ToArray();
 
     sealed record FixedApplication(TypeNode[] Arguments, (int Slot, TypeNode Bound)[] Facets);
 
@@ -36,6 +37,19 @@ static partial class CapturedGenericInvocation
         // or a dependency on a recovered argument (Y : X).
         var lost = explicitProofs.Select(p => p.Argument.Value).Concat(candidates.Where(i =>
             frame[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().Any(isInterface))).ToHashSet();
+        var dependent = new List<(int Slot, TypeNode Bound)>();
+        foreach (var i in candidates)
+        {
+            if (CallableWitnessScope.SplitNullable(actual[i], owner, method) is not { } nullable) continue;
+            // The fixed CLR declaration can itself require X : Y when X and Y
+            // are the split ordinary and nullable views of one Kotlin argument.
+            // Recover that proof at the call, not as a bound on the class witness.
+            if (frame[i].Constraints.OrEmpty().OfType<TypeNode.Tv>().Any(b => b.Scope == "method" && actual[b.I] == nullable))
+            {
+                lost.Add(i);
+                dependent.Add((i, nullable));
+            }
+        }
         int previous;
         do {
             previous = lost.Count;
@@ -49,7 +63,7 @@ static partial class CapturedGenericInvocation
         // that none of the individual declared bounds satisfies.
         var facets = explicitProofs.SelectMany(p => p.Interfaces.Value.Select(b => (p.Argument.Value, b)))
             .Concat(lexical.Select(p => (p.i, p.proof.Slot.Bound)))
-            .Concat(lexical.Select(p => (p.i, (TypeNode)p.proof.Variable))).Distinct().ToArray();
+            .Concat(lexical.Select(p => (p.i, (TypeNode)p.proof.Variable))).Concat(dependent).Distinct().ToArray();
         return new(arguments, facets);
     }
 

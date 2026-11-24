@@ -209,19 +209,56 @@ static partial class CapturedGenericInvocation
             site.Owner is TypeNode.Fqn owner && declarations.TryGetValue(id, out var matches)
                 ? matches.SingleOrDefault(m => m.Owner == owner.Name && m.Method.Name.OrDefault() == site.Method)?.Method : null;
 
+        internal bool CloseForwardedNullable(BirGraphValue node, CallableWitnessScope owner, CallableWitnessScope method,
+            ReferenceMetadataIndex references, out bool recover)
+        {
+            recover = false;
+            if (method.Representations == null || !Invocation.Admits(node) ||
+                node.ApplicationTypeArguments.OrDefault() is not { Length: > 0 } actual ||
+                !actual.Any(t => CallableWitnessScope.SplitNullable(t, owner, method) != null)) return false;
+            var site = new Invocation(node);
+            var id = node.SelectedGenericCallable ?? node.DeclarationIdentityFact.OrDefault();
+            if (id == null) return false;
+            var local = LocalConsumer(site);
+            var frame = local?.TypeParams.OrDefault()
+                ?? references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
+            if (frame == null || frame.Length != actual.Length) return false;
+            var revised = actual;
+            for (var i = 0; i < actual.Length; i++)
+            {
+                if (CallableWitnessScope.SplitNullable(actual[i], owner, method) is not { } nullable) continue;
+                var bounds = frame[i].Constraints.OrEmpty().Where(c => !FBoundStarProjectionErasure.IsObjectish(c)).ToArray();
+                if (!bounds.OfType<TypeNode.Tv>().Any(b => b.Scope == "method" && actual[b.I] == nullable)) continue;
+                var signature = local != null ? local.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).Append(local.Ret.Value)
+                    : site.Member?.ParameterTypes.OrEmpty().Append(site.Member.ReturnType.Value);
+                // Only an erased, otherwise free argument can collapse onto the
+                // upper witness. An invariant operand can fix it independently.
+                if (bounds.Length != 1 || frame[i].SpecialConstraints.OrEmpty().Length != 0 || signature == null ||
+                    signature.Any(t => ContainsCapturedSlot(t, [i])) ||
+                    frame.Any(p => p.Constraints.OrEmpty().Any(t => ContainsCapturedSlot(t, [i]))))
+                { recover = true; return false; }
+                if (ReferenceEquals(revised, actual)) revised = actual.ToArray();
+                revised[i] = nullable;
+            }
+            if (ReferenceEquals(revised, actual)) return false;
+            node.ApplicationTypeArguments = revised;
+            return true;
+        }
+
         internal BirGraphValue FixedIntersection(Invocation call, string lexicalOwner, BirTypeParameter[] ownerFrame, ReferenceMetadataIndex refs,
             HashSet<string> emitted, List<IBirTypeDeclaration> generated, bool deferVariableArguments = false,
             CallableWitnessScope classScope = default, CallableWitnessScope methodScope = default,
             Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null, LiveResultUse resultUse = null,
-            bool projectingBody = false, IReadOnlyDictionary<string, TypeNode> locations = null)
+            bool projectingBody = false, IReadOnlyDictionary<string, TypeNode> locations = null, bool splitDependency = false)
         {
             var occurrence = call.Node;
             call = SelectedInvocation(call, out var access);
-            var id = call.Node.SelectedGenericCallable;
+            var id = call.Node.SelectedGenericCallable ?? (splitDependency ? call.Node.DeclarationIdentityFact.OrDefault() : null);
             var owner = (TypeNode.Fqn)(call.Member?.DeclaringType.OrDefault() ?? call.Owner);
-            var local = id != null && declarations.TryGetValue(id, out var bindings)
-                ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method)?.Method : null;
-            if (!(id == null && call.Member != null) && call.Node is not (BirGenericInstance or BirGenericStatic) &&
+            var binding = id != null && declarations.TryGetValue(id, out var bindings)
+                ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method) : null;
+            var local = binding?.Method;
+            if (!splitDependency && !(id == null && call.Member != null) && call.Node is not (BirGenericInstance or BirGenericStatic) &&
                 !ProjectedCallableEntries.HasFixedAbi(local, id, refs)) return null;
             if (projectingBody && LiveResultUse.InCurrentPass(occurrence, true) &&
                 SignatureValueTypes.Of(call.Member.ReturnType.Value) is { } storage &&
@@ -254,8 +291,8 @@ static partial class CapturedGenericInvocation
             }
             else
             {
-                var definition = definitions[owner.Name].Type;
-                var ownerParameters = TypeParameterFrame.Declarations(definition).ToArray();
+                var definition = binding.Container.Type;
+                var ownerParameters = definition == null ? [] : TypeParameterFrame.Declarations(definition).ToArray();
                 var methodParameters = local.TypeParams.OrEmpty();
                 bool Typed(TypeNode type) => SignatureValueTypes.Of(type) is TypeNode.Tv v
                     ? (v.Scope == "method" ? methodParameters : ownerParameters)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct")
@@ -264,13 +301,13 @@ static partial class CapturedGenericInvocation
                 // A local MethodDef has no token yet. Bind its complete physical
                 // descriptor. Zero is reserved for unique lexical thunks.
                 target = new(local.Name.Value, -1, formals.Select(t => RuntimeKey(SignatureValueTypes.Of(t), refs)).ToArray(),
-                    ownerParameters, methodParameters, definition.Kind.Value == "struct", formals,
+                    ownerParameters, methodParameters, definition?.Kind.Value == "struct", formals,
                     formals.Select(Typed).ToArray(), local.Ret.Value, Typed(local.Ret.Value));
             }
             var signature = target.Signature;
             var ret = target.Result;
             var actual = call.TypeArguments.Value;
-            var proofs = occurrence.MethodWitnessFacts.Value;
+            var proofs = occurrence.MethodWitnessFacts.OrEmpty();
             var fixedAddresses = FixedAddresses(signature, call.Arguments.OrDefault(), locations);
             var application = BindFixedWitnesses(target.MethodFrame, signature, actual, proofs, LexicalCandidates(actual, classScope, methodScope),
                 classScope, methodScope, t => definitions.TryGetValue(t.Name, out var declaration)

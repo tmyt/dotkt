@@ -166,8 +166,31 @@ sealed class ProjectedCallableEntries
 
     ProjectedClassStorageFrame MethodFrame(BirFunctionDeclaration m)
     {
-        var frame = Frame(m.TypeParams.OrEmpty(),
-            !m.Extern.OrDefault() && m.Params.OrEmpty().Any(p => ProjectedMethodPlan.HasMethodLocation(p, references)));
+        var parameters = m.TypeParams.OrEmpty();
+        var representations = m.LocalBodyEntry?.Frame ?? m.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault();
+        bool NeedsIndependentOrdinary(int source)
+        {
+            var ordinary = new TypeNode.Tv("method", representations.SourcePosition(source));
+            var nullable = representations.NullableVariable(new TypeNode.Tv("method", source));
+            bool Mentions(TypeNode type, TypeNode variable)
+            {
+                var found = false;
+                BirGraphNameFields.VisitTypeNodes(type, t => found |= t == variable);
+                return found;
+            }
+            var signature = m.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).Append(m.Ret.Value);
+            if (!signature.Any(t => Mentions(t, nullable))) return false;
+            // An otherwise unbounded, erased argument can use its nullable
+            // witness directly. A nominal bound or an observable CLR signature
+            // (for example List<B> as well as List<B?>) fixes B independently.
+            return parameters[ordinary.I].Constraints.OrEmpty().Any(c => c != nullable && !FBoundStarProjectionErasure.IsObjectish(c)) ||
+                parameters[ordinary.I].SpecialConstraints.OrEmpty().Length != 0 ||
+                parameters.Any(p => p.Constraints.OrEmpty().Any(t => Mentions(t, ordinary))) ||
+                signature.Any(t => Mentions(t, ordinary));
+        }
+        var frame = Frame(parameters,
+            !m.Extern.OrDefault() && (representations?.NullableIndices.Any(NeedsIndependentOrdinary) == true ||
+                m.Params.OrEmpty().Any(p => ProjectedMethodPlan.HasMethodLocation(p, references))));
         return frame;
     }
 
@@ -198,7 +221,8 @@ sealed class ProjectedCallableEntries
                 .Select(e => e.spec).Distinct().Single(t => t.Name == declaringOwner);
             return declarationPlans[method] = plan.OnOwner(application.Args ?? []);
         }
-        return declarationPlans[method] = ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references);
+        return declarationPlans[method] = ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
+            method.LocalBodyEntry?.Frame ?? method.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault());
     }
 
     BirFunctionDeclaration[] Declare(BirFunctionDeclaration[] source, IBirTypeDeclaration owner, List<Body> bodies,
@@ -342,10 +366,12 @@ sealed class ProjectedCallableEntries
             if (node is BirNewClosure or BirNewSam)
                 ProjectClosureCreation(node, ownerScope, methodScope, allocate, generated);
             if (Bind(node, ownerScope, methodScope, locations != null)) return node;
-            if (node.MethodWitnessFacts.HasValue && CapturedGenericInvocation.Invocation.Admits(node) &&
+            if (invocations.CloseForwardedNullable(node, ownerScope, methodScope, references, out var dependency)) return node;
+            if ((node.MethodWitnessFacts.HasValue || dependency) && CapturedGenericInvocation.Invocation.Admits(node) &&
                 invocations.FixedIntersection(new(node), owner?.Name.Value, owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(),
                     references, null, generated, classScope: ownerScope, methodScope: methodScope,
-                    allocate: allocate, lexicalDefinition: owner, projectingBody: true, locations: locations) is { } fixedCall) return fixedCall;
+                    allocate: allocate, lexicalDefinition: owner, projectingBody: true, locations: locations,
+                    splitDependency: dependency) is { } fixedCall) return fixedCall;
             return CapturedGenericInvocation.ProjectStorageCall(node, ownerScope, methodScope, references, allocate, generated, owner, helpers, locations);
         }
         Rewrite(root, default, null);
@@ -526,9 +552,23 @@ sealed class ProjectedCallableEntries
             && v.I < parameters.Length && parameters[v.I].Constraints.OrEmpty().Contains(bound);
         var application = target.Plan.Close(actual, ownerArgs, node.MethodWitnessFacts.OrEmpty(),
             target.Original, target.Representations, node is BirCallInstance super && super.Super.OrDefault() ||
-                locationBody && target.Plan.AddressOperands.Length != 0,
+                locationBody && target.Plan.AddressOperands.Length != 0 || RequiresNullableSplit(),
             (t, b, rows) => Proof(t, b, ownerScope, methodScope, rows), Declares,
             Proves);
+        bool RequiresNullableSplit()
+        {
+            if (target.Representations is not { } layout) return false;
+            foreach (var source in layout.NullableIndices)
+            {
+                var ordinary = layout.SourcePosition(source);
+                var nullable = layout.NullableVariable(new TypeNode.Tv("method", source));
+                if (target.Original[ordinary].Constraints.OrEmpty().Contains(nullable) &&
+                    !target.Plan.Parameters[ordinary].Constraints.OrEmpty().Contains(nullable) &&
+                    Scope.SplitNullable(actual[ordinary], ownerScope, methodScope) is { } lexical &&
+                    lexical == actual[nullable.I]) return true;
+            }
+            return false;
+        }
         node.ApplicationTypeArguments = application.Arguments;
         node.MethodWitnessFacts = default;
         if (!application.Projected) return true;

@@ -2761,13 +2761,20 @@ Frame demand is structural, not inferred by chasing upper bounds. A nullable arg
 when its source variable has a reference-only bound. Ordinary source parameters retain their constraints. Companions
 are implementation parameters, not new Kotlin parameters or a requirement that users add a `reified` modifier.
 
-An ordinary physical parameter also carries a CLR upper bound naming its nullable-argument companion, when present.
+On an exact entry, an ordinary physical parameter also carries a CLR upper bound naming its nullable-argument companion, when present.
 The companion closes to the same reference type or to boxed `object` for nullable values; it is not the scalar
 `Nullable<V>` representation. This states the physical relation needed when Kotlin supplies `T` and `T?` to a
 declaration with a dependent type-parameter bound. No such relation is inferred for storage companions. The original
 Kotlin bound list is recorded separately before adding the physical constraint, including an explicit empty list for
 an originally unbounded parameter. Readers replace physical bounds with that complete source list; they do not expose
 the implementation-only companion as a Kotlin type parameter or bound.
+
+A projected Kotlin method can instead receive separate witnesses for the class bound and the nullable argument.
+For example, given `Item<T> : Root(), Mark`, a call at `Item<*>` can use `Root` to prove the class bound while a
+native `List<A?>` must retain its actual element type, the Kotlin value interface for `Item<*>`. The projected entry
+does not require `Root` to implement that interface. Forwarding to another Kotlin method uses the constraints of
+the selected entry; calling a fixed CLR method must still satisfy its authored constraints. Neither the native list
+nor its elements are copied, and the caller need not add a cast.
 
 Each frame records its source arity, the source indices requiring nullable companions and the physical slot order.
 Nested types preserve the entire enclosing CLR parameter prefix using that explicit correspondence. Owned TypeDefs

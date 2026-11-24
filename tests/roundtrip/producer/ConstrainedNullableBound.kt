@@ -117,6 +117,14 @@ class RelatedItemSlot<B : A, A : PendingItems.Item> { var item: B? = null }
 interface MarkedItemSink<A> where A : PendingItems.Item, A : ResultSource.Mark { fun accept(value: A): A }
 fun <A> pickMarked(left: A, right: A, first: Boolean): A where A : PendingItems.Item, A : ResultSource.Mark =
     if (first) left else right
+fun <A> keepMarked(value: A, items: ClrList<A?>?): A where A : PendingItems.Item, A : ResultSource.Mark {
+    if (items != null) appendItem(value, items)
+    return value
+}
+private fun <B : PendingItems.Item> appendItem(value: B, items: ClrList<B?>) {
+    items.Add(null)
+    RoundtripDependentNative.NullableListWriter.Append<B, B?>(value, items)
+}
 interface MarkedChoice {
     fun <A> selectMarked(left: A, right: A): A where A : PendingItems.Item, A : ResultSource.Mark
 }
