@@ -19,6 +19,11 @@ private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String
 private class DelegatedVector : GenericValueInterop.NativeVectorBase(arrayOf(roundtrip.genericvalueinterop.Derived<String>()))
 private class DelegatedBoxVector(value: Box<String>) : GenericValueInterop.NativeBoxArrayLease(arrayOf(value))
 private class LocalStoredBox<T>(val value: T)
+private fun <R> listRoundTrip(value: R): R {
+    val saved = mutableListOf<R>()
+    saved.add(value)
+    return saved[0]
+}
 private open class PlainArrayBase
 private class ProjectedArrayChild<T>(val value: T) : PlainArrayBase()
 private class NativeRowSource<T>(val value: T) : GenericValueInterop.NativeValueSource<T> {
@@ -97,7 +102,11 @@ class InvariantValueStorageTests {
     }
 
     @TestAttribute
+    @Suppress("UNCHECKED_CAST")
     fun sourceContainerElementsRetainUncheckedIdentityAcrossDlls() {
+        val original = LocalStoredBox(42L)
+        check(listRoundTrip(original as LocalStoredBox<String>) === original)
+        check(listRoundTrip(42) == 42)
         val tail = arrayOf(LocalStoredBox("tail"))
         check(readMixed(LocalStoredBox("head"), *tail) == "headtail")
         val elements = storedList()

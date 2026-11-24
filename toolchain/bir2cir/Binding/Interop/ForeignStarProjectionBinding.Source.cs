@@ -172,15 +172,23 @@ static partial class ForeignStarProjectionBinding
     }
 
     sealed record ForeignResult(TypeNode AdapterType, TypeNode.Fn Target, bool Adapt, TypeNode Projected);
-    static ForeignResult PlanForeignResult(TypeNode declaration, TypeNode semantic, TypeNode[] ownerArguments,
-        TypeNode[] resultOwnerArguments, ReferenceMetadataIndex refs, IReadOnlyList<TypeNode> methodArguments = null,
+    static ForeignResult PlanForeignResult(TypeNode declaration, TypeNode semantic, TypeNode.Fqn owner,
+        ReferenceMetadataIndex refs, IReadOnlyList<TypeNode> methodArguments = null,
         bool field = false)
     {
-        var adapter = SubstituteProjectedOwnerSlots(semantic, ownerArguments);
+        var resultOwnerArguments = AliasVarianceRepresentation.ResultOwnerArguments(owner, refs);
+        var adapter = SubstituteProjectedOwnerSlots(semantic, owner.Args);
         var target = UnwrapFunction(adapter);
         var adapt = UnwrapFunction(declaration) is { } declaredFunction && (field || !declaredFunction.Suspend)
             && DependsOnProjectedOwnerSlot(declaration, resultOwnerArguments) && target != null;
-        return new(adapter, target, adapt, field && adapt ? null : ProjectResult(declaration, resultOwnerArguments, refs, methodArguments));
+        var projected = field && adapt ? null : ProjectResult(declaration, resultOwnerArguments, refs, methodArguments);
+        // A direct element read on an erased Kotlin alias returns a Kotlin value.
+        // Its call result already names the caller's value slot; the owner's
+        // ordinary argument is still needed for the exact native view and member.
+        if (declaration is TypeNode.Tv { Scope: "type" } && projected is TypeNode.Tv &&
+            semantic is TypeNode.Tv && AliasVarianceRepresentation.RequiresErasure(owner, refs))
+            projected = semantic;
+        return new(adapter, target, adapt, projected);
     }
 
     sealed record ForeignClassifier(TypeNode.Fqn Owner, bool Nullable, string OpenType, string Method, TypeNode Result);
@@ -269,7 +277,6 @@ static partial class ForeignStarProjectionBinding
         if (refs.IsByRefLikeFqn(owner))
             throw new NotSupportedException($"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
         var valueReceiver = refs.IsValueType(owner);
-        var resultOwnerArgs = AliasVarianceRepresentation.ResultOwnerArguments(owner, refs);
         var signature = input.Signature ?? (input.Kind == "clrPropSet" && input.SetValue != null
             ? new[] { BirNodeType.Of(input.SetValue as BirGraphNode) } : Array.Empty<TypeNode>());
         if (signature.Any(t => t == null))
@@ -286,8 +293,7 @@ static partial class ForeignStarProjectionBinding
                         hint, SourceInteger(selected.Token), SourceText(input.Name), input.SetValue);
             var call = SourceCall("starProjectionGetField", new[] { Any, Type, TypeN, Int, String }, AnyN,
                 receiver, SourceClassRef(new TypeNode.Fqn(selected.OpenType)), hint, SourceInteger(selected.Token), SourceText(input.Name));
-            var fieldResult = PlanForeignResult(selected.DeclarationReturn, input.Result, owner.Args,
-                resultOwnerArgs, refs, field: true);
+            var fieldResult = PlanForeignResult(selected.DeclarationReturn, input.Result, owner, refs, field: true);
             if (fieldResult.Adapt) return SourceDelegateResult(call, fieldResult.AdapterType, fieldResult.Target, synthesized);
             return IsObjectish(fieldResult.Projected) ? call : SourceCast(fieldResult.Projected, call);
         }
@@ -300,8 +306,7 @@ static partial class ForeignStarProjectionBinding
                 (IBirExpression)((BirGraphValue)hint).DeepClone(), SourceInteger(selected.Token), SourceText(selected.RuntimeName),
                 SourceInteger(input.MethodArguments.Length), SourceArray(String, selected.RuntimeParameterKeys.Select(SourceText)),
                 SourceArray(Type, input.MethodArguments.Select(SourceClassRef)), runtimeArguments);
-        var resultPlan = PlanForeignResult(selected.DeclarationReturn, input.Result, owner.Args,
-            resultOwnerArgs, refs, input.MethodArguments);
+        var resultPlan = PlanForeignResult(selected.DeclarationReturn, input.Result, owner, refs, input.MethodArguments);
         var (adapterType, target, adapt, projected) = resultPlan;
         if (valueReceiver)
         {
