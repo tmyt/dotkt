@@ -1474,8 +1474,11 @@ unimplemented. This is not full Kotlin reflection or a new semantic runtime-type
 
 The CLR extensions `kotlin.reflect.full.isInterface` and `companionObjectInstance` query the declaration,
 not the storage used for a star projection. For example, `Box::class` and `Box(1)::class` can share a CLR
-interface token yet both report a class and return the same Kotlin companion singleton. An ordinary CLR
-type reports its native kind and has no Kotlin companion. A static companion block alone creates no
+interface token yet both report a class and return the same Kotlin companion singleton. For a CLR alias the
+token reports the represented CLR declaration kind: `Annotation::class` and `Any::class` represent the same
+`System.Object` token, so neither reports an interface. The stdlib links unambiguous aliases such as `Int`
+to their Kotlin companions. A token shared by several exported aliases cannot identify one companion,
+and returns null, as does an unrelated native type. A static companion block alone creates no
 singleton. A user implementation of `KClass` without a represented CLR type cannot answer these
 declaration queries; both throw `UnsupportedOperationException`. Neither query changes Kotlin classifier
 equality or the result of casting the raw token to `System.Type`.

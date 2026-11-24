@@ -5,6 +5,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Inspect a runtime-backed Kotlin `KClass` via `kotlin.reflect.full.isInterface` and
+  `companionObjectInstance`, including generic declarations imported from another DLL (#1925).
+
 ## 0.9.33 (2026-11-24)
 
 - Preserve inherited CLR interface constraints when forwarding a Kotlin generic method's type argument, including across assemblies (#1845).

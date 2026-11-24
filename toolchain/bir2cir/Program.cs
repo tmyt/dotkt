@@ -482,7 +482,7 @@ sealed class Pipeline
         // decisions; late consumers receive the resulting scalar associations.
         GenericStaticOwnerBinding.Materialize(captured);
         GenericStaticOwnerBinding.ApplyEventOwnersAll(captured, refs);
-        var companionRepresentations = CompanionRepresentationLowering.Apply(captured);
+        var companionRepresentations = CompanionRepresentationLowering.Apply(captured, substituteStdlibBuild ? valuePolicy.Aliases : null);
         var companionExtensionBindings = CompanionExtensionBinding.Apply(captured, refs);
         LateinitInitializationLowering.ApplyAll(captured, refs);
         KotlinPropertyAccessors.AllocateDeclarationsAndProperties(captured);

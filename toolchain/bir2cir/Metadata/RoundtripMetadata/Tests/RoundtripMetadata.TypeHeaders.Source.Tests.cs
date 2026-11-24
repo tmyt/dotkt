@@ -96,6 +96,11 @@ static partial class RoundtripMetadata
         ExpectPayload(enumeration, AKBasicEnum, """{"underlying":"System.Int32","entries":[{"name":"A","ordinal":0,"physicalValue":"7"}]}""");
         ExpectPayload(rich, AKRichEnum, """{"entries":[],"name":"name","ordinal":"ordinal","values":"values","valueOf":"valueOf"}""");
         if (!HasRepresentationTypeAssociations(file)) throw new InvalidOperationException("Typed representation association inventory missed the header result");
+        var companionOnly = new BirFileDeclaration { Types = new IBirTypeDeclaration[] {
+            new BirClassDefinition { Attrs = new[] { HeaderMarker(RuntimeCompanionAttribute) } },
+        } };
+        if (!HasRepresentationTypeAssociations(companionOnly))
+            throw new InvalidOperationException("A standalone runtime companion link requires its attribute definition");
         var attrs = owner.Attrs.Value;
         StampTypeHeaders(file, runtimeMode: false);
         if (!ReferenceEquals(owner.Attrs.Value, attrs)) throw new InvalidOperationException("Type header capability was consumed twice");

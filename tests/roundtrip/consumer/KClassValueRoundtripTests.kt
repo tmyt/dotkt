@@ -58,6 +58,8 @@ class KClassValueRoundtripTests {
         check(ImportedPlainBase::class.companionObjectInstance == null)
         check(List::class.isInterface && !ArrayList::class.isInterface)
         check(!System.Random::class.isInterface && System.Random::class.companionObjectInstance == null)
+        check(Int::class.companionObjectInstance === Int.Companion && String::class.companionObjectInstance === String.Companion)
+        check(!Annotation::class.isInterface && Any::class.companionObjectInstance == null)
         check(runCatching { ImportedManual().isInterface }.exceptionOrNull() is UnsupportedOperationException)
     }
 
