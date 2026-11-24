@@ -500,6 +500,13 @@ static partial class FBoundStarProjectionErasure
                 constrained |= application.Parameters[i].Constraints.OrEmpty().Any(b => b is TypeNode.Fqn f && !IsObjectish(f));
             }
             if (!constrained) return null;
+            // Only a native obligation needs the carrier as the CLR primary
+            // argument. Pure Kotlin bounds keep their established witness and
+            // value slots; replacing a usable witness can erase a use-site bound.
+            var native = NativeSupertypeConstraints(owner.Name, proposed.Length);
+            if (!Enumerable.Range(0, proposed.Length).Any(i => proposed[i] != owner.Args[i]
+                && (NativeProofs.ExactTypeArgument(owner.Name, i) || native.Native.Contains(i)
+                    || native.Fixed.Any(row => row.Index == i)))) return null;
             // Proof and newobj must name the same arguments, including the slot
             // assigned to a sibling bound. An operand's runtime class is not
             // the type argument of an invariant native interface.
