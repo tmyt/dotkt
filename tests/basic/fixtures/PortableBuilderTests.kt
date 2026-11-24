@@ -183,11 +183,22 @@ class PortableBuilderTests {
         check(trace == "rvse")
     }
 
-    @TestAttribute fun scalarForwardersUseTheExistingClrToStringContract() {
+    @TestAttribute fun scalarForwardersUseInvariantClrNumericSpelling() {
         val before = System.Globalization.CultureInfo.CurrentCulture
         try {
-            for (culture in listOf(System.Globalization.CultureInfo.InvariantCulture, System.Globalization.CultureInfo.GetCultureInfo("fr-FR"))) {
+            for (culture in listOf(System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.CultureInfo.GetCultureInfo("fr-FR"), System.Globalization.CultureInfo.GetCultureInfo("sv-SE"))) {
                 System.Globalization.CultureInfo.CurrentCulture = culture
+                val i = -5
+                val d = -1.5
+                val boxed: Any = d
+                val bound: () -> String = boxed::toString
+                val unbound: (Any) -> String = Any::toString
+                check(bound() == "-1.5" && unbound(boxed) == "-1.5")
+                check(i.toString() == "-5" && d.toString() == "-1.5" && boxed.toString() == "-1.5")
+                check("i=$i d=$d boxed=$boxed" == "i=-5 d=-1.5 boxed=-1.5")
+                check(StringBuilder().append(i).append(' ').append(d).append(' ').append(boxed).toString() == "-5 -1.5 -1.5")
+                check(Double.POSITIVE_INFINITY.toString().toDouble() == Double.POSITIVE_INFINITY)
                 for (value in listOf(true, false)) {
                     check(StringBuilder().append(value).toString() == value.toString())
                     check(StringBuilder("!").insert(0, value).toString() == value.toString() + "!")

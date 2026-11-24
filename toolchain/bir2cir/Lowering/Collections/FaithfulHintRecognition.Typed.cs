@@ -72,9 +72,12 @@ static partial class FaithfulHintRecognition
             "kotlin.Double" => "clrDoubleCompare", "kotlin.Float" => "clrFloatCompare", _ => null,
         } : null;
 
-    internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns)
+    internal static BirGraphValue Apply(BirGraphValue root, IReadOnlySet<string> localTopLevelFns, NumericTextOperands numericText = null)
         => SourceGraphRewrite.Rewrite(root, (node, scope) => node switch {
-            BirObjectMethod value => Transform(value, scope),
+            BirObjectMethod value => Transform(value, scope, numericText),
+            BirCallInstance value when numericText != null && AnySlotRebind.IsVirtualToString(value)
+                && value.Recv.HasValue && value.Args.OrEmpty().Length == 0 =>
+                Transform(new BirObjectMethod { Method = "ToString", Recv = value.Recv, Sty = value.Sty }, scope, numericText),
             BirCallStatic value => Transform(value, scope, localTopLevelFns),
             BirConcat value => Transform(value, scope),
             BirCallInstance value when CompareHelper(value.Method.OrDefault(), value.OwnerType.OrDefault()) is { } method
@@ -83,11 +86,13 @@ static partial class FaithfulHintRecognition
             _ => node,
         });
 
-    static BirGraphValue Transform(BirObjectMethod call, IReadOnlyDictionary<string, TypeNode> scope)
+    static BirGraphValue Transform(BirObjectMethod call, IReadOnlyDictionary<string, TypeNode> scope, NumericTextOperands numericText)
     {
         if (call.Method.OrDefault() != "ToString" || !call.Recv.HasValue) return call;
         var rendering = SelectRendering(RenderSite.Object, null, BirGraphStaticType.Value(call.Recv.Value, scope));
-        return rendering.Kind == Renderer.None ? call : (BirGraphValue)Render(call.Recv.Value, rendering);
+        if (rendering.Kind != Renderer.None) return (BirGraphValue)Render(call.Recv.Value, rendering);
+        if (numericText != null) call.Recv = OptionalField<IBirExpression>.Of(numericText.Select(call.Recv.Value, scope));
+        return call;
     }
 
     static BirGraphValue Transform(BirCallStatic call, IReadOnlyDictionary<string, TypeNode> scope, IReadOnlySet<string> localTopLevelFns)
