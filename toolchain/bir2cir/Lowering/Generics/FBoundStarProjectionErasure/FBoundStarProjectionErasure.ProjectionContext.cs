@@ -483,18 +483,44 @@ static partial class FBoundStarProjectionErasure
             return arguments;
         }
 
-        internal TypeNode.Fqn ProvenInterfaceCarrier(WitnessSlot slot, TypeNode.Fqn carrier)
+        internal TypeNode.Fqn InterfaceCarrierConstruction(TypeNode.Fqn owner)
         {
-            // The synthesized value interface, not the source class, must prove
-            // the complete interface constraint set of this physical argument.
-            var formal = slot.Formal;
-            if (formal == null || formal.SpecialConstraints.OrEmpty().Any(s => s != "class")) return null;
-            var bounds = formal.Constraints.OrEmpty();
-            TypeNode[] closed = null;
-            TypeNode Close(int i) => (closed ??= ((TypeNode.Fqn)Rewrite(slot.Entry.Owner, preserveConstructedHead: true)).Args)[i];
-            return bounds.Length != 0 && bounds.All(bound =>
-                slot.CloseBound(bound, Close) is TypeNode.Fqn required && BoundKind(required) == "interface"
-                    && HasPhysicalSupertype(carrier, required)) ? carrier : null;
+            RequireSourceClock();
+            if (!TryExistentialCarrier(owner.Name, out _)) return null;
+            var application = SelectPhysicalClassApplication(owner);
+            if (application.Parameters == null) return null;
+            var proposed = (TypeNode[])owner.Args.Clone();
+            var constrained = false;
+            for (int i = 0; i < proposed.Length; i++)
+            {
+                if (!ContainsExistentialProjection(proposed[i])) continue;
+                if (StripSourceNullability(proposed[i]) is not TypeNode.Fqn arg || !TryExistentialCarrier(arg.Name, out var name)
+                    || application.Parameters[i].SpecialConstraints.OrEmpty().Any(s => s != "class")) return null;
+                proposed[i] = new TypeNode.Fqn(name);
+                constrained |= application.Parameters[i].Constraints.OrEmpty().Any(b => b is TypeNode.Fqn f && !IsObjectish(f));
+            }
+            if (!constrained) return null;
+            // Proof and newobj must name the same arguments, including the slot
+            // assigned to a sibling bound. An operand's runtime class is not
+            // the type argument of an invariant native interface.
+            var selected = owner with { Args = proposed };
+            var physical = ((TypeNode.Fqn)Rewrite(selected, preserveConstructedHead: true)).Args;
+            synthesizedHierarchy ??= SupertypeGraph.CollectSource(Preparation.Bindings.SourceRoots.Select(r => (BirFileDeclaration)r.Source));
+            Preparation.Bindings.SourceDefinitions.TryGetValue(owner.Name, out var local);
+            for (int i = 0; i < physical.Length; i++)
+                foreach (var constraint in application.Parameters[i].Constraints.OrEmpty())
+                {
+                    // Unchanged slots may contain the caller's open type variables.
+                    // Only constraints affected by this substitution need a new proof.
+                    var changed = proposed[i] != owner.Args[i];
+                    if (!changed) BirGraphNameFields.VisitTypeNodes(constraint, part =>
+                        changed |= part is TypeNode.Tv { Scope: "type" } tv && proposed[tv.I] != owner.Args[tv.I]);
+                    if (!changed) continue;
+                    var bound = local == null ? constraint : Rewrite(constraint, NativeProofs.IsPhysicalConstraint(local, i, constraint));
+                    var closed = SupertypeGraph.SubstOwnerTvs(bound, physical);
+                    if (!IsObjectish(closed) && !ProjectedConstructorPlan.Proves(physical[i], closed, synthesizedHierarchy, References)) return null;
+                }
+            return selected;
         }
 
         internal StorageWitness ClassStorageWitness(WitnessSlot slot,
