@@ -76,6 +76,22 @@ private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(mak
 private class UnconstrainedForwarder<A : System.IO.Stream>(val make: () -> A) {
     fun read(): Any? = eraseFrom(make)
 }
+private fun interface StreamReader { fun read(): Any }
+private fun <V : System.IO.Stream> streamReader(make: () -> V): StreamReader {
+    fun <T : System.IO.Stream> local(factory: () -> T): Any = forwardStream(factory)
+    return StreamReader { local<V>(make) }
+}
+private class Envelope<O>(val tag: O) {
+    inner class Entry<T : System.IO.Stream>(val value: T)
+}
+private fun <V : System.IO.Stream> readEntry(make: () -> V): Any = Envelope("tag").Entry<V>(make()).value
+private class StreamBox<A : System.IO.Stream> {
+    fun read(make: () -> A): Any = forwardStream(make)
+    fun name(): String = "box"
+}
+private open class StreamMaker {
+    open fun <V : System.IO.Stream> label(): String = StreamBox<V>().name()
+}
 private fun <T : ReferencedBoundSink<Any?>> useReferencedObjectBound(t: T): String = t.accept("y")
 
 private class ForeignBoundHolder<T : VisibleBoundBase>(val element: T) {
@@ -569,6 +585,9 @@ class ConstrainedNullableBoundTests {
         check(readProjectedChunk(chunk) === chunk)
         check(deferredStream { chunk }() === chunk)
         check(UnconstrainedForwarder { chunk }.read() === chunk)
+        check(streamReader { chunk }.read() === chunk)
+        check(readEntry { chunk } === chunk)
+        check(StreamMaker().label<MemoryStream>() == "box")
         exact.Add(chunk)
         @Suppress("UNCHECKED_CAST")
         check(firstChunk(exact as ClrList<StreamChunk<*>>) === chunk)

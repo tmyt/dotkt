@@ -10,7 +10,9 @@ static partial class NullableRepresentationMaterialization
     static void ForwardStorageProofs(IReadOnlyList<NullableRepresentationDemand.SourceOwnerDemand> owners,
         IReadOnlyDictionary<BirGraphValue, NullableRepresentationFrame> methodFrames,
         IReadOnlyDictionary<BirGraphValue, NullableRepresentationFrame> ownerFrames,
-        ReferenceMetadataIndex references, GenericRepresentationPolicy policy)
+        IReadOnlyDictionary<BirGraphValue, BirFunctionDeclaration> localBindings,
+        IReadOnlyList<(NullableRepresentationViews.Owner Owner, BirFunctionDeclaration Method, NullableRepresentationFrame Frame)> helpers,
+        IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex references, GenericRepresentationPolicy policy)
     {
         if (policy == null) return;
         var allowed = new Dictionary<BirTypeParameter, TypeNode[]>(ReferenceEqualityComparer.Instance);
@@ -40,8 +42,15 @@ static partial class NullableRepresentationMaterialization
                 if (method.View.CanExtendBodyFrame) Register(rows, methodFrames[method.Declaration], "method");
             }
         }
+        foreach (var (_, method, frame) in helpers)
+        {
+            var rows = method.TypeParams.OrEmpty();
+            methods.Add(method.DeclarationId.Value, rows);
+            Register(rows, frame, "method");
+        }
         if (allowed.Count == 0) return;
-        var edges = new List<(BirTypeParameter Actual, BirTypeParameter Formal, TypeNode[] Owner, TypeNode[] Method)>();
+        var order = new InnerApplicationOrder(roots, references);
+        var users = new Dictionary<BirTypeParameter, List<(BirTypeParameter Actual, TypeNode[] Owner, TypeNode[] Method)>>(ReferenceEqualityComparer.Instance);
         void Scan(BirGraphValue root, BirTypeParameter[] ownerRows, BirTypeParameter[] methodRows)
         {
             if (!ownerRows.Any(allowed.ContainsKey) && !methodRows.Any(allowed.ContainsKey)) return;
@@ -52,8 +61,9 @@ static partial class NullableRepresentationMaterialization
                 {
                     if (args[i] is not TypeNode.Tv v) continue;
                     var rows = v.Scope == "method" ? methodRows : ownerRows;
-                    if ((uint)v.I < (uint)rows.Length && allowed.ContainsKey(rows[v.I]))
-                        edges.Add((rows[v.I], formals[i], ownerArgs, methodArgs));
+                    if ((uint)v.I >= (uint)rows.Length || !allowed.ContainsKey(rows[v.I])) continue;
+                    if (!users.TryGetValue(formals[i], out var edges)) users[formals[i]] = edges = [];
+                    edges.Add((rows[v.I], ownerArgs, methodArgs));
                 }
             }
             void Application(TypeNode type)
@@ -62,29 +72,40 @@ static partial class NullableRepresentationMaterialization
                 if (!types.TryGetValue(f.Name, out var rows))
                     types[f.Name] = rows = references?.NullableTypeFrames.ContainsKey(f.Name) == true
                         ? references.PhysicalOwnerTypeParametersInPhysicalFrame(f.Name, nativeNames: true) : null;
-                Connect(f.Args, rows, f.Args, []);
+                if (rows?.Length != f.Args.Length) return;
+                var args = order.DeclarationArguments(f);
+                Connect(args, rows, args, []);
             }
             void Visit(BirGraphValue node)
             {
-                if (node is BirAttribute or IBirExecutablePayload ||
-                    node != root && node is (BirFunctionDeclaration or IBirTypeDeclaration)) return;
-                if (node.ApplicationTypeArguments.OrDefault() is { Length: > 0 } args
-                    && node.DeclarationIdentityFact.OrDefault() is string id)
+                if (node is BirAttribute or IBirExecutablePayload || node != root &&
+                    (ownerFrames.ContainsKey(node) || methodFrames.ContainsKey(node))) return;
+                if (node.ApplicationTypeArguments.OrDefault() is { Length: > 0 } args)
                 {
-                    if (!methods.TryGetValue(id, out var formals))
+                    if (localBindings.TryGetValue(node, out var local))
+                        Connect(args, local.TypeParams.OrEmpty(), [], args);
+                    else if (node.DeclarationIdentityFact.OrDefault() is string id)
                     {
-                        methods[id] = formals = references?.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
+                        if (!methods.TryGetValue(id, out var formals))
+                            methods[id] = formals = references?.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
+                        if (formals?.Length == args.Length)
+                            Connect(args, formals, order.DeclarationArguments(SelectedOwner(node) as TypeNode.Fqn) ?? [], args);
                     }
-                    Connect(args, formals, (SelectedOwner(node) as TypeNode.Fqn)?.Args ?? [], args);
                 }
+                var snapshot = NullableRepresentationViews.ReturnFacts(node);
+                bool Lexical(BirGenericFrameRole ownership) => !NullableRepresentationViews.Frozen(ownership)
+                    && ownership is not (BirGenericFrameRole.OverrideDeclaration or BirGenericFrameRole.SyntheticApplication);
                 node.RewriteRepresentationInPlace((ownership, role, type) => {
-                    if (!NullableRepresentationViews.Frozen(ownership) && role is not (BirRepresentationRole.Declaration
+                    if (Lexical(ownership) && !(role == BirRepresentationRole.Return && snapshot.DeclarationReturn)
+                        && role is not (BirRepresentationRole.Declaration
                         or BirRepresentationRole.DeclaredMemberType or BirRepresentationRole.TypeParameterDeclarations
                         or BirRepresentationRole.Foreign))
                         BirGraphNameFields.VisitTypeNodes(type, Application);
                     return type;
-                }, (ownership, _, child) => {
-                    if (!NullableRepresentationViews.Frozen(ownership) && ownership != BirGenericFrameRole.OverrideDeclaration) Visit(child);
+                }, (ownership, role, child) => {
+                    if (Lexical(ownership) && role is not (BirRepresentationRole.Attributes
+                        or BirRepresentationRole.InheritedImplementation or BirRepresentationRole.TypeParameterDeclarations)
+                        && !(ownerFrames.ContainsKey(node) && child is BirFunctionDeclaration)) Visit(child);
                 });
             }
             Visit(root);
@@ -96,11 +117,14 @@ static partial class NullableRepresentationMaterialization
             foreach (var method in owner.Methods)
                 if (method.View.Function is { } function) Scan(function, rows, method.View.Parameters.OrEmpty());
         }
-        bool changed;
-        do
+        foreach (var (owner, method, _) in helpers)
+            Scan(method, owner.Parameters.OrEmpty(), method.TypeParams.OrEmpty());
+        var queue = new Queue<BirTypeParameter>(users.Keys.Where(row => row.Constraints.OrEmpty().Length != 0));
+        var queued = new HashSet<BirTypeParameter>(queue, ReferenceEqualityComparer.Instance);
+        while (queue.TryDequeue(out var formal))
         {
-            changed = false;
-            foreach (var (actual, formal, ownerArgs, methodArgs) in edges)
+            queued.Remove(formal);
+            foreach (var (actual, ownerArgs, methodArgs) in users[formal])
             {
                 var existing = actual.Constraints.OrEmpty();
                 var required = formal.Constraints.OrEmpty().Select(bound =>
@@ -108,8 +132,8 @@ static partial class NullableRepresentationMaterialization
                 var add = allowed[actual].Intersect(required).Except(existing).ToArray();
                 if (add.Length == 0) continue;
                 actual.Constraints = existing.Concat(add).ToArray();
-                changed = true;
+                if (users.ContainsKey(actual) && queued.Add(actual)) queue.Enqueue(actual);
             }
-        } while (changed);
+        }
     }
 }
