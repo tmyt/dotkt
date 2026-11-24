@@ -89,6 +89,9 @@ static class TypedPhysicalValueCoercion
         internal bool LocalFunctionRuntime;
         internal bool LocalArrayRuntime;
         internal ReferenceMetadataIndex References;
+        BirMemberReference isValueType;
+        internal BirNativeInstance IsValueType(TypeNode variable) =>
+            PhysicalTypeKindTest.IsValueType(variable, isValueType ??= PhysicalTypeKindTest.Bind(References));
         internal IReadOnlyDictionary<string, string> LocalCarriers;
         internal BirFileDeclaration Document;
         internal BirTemporaryNames ArrayNames;
@@ -849,6 +852,11 @@ static class TypedPhysicalValueCoercion
         }
         BirLocal Address(IBirExpression value, TypeNode.ByRef pointer) =>
             Retain(value is BirByRefOf ? value : new BirByRefOf { Inner = Field(value) }, pointer);
+        // A value-type instantiation cannot itself be an array; in particular,
+        // an allows-ref-struct instantiation must never execute a box.
+        IBirExpression ExposureCandidate(BirGraphValue value, TypeNode type) => type is not TypeNode.Tv ? Expression(value)
+            : new BirConditional { Type = Object, Cond = index.IsValueType(type),
+                Then = new BirConstant { Type = Object, Value = new BirLiteral.NullLiteral() }, Else = Cast(value, Object) };
         if (receiver != null)
         {
             if (receiverType == null) return null;
@@ -868,7 +876,7 @@ static class TypedPhysicalValueCoercion
             if (publishesReceiver)
             {
                 dynamicValue |= receiverType is not TypeNode.Array;
-                exports.Add(receiverType is TypeNode.Tv ? Cast(Graph(saved).DeepClone(), Object) : Expression(Graph(saved).DeepClone()));
+                exports.Add(ExposureCandidate(Graph(saved).DeepClone(), receiverType));
             }
         }
         for (var i = 0; i < args.Length; i++)
@@ -890,7 +898,7 @@ static class TypedPhysicalValueCoercion
                 {
                     dynamicValue |= pointer.Of is not TypeNode.Array;
                     var load = new BirByRefLoad { Local = address.Name, Elem = pointer.Of };
-                    exports.Add(pointer.Of is TypeNode.Tv ? Cast(load, Object) : load);
+                    exports.Add(ExposureCandidate(load, pointer.Of));
                 }
             }
             else
@@ -900,7 +908,7 @@ static class TypedPhysicalValueCoercion
                 if (Publishes(signature[i]))
                 {
                     dynamicValue |= signature[i] is not TypeNode.Array;
-                    exports.Add(signature[i] is TypeNode.Tv ? Cast(saved.DeepClone(), Object) : (BirLocal)saved.DeepClone());
+                    exports.Add(ExposureCandidate(saved.DeepClone(), signature[i]));
                 }
             }
         }

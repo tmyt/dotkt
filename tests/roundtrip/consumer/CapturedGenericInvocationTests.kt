@@ -28,6 +28,9 @@ private class ThrowingElement : CoroutineContext.Element {
 class CapturedGenericInvocationTests {
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
+        val derived = CsList<System.IO.MemoryStream>()
+        derived.Add(System.IO.MemoryStream())
+        check(countWithSpan(derived) == 1)
     }
     @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
         val leaf = NativeListLeaf(42L)

@@ -284,19 +284,9 @@ static partial class CapturedGenericInvocation
             occurrence.MethodWitnessFacts = default;
             if (access == null && (call.Super || typed && lexicalAccess))
             {
-                var formals = signature.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? [])).ToArray();
-                var returns = SupertypeGraph.SubstOwnerTvs(ret, owner.Args ?? []);
-                var thunk = LexicalForwarder(call, owner, lexicalOwner, target.MethodFrame.Select(p => CloneParameter(p,
-                    t => SupertypeGraph.SubstOwnerTvs(t, owner.Args ?? []))).ToArray(), formals, returns, local != null, typed, lexicalDefinition);
-                lexical = new(new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
-                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, thunk);
+                lexical = LexicalAdapter(call, target, owner, lexicalOwner, ownerFrame, local != null, typed, lexicalDefinition);
             }
-            string Allocate(string role) {
-                string name;
-                do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
-                return name;
-            }
-            return typed || access != null ? ProjectAddressCall(call, target, owner, application.Facets, refs, allocate ?? Allocate, generated, lexical, access, application.Arguments,
+            return typed || access != null ? ProjectAddressCall(call, target, owner, application.Facets, refs, allocate ?? (role => AllocateAdapter(lexicalOwner, emitted, role)), generated, lexical, access, application.Arguments,
                 fixedAddresses, captures: rows, capturedResult: capturedResult, resultUse: resultUse)
                 : IntersectionCall(call, lexical?.Owner ?? owner, lexical == null ? target.Token : 0,
                     lexical?.Method.Name.Value ?? target.Name, target.Keys, application.Arguments, application.Facets, result, unit, refs, rows);
@@ -315,6 +305,23 @@ static partial class CapturedGenericInvocation
                 Body(forward, IsVoid(result), objectResult: false), isStatic: !call.Instance, visibility: adapterAccess ? "internal" : "private");
             definition.Methods = definition.Methods.OrEmpty().Append(method).ToArray();
             return method;
+        }
+
+        static string AllocateAdapter(string lexicalOwner, HashSet<string> emitted, string role)
+        {
+            string name;
+            do name = lexicalOwner + "$" + role + _next++; while (emitted.Contains(name));
+            return name;
+        }
+
+        LexicalTarget LexicalAdapter(Invocation call, AddressTarget target, TypeNode.Fqn owner, string lexicalOwner,
+            BirTypeParameter[] ownerFrame, bool local, bool typed, IBirTypeDeclaration definition = null)
+        {
+            TypeNode Close(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type, owner.Args ?? []);
+            var thunk = LexicalForwarder(call, owner, lexicalOwner, target.MethodFrame.Select(p => CloneParameter(p, Close)).ToArray(),
+                target.Signature.Select(Close).ToArray(), Close(target.Result), local, typed, definition);
+            return new(new(lexicalOwner, ownerFrame.Length == 0 ? null : Enumerable.Range(0, ownerFrame.Length)
+                .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray()), ownerFrame, thunk);
         }
 
         static void Declare(BirGraphValue node, Dictionary<string, TypeNode> scope)
@@ -412,13 +419,29 @@ static partial class CapturedGenericInvocation
                 return HasAddress(type) || ByRefLike(type, refs) || type is TypeNode.Tv v &&
                     (v.Scope == "method" ? methodFrame : ownerFrame)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct");
             }
-            if (declarationParameters.Any(RequiresTypedTransport) || RequiresTypedTransport(declaredReturn)) return call.Node;
+            var typedInput = declarationParameters.Any(RequiresTypedTransport);
+            if (RequiresTypedTransport(declaredReturn) || typedInput && (local || declarationParameters.Any(HasAddress) ||
+                captureIndices.Any(i => RequiresTypedTransport(declarationParameters[i])))) return call.Node;
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.
             var rows = CaptureRows(capture, declarationParameters, refs);
             var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
             if (declarationParameters.Where((_, index) => !captureIndices.Contains(index)).Any(type => ContainsCapturedSlot(type, closedSlots))) return call.Node;
+
+            if (typedInput)
+            {
+                // Close the invariant operand from its runtime witness, but pass
+                // independent stack-only values through the typed Invoke signature.
+                if (rows.Length == 0) return call.Node;
+                if (!TrySelectedMethod(call, owner, refs, out var method))
+                    throw new InvalidOperationException("Captured invocation lost its selected MethodDef");
+                var target = AddressTarget.FromReference(method, call.Member, selectedFrame);
+                var lexical = call.Super || !method.IsPublic
+                    ? LexicalAdapter(call, target, owner, lexicalOwner, ownerFrame, false, true) : null;
+                return ProjectAddressCall(call, target, owner, [], refs, role => AllocateAdapter(lexicalOwner, emitted, role), generated, lexical, null,
+                    call.TypeArguments.Value, captures: rows, capturedResult: result);
+            }
 
             if (call.Super)
             {

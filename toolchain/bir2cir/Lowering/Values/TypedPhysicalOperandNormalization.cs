@@ -2,6 +2,24 @@ using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
 
+// Both receiver snapshots and native array exposure branch on typeof(T),
+// without inspecting (or boxing) the value of T.
+static class PhysicalTypeKindTest
+{
+    internal static BirMemberReference Bind(ReferenceMetadataIndex references)
+    {
+        var owner = references.ResolveRefType("System.Type");
+        return BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references,
+            owner.GetProperty(nameof(System.Type.IsValueType)).GetMethod, MemberRefNode.Kinds.Method, owner, null));
+    }
+
+    internal static BirNativeInstance IsValueType(TypeNode type, BirMemberReference getter) => new() {
+        Type = getter.DeclaringType, Method = getter.Name, Recv = new BirClassReference { Type = type },
+        Args = Array.Empty<IBirExpression>(), ArgTypes = Array.Empty<TypeNode>(), Ret = getter.ReturnType,
+        Dispatch = "callvirt", MemberRef = getter,
+    };
+}
+
 // Author empty-stack evaluation sites on the owning physical graph. Operands are
 // selected by their declared node roles, never by JSON keys or apparent shape.
 static partial class TypedPhysicalOperandNormalization
@@ -12,10 +30,7 @@ static partial class TypedPhysicalOperandNormalization
         Func<BirGraphValue, IReadOnlyDictionary<string, TypeNode>, TypeNode> typeOf,
         ReferenceMetadataIndex references)
     {
-        var owner = references.ResolveRefType("System.Type");
-        var getter = ClrMemberResolution.MemberRefOf(null, references, owner.GetProperty("IsValueType").GetMethod,
-            MemberRefNode.Kinds.Method, owner, null);
-        new Normalizer(isValue ?? (_ => false), typeOf, BirMemberReference.FromPhysical(getter))
+        new Normalizer(isValue ?? (_ => false), typeOf, PhysicalTypeKindTest.Bind(references))
             .Walk(root, new Dictionary<string, TypeNode>(StringComparer.Ordinal));
     }
 
@@ -383,13 +398,7 @@ static partial class TypedPhysicalOperandNormalization
                 address = new BirConditional
                 {
                     Type = reference,
-                    Cond = new BirNativeInstance
-                    {
-                        Type = new TypeNode.Fqn("System.Type"), Method = "get_IsValueType",
-                        Recv = new BirClassReference { Type = type }, Args = Array.Empty<IBirExpression>(),
-                        ArgTypes = Array.Empty<TypeNode>(), Ret = new TypeNode.Fqn("System.Boolean"),
-                        Dispatch = "callvirt", MemberRef = isValueType,
-                    },
+                    Cond = PhysicalTypeKindTest.IsValueType(type, isValueType),
                     Then = OptionalField<IBirExpression>.Of(address),
                     Else = new BirValueBlock
                     {

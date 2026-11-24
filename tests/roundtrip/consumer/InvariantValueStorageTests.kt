@@ -10,6 +10,8 @@ import roundtrip.genericvalueinterop.Box
 import roundtrip.invariantstorage.*
 
 private fun forwardedNativeBox(): Box<String> = Box("forwarded")
+private fun <T> exposeViaOpenParameter(value: T): Int =
+    GenericValueInterop.CollectionStorageApi.CountWith(System.Collections.Generic.List<System.IO.Stream>(), value)
 private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String>>) -> Unit): Any {
     val items = arrayOf(Box("before"))
     change(items)
@@ -285,6 +287,7 @@ class InvariantValueStorageTests {
         val grown = roundtrip.arrayconversion.LibraryArrayCollection(listOf<Any?>(number, number)).into(arrayOf(forwardedNativeBox()))
         check(grown.size == 2 && (grown[1] as Any) === number)
         check(try { NativeBoxApi.EchoBoxes(retained); false } catch (_: ClassCastException) { true })
+        check(try { exposeViaOpenParameter(retained); false } catch (_: ClassCastException) { true })
         check(try { NativeBoxApi.ArrayField = retained; false } catch (_: ClassCastException) { true })
         check(try { NativeBoxApi.ArrayProperty = retained; false } catch (_: ClassCastException) { true })
         check(try { (retained as System.Array).GetValue(0); false } catch (_: ClassCastException) { true })
