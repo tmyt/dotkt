@@ -258,7 +258,7 @@ static partial class SuspendColdLowering
             }
             if (IsAwaitMarkerSource(node)) return (BirGraphValue)EmitAwaitPoint(node, output);
             if (node is BirCallStatic or BirCallInstance or BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance
-                && TrySourceSuspension(node, out _)) return (BirGraphValue)EmitSuspensionPoint(node, output);
+                && TrySourceSuspension(node, out _)) return (BirGraphValue)EmitSuspensionPoint(node, output, expectedType);
             if (node is BirConditional conditional && (HasOwnSuspensionSource(conditional) || EscapesExpression(conditional)))
                 return (BirGraphValue)EmitCondValue(conditional, output);
             var slots = new List<(string Field, BirGraphSlot Slot)>();

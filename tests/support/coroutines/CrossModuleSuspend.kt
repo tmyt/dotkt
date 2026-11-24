@@ -45,3 +45,7 @@ public suspend fun suspendOperandCrossModuleRelay(n: Int): Int = n
 abstract class SuspendTextSource {
     abstract suspend fun readText(gate: Task): CharSequence?
 }
+
+open class SuspendTextAncestor {
+    suspend fun inheritedText(): CharSequence? = "hello"
+}
