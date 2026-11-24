@@ -165,6 +165,7 @@ public actual class Regex {
         var first: MatchResult? = null
         while (match.success && match.index >= startIndex) {
             first = InputOrderMatchResult(match, groups, first)
+            if (match.index == startIndex && match.length == 0) break
             match = match.nextMatch()
         }
         return first
@@ -212,7 +213,8 @@ public actual class Regex {
         if (index < 0 || index > text.length) {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
-        return findFrom(text, index)?.takeIf { it.range.first == index }
+        val match = nativeMatch(text, index)
+        return if (match.success && match.index == index) ClrMatchResult(match, lazy { nativeGroupNumbers() }) else null
     }
 
     @SinceKotlin("1.7")
@@ -222,7 +224,6 @@ public actual class Regex {
         if (index < 0 || index > text.length) {
             throw IndexOutOfBoundsException("index out of bounds: $index, input length: ${text.length}")
         }
-        if (nativeRightToLeft) return findFrom(text, index)?.range?.first == index
         val match = nativeMatch(text, index)
         return match.success && match.index == index
     }

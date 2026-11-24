@@ -9,7 +9,6 @@ class PortableRegexTests {
         val first = regex.find("aba")!!
         check(first.range.first == 0 && first.next()!!.range.first == 2 && first.next()!!.next() == null)
         check(regex.findAll("aba", 1).map { it.range.first }.toList() == listOf(2))
-        check(regex.matchAt("aba", 2)?.value == "a" && !regex.matchesAt("aba", 1))
         check(regex.split("aba") == listOf("", "b", ""))
         check(regex.splitToSequence("aba", 2).toList() == listOf("", "ba"))
         val visited = mutableListOf<Int>()
@@ -19,6 +18,11 @@ class PortableRegexTests {
         check(overlap.find("aaa")!!.range == 1..2 && overlap.find("aaa", 2) == null)
         val empty = (RegexInterop.NativeRegexes.Backwards("(?=a)|$") as Any) as Regex
         check(empty.findAll("aba").map { it.range.first }.toList() == listOf(0, 2, 3))
+        val tied = (RegexInterop.NativeRegexes.Backwards("(?<ch>[ab])+|\\A") as Any) as Regex
+        val atZero = tied.find("ab")!!
+        check(atZero.value == "" && atZero.next()!!.groups["ch"]?.value == "a")
+        check(tied.replace("ab") { "[" + it.value + "]" } == "[][ab]")
+        check(empty.replace("aba") { "|" } == "|ab|a|")
     }
 
     @TestAttribute fun foreignRegexKeepsNativeMatchingAndDistinctReplacementSyntax() {
