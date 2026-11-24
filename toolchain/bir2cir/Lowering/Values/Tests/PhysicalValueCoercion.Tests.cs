@@ -29,6 +29,7 @@ static partial class PhysicalValueCoercion
         root["types"] = new JsonArray(new JsonObject { ["name"] = "PlainOwner", ["kind"] = "class" });
         root["types"].AsArray().Add(new JsonObject {
             ["name"] = "GenericOwner", ["kind"] = "class", ["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" }),
+            ["base"] = TypeJson.Fqn("PlainOwner"),
             ["interfaces"] = new JsonArray(TypeJson.Fqn("Carrier")),
         });
         root["types"].AsArray().Add(new JsonObject {
@@ -47,6 +48,10 @@ static partial class PhysicalValueCoercion
         exactLocalView["typeParams"] = new JsonArray(new JsonObject { ["name"] = "T" });
         exactLocalView["ret"] = TypeJson.Write(new TypeNode.Fqn("GenericOwner", new TypeNode[] { new TypeNode.Tv("method", 0) }));
         root["methods"].AsArray().Add(exactLocalView);
+        var localBaseView = carrierView.DeepClone().AsObject();
+        localBaseView["name"] = "localBaseView";
+        localBaseView["ret"] = TypeJson.Fqn("PlainOwner");
+        root["methods"].AsArray().Add(localBaseView);
         var interfaceView = exactLocalView.DeepClone().AsObject();
         interfaceView["name"] = "interfaceView";
         interfaceView["params"][0]["type"] = TypeJson.Fqn("DerivedCarrier");
@@ -161,7 +166,8 @@ static partial class PhysicalValueCoercion
         ApplyFixtureForSelfTest(new JsonNode[] { root }, () => throw new InvalidOperationException("Unexpected Unit conversion"), _ => false,
             isExistentialOwner: owner => owner.Name is "Carrier" or "DerivedCarrier",
             isNativeReference: owner => owner.Name == "System.Collections.Generic.IReadOnlyList",
-            referencedCarrier: (target, source) => target.Name == "ReferencedOwner" && source.Name == "Carrier");
+            referencedCarrier: (target, source) => target.Name == "ReferencedOwner" && source.Name == "Carrier",
+            localCarriers: new Dictionary<string, string> { ["GenericOwner"] = "Carrier" });
         JsonObject Method(string name) => root["methods"].AsArray().OfType<JsonObject>().Single(method => Str(method["name"]) == name);
         carrierView = Method("carrierView");
         exactLocalView = Method("exactLocalView");
@@ -181,6 +187,7 @@ static partial class PhysicalValueCoercion
         if (Str(carrierView["body"][0]["value"]["k"]) != "cast")
             throw new InvalidOperationException("A declared carrier value lost its checked native interface view");
         if (Str(exactLocalView["body"][0]["value"]["k"]) != "cast"
+            || Str(Method("localBaseView")["body"][0]["value"]["k"]) != "cast"
             || TypeJson.Read(exactLocalView["body"][0]["value"]["type"]) != TypeJson.Read(exactLocalView["ret"])
             || Str(unrelatedView["body"][0]["value"]["k"]) != "local")
             throw new InvalidOperationException("Local carrier conversion guessed a class or discarded the exact declaration closure");
@@ -222,10 +229,11 @@ static partial class PhysicalValueCoercion
     internal static void ApplyFixtureForSelfTest(IReadOnlyList<JsonNode> roots, Func<JsonObject> unitValue,
         ValueTypeOracle isValue, bool referenceBuild = false, Func<TypeNode.Fqn, bool> isReferenceOwner = null,
         Func<TypeNode.Fqn, bool> isExistentialOwner = null, Func<TypeNode.Fqn, bool> isNativeReference = null,
-        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
+        Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null,
+        IReadOnlyDictionary<string, string> localCarriers = null)
     {
         var owning = roots.Select(BirGraphDom.ReadBirFileDeclaration).ToArray();
-        TypedPhysicalValueCoercion.ApplyAll(null, new PhysicalDelegateDeclarations(), null, owning, () => BirGraphDom.ReadBirExpression(unitValue()),
+        TypedPhysicalValueCoercion.ApplyAll(null, new PhysicalDelegateDeclarations(), localCarriers, owning, () => BirGraphDom.ReadBirExpression(unitValue()),
             isValue, referenceBuild, isReferenceOwner, isExistentialOwner, isNativeReference, referencedCarrier, references);
         for (var index = 0; index < roots.Count; index++)
         {

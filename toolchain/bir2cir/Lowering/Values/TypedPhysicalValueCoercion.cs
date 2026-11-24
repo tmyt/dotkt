@@ -160,7 +160,7 @@ static class TypedPhysicalValueCoercion
             if (CarrierClasses.TryGetValue(carrier.Name, out var name) && types.TryGetValue(name, out var def))
                 owner = Open(name, def.Arity);
             else if (References?.ExistentialSourceType(carrier.Name) is { } source)
-                owner = Open(source.Name, source.Args?.Length ?? 0);
+                owner = Open(References.RecordedPhysicalTypeName(source.Name), source.Args?.Length ?? 0);
             return classBases[(target, carrier)] = owner != null && !IsValue(target) &&
                 (types.TryGetValue(target.Name, out var dest) ? dest.Kind == "class" : References?.IsClassType(target) == true)
                 && SupertypeGraph.Reaches(owner, target, types, References);

@@ -9,6 +9,7 @@ private fun readHere(context: CoroutineContext, element: CoroutineContext.Elemen
 private fun lookupHere(context: Lookup, element: Element): Element? = context.lookup(element.key)
 private fun takeProjected(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = takeNativeHead(xs)
 private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
+private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Long>) = xs.Add(leaf)
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
@@ -39,6 +40,9 @@ class CapturedGenericInvocationTests {
         val broad = CsList<NativeListRoot>()
         broad.Add(leaf)
         check(broad[0] === leaf)
+        val nested = NativeListLeaf.Nested<Long>()
+        addNested(broad, nested)
+        check(broad[1] === nested)
         clearProjected(broad)
         check(broad.Count == 0)
     }
