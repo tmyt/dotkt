@@ -182,12 +182,12 @@ static partial class ForeignStarProjectionBinding
         var adapt = UnwrapFunction(declaration) is { } declaredFunction && (field || !declaredFunction.Suspend)
             && DependsOnProjectedOwnerSlot(declaration, resultOwnerArguments) && target != null;
         var projected = field && adapt ? null : ProjectResult(declaration, resultOwnerArguments, refs, methodArguments);
-        // A direct element read on an erased Kotlin alias returns a Kotlin value.
-        // Its call result already names the caller's value slot; the owner's
-        // ordinary argument is still needed for the exact native view and member.
+        // The native view's open argument selects a member, not a cast for a
+        // Kotlin value. Keep a distinct caller value slot if supplied;
+        // otherwise let the consumer impose its own physical type.
         if (declaration is TypeNode.Tv { Scope: "type" } && projected is TypeNode.Tv &&
-            semantic is TypeNode.Tv && AliasVarianceRepresentation.RequiresErasure(owner, refs))
-            projected = semantic;
+            (semantic is TypeNode.Tv || IsObjectish(semantic)) && AliasVarianceRepresentation.RequiresErasure(owner, refs))
+            projected = semantic == projected ? AnyN : semantic;
         return new(adapter, target, adapt, projected);
     }
 

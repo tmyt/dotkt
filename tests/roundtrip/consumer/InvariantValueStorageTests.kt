@@ -19,6 +19,11 @@ private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String
 private class DelegatedVector : GenericValueInterop.NativeVectorBase(arrayOf(roundtrip.genericvalueinterop.Derived<String>()))
 private class DelegatedBoxVector(value: Box<String>) : GenericValueInterop.NativeBoxArrayLease(arrayOf(value))
 private class LocalStoredBox<T>(val value: T)
+private class ListValueReader<T> {
+    fun first(values: List<T>): T = values[0]
+}
+private fun <R> peekList(values: MutableList<R>): Any? = values[0]
+private fun <R> nullableListRead(values: MutableList<R?>): R? = values[0]
 private fun <R> listRoundTrip(value: R): R {
     val saved = mutableListOf<R>()
     saved.add(value)
@@ -107,6 +112,15 @@ class InvariantValueStorageTests {
         val original = LocalStoredBox(42L)
         check(listRoundTrip(original as LocalStoredBox<String>) === original)
         check(listRoundTrip(42) == 42)
+        val viewed = mutableListOf<LocalStoredBox<String>>()
+        viewed.add(original as LocalStoredBox<String>)
+        check(ListValueReader<LocalStoredBox<String>>().first(viewed) === original)
+        check(peekList(viewed) === original)
+        val nullable = mutableListOf<LocalStoredBox<String>?>()
+        nullable.add(original as LocalStoredBox<String>)
+        check(nullableListRead(nullable) === original)
+        nullable[0] = null
+        check(nullableListRead(nullable) == null)
         val tail = arrayOf(LocalStoredBox("tail"))
         check(readMixed(LocalStoredBox("head"), *tail) == "headtail")
         val elements = storedList()
