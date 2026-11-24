@@ -89,6 +89,7 @@ abstract class JoinedFactoryContract {
 abstract class DependentJoinedContract<K> where K : Base, K : RoundtripDependentNative.ILeft, K : RoundtripDependentNative.IRight {
     abstract fun <A : K> make(): Any
 }
+interface JointProof : RoundtripDependentNative.ILeft, RoundtripDependentNative.IRight
 
 fun <A> makeNativeJoined(): Any where A : RoundtripDependentNative.Base, A : RoundtripDependentNative.Family.IMark<String>,
                                       A : RoundtripDependentNative.IMarker<String> = NativeJoined<A>()

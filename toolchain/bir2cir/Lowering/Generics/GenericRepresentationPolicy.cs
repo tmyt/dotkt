@@ -136,8 +136,15 @@ sealed partial class GenericRepresentationPolicy
     {
         var bounds = constraints.Select(StorageConstraint)
             .Where(bound => bound != null).Distinct().ToArray();
-        return bounds.Any(IsNominalStorageBound) && bounds.Count(b => !IsNominalStorageBound(b)
-            && !NeedsNativeWitness(b) && CanReferenceStorageProof(b)) >= 2;
+        if (!bounds.Any(IsNominalStorageBound)) return false;
+        // An interface can supply both proofs through inheritance. The virtual
+        // convention must not depend on whether its parents were spelled out.
+        var contracts = bounds.OfType<TypeNode.Fqn>().Where(b => !IsNominalStorageBound(b)
+            && !NeedsNativeWitness(b) && CanReferenceStorageProof(b)).ToArray();
+        return SupertypeGraph.Reachable(new SupertypeGraph.Def { Interfaces = contracts }, _sourceHierarchy, _references, sourceFrames: true)
+            .Where(edge => edge.isInterface).Select(edge => StorageConstraint(edge.spec)).OfType<TypeNode.Fqn>()
+            .Where(proof => !NeedsNativeWitness(proof) && CanReferenceStorageProof(proof))
+            .Distinct().Take(2).Count() == 2;
     }
 
     // Closed native interfaces (and invariant native applications even when open)

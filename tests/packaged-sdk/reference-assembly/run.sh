@@ -29,6 +29,9 @@ class Box<T : Bound>(val value: T) {
     fun echo(other: T = value): T = other
 }
 interface AbstractApi { fun action(): Int }
+interface Left
+interface Right
+interface Factory<K> where K : Bound, K : Left, K : Right { fun <A : K> make(): Any }
 class Cell<R>(var n: Int)
 fun replaceCell(cell: kotlin.clr.ClrRef<Cell<*>>, replacement: Cell<*>): Cell<*> {
     cell.value = replacement
@@ -74,7 +77,14 @@ private class Direct : Tagged {
         set(v) { n = v }
 }
 
+private class Joint : Bound(42), refprobe.Left, refprobe.Right
+private class FixedFactory : refprobe.Factory<Joint> {
+    override fun <A : Joint> make(): Any = "fixed"
+}
+
 fun main() {
+    val factory: refprobe.Factory<Joint> = FixedFactory()
+    check(factory.make<Joint>() == "fixed")
     check(result() == 42)
     val tagged: Tagged = Direct()
     val cell = Cell<String>(7)

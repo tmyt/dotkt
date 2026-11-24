@@ -72,8 +72,9 @@ static partial class NullableRepresentationMaterialization
                 }
                 else if (bound is TypeNode.Tv { Scope: "type" } o && scope == "method" && enclosingRows != null)
                 {
-                    var owner = new TypeNode.Tv("type", enclosingFrame?.PhysicalSlot(o.I).SourceIndex ?? o.I);
-                    foreach (var inherited in OwnerConstrainedMethodLowering.IndependentBounds(owner, enclosingRows)) yield return inherited;
+                    var indexInOwner = enclosingFrame?.PhysicalSlot(o.I).SourceIndex ?? o.I;
+                    foreach (var inherited in StorageClassifierBounds(enclosingRows, indexInOwner, "type", enclosingFrame, null, null))
+                        yield return inherited;
                 }
                 else yield return bound;
         }

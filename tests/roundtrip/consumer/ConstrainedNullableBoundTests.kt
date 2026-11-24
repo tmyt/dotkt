@@ -358,9 +358,19 @@ class ConstrainedNullableBoundTests {
         where K : Base, K : RoundtripDependentNative.ILeft, K : RoundtripDependentNative.IRight {
         override fun <A : K> make(): Any = JoinedProduct<A>()
     }
-    private open class JointRoot : Base(), RoundtripDependentNative.ILeft, RoundtripDependentNative.IRight
+    private open class JointRoot : Base(), roundtrip.constrainedbound.JointProof
     private class FixedFactory : roundtrip.constrainedbound.DependentJoinedContract<JointRoot>() {
-        override fun <A : JointRoot> make(): Any = "fixed"
+        override fun <A : JointRoot> make(): Any = JoinedProduct<A>()
+    }
+    private open class FactoryRelay {
+        open fun <S> relay(f: roundtrip.constrainedbound.JoinedFactoryContract): Any
+            where S : Base, S : roundtrip.constrainedbound.JointProof = f.make<S>()
+    }
+    private class Outer<X>(val x: X) {
+        open inner class Factory<B, K, Z> where B : K, K : Base, K : RoundtripDependentNative.ILeft,
+            K : RoundtripDependentNative.IRight, Z : Base, Z : RoundtripDependentNative.IMarker<String> {
+            open fun <A : B> make(): Any = "ok"
+        }
     }
     private class LocalJoinedValue<T>(val item: T, val nativeItems: System.Collections.Generic.List<T>) : RoundtripDependentNative.IJoinedValue<T>
         where T : RoundtripDependentNative.ILeft, T : RoundtripDependentNative.IRight
@@ -389,14 +399,21 @@ class ConstrainedNullableBoundTests {
     }
 
     @TestAttribute
-    fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
+    fun parameterlessVirtualFactoriesUseTheDeclaredJointWitness() {
         val factory: roundtrip.constrainedbound.JoinedFactoryContract = ParameterlessFactory()
         check(factory.make<JoinedChild<Int>>() is RoundtripDependentNative.IJoinedValue<*>)
         check(factory.make<JoinedChild<*>>() is RoundtripDependentNative.IJoinedValue<*>)
         val dependent: roundtrip.constrainedbound.DependentJoinedContract<JoinedChild<Int>> = DependentFactory<JoinedChild<Int>>()
         check(dependent.make<JoinedChild<Int>>() is RoundtripDependentNative.IJoinedValue<*>)
         val fixed: roundtrip.constrainedbound.DependentJoinedContract<JointRoot> = FixedFactory()
-        check(fixed.make<JointRoot>() == "fixed")
+        check(fixed.make<JointRoot>() is RoundtripDependentNative.IJoinedValue<*>)
+        check(FixedFactory().make<JointRoot>() is RoundtripDependentNative.IJoinedValue<*>)
+        check(FactoryRelay().relay<JointRoot>(factory) is RoundtripDependentNative.IJoinedValue<*>)
+        check(Outer("x").Factory<JointRoot, JointRoot, Child<Int>>().make<JointRoot>() == "ok")
+    }
+
+    @TestAttribute
+    fun forwardedFacetSelectsTheSameNestedNativeInterfaceAcrossAssemblies() {
         val value = Child<Int>()
         val item = JoinedChild<Int>()
         val exact = JoinedValueFactory<JoinedChild<*>>()
