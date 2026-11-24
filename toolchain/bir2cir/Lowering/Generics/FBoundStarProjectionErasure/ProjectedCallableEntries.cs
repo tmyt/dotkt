@@ -179,7 +179,10 @@ sealed class ProjectedCallableEntries
                 BirGraphNameFields.VisitTypeNodes(type, t => found |= t == variable);
                 return found;
             }
-            var signature = m.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).Append(m.Ret.Value);
+            // A function-signature modifier identifies an overload but does not
+            // store the argument. Only the value inside it can require a witness.
+            var signature = m.Params.OrEmpty().Select(p => SignatureValueTypes.Of(p.Type.Value))
+                .Append(SignatureValueTypes.Of(m.Ret.Value));
             if (!signature.Any(t => Mentions(t, nullable))) return false;
             // An otherwise unbounded, erased argument can use its nullable
             // witness directly. A nominal bound or an observable CLR signature
