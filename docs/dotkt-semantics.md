@@ -1472,6 +1472,14 @@ declaration explicitly. Name/isInstance accessors dispatch to either the native 
 implementation. Native annotations can be read; reflective enumeration of native callable members remains
 unimplemented. This is not full Kotlin reflection or a new semantic runtime-type witness.
 
+The CLR extensions `kotlin.reflect.full.isInterface` and `companionObjectInstance` query the declaration,
+not the storage used for a star projection. For example, `Box::class` and `Box(1)::class` can share a CLR
+interface token yet both report a class and return the same Kotlin companion singleton. An ordinary CLR
+type reports its native kind and has no Kotlin companion. A static companion block alone creates no
+singleton. A user implementation of `KClass` without a represented CLR type cannot answer these
+declaration queries; both throw `UnsupportedOperationException`. Neither query changes Kotlin classifier
+equality or the result of casting the raw token to `System.Type`.
+
 ## 5h. An auto-property's backing field is a compiler-generated `<Name>k__BackingField` (#228)
 
 An **accessor-routed** Kotlin property becomes a real CLR property (`Name` + dedicated

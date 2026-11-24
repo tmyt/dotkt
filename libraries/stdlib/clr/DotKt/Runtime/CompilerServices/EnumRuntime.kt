@@ -144,6 +144,9 @@ private interface EnumRuntimeMethod {
 
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface EnumRuntimeType {
+    @kotlin.clr.ClrIntrinsic("GetField")
+    fun getField(name: String, flags: EnumRuntimeBindingFlags): EnumRuntimeField?
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "FullName")
     val fullName: String?
 
@@ -370,6 +373,22 @@ internal fun readClassifierIdentity(token: StarProjectionType): KotlinClassifier
         val args = attr.constructorArguments
         return KotlinClassifierIdentity(args[0].value as StarProjectionType, args[1].value as StarProjectionType,
             args[2].value as String, args[3].value as Boolean)
+    }
+    return null
+}
+
+internal fun readCompanionInstance(declaration: StarProjectionType): Any? {
+    val type = declaration as EnumRuntimeType
+    val name = "DotKt.Runtime.CompilerServices.KotlinCompanionInstanceAttribute"
+    if (type.assembly.findType(name) == null) return null
+    val attributes = type.getCustomAttributesData()
+    for (index in 0 until attributes.count) {
+        val attr = attributes[index]
+        if (!attr.isCompilerCarrier(name, type.assembly)) continue
+        if (!type.assembly.isCompilerAssembly()) return null
+        val carrier = attr.constructorArguments[0].value as EnumRuntimeType
+        // The producer links the closed carrier; its singleton field is a compiler-owned slot.
+        return carrier.getField("\$INSTANCE", EnumRuntimeBindingFlags.DECLARED_STATIC_PUBLIC)!!.getValue(null)!!
     }
     return null
 }

@@ -102,6 +102,13 @@ static partial class CompanionRepresentationLowering
             Name = association.SourceName, Visibility = association.Visibility,
             PhysicalOwner = association.PhysicalOwner, PhysicalOwnerArity = association.PhysicalOwnerArity,
         };
+        owner.Attrs = owner.Attrs.OrEmpty().Append(new BirAttribute {
+            Attr = new TypeNode.Fqn(RoundtripMetadata.RuntimeCompanionAttribute),
+            ArgTypes = new TypeNode[] { new TypeNode.Fqn("System.Type") },
+            Args = new IBirAttributeValue[] { new BirClassReference {
+                Type = new TypeNode.Fqn(association.PhysicalName), DefinitionToken = true,
+            } },
+        }).ToArray();
         if (owner.Kind.OrDefault() == "enum") return;
         if (owner.Fields.OrEmpty().Any(field => field.Name.OrDefault() == association.SourceName))
             throw new InvalidOperationException($"companion value accessor '{association.OwnerName}.{association.SourceName}' collides with an existing field");

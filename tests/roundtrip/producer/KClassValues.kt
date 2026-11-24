@@ -5,6 +5,9 @@ import kotlin.reflect.KCallable
 import kotlin.reflect.KClass
 import kotlin.reflect.KClassifier
 
+interface CompanionFace<T> { companion object Named }
+enum class CompanionEnum { ONE; companion object }
+
 annotation class ImportedTyped(val type: KClass<*> = String::class)
 annotation class CollectionKey(val type: KClass<*> = Map::class)
 fun defaultCollectionKey(key: KClass<*> = Map::class): KClass<*> = key
