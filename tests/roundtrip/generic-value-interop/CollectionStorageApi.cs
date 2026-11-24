@@ -23,6 +23,7 @@ public static class CollectionStorageApi
     public static int IndexOf<T>(object value, T element) => ((IList<T>)value).IndexOf(element);
 
 #nullable enable
+    public static void Append<T>(List<T> items, T? value) where T : notnull => items.Add(value!);
     public static int CountWith<T, W>(List<T> items, W witness)
         where T : System.IO.Stream where W : allows ref struct => items.Count;
 #nullable restore

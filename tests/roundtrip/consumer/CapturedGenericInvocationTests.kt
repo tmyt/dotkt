@@ -8,6 +8,8 @@ import roundtrip.capturedgeneric.*
 private fun readHere(context: CoroutineContext, element: CoroutineContext.Element): CoroutineContext.Element? = context[element.key]
 private fun lookupHere(context: Lookup, element: Element): Element? = context.lookup(element.key)
 private fun takeProjected(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = takeNativeHead(xs)
+private fun readWithNull(xs: CsList<out NativeListLeaf<*>>): NativeListLeaf<*> = optionalNativeHead(xs, null)
+private fun appendNull(xs: CsList<out Any>) = GenericValueInterop.CollectionStorageApi.Append(xs, null)
 private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
 private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Long>) = xs.Add(leaf)
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
@@ -33,6 +35,12 @@ private class ThrowingElement : CoroutineContext.Element {
 }
 
 class CapturedGenericInvocationTests {
+    @TestAttribute fun nullCannotBecomeAValueOfTheCapturedNativeType() {
+        val ints = CsList<Int>()
+        var rejected = false
+        try { appendNull(ints) } catch (_: Throwable) { rejected = true }
+        check(rejected && ints.Count == 0)
+    }
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
         val derived = CsList<System.IO.MemoryStream>()
@@ -45,6 +53,7 @@ class CapturedGenericInvocationTests {
         val leaf = NativeListLeaf(42L)
         val narrow = CsList<NativeListLeaf<Long>>()
         narrow.Add(leaf)
+        check(readWithNull(narrow) === leaf)
         check(takeProjected(narrow) === leaf)
         check(narrow.Count == 0)
 

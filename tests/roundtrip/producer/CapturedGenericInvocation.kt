@@ -95,3 +95,5 @@ fun <A : NativeListRoot> takeNativeHead(xs: CsList<A>): A {
     return head
 }
 fun <A> clearNativeList(xs: CsList<A>) = xs.Clear()
+fun <A : NativeListRoot> optionalNativeHead(xs: CsList<A>, other: CsList<A>?): A =
+    (other ?: xs)[0]
