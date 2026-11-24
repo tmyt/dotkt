@@ -343,16 +343,19 @@ static partial class FBoundStarProjectionErasure
         {
             if (ConstraintParameters(owner) is not { Length: > 0 } parameters) return null;
             Preparation.Bindings.SourceDefinitions.TryGetValue(owner, out var declaration);
+            var layout = ClassApplicationLayout(owner);
             var frame = ProjectedClassStorageFrame.Plan(parameters, (index, bound) => {
                 // The local source may say Base<T> even though its emitted constraint is
-                // the Kotlin value interface. A pair of interfaces is not a class intersection.
+                // the Kotlin value interface. Classify the actual physical bound.
                 var type = declaration == null ? bound :
                     Rewrite(bound, NativeProofs.IsPhysicalConstraint(declaration, index, bound)) as TypeNode.Fqn;
                 if (type == null || IsObjectish(type)) return (type, null);
                 if (type.Name != bound.Name && TryExistentialCarrier(bound.Name, out var carrier) && type.Name == carrier)
                     return (type, "interface");
                 return (type, BoundKind(type));
-            });
+            }, splitInterfaceConjunction: index =>
+                (layout == null || layout.PhysicalSlot(index).Representation == NullableRepresentationFrame.Role.Ordinary) &&
+                parameters[index].Constraints.OrEmpty().All(b => b is TypeNode.Fqn f && BoundKind(f) == "interface"));
             if (frame == null) return null;
             var (required, nativeArguments) = NativeSupertypeConstraints(owner, parameters.Length);
             bool Required(ProjectedClassStorageFrame.InterfaceSlot slot, FixedSupertypeConstraint r) =>

@@ -23,7 +23,8 @@ sealed class ProjectedClassStorageFrame
         => (this.original, Interfaces) = (original, interfaces);
 
     internal static ProjectedClassStorageFrame Plan(BirTypeParameter[] parameters,
-        Func<int, TypeNode.Fqn, (TypeNode.Fqn Type, string Kind)> physicalBound, bool includeWithoutFacets = false)
+        Func<int, TypeNode.Fqn, (TypeNode.Fqn Type, string Kind)> physicalBound, bool includeWithoutFacets = false,
+        Func<int, bool> splitInterfaceConjunction = null)
     {
         var slots = new List<InterfaceSlot>();
         for (int i = 0; i < parameters.Length; i++)
@@ -31,7 +32,11 @@ sealed class ProjectedClassStorageFrame
             var constraints = parameters[i].Constraints.OrEmpty();
             var physical = constraints.Select((bound, j) => (j, Bound: bound is TypeNode.Fqn named
                 ? physicalBound(i, named) : default)).ToArray();
-            if (!physical.Any(row => row.Bound.Kind == "class")) continue;
+            // An interface-only constructor can use separate ordinary and
+            // interface arguments too. Do not split compiler companion slots.
+            if (!physical.Any(row => row.Bound.Kind == "class") &&
+                !(splitInterfaceConjunction != null && physical.Where(row => row.Bound.Kind == "interface")
+                    .Select(row => row.Bound.Type).Distinct().Skip(1).Any() && splitInterfaceConjunction(i))) continue;
             foreach (var row in physical.Where(row => row.Bound.Kind == "interface"))
                 slots.Add(new(i, row.j, row.Bound.Type));
         }

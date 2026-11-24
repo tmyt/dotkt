@@ -81,7 +81,7 @@ static partial class NullableRepresentationDemand
                         {
                             var bounds = owner.View.Parameters.Value[tv.I].Constraints.OrEmpty().OfType<TypeNode.Fqn>()
                                 .Select(policy.StorageConstraint).Where(bound => bound != null).ToArray();
-                            if (policy.HasJointStorageBounds(bounds)) owner.Signature.Add(tv, RepresentationRole.Storage);
+                            if (policy.HasJointStorageBounds(bounds, nativeApplication: true)) owner.Signature.Add(tv, RepresentationRole.Storage);
                         }
                     });
                 }
