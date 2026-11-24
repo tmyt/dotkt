@@ -30,6 +30,7 @@ internal interface KClassConstruction<T : Any> : RepresentedTypeConstruction
 
 @kotlin.clr.ClrTypeAlias("System.Type")
 private interface NativeReflectionType {
+    @kotlin.clr.ClrProperty(kotlin.clr.READ, "IsInterface") val isInterface: Boolean
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "Name") val name: String
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "FullName") val fullName: String?
     @kotlin.clr.ClrIntrinsic("IsInstanceOfType") fun isInstance(value: Any?): Boolean
@@ -74,6 +75,21 @@ internal fun reifiedKClass(type: StarProjectionType, shape: Any?): StarProjectio
 
 internal fun representedClassStorage(type: StarProjectionType): StarProjectionType =
     if (classifierIdentity(type).collection == null) type else Any::class as StarProjectionType
+
+private fun declarationIdentity(value: Any): KotlinClassifierIdentity {
+    if (value !is NativeReflectionType)
+        throw UnsupportedOperationException("This KClass does not represent a CLR type")
+    return classifierIdentity(value as StarProjectionType)
+}
+
+internal fun kClassIsInterface(value: Any): Boolean {
+    val identity = declarationIdentity(value)
+    val collection = identity.collection
+    if (collection != null) return collection.isInterface
+    return (identity.declaration as NativeReflectionType).isInterface
+}
+
+internal fun kClassCompanionInstance(value: Any): Any? = readCompanionInstance(declarationIdentity(value).declaration)
 
 // A Kotlin generic declaration can use its non-generic classifier as array
 // storage. Bounds describe that declaration, not the CLR interfaces of its

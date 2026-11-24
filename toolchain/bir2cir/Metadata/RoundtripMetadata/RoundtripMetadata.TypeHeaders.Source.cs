@@ -220,5 +220,5 @@ static partial class RoundtripMetadata
 
     internal static bool HasRepresentationTypeAssociations(BirFileDeclaration file)
         => file.Types.OrEmpty().Cast<IBirTypeDeclaration>().Any(type => type.Attrs.OrEmpty()
-            .Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AKType }));
+            .Any(attribute => attribute.Attr.OrDefault() is TypeNode.Fqn { Name: AKType or RuntimeClassifierAttribute or RuntimeCompanionAttribute }));
 }
