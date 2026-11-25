@@ -2546,6 +2546,12 @@ Reading the other direction, consuming **any** .NET assembly:
 | `[Nullable(1)]` / non-null context | `T` |
 | **none** (assembly never opted into NRT) | `T!` — a **platform type** |
 
+CLR virtual overrides share one slot even if their nullable-reference annotations differ.
+When conflicting parameter annotations would split that slot in Kotlin, the differing occurrence
+in the override is exposed as a platform type. Matching annotations stay precise, and an override
+can strengthen a nullable return to non-null. Unrelated overloads and new virtual slots do not
+inherit another method's annotations.
+
 A **value type never takes an annotation from this metadata**, whatever the declaration's `[NullableContext]` says: its
 one nullable form is the structural `System.Nullable<T>`, which the signature already states. The byte array is a
 pre-order flattening of the type tree, and value-ness decides POSITIONS in it as well as annotations — a bare struct,
