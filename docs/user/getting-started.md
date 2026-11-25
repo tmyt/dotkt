@@ -17,9 +17,13 @@ Next steps after this page:
   Both target families support platform qualifiers such as `-windows`. For either target,
   the compiler tools need a **.NET 10 runtime (10.0.12 or later in the 10.0 line)** on the
   build machine (`dotnet --list-runtimes`). A `net11.0` app itself runs on .NET 11.
-- **A Java runtime on your `PATH`** — a JDK or JRE, **version 21 or newer** (`java -version`). The
+- **A Java runtime** — a JDK or JRE, **version 21 or newer** (`java -version`). The
   DotKt Kotlin compiler front-end (`kotc`) runs on the JVM, so a Java runtime is required to *build*
   a DotKt project. (Nothing Java is needed to *run* the emitted assembly — it is plain .NET IL.)
+  By default the launcher uses `JAVA_HOME`, or `java` on `PATH` if no home is set.
+  To select an installed runtime for just the compiler, set the MSBuild property `DotKtJavaHome`
+  to its home directory (for example, `dotnet build -p:DotKtJavaHome="/opt/java 21"`).
+  An empty property leaves the launcher's environment unchanged. The SDK does not download a runtime.
 
 ## 2. Install
 

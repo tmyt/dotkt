@@ -1,7 +1,7 @@
 <Project>
   <Import Project="$(MSBuildThisFileDirectory)../buildShared/DotKt.Toolchain.public.props" />
   <!-- The compiler toolchain binaries, at package-internal paths (no repo dependency). The compiler is JVM-based,
-       so a JRE must be on PATH. -->
+       so the launcher needs a Java runtime via DotKtJavaHome, inherited JAVA_HOME, or PATH. -->
   <PropertyGroup>
     <!-- The Gradle `application` plugin installDist ships BOTH launchers side by side under kotc/bin/: the
          extension-less UNIX shell script `kotc` and the Windows batch `kotc.bat`. Select by OS so cmd.exe never
