@@ -102,6 +102,22 @@ static class ClrMemberReferences
         };
     }
 
+    // A metadata build links the MethodDef in the compile image itself, not its shipped twin.
+    // Its signature stays open; only the declaring edge is instantiated in the caller's frame.
+    internal static MemberRefNode MetadataDeclaration(ReferenceMetadataIndex refs, MethodBase selected, TypeNode.Fqn owner)
+    {
+        var member = OpenDeclarationOf(selected);
+        var signature = refs.MetadataMethodSignature(member);
+        var ctor = member is ConstructorInfo;
+        var reference = new MemberRefNode(ctor ? MemberRefNode.Kinds.Ctor : MemberRefNode.Kinds.Method,
+            member.Module.Assembly.GetName().Name, owner, ctor ? MemberRefNode.CtorName : member.Name,
+            member.IsGenericMethod ? member.GetGenericArguments().Length : 0,
+            ctor ? MemberRefNode.Void : signature.Return,
+            ConventionOf(member), signature.Parameters);
+        reference.Validate();
+        return reference;
+    }
+
     internal static MemberRefNode FieldRefOf(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
     {
         field = OpenFieldDeclarationOf(field);

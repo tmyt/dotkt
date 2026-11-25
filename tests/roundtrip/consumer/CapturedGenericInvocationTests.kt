@@ -22,6 +22,8 @@ private fun copyUsingListWitness(xs: MutableList<*>): Int = copyCount(missingKey
 private fun collectWithToken(key: kotlin.reflect.KClass<*>): Int = collectTokenSize(key, mutableListOf())
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
+private fun countOblivious(items: CsList<out System.IO.Stream>): Int =
+    GenericValueInterop.CollectionStorageApi.CountOblivious(items)
 private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
     GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
@@ -71,6 +73,8 @@ class CapturedGenericInvocationTests {
         check(derived.Count == 0)
     }
     @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
+        check(countOblivious(CsList<System.IO.Stream>()) == 0)
+        check(countOblivious(CsList<System.IO.MemoryStream>()) == 0)
         val leaf = NativeListLeaf(42L)
         val narrow = CsList<NativeListLeaf<Long>>()
         narrow.Add(leaf)

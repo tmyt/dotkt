@@ -334,7 +334,7 @@ sealed class Pipeline
     {
         Directory.CreateDirectory(_options.OutDir);
 
-        using var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
+        using var refs = ReferenceMetadataIndex.Build(_options.CompileReferences, metadataBuild: _options.RefBuild);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
@@ -1309,7 +1309,7 @@ sealed class Pipeline
         foreach (var root in physicalDocuments)
         {
             ClrMemberResolution.ApplyDeclarationBindings(root, refs, emittedLocalTypes);
-            ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes);
+            ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes, _options.RefBuild);
         }
         // Retain the original prepared declaration membership and exact source
         // anchors. The captured ID keys already

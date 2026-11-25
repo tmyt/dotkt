@@ -23,12 +23,14 @@ static class ClrDeclarationMatching
     }
 
     internal static ConstructorInfo PickDeclaredConstructor(ReferenceMetadataIndex references, IEnumerable<ConstructorInfo> constructors,
-        IReadOnlyList<TypeNode> declaration, string context)
+        IReadOnlyList<TypeNode> declaration, string context, IEqualityComparer<TypeNode> metadataSlots = null)
     {
         // Both `new` and base delegation carry the selected declaration's open shape.
         // Compare that shape, not argument applicability or a nominal-head approximation.
         var exact = constructors.Where(constructor =>
         {
+            if (metadataSlots != null)
+                return references.MetadataMethodSignature(constructor).Parameters.SequenceEqual(declaration, metadataSlots);
             var parameters = constructor.GetParameters();
             return parameters.Length == declaration.Count && parameters.Select((parameter, index) =>
                 DeclaredSlotMatches(references, declaration[index],

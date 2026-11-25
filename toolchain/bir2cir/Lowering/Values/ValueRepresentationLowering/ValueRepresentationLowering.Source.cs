@@ -188,7 +188,13 @@ sealed partial class ValueRepresentationLowering
         readonly BirFunctionDeclaration source;
         readonly MemberBinding reference;
         internal LiveMethod(BirFunctionDeclaration source) => this.source = source;
-        internal LiveMethod(MemberBinding reference) => this.reference = reference;
+        readonly NativeSignatureReader.Signature metadataSignature;
+        internal LiveMethod(MemberBinding reference, bool metadataBuild)
+        {
+            this.reference = reference;
+            if (metadataBuild) metadataSignature = reference.MetadataValueSignature
+                ?? throw new InvalidOperationException($"Missing metadata declaration for value member '{reference.DeclarationId}'");
+        }
         internal bool HasSource => source != null;
         internal BirFunctionDeclaration SourceOccurrence => source
             ?? throw new InvalidOperationException("Referenced value declaration has no local owning occurrence");
@@ -201,8 +207,9 @@ sealed partial class ValueRepresentationLowering
         internal bool Abstract => source != null ? source.Abstract.OrDefault() : reference.IsAbstract;
         internal bool HasParameters => source != null ? source.Params.HasValue : true;
         internal TypeNode[] Parameters => source != null ? source.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray()
-            : reference.DeclarationSemanticParams ?? reference.ParamTypeNodes;
-        internal TypeNode Return => source != null ? source.Ret.OrDefault() : reference.DeclarationSemanticReturn ?? reference.ReturnTypeNode;
+            : metadataSignature?.Parameters ?? reference.DeclarationSemanticParams ?? reference.ParamTypeNodes;
+        internal TypeNode Return => source != null ? source.Ret.OrDefault()
+            : metadataSignature?.Return ?? reference.DeclarationSemanticReturn ?? reference.ReturnTypeNode;
     }
 
     string HelperIdentity(string owner, string name, IReadOnlyList<TypeNode> parameters)
