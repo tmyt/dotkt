@@ -509,7 +509,8 @@ static class ReferenceMetadataReader
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
                         HierarchyView(type.BaseType),
-                        type.GetInterfaces().Select(HierarchyView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
+                        type.GetInterfaces().Select(HierarchyView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts,
+                        NativeDeclaration: dotKtAuthored ? null : type);
                     metadata.TypeShapes[typeDeclarationIdentity] = semanticTypeShape;
                     // Inheritance edges are declaration identities just like member owners. The exact index retains
                     // the reflected TypeDef spelling so current-format override markers traverse a physical graph
@@ -519,7 +520,8 @@ static class ReferenceMetadataReader
                         semanticTypeShape.TypeParamCount,
                         semanticTypeShape.Kind,
                         ExactDeclaringView(type.BaseType),
-                        type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts);
+                        type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray(), sourceFacts,
+                        NativeDeclaration: semanticTypeShape.NativeDeclaration);
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
