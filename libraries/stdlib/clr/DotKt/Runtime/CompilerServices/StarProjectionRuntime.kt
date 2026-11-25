@@ -1496,7 +1496,7 @@ internal fun projectedViewEnumeratorErased(receiver: Any, preferredView: Any?, f
     }
 }
 
-private fun projectedCollectionFamily(receiver: Any, preferred: StarProjectionType?): StarProjectionType? =
+internal fun projectedCollectionFamily(receiver: Any, preferred: StarProjectionType?): StarProjectionType? =
     findErasedProjectedView(receiver,
         "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.ICollection`1",
         excludeDictionaryStorage = true, elementWitness = preferredCollectionElement(preferred))

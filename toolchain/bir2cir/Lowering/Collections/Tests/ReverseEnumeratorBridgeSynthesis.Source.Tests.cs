@@ -86,8 +86,8 @@ static partial class ReverseEnumeratorBridgeSynthesis
             && adapter.Ctors.Value.Single().BaseArgs.IsNull && adapter.Ctors.Value.Single().ThisArgs.IsNull
             && adapter.Methods.Value.Select(method => method.Name.Value).SequenceEqual(new[] {
                 "MoveNext", "get_Current", NonGenericCurrentName, "Reset", "Dispose" })
-            && !adapter.Methods.Value.Last().BodyTerminates.IsPresent && adapter.Methods.Value.Last().Body.Value.Length == 0,
-            "adapter's native layout, construction ABI, descriptor order or empty Dispose semantics changed");
+            && !adapter.Methods.Value.Last().BodyTerminates.IsPresent,
+            "adapter's native layout, construction ABI or descriptor order changed");
         var branch = ((BirIf)adapter.Methods.Value[0].Body.Value[0]).Branches.Value.Single();
         Need(branch.Cond.Value is BirCallInstance hasNext && hasNext.Method.Value == "physicalHasNext"
             && branch.Body.Value[0] is BirSetField { Value.Value: BirCallStatic { Method.Value: "kotlinFunctionObject",

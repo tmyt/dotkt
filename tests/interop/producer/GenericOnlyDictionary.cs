@@ -10,6 +10,7 @@ public class GenericOnlyDictionary<K, V> : IDictionary<K, V> where K : notnull
     private readonly Dictionary<K, V> data = new();
     public Exception CountFailure { get; set; }
     public int EnumeratorsDisposed { get; private set; }
+    public int EnumeratorsCreated { get; private set; }
     public V this[K key] { get => data[key]; set => data[key] = value; }
     public ICollection<K> Keys => data.Keys;
     public ICollection<V> Values => data.Values;
@@ -24,7 +25,10 @@ public class GenericOnlyDictionary<K, V> : IDictionary<K, V> where K : notnull
     public bool Remove(K key) => data.Remove(key);
     public bool Remove(KeyValuePair<K, V> item) => ((ICollection<KeyValuePair<K, V>>)data).Remove(item);
     public bool TryGetValue(K key, out V value) => data.TryGetValue(key, out value);
-    public IEnumerator<KeyValuePair<K, V>> GetEnumerator() => new Cursor(this, data.GetEnumerator());
+    public IEnumerator<KeyValuePair<K, V>> GetEnumerator() {
+        EnumeratorsCreated++;
+        return new Cursor(this, data.GetEnumerator());
+    }
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     private sealed class Cursor : IEnumerator<KeyValuePair<K, V>>
@@ -65,6 +69,12 @@ public sealed class DualDictionary : GenericOnlyDictionary<string, string>, IDic
 public static class NativeDictionaries
 {
     public static object Raw() => new Hashtable { ["key"] = "raw" };
+    public static object IgnoreCase() => new Hashtable(StringComparer.OrdinalIgnoreCase) { ["Key"] = "value" };
+    public static object FirstAndDispose(object view) {
+        var cursor = ((IEnumerable)view).GetEnumerator();
+        try { return cursor.MoveNext() ? cursor.Current : null; }
+        finally { (cursor as IDisposable)?.Dispose(); }
+    }
     public static object Generic() => new Dictionary<string, int> { ["key"] = 42 };
 }
 

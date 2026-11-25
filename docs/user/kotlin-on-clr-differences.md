@@ -76,8 +76,9 @@ invariant. Exact native declarations and invariant mutable collection slots, suc
   source type. Widening a Kotlin collection does not copy it or create a wrapper.
 - `Map.get` keeps Kotlin's null-on-missing semantics. Kotlin-authored map implementations retain
   their original methods and views.
-- BCL-backed read-only `Map.keys` / `values` / `entries` are snapshots of membership, while an
-  entry's value reads through to the backing map. `MutableMap.keys` is live and supports remove/clear;
+- BCL-backed read-only `Map.keys` / `values` / `entries` are live views over the selected dictionary.
+  Key membership uses the dictionary's comparer; Kotlin Set equality compares the elements themselves.
+  An entry reads the current value for its key. `MutableMap.keys` is live and supports remove/clear;
   `MutableMap.values` is a live Kotlin collection; removals, including iterator removals, update
   the backing map. These views do not replace the native dictionary's directly imported properties.
 
