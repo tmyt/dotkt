@@ -2313,6 +2313,15 @@ internal sealed partial class AssemblyScanner : IDisposable
         }
 
         var typeContext = new GenericContext(handle, default, typeParameterIds);
+        void ReconcileOverride(Function function, MethodDefinitionHandle body, GenericContext methodContext)
+        {
+            var method = _md.GetMethodDefinition(body);
+            if (_attrs.IsDotKtAssembly || (method.Attributes & MethodAttributes.Virtual) == 0 ||
+                ((method.Attributes & MethodAttributes.NewSlot) != 0 && def.GetMethodImplementations().Count == 0))
+                return;
+            ReconcileOverrideNullability(function, body, methodContext, names, signatures,
+                overrideBases ??= OverrideBases(def, typeContext, names, signatures));
+        }
         var attributeNamedArguments = isAnnotation
             ? ProjectAttributeNamedArguments(handle, def, names, signatures, typeContext)
             : Array.Empty<AttributeNamedArgument>();
@@ -2585,9 +2594,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                             declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
                     };
                     function.Flags = CallableVisibility(methodHandle, function.Flags);
-                    if (!_attrs.IsDotKtAssembly && (method.Attributes & (MethodAttributes.Virtual | MethodAttributes.NewSlot)) == MethodAttributes.Virtual)
-                        ReconcileOverrideNullability(function, method, context, names, signatures,
-                            overrideBases ??= OverrideBases(def, typeContext, names, signatures));
+                    ReconcileOverride(function, methodHandle, context);
                     PromoteContextParameters(method, function);
                     ApplySourceFunctionPriority(function, kotlinFlags, names);
                     // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
@@ -2716,7 +2723,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             var isStatic = (representative.Attributes & MethodAttributes.Static) != 0;
             if (signature.ParameterTypes.Length != 0)
             {
-                AddIndexer(result, propertyHandle, property, accessors, representative, signature, canWrite, names, signatures, context);
+                AddIndexer(result, accessors, canWrite, names, signatures, context, ReconcileOverride);
                 continue;
             }
             var propertyType = getter is not null
@@ -4167,7 +4174,12 @@ internal sealed partial class AssemblyScanner : IDisposable
             // Substitution replaces the classifier, not the use-site nullability. `T?` instantiated with a non-null
             // owner argument remains nullable; returning the argument verbatim weakened restored method bounds such
             // as `E : T?` to `E : String` on inherited interface declarations.
-            if (source.Nullable) replacement.Nullable = true;
+            if (source.Nullable)
+            {
+                // T? closes over the nullable upper bound of a platform argument, not another flexible type.
+                if (replacement.FlexibleUpperBound is { } upperBound) replacement = upperBound.Clone();
+                replacement.Nullable = true;
+            }
             if (source.FlexibleUpperBound is { } sourceUpper)
             {
                 replacement.Nullable = source.Nullable || replacement.Nullable;
@@ -6879,15 +6891,12 @@ internal sealed partial class AssemblyScanner : IDisposable
 
     private void AddIndexer(
         Class owner,
-        PropertyDefinitionHandle propertyHandle,
-        PropertyDefinition property,
         PropertyAccessors accessors,
-        MethodDefinition representative,
-        MethodSignature<KType> propertySignature,
         bool canWrite,
         NameTable names,
         SignatureDecoder signatures,
-        GenericContext context)
+        GenericContext context,
+        Action<Function, MethodDefinitionHandle, GenericContext> reconcileOverride)
     {
         if (!accessors.Getter.IsNil)
         {
@@ -6908,6 +6917,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                         context with { Method = accessors.Getter }),
                     ValueParameter = { Parameters(accessors.Getter, getter, sig.ParameterTypes, names, signatures, context) },
                 };
+                reconcileOverride(function, accessors.Getter, context with { Method = accessors.Getter });
                 ApplySourceFunctionPriority(function,
                     _attrs.Int32(accessors.Getter, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0, names);
                 owner.Function.Add(function);
@@ -6925,6 +6935,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 ReturnType = signatures.NamedType("kotlin.Unit"),
                 ValueParameter = { Parameters(accessors.Setter, setter, sig.ParameterTypes, names, signatures, setterContext) },
             };
+            reconcileOverride(function, accessors.Setter, setterContext);
             ApplySourceFunctionPriority(function,
                 _attrs.Int32(accessors.Setter, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0, names);
             owner.Function.Add(function);

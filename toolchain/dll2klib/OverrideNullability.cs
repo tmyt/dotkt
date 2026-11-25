@@ -7,8 +7,10 @@ using KType = DotKt.Klib.Metadata.Type;
 
 internal sealed partial class AssemblyScanner
 {
-    private sealed record OverrideBase(MetadataReader Reader, SignatureDecoder Decoder,
-        RawSignatureTypeProvider Physical, ImmutableArray<KType> Arguments, ILookup<string, MethodDefinitionHandle> Virtuals);
+    private sealed record OverrideBase(MetadataReader Reader, TypeDefinitionHandle Owner, string? Path,
+        SignatureDecoder Decoder, RawSignatureTypeProvider Physical, ImmutableArray<KType> Arguments,
+        ILookup<string, MethodDefinitionHandle> Virtuals);
+    private readonly Dictionary<(MetadataReader, TypeDefinitionHandle), ILookup<string, MethodDefinitionHandle>> _virtualIndices = new();
 
     private RawSignatureTypeProvider SlotIdentity(string? path, ImmutableArray<string> arguments = default) =>
         new((md, entity) => _publicTypeCatalog.TryResolveDefinition(md, entity, out var def, path)
@@ -36,50 +38,101 @@ internal sealed partial class AssemblyScanner
             arguments = decoder.DeclarationArguments(parent.Handle, constructed);
             definition = reader.GetTypeDefinition(parent.Handle);
             context = new GenericContext(parent.Handle, default, definition.GetGenericParameters().ToDictionary(h => h, h => reader.GetGenericParameter(h).Index));
-            var methods = definition.GetMethods().Where(h => (reader.GetMethodDefinition(h).Attributes & MethodAttributes.Virtual) != 0)
-                .ToLookup(h => reader.GetString(reader.GetMethodDefinition(h).Name), StringComparer.Ordinal);
-            result.Add(new(reader, decoder, raw, arguments, methods));
+            if (!_virtualIndices.TryGetValue((reader, parent.Handle), out var methods))
+                _virtualIndices[(reader, parent.Handle)] = methods = definition.GetMethods()
+                    .Where(h => (reader.GetMethodDefinition(h).Attributes & MethodAttributes.Virtual) != 0)
+                    .ToLookup(h => reader.GetString(reader.GetMethodDefinition(h).Name), StringComparer.Ordinal);
+            result.Add(new(reader, parent.Handle, path, decoder, raw, arguments, methods));
         }
         return result;
     }
 
-    private void ReconcileOverrideNullability(Function function, MethodDefinition method, GenericContext context,
+    private void ReconcileOverrideNullability(Function function, MethodDefinitionHandle body, GenericContext context,
         NameTable names, SignatureDecoder signatures, List<OverrideBase> bases)
     {
-        var actual = method.DecodeProjectedSignature(SlotIdentity(_definitionPath), context);
-        var name = _md.GetString(method.Name);
-        foreach (var parent in bases)
+        var visited = new HashSet<(int, MethodDefinitionHandle)>();
+        Visit(-1, body, context);
+        void Visit(int level, MethodDefinitionHandle handle, GenericContext sourceContext)
         {
-            foreach (var handle in parent.Virtuals[name])
+            var reader = level < 0 ? _md : bases[level].Reader;
+            var path = level < 0 ? _definitionPath : bases[level].Path;
+            var method = reader.GetMethodDefinition(handle);
+            // A covariant return (or an explicitly selected hidden slot) uses a class MethodImpl,
+            // independent of the body's NewSlot flag. Its declaration, not the body's return type, identifies it.
+            foreach (var implHandle in reader.GetTypeDefinition(method.GetDeclaringType()).GetMethodImplementations())
             {
-                var declaration = parent.Reader.GetMethodDefinition(handle);
-                var inheritedContext = InheritedContext(parent.Reader, handle, declaration);
-                var slot = declaration.DecodeProjectedSignature(parent.Physical, inheritedContext);
-                if (actual.Header != slot.Header || actual.GenericParameterCount != slot.GenericParameterCount ||
-                    actual.RequiredParameterCount != slot.RequiredParameterCount || actual.ReturnType != slot.ReturnType ||
-                    !actual.ParameterTypes.SequenceEqual(slot.ParameterTypes)) continue;
-                var surface = declaration.DecodeProjectedSignature(parent.Decoder, inheritedContext);
-                var closed = surface.ParameterTypes.Select(t => SubstituteTypeParameters(t, parent.Arguments)).ToImmutableArray();
-                var inherited = InheritedParameters(parent.Reader, handle, declaration, closed, names, parent.Decoder,
-                    substitutedDeclarationTypes: surface.ParameterTypes).ToArray();
-                for (int i = 0; i < inherited.Length; ++i)
+                var impl = reader.GetMethodImplementation(implHandle);
+                if (impl.MethodBody != handle) continue;
+                var target = impl.MethodDeclaration;
+                if (target.Kind == HandleKind.MethodDefinition)
                 {
-                    function.ValueParameter[i].Type = Reconcile(function.ValueParameter[i].Type, inherited[i].Type, signatures);
-                    if (function.ValueParameter[i].VarargElementType is { } element && inherited[i].VarargElementType is { } parentElement)
-                        function.ValueParameter[i].VarargElementType = Reconcile(element, parentElement, signatures);
+                    var decl = (MethodDefinitionHandle)target;
+                    var owner = reader.GetMethodDefinition(decl).GetDeclaringType();
+                    for (int i = level + 1; i < bases.Count; i++)
+                        if (bases[i].Reader == reader && bases[i].Owner == owner) Apply(i, decl);
                 }
-                var ret = ProjectInheritedReturn(parent.Reader, handle, declaration,
-                    SubstituteTypeParameters(surface.ReturnType, parent.Arguments), parent.Decoder);
-                function.ReturnType = Reconcile(function.ReturnType, ret, signatures, isReturn: true);
-                if ((declaration.Attributes & MethodAttributes.NewSlot) != 0) return;
-                break;
+                else if (target.Kind == HandleKind.MemberReference)
+                {
+                    var member = reader.GetMemberReference((MemberReferenceHandle)target);
+                    if (!_publicTypeCatalog.TryResolveDefinition(reader, member.Parent, out var owner, path)) continue;
+                    for (int i = level + 1; i < bases.Count; i++)
+                    {
+                        var parent = bases[i];
+                        if (parent.Reader.GetGuid(parent.Reader.GetModuleDefinition().Mvid) !=
+                            owner.Reader.GetGuid(owner.Reader.GetModuleDefinition().Mvid) || parent.Owner != owner.Handle) continue;
+                        var expected = member.DecodeProjectedMethodSignature(SlotIdentity(path), sourceContext);
+                        foreach (var decl in parent.Virtuals[reader.GetString(member.Name)])
+                        {
+                            var definition = parent.Reader.GetMethodDefinition(decl);
+                            if (SameSignature(expected, definition.DecodeProjectedSignature(SlotIdentity(parent.Path),
+                                    InheritedContext(parent.Reader, decl, definition)))) Apply(i, decl);
+                        }
+                    }
+                }
             }
+            if ((method.Attributes & MethodAttributes.NewSlot) != 0) return;
+            var actual = method.DecodeProjectedSignature(level < 0 ? SlotIdentity(path) : bases[level].Physical, sourceContext);
+            for (int i = level + 1; i < bases.Count; i++)
+            {
+                var parent = bases[i];
+                foreach (var decl in parent.Virtuals[reader.GetString(method.Name)])
+                {
+                    var candidate = parent.Reader.GetMethodDefinition(decl);
+                    if (!IsPublicOrProtected(candidate.Attributes)) continue;
+                    if (!SameSignature(actual, candidate.DecodeProjectedSignature(parent.Physical,
+                        InheritedContext(parent.Reader, decl, candidate)))) continue;
+                    Apply(i, decl);
+                    return;
+                }
+            }
+        }
+        void Apply(int i, MethodDefinitionHandle decl)
+        {
+            var parent = bases[i];
+            if (!visited.Add((i, decl)) || parent.Decoder.Attributes.IsDotKtAssembly) return;
+            var declaration = parent.Reader.GetMethodDefinition(decl);
+            var ctx = InheritedContext(parent.Reader, decl, declaration);
+            var surface = declaration.DecodeProjectedSignature(parent.Decoder, ctx);
+            var n = 0;
+            foreach (var inherited in InheritedParameters(parent.Reader, decl, declaration, surface.ParameterTypes, names, parent.Decoder))
+            {
+                var parameter = function.ValueParameter[n++];
+                var closed = SubstituteTypeParameters(inherited.Type, parent.Arguments);
+                parameter.Type = Reconcile(parameter.Type, closed, signatures);
+                if (parameter.VarargElementType != null) parameter.VarargElementType = signatures.ArrayElement(parameter.Type);
+            }
+            Visit(i, decl, ctx);
         }
     }
 
-    // Parameters are invariant for Kotlin overrides; return types may strengthen nullability.
-    // Flex only the conflicting occurrence, not every reference in the CLR declaration.
-    private static KType Reconcile(KType actual, KType inherited, SignatureDecoder decoder, bool isReturn = false)
+    private static bool SameSignature(MethodSignature<string> a, MethodSignature<string> b) =>
+        a.Header == b.Header && a.GenericParameterCount == b.GenericParameterCount &&
+        a.RequiredParameterCount == b.RequiredParameterCount && a.ReturnType == b.ReturnType &&
+        a.ParameterTypes.SequenceEqual(b.ParameterTypes);
+
+    // Kotlin override parameters are invariant. Preserve the return contract and flex only conflicting
+    // reference occurrences. A declaration's NRT bytes are interpreted before substituting its owner arguments.
+    private static KType Reconcile(KType actual, KType inherited, SignatureDecoder decoder)
     {
         if (actual.ClassName != inherited.ClassName || actual.HasClassName != inherited.HasClassName ||
             actual.TypeParameter != inherited.TypeParameter || actual.HasTypeParameter != inherited.HasTypeParameter ||
@@ -87,8 +140,8 @@ internal sealed partial class AssemblyScanner
         for (int i = 0; i < actual.Argument.Count; ++i)
             if (actual.Argument[i].Type is { } arg && inherited.Argument[i].Type is { } parent)
                 actual.Argument[i].Type = Reconcile(arg, parent, decoder);
-        return actual.FlexibleUpperBound == null && inherited.FlexibleUpperBound == null &&
-            actual.Nullable != inherited.Nullable && (!isReturn || actual.Nullable)
+        if (actual.FlexibleUpperBound != null) return decoder.AsPlatform(actual);
+        return inherited.FlexibleUpperBound == null && !decoder.IsValueType(actual) && actual.Nullable != inherited.Nullable
             ? decoder.AsPlatform(actual) : actual;
     }
 }
