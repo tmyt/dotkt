@@ -19,6 +19,7 @@ private fun <T> missingKey(): PlainKey<T>? = null
 private fun <T> copyCount(key: PlainKey<T>?, xs: MutableList<T>): Int =
     GenericValueInterop.CollectionStorageApi.Copy<T>(xs).size
 private fun copyUsingListWitness(xs: MutableList<*>): Int = copyCount(missingKey(), xs)
+private fun collectWithToken(key: kotlin.reflect.KClass<*>): Int = collectTokenSize(key, mutableListOf())
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
 private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
@@ -159,6 +160,7 @@ class CapturedGenericInvocationTests {
     }
     @TestAttribute fun erasedListDoesNotConstrainAnIndependentKey() {
         check(collectHere(TextKey) == 0)
+        check(collectWithToken(String::class) == 0)
         val shared = mutableListOf<Any?>("original")
         @Suppress("UNCHECKED_CAST")
         fun <T> existing(): MutableList<T> = shared as MutableList<T>

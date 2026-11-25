@@ -378,7 +378,8 @@ static partial class CapturedGenericInvocation
             var typed = target.ValueOwner && call.Instance || target.TypedParameters.Contains(true) || target.TypedResult;
             LexicalTarget lexical = null;
             var capture = TakeCaptureFacts(occurrence);
-            var rows = capture?.Arguments.HasValue == true ? CaptureRows(capture, signature, refs) : [];
+            var rows = capture?.Arguments.HasValue == true
+                ? CaptureRows(capture, signature.Select(SignatureValueTypes.Of).ToArray(), refs) : [];
             // IKey<capture> is not IKey<object>. Keep the projected result
             // that belongs to this expression, not the fallback MethodSpec.
             var capturedResult = rows.Length == 0 ? null : capture.Result ?? BirNodeType.Of(occurrence as BirGraphNode);
@@ -451,9 +452,12 @@ static partial class CapturedGenericInvocation
 
         CaptureRow[] CaptureRows(CaptureFacts capture, TypeNode[] declarationParameters, ReferenceMetadataIndex refs)
         {
-            var witnesses = capture.Target != null && _parameterWitnesses.TryGetValue(capture.Target, out var source)
-                ? source.Select(t => BirTypeLowering.LowerPhysicalType(captureConstruction?.Invoke(t) ?? t,
-                    refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg: false)).ToArray()
+            (TypeNode Construction, bool StorageOnly)[] witnesses = capture.Target != null && _parameterWitnesses.TryGetValue(capture.Target, out var source)
+                ? source.Select((t, i) => {
+                    var marker = captureConstruction?.Invoke(t);
+                    return (BirTypeLowering.LowerPhysicalType(marker ?? t, refs.Aliases, refs.IsValueType,
+                        refs.PhysicalTypeNames, typeArg: false), marker == null && FBoundStarProjectionErasure.IsObjectish(declarationParameters[i]));
+                }).ToArray()
                 : refs.CapturedParameterWitnesses(capture.Target, declarationParameters, captureConstruction);
             var frame = capture.Target != null && _methodWitnessFrames.TryGetValue(capture.Target, out var localFrame)
                 ? localFrame : refs.NullableMethodFrame(capture.Target);
@@ -461,7 +465,7 @@ static partial class CapturedGenericInvocation
             foreach (var entry in capture.Arguments.Value)
             {
                 var index = entry.Argument.Value;
-                if (CaptureOwner(SignatureValueTypes.Of(witnesses[index])) is not { Args: { } parts } owner)
+                if (CaptureOwner(SignatureValueTypes.Of(witnesses[index].Construction)) is not { Args: { } parts } owner)
                     throw new InvalidOperationException("Captured argument has no declaration-owned construction witness");
                 var localOwner = definitions.GetValueOrDefault(owner.Name);
                 var head = new TypeNode.Fqn(localOwner != null ? owner.Name : PhysicalName(owner, refs));
@@ -478,14 +482,13 @@ static partial class CapturedGenericInvocation
                     if (logical is not int sourceSlot) continue;
                     var nullable = frame?.NullableIndices.Contains(sourceSlot) == true
                         ? frame.NullableVariable(new TypeNode.Tv("method", sourceSlot)).I : -1;
-                    rows.Add(new(index, head, pos, variable.I, nullable,
-                        FBoundStarProjectionErasure.IsObjectish(declarationParameters[index])));
+                    rows.Add(new(index, head, pos, variable.I, nullable, witnesses[index].StorageOnly));
                 }
             }
             // A declaration transported as object accepts the existing value independently
             // of its closed backing type. Its recovered construction can supply an otherwise
             // unknown slot, but cannot constrain a slot witnessed by a nominal parameter.
-            return rows.OrderBy(row => row.Opaque).ToArray();
+            return rows.OrderBy(row => row.StorageOnly).ToArray();
         }
 
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,

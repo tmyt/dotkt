@@ -88,6 +88,7 @@ static partial class CapturedGenericInvocation
             "typed invocation must continue live owners, preserve module order and append fresh unmarked helpers");
         var coordinates = (BirNewArray)replacement.Args.Value[6];
         Require(coordinates.Elems.Value.Length == 5
+            && ((BirLiteral.IntegerLiteral)((BirConstant)coordinates.Elems.Value[0]).Value.Value).Value == 1
             && ((BirLiteral.IntegerLiteral)((BirConstant)coordinates.Elems.Value[1]).Value.Value).Value == 0,
             "source capture witnesses must survive the metadata frontier");
         FrontierGuards();

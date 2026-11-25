@@ -6,7 +6,7 @@ using System.Reflection;
 static partial class CapturedGenericInvocation
 {
     sealed record LexicalTarget(TypeNode.Fqn Owner, BirTypeParameter[] OwnerFrame, BirFunctionDeclaration Method);
-    sealed record CaptureRow(int Argument, TypeNode Owner, int Position, int Slot, int Nullable, bool Opaque);
+    sealed record CaptureRow(int Argument, TypeNode Owner, int Position, int Slot, int Nullable, bool StorageOnly);
 
     // Runtime sees only declaration-authorized coordinates. Do not infer other
     // invariant slots from the values or allocate a table for ordinary calls.
@@ -14,7 +14,7 @@ static partial class CapturedGenericInvocation
         ? NewArray(Type, rows.Select(r => ClassRef(r.Owner))) : Null();
     static IBirExpression CaptureCoordinates(CaptureRow[] rows, int argumentOffset = 0) => rows is { Length: > 0 }
         ? NewArray(Int, rows.SelectMany(r => new[] { r.Argument + argumentOffset, r.Position, r.Slot, r.Nullable })
-            .Prepend(rows.Count(r => !r.Opaque)).Select(Number)) : Null();
+            .Prepend(rows.Count(r => !r.StorageOnly)).Select(Number)) : Null();
 
     static int[] LexicalCandidates(TypeNode[] actual, CallableWitnessScope owner, CallableWitnessScope method) =>
         Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()
