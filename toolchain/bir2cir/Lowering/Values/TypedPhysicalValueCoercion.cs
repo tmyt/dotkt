@@ -347,10 +347,15 @@ static class TypedPhysicalValueCoercion
     static IBirExpression CoerceExpression(IBirExpression value, TypeNode target, Scope scope, Index index, TypeNode selected = null)
     {
         if (value == null) return null;
-        if (scope.ProjectedCallable && SignatureValueTypes.Of(target) is TypeNode.ByRef to &&
-            ManagedAddress(value is BirByRefOf address ? address.Inner.OrDefault() : value, scope, index) is { Of: TypeNode.Tv } from &&
-            from.Of != to.Of)
-            return CheckedAddressView(value, from, to, index);
+        if (target is TypeNode.ByRef or TypeNode.Mod && SignatureValueTypes.Of(target) is TypeNode.ByRef to)
+        {
+            var location = value is BirByRefOf address ? address.Inner.OrDefault() : value;
+            if (location is BirLocal or BirFieldGet or BirStaticFieldGet or BirByRefLoad
+                && ExprType(Graph(location), scope, index) is { } storage)
+                CheckNullableLocation(storage is TypeNode.ByRef pointer ? pointer.Of : storage, to.Of);
+            if (scope.ProjectedCallable && ManagedAddress(location, scope, index) is { Of: TypeNode.Tv } from && from.Of != to.Of)
+                return CheckedAddressView(value, from, to, index);
+        }
         // A nominal function's ordinary callable view and the selected CLR
         // parameter can be different constructed delegates, not merely different names.
         if (FunctionSlot(target, selected, index) != target && Underlying(selected) is TypeNode.Fn selectedFunction
@@ -438,6 +443,23 @@ static class TypedPhysicalValueCoercion
         TypeNode.Nullable n => Underlying(n.Of), TypeNode.Oblivious o => Underlying(o.Of),
         TypeNode.Mod m => Underlying(m.Of), _ => type,
     };
+
+    // A nullable value is a different addressable slot, not a conversion of
+    // the value read from that slot. Obliviousness itself has no CLR identity.
+    static bool DifferentNullableStorage(TypeNode left, TypeNode right)
+    {
+        TypeNode Slot(TypeNode type) => type is TypeNode.Oblivious oblivious ? Slot(oblivious.Of)
+            : BirTypeLowering.CanonicalPhysicalSlotType(SignatureValueTypes.Of(type));
+        var a = Slot(left);
+        var b = Slot(right);
+        return a is TypeNode.Nullable an && Slot(an.Of) == b || b is TypeNode.Nullable bn && a == Slot(bn.Of);
+    }
+
+    static void CheckNullableLocation(TypeNode storage, TypeNode requested)
+    {
+        if (DifferentNullableStorage(storage, requested))
+            throw new InvalidOperationException($"Cannot pass this location by reference: its CLR storage type '{FieldLegality.Render(storage)}' differs from the required pointee '{FieldLegality.Render(requested)}'");
+    }
 
     // Explicit casts, assignments, calls and returns must agree on what a Kotlin
     // function value is. In particular a nominal object is never itself a delegate.
@@ -528,12 +550,17 @@ static class TypedPhysicalValueCoercion
                     if (node.LocationOperandFacts.OrDefault()?.Contains(i) == true) continue;
                     if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference) continue;
                     var location = arguments[i] is BirByRefOf address ? address.Inner.OrDefault() : arguments[i];
+                    // A pointee annotation can wrap the same location in *(&location).
+                    // Allocate that declaration, not a temporary copy of its loaded value.
+                    while (location is BirByRefLoad load && load.Ptr.OrDefault() is BirByRefOf annotated)
+                        location = annotated.Inner.OrDefault();
                     if (location is not BirLocal { Name.HasValue: true } local
                         || !declarations.TryGetValue(local.Name.Value, out var declaration)
                         || !PhysicalValueCoercion.NativeLocalEligible(genericParametersOnly,
                             parameterSet.Contains(declaration), reference.Of)
                         || SignatureValueTypes.Of(StorageType(declaration)) is TypeNode.ByRef) continue;
                     var element = SignatureValueTypes.Of(reference.Of);
+                    if (DifferentNullableStorage(StorageType(declaration), element)) continue;
                     if (required.TryGetValue(declaration, out var previous) && previous != element)
                         throw new InvalidOperationException($"bir2cir: local '{local.Name.Value}' is required by distinct CLR managed-reference element types");
                     required[declaration] = element;
@@ -769,7 +796,11 @@ static class TypedPhysicalValueCoercion
         if (node is BirByRefLoad load)
         {
             var pointer = load.Ptr.OrDefault() ?? (load.Local.HasValue ? new BirLocal { Name = load.Local.Value } : null);
-            if (ExprType(Graph(pointer), scope, index) is TypeNode.ByRef reference) load.Elem = reference.Of;
+            if (ExprType(Graph(pointer), scope, index) is TypeNode.ByRef reference)
+            {
+                if (load.Elem.HasValue) CheckNullableLocation(reference.Of, load.Elem.Value);
+                load.Elem = reference.Of;
+            }
         }
         if (node is BirByRefStore store)
         {

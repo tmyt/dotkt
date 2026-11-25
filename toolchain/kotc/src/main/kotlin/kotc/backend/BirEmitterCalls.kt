@@ -2342,15 +2342,21 @@ internal fun BirEmitter.markerAddress(arg: IrExpression): BirExpression? =
 	byrefMarker(arg)?.let { addressExpression(it, (arg as IrCall).typeArguments.singleOrNull()) }
 
 /** Flow narrowing describes the value read, not the storage designated by a ref to the declared type.
- * Never peel an authored cast, a call, an evaluation-plan binding, or a conversion to a different pointee. */
+ * Retain a requested pointee that differs from the declaration even when the call is spliced.
+ * Never peel an authored cast, a call, or an evaluation-plan binding. */
 private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): BirExpression {
 	var storage = arg
 	while (storage is IrTypeOperatorCall && storage.operator == IrTypeOperator.IMPLICIT_CAST && storage !in planReads)
 		storage = storage.argument
-	if (storage is IrGetValue && pointee != null) {
-		val declared = storage.symbol.owner.type
-		// IR type equality alone ignores the platform-nullability annotation.
-		if (declared == pointee && birType(declared) == birType(pointee)) return localAddress(storage)
+	if (storage is IrGetValue && pointee != null && storage.symbol.owner.type.makeNotNull() == pointee.makeNotNull()) {
+		val location = localAddress(storage)
+		val requested = birType(pointee)
+		val declared = birType(storage.symbol.owner.type)
+		// Platform flexibility alone is not a Kotlin conversion of the lvalue (T to T!,
+		// for example). Leave the location visible to native generic address selection.
+		fun inflexible(t: TypeNode): TypeNode = if (t is TypeNode.Oblivious) t.of else t
+		return if (inflexible(requested) == inflexible(declared)) location
+		else BirByRefLoad(elem = requested, ptr = BirByRefOf(inner = location))
 	}
 	return byrefBackingField(arg) ?: expr(arg)
 }
