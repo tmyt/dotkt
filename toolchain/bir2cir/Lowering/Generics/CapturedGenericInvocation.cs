@@ -49,11 +49,15 @@ static partial class CapturedGenericInvocation
             // Use-site projections hide the invariant owner's actual argument:
             // neither an out bound nor an in bound is the CLR construction.
             static bool NeedsCapture(TypeNode type) => type is TypeNode.Star or TypeNode.Projection;
+            // An NRT-oblivious T! still denotes the same CLR generic slot as T.
+            // Do not look through nullable or constructed types: their storage need not be T.
+            static bool IsMethodSlot(TypeNode type) => type is TypeNode.Oblivious oblivious
+                ? IsMethodSlot(oblivious.Of) : type is TypeNode.Tv { Scope: "method" };
             var captures = new List<CapturedGenericArgument>();
             for (var index = 0; index < arguments.Length && index < signature.Length; index++)
             {
                 if (CaptureOwner(signature[index]) is not { Args: { } formalArgs } formal
-                    || !formalArgs.Any(type => type is TypeNode.Tv { Scope: "method" })
+                    || !formalArgs.Any(IsMethodSlot)
                     || CaptureOwner(BirNodeType.Of(arguments[index] as BirGraphNode)) is not { Args: { } actualArgs } actual
                     || !actualArgs.Any(NeedsCapture)) continue;
                 var formalOwner = OwnerIdentity(formal.Name);
@@ -74,7 +78,7 @@ static partial class CapturedGenericInvocation
                     ? referencedFrame : null;
                 if (parameters == null || (frame?.SourceArity ?? parameters.Count) != formalArgs.Length) continue;
                 var positions = Enumerable.Range(0, formalArgs.Length).Where(slot =>
-                        formalArgs[slot] is TypeNode.Tv { Scope: "method" }
+                        IsMethodSlot(formalArgs[slot])
                         && NeedsCapture(actualArgs[slot])
                         && parameters[frame?.SourcePosition(slot) ?? slot].Variance.OrDefault() is not ("in" or "out")).ToArray();
                 if (positions.Length != 0) captures.Add(new CapturedGenericArgument { Argument = index, OwnerPositions = positions });

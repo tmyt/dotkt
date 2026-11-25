@@ -23,6 +23,9 @@ public static class CollectionStorageApi
         IReadOnlyList<IReadOnlyCollection<T>> value) => value;
     public static int IndexOf<T>(object value, T element) => ((IList<T>)value).IndexOf(element);
 
+#nullable disable
+    public static int CountOblivious<T>(List<T> items) where T : System.IO.Stream => items.Count;
+
 #nullable enable
     public static void Append<T>(List<T> items, T? value) where T : notnull => items.Add(value!);
     public static object NullableIntList() => new List<int?>();
