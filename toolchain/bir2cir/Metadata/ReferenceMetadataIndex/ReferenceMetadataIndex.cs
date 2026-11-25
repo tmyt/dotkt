@@ -181,6 +181,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 edges = DeclaredMetadataInterfaces(reader, item.Definition).Select(row => {
                     var target = row.Scope == item.Definition.Assembly.FullName ? item.Definition.Assembly.GetType(row.Name)
                         : ResolveRefTypeIn(row.Name, new AssemblyName(row.Scope).Name);
+                    // A compiler-produced interface row can explicitly name the shipped twin.
+                    // It is not part of the ordinary compile-reference lookup after twin collapse.
+                    if (target == null && _universe.PhysicalStdlib is { } shipped && row.Scope == shipped.FullName)
+                        target = shipped.GetType(row.Name);
                     return (target ?? throw new InvalidOperationException(
                         $"bir2cir: metadata interface '{row.Name}' not found in '{row.Scope}'"), row.Edge);
                 }).ToArray();

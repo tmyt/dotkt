@@ -48,6 +48,11 @@ static partial class ClrMemberResolution
     sealed record InterfaceCandidate(MethodInfo Method, MemberRefNode Reference,
         TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return);
 
+    // A local declaration at another arity can hide the reference spelling,
+    // but not the runtime interface that owns a resolved MethodImpl.
+    static Type ExternalSlotOwner(TypeNode.Fqn face, ReferenceMetadataIndex refs) =>
+        ResolveOwnerType(face, refs) ?? refs.PhysicalTypeNamed(face.Name, face.Args?.Length ?? 0);
+
     static void StampInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IBirTypeDeclaration type,
         IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild)
     {
@@ -72,7 +77,7 @@ static partial class ClrMemberResolution
                 owners.Add((iface, null));
                 continue;
             }
-            var open = ResolveOwnerType(iface, refs) ?? refs.PhysicalTypeNamed(iface.Name)
+            var open = ExternalSlotOwner(iface, refs)
                 ?? throw new InvalidOperationException($"bir2cir: interface MethodImpl owner '{iface.Name}' does not resolve in the reference set");
             var arguments = iface.Args ?? Array.Empty<TypeNode>();
             var declarationOwners = metadataBuild ? refs.MetadataInterfaceOwners(open, arguments).ToArray()
@@ -185,7 +190,7 @@ static partial class ClrMemberResolution
                     Include((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, args), result);
                 return;
             }
-            external ??= ResolveOwnerType(face, refs);
+            external ??= ExternalSlotOwner(face, refs);
             if (external == null || !result.Add(Key(external, face))) return;
             if (external.IsConstructedGenericType) external = external.GetGenericTypeDefinition();
             foreach (var (definition, spec) in refs.MetadataInterfaceOwners(external, args))
