@@ -85,18 +85,29 @@ assert_runtime() {
 }
 file_state() { stat -c '%y|%s' "$1"; sha256sum "$1"; }
 
-# Observe the real packaged launcher on two builds this suite already needs.
-java_home_probe="$(cd "$work" && pwd)/selected java"
-if [[ -n "${JAVA_HOME:-}" ]]; then real_java="$JAVA_HOME/bin/java"; else real_java="$(command -v java)"; fi
-mkdir -p "$java_home_probe/bin"
-cat > "$java_home_probe/bin/java" <<'EOF'
+# Observe the POSIX launcher on builds this suite already needs. The batch
+# launcher requires java.exe, so keep the original builds on that host.
+build_with_java_probe() (
+	local mode="$1"; shift
+	if [[ ${OS:-} == Windows_NT ]]; then build "$@"; return; fi
+	local base; base="$(cd "$work" && pwd)"
+	local home_probe="$base/selected; java"
+	if [[ -n "${JAVA_HOME:-}" ]]; then DOTKT_TEST_REAL_JAVA="$JAVA_HOME/bin/java"; else DOTKT_TEST_REAL_JAVA="$(command -v java)"; fi
+	export DOTKT_TEST_REAL_JAVA DOTKT_TEST_JAVA_LOG="$base/$mode-java.log"
+	: > "$DOTKT_TEST_JAVA_LOG"
+	mkdir -p "$home_probe/bin"
+	cat > "$home_probe/bin/java" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$JAVA_HOME" > "$DOTKT_TEST_JAVA_LOG"
 exec "$DOTKT_TEST_REAL_JAVA" "$@"
 EOF
-chmod +x "$java_home_probe/bin/java"
-JAVA_HOME="$java_home_probe" DotKtJavaHome= DOTKT_TEST_REAL_JAVA="$real_java" DOTKT_TEST_JAVA_LOG="$work/inherited-java.log" build "$producer" initial first
-[[ "$(cat "$work/inherited-java.log")" == "$java_home_probe" ]]
+	chmod +x "$home_probe/bin/java"
+	if [[ $mode == inherited ]]; then export JAVA_HOME="$home_probe" DotKtJavaHome=
+	else export JAVA_HOME="$base/missing-java" DotKtJavaHome="$home_probe"; fi
+	build "$@"
+	[[ "$(cat "$DOTKT_TEST_JAVA_LOG")" == "$home_probe" ]]
+)
+build_with_java_probe inherited "$producer" initial first
 build "$kotlin_consumer" initial-kotlin first
 build "$csharp_consumer" initial-csharp first
 assert_runtime
@@ -161,7 +172,6 @@ grep -q 'DotKt: emitting CIL' "$work/deleted-output.log"
 [[ "$(file_state "$obj/cir/.stamp")" == "$cir_state" ]]
 dotnet clean "$producer" -v:q --nologo > "$work/clean.log" 2>&1
 [[ ! -e "$obj/Probe.dll" && ! -e "$obj/bir" && ! -e "$obj/cir" && ! -e "$obj/dotkt-ilemit.stamp" ]]
-JAVA_HOME="$work/missing-java" DotKtJavaHome="$java_home_probe" DOTKT_TEST_REAL_JAVA="$real_java" DOTKT_TEST_JAVA_LOG="$work/configured-java.log" build "$producer" after-clean third
-[[ "$(cat "$work/configured-java.log")" == "$java_home_probe" ]]
+build_with_java_probe configured "$producer" after-clean third
 assert_output "$producer_dll" "PASS incremental Kotlin entry point: 42"
 echo "PASS incremental-emission:deleted-output-and-clean"
