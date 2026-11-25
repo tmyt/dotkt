@@ -7,7 +7,7 @@ using Scope = CallableWitnessScope;
 // may select a companion body with separate class and interface witnesses.
 // Both entries are published by the producer; callers use declaration IDs,
 // never a search for a matching member name or the runtime type of a value.
-sealed class ProjectedCallableEntries
+sealed partial class ProjectedCallableEntries
 {
     sealed record Entry(string Name, ProjectedMethodPlan Plan, BirTypeParameter[] Original,
         NullableRepresentationFrame Representations, TypeNode[] Signature);
@@ -106,7 +106,12 @@ sealed class ProjectedCallableEntries
             foreach (var id in slots.Distinct(StringComparer.Ordinal))
             {
                 bool local = localSlots.TryGetValue(id, out var slot);
-                if (!local && !references.TryDeclarationSignatureSlot(EntryId(id), out slot)) continue;
+                if (!local && !references.TryDeclarationSignatureSlot(EntryId(id), out slot))
+                {
+                    if (owner.Kind.OrDefault() == "class")
+                        DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id);
+                    continue;
+                }
                 var constructed = SupertypeGraph.Reachable(hierarchy[owner.Name.Value], hierarchy, references)
                     .Select(edge => edge.spec).Distinct().Single(s => s.Name == slot.Owner);
                 TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, constructed.Args ?? []);
@@ -357,8 +362,14 @@ sealed class ProjectedCallableEntries
         var ownerArity = TypeParameterFrame.Count(owner);
         var ownerType = new TypeNode.Fqn(owner.Name.Value, ownerArity == 0 ? null :
             Enumerable.Range(0, ownerArity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+        return ForwardBody(ownerType, new BirThis(), exact, implementation, arguments);
+    }
+
+    static IBirStatement[] ForwardBody(TypeNode.Fqn ownerType, IBirExpression receiver, BirFunctionDeclaration exact,
+        BirFunctionDeclaration implementation, TypeNode[] arguments)
+    {
         var call = new BirCallInstance { OwnerType = ownerType, Method = implementation.Name, Virtual = true,
-            Recv = new BirThis(), Ret = exact.Ret, CalleeRet = implementation.Ret,
+            Recv = OptionalField<IBirExpression>.Of(receiver), Ret = exact.Ret, CalleeRet = implementation.Ret,
             TypeArgs = arguments,
             Sig = implementation.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
             Args = exact.Params.OrEmpty().Select(p => (IBirExpression)new BirLocal { Name = p.Name }).ToArray() };
@@ -469,6 +480,7 @@ sealed class ProjectedCallableEntries
 
     internal void Finish(BirFileDeclaration[] files, HashSet<string> emittedTypes)
     {
+        emittedTypes.UnionWith(operationTypes);
         if (referenceBuild || emittedEntries.Count == 0) { BindRemainingApplications(files); return; }
         foreach (var file in files)
         {

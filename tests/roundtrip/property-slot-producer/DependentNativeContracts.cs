@@ -19,6 +19,7 @@ public sealed class NullableListSink<T,Y> where T : Y
 public interface IJoinedValue<T> where T : ILeft, IRight { }
 public static class JoinedSlot
 {
+    public static bool IsValue<T>(object value) where T : ILeft, IRight => value is IJoinedValue<T>;
     public static bool Holds<T>(IJoinedValue<T> owner, object item) where T : ILeft, IRight =>
         owner != null && item is T;
 }

@@ -497,6 +497,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     public NullableRepresentationFrame NullableMethodFrame(string id) =>
         id != null && _declarationById.TryGetValue(id, out var binding) ? binding.NullableFrame : null;
 
+    internal IReadOnlyDictionary<int, TypeNode[]> SelectedSourceMethodBounds(string id) =>
+        _declarationById.TryGetValue(id, out var binding) ? binding.SemanticMethodTypeParams?
+            .Select((p, i) => (i, Bounds: p.Constraints.OrEmpty())).ToDictionary(p => p.i, p => p.Bounds) : null;
+
     internal MemberBinding AuthoredKotlinHelper(string owner, string name, int sourceArity,
         IReadOnlyList<TypeNode> sourceParameters, bool isStatic = true)
     {

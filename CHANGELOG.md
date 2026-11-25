@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve the exact method type argument when two specialized Kotlin interfaces select the same override with different CLR constraint frames (#1922).
 - Preserve the original mutable collection when a Kotlin generic call takes both a projected key and an independently constructed collection for the same type parameter (#1917).
 
 - Fixed-decimal duration formatting no longer depends on the CLR floating-point formatter; the output and ties-to-even rounding are unchanged (#1612).
