@@ -34,8 +34,18 @@ static partial class RefBodySquash
             foreach (var statement in body) retireDiscardedSubtree((BirGraphValue)statement);
         }
     }
-    internal static IBirStatement[] SourceThrowStubBody() => new IBirStatement[] {
-        new BirThrow { Value = new BirNewClr { Type = new TypeNode.Fqn("System.NotImplementedException"),
-            ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() } },
-    };
+    internal static IBirStatement[] SourceThrowStubBody(ReferenceMetadataIndex references = null)
+    {
+        var exception = new BirNewClr { Type = new TypeNode.Fqn("System.NotImplementedException"), Args = Array.Empty<IBirExpression>() };
+        if (references == null) exception.ArgTypes = Array.Empty<TypeNode>();
+        else
+        {
+            // Late physical forwarders are born after constructor resolution.
+            var owner = references.ResolveRefType("System.NotImplementedException");
+            exception.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references,
+                owner.GetConstructor(Type.EmptyTypes), "ctor", owner, null));
+            exception.ResolvedMemberReturn = new TypeNode.Fqn("void");
+        }
+        return [new BirThrow { Value = exception }];
+    }
 }

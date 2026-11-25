@@ -37,5 +37,6 @@ class SelectedMethodBoundsTests {
         check(JoinedSlot.IsValue<Item>(left.make<Item>()))
         check(JoinedSlot.IsValue<Item>(right.make<Item>()))
         check(JoinedSlot.IsValue<Item>(fallback.make<Item>()))
+        check(JoinedSlot.IsValue<Leaf<*>>(fallback.make<Leaf<*>>()))
     }
 }

@@ -178,7 +178,7 @@ sealed partial class ProjectedCallableEntries
             Vis = "private", Virtual = true, Abstract = false, ClrFinal = true, Static = false, Generated = true,
             ClrInterfaceImpls = new[] { descriptor },
         };
-        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody() : ForwardBody(owner, bridge, target, arguments);
+        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
         if (owner.Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
     }
@@ -405,7 +405,7 @@ sealed partial class ProjectedCallableEntries
         exact.ClrFinal = exact.Virtual.OrDefault();
         exact.ClrBaseImpls = default;
         exact.ClrInterfaceImpls = default;
-        if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(); return; }
+        if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(references); return; }
         var original = Enumerable.Range(0, exact.TypeParams.Value.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
         var exactLocations = plan.AddressOperands.Select(i => ((TypeNode.ByRef)SignatureValueTypes.Of(exact.Params.Value[i].Type.Value)).Of);
         exact.Body = ForwardBody(owner, exact, implementation, original.Concat(plan.Facets.Select(f => original[f.OwnerIndex]))

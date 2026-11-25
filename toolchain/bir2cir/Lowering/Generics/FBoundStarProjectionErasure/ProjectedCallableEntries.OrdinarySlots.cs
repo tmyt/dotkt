@@ -106,7 +106,7 @@ sealed partial class ProjectedCallableEntries
         if (anchors.Length == 0)
         {
             var direct = Bridge(selectedOwner, slot.Name, weakRows);
-            direct.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody() : ForwardBody(owner, direct, target, args);
+            direct.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, direct, target, args);
             return;
         }
         var file = files.Single(f => f.Types.OrEmpty().Contains(owner));
@@ -151,7 +151,7 @@ sealed partial class ProjectedCallableEntries
         }
         var exact = Bridge(implemented, invoke.Name.Value, Strengthen(anchors.Select(a => a.Bound).ToArray()));
         var weak = Bridge(selectedOwner, slot.Name, weakRows);
-        if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(); weak.Body = RefBodySquash.SourceThrowStubBody(); return; }
+        if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(references); weak.Body = RefBodySquash.SourceThrowStubBody(references); return; }
         exact.Body = ForwardBody(owner, exact, target, args);
         weak.Body = ForwardBody(viewed, new BirCast { Type = viewed, E = new BirThis(), Sty = viewed },
             weak, invoke, Enumerable.Range(0, weakRows.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray());
