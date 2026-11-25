@@ -2342,16 +2342,14 @@ internal fun BirEmitter.markerAddress(arg: IrExpression): BirExpression? =
 	byrefMarker(arg)?.let { addressExpression(it, (arg as IrCall).typeArguments.singleOrNull()) }
 
 /** Flow narrowing describes the value read, not the storage designated by a ref to the declared type.
- * Never peel an authored cast, a call, an evaluation-plan binding, or a conversion to a different pointee. */
+ * The selected parameter retains the requested pointee; bir2cir owns physical compatibility.
+ * Never peel an authored cast, a call, or an evaluation-plan binding. */
 private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): BirExpression {
 	var storage = arg
 	while (storage is IrTypeOperatorCall && storage.operator == IrTypeOperator.IMPLICIT_CAST && storage !in planReads)
 		storage = storage.argument
-	if (storage is IrGetValue && pointee != null) {
-		val declared = storage.symbol.owner.type
-		// IR type equality alone ignores the platform-nullability annotation.
-		if (declared == pointee && birType(declared) == birType(pointee)) return localAddress(storage)
-	}
+	if (storage is IrGetValue && pointee != null &&
+		storage.symbol.owner.type.makeNotNull() == pointee.makeNotNull()) return localAddress(storage)
 	return byrefBackingField(arg) ?: expr(arg)
 }
 
