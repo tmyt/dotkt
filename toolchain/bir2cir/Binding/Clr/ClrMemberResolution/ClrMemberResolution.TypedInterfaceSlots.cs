@@ -150,7 +150,38 @@ static partial class ClrMemberResolution
         // Normalize to exact declarations before deduplication: mixed Kotlin/CLR
         // spellings such as int/System.Int32 must not be guessed equivalent early.
         DeduplicateResolvedInterfaceDescriptors(methods);
+        DeclareReimplementedInterfaces(type, definitions, refs);
         if (slotSets.Count != 0) SetInterfaceSlotSets(type, slotSets.Values.ToArray());
+    }
+
+    // A MethodImpl identifies an exact constructed interface slot. The CLI requires its
+    // declaring interface to be implemented here, not solely through the base class.
+    static void DeclareReimplementedInterfaces(IBirTypeDeclaration type,
+        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs)
+    {
+        if (type.Base.OrDefault() is not TypeNode.Fqn) return;
+        var direct = type.Interfaces.OrEmpty();
+        var declared = new HashSet<TypeNode>(InterfaceSlotTypeComparer.Instance);
+        void Include(TypeNode.Fqn face)
+        {
+            if (!declared.Add(face)) return;
+            var args = face.Args ?? [];
+            var parents = definitions.TryGetValue((face.Name, args.Length), out var local)
+                ? local.Interfaces.OrEmpty().OfType<TypeNode.Fqn>()
+                : refs.ReferencedSupertypes(face).Where(edge => edge.isInterface).Select(edge => edge.spec);
+            foreach (var parent in parents)
+                Include((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, args));
+        }
+        foreach (var face in direct.OfType<TypeNode.Fqn>()) Include(face);
+        var added = new List<TypeNode>();
+        foreach (var method in type.Methods.OrEmpty())
+            foreach (var slot in method.ClrInterfaceImpls.OrEmpty())
+                if (slot.Owner.OrDefault() is TypeNode.Fqn owner && !declared.Contains(owner))
+                {
+                    added.Add(owner);
+                    Include(owner);
+                }
+        if (added.Count != 0) type.Interfaces = direct.Concat(added).ToArray();
     }
 
     static (string Member, int Arity, TypeNode[] Parameters, TypeNode Return) ReadInterfaceDescriptor(

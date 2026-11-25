@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Derived classes inherit their base class's default-interface dispatch without redundant forwarding methods. Explicit interface overrides now carry the interface declarations needed by the IL trimmer (#1971).
+
 - Kotlin subclasses of a CLR class no longer need to reimplement a virtual method solely because its override changed a nullable-reference annotation (#1940).
 
 - Read-only Kotlin map views over CLR dictionaries reflect subsequent updates without copying the dictionary's keys, values, or entries (#1605).
