@@ -27,6 +27,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   result into an object slot across assemblies (#1898).
 - Keep the actual CLR element type of an invariant container passed to a Kotlin method with class and interface bounds. Writes affect the original container, including for star-projected elements (#1926).
 - Bind property-reference base constructors and interface slots to the private stdlib when producing stdlib metadata (#1713).
+- The optional MSBuild property `DotKtJavaHome` selects a Java installation for the Kotlin compiler without changing the environment for other build tools (#1934).
 
 ## 0.9.33 (2026-11-24)
 
