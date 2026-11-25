@@ -53,6 +53,20 @@ class ReadOnlyMutableCaptureTests {
         assertEquals(17, current)
     }
     @TestAttribute
+    fun narrowedReferenceWritesReachNullableStorage() {
+        fun replace(slot: ClrRef<String>) { slot.value = "after" }
+        fun direct(initial: String?): String? {
+            var value = initial
+            if (value != null) replace(byref(value))
+            return value
+        }
+        assertEquals("after", direct("before"))
+        var captured: String? = "before"
+        val read = { captured }
+        if (captured != null) replace(byref(captured))
+        assertEquals("after", read())
+    }
+    @TestAttribute
     fun readersObserveWritesThroughManagedReferences() {
         var current = 7
         val read = { current }
