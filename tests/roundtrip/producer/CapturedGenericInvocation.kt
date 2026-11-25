@@ -49,6 +49,12 @@ interface PlainKey<T>
 object TextKey : PlainKey<String>
 fun <T> plainTag(key: PlainKey<T>): String = "plain-key"
 fun readPlainKey(key: PlainKey<*>): String = plainTag(key)
+fun <T> collectSize(key: PlainKey<T>, sink: MutableList<T>): Int = sink.size
+fun collectHere(key: PlainKey<*>): Int = collectSize(key, mutableListOf())
+fun <T> clearCollected(sink: MutableList<T>, key: PlainKey<T>): Any {
+    sink.clear()
+    return sink
+}
 
 class KeyCounter {
     var count = 0

@@ -153,6 +153,14 @@ class CapturedGenericInvocationTests {
         check(readTwoKeys(TextKey, IntegerKey) == "two-keys")
         check(readTwoKeys(IntegerKey, TextKey) == "two-keys")
     }
+    @TestAttribute fun erasedListDoesNotConstrainAnIndependentKey() {
+        check(collectHere(TextKey) == 0)
+        val shared = mutableListOf<Any?>("original")
+        @Suppress("UNCHECKED_CAST")
+        fun <T> existing(): MutableList<T> = shared as MutableList<T>
+        fun clear(key: PlainKey<*>): Any = clearCollected(existing(), key)
+        check(clear(IntegerKey) === shared && shared.isEmpty())
+    }
     @TestAttribute fun superCallKeepsNonVirtualDispatch() {
         check(DerivedKeyReader().readBase(TextKey) == "base-key")
         check(DerivedKeyReader().read(TextKey) == "derived-key")

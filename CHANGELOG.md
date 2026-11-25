@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Preserve the original mutable collection when a Kotlin generic call takes both a projected key and an independently constructed collection for the same type parameter (#1917).
+
 - Fixed-decimal duration formatting no longer depends on the CLR floating-point formatter; the output and ties-to-even rounding are unchanged (#1612).
 - Preserve a valid CLR interface type argument when directly constructing a Kotlin generic class with a star-projected value and multiple interface bounds (#1912).
 - Visit matches of an imported right-to-left CLR Regex in Kotlin input order for search, splitting, and transform replacement, without changing which matches the CLR engine chooses (#1722).

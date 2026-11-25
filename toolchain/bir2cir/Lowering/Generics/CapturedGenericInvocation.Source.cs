@@ -481,7 +481,12 @@ static partial class CapturedGenericInvocation
                     rows.Add(new(index, head, pos, variable.I, nullable));
                 }
             }
-            return rows.ToArray();
+            // A declaration transported as object accepts the existing value independently
+            // of its closed backing type. Its recovered construction can supply an otherwise
+            // unknown slot, but cannot constrain a slot witnessed by a nominal parameter.
+            bool Opaque(CaptureRow row) => FBoundStarProjectionErasure.IsObjectish(declarationParameters[row.Argument]);
+            var required = rows.Where(row => !Opaque(row)).Select(row => row.Slot).ToHashSet();
+            return rows.Where(row => !Opaque(row) || !required.Contains(row.Slot)).ToArray();
         }
 
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,
