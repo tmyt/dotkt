@@ -29,13 +29,7 @@
     <DotKtKlibZipFileAccessorCacheLimit Condition="'$(DotKtKlibZipFileAccessorCacheLimit)' == ''">256</DotKtKlibZipFileAccessorCacheLimit>
     <!-- Non-file compile options (raw kotc flags, KLIB cache limit and MPP config) hashed into a manifest so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
-    <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
-         assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
-         resolves to a package's ref/ reference assembly — method-body-less; deriving a class from one fails with
-         "does not have an implementation"). For OutputType=Library a package's runtime dll is NOT copy-local by
-         default (CopyLocalLockFileAssemblies defaults false for a non-runtime output), so a Library consuming any
-         DotKt/.NET package would starve ilemit of it (#132). Force the transitive package runtime assets into the
-         copy-local set so ilemit sees them for a Library exactly as it already does for an Exe. -->
+    <!-- Preserve the package output default. Explicitly disabling copying must not change emit-time binding. -->
     <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -84,6 +78,13 @@
       <_DotKtCompileReference Include="@(ReferencePathWithRefAssemblies)" />
       <_DotKtCompileReference Include="@(ReferencePath)" Condition="'@(ReferencePathWithRefAssemblies)' == ''" />
       <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
+      <!-- ResolveLockFileCopyLocalFiles computes these even when it does not add them to the copy list.
+           Apply the SDK's runtime conflict exclusions without touching what gets copied to bin/. -->
+      <_DotKtUncopiedRuntimeAsset Include="@(_ResolvedCopyLocalBuildAssets)"
+                                  Exclude="@(_DotKtRuntimeReference)"
+                                  Condition="'$(CopyLocalLockFileAssemblies)' == 'false' and '%(Extension)' == '.dll'" />
+      <_DotKtUncopiedRuntimeAsset Remove="@(_ConflictPackageFiles)" Condition="'%(_ConflictPackageFiles.ConflictItemType)' != 'Reference'" />
+      <_DotKtRuntimeReference Include="@(_DotKtUncopiedRuntimeAsset)" />
       <_DotKtKlibReference Include="@(_DotKtCompileReference)"
                            Condition="'%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
         <KlibPath>$(DotKtReferenceKlibPath)/%(Filename).klib</KlibPath>

@@ -859,9 +859,7 @@ EOF
 
 # ---------------------------------------------------------------------------------------------------------
 # Case: library — the #132-general reproducer. A `Library` that PackageReferences a SECOND DotKt library
-# (packed as its own nupkg) and calls into it. The second library's runtime dll is NOT copy-local for a
-# Library, so the OLD copy-local-glob targets starved ilemit of it and the emit FAILED. Under the general
-# @(ReferencePath) rule it flows through. Assert: consumer builds AND the emitted dll declares the call.
+# (packed as its own nupkg) and calls into it. Runtime binding must work even without copying the packages.
 # ---------------------------------------------------------------------------------------------------------
 case_library() {
 	# (a) build the second DotKt library.
@@ -918,6 +916,7 @@ EOF
     <OutputType>Library</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="MyDotKtLib" Version="$VER" />
@@ -929,12 +928,19 @@ package consumer
 import mylib.libValue
 import mylib.Doubler
 fun compute(): Int = libValue() + Doubler().twice(10)
+fun joined(): String = listOf("a", "b").joinToString("\n")
 EOF
 	if ! (cd "$con" && dotnet build -v q --nologo >"$con/build.log" 2>&1); then
 		fail library "consumer Library build failed" "$(tail -25 "$con/build.log")"; return
 	fi
 	local condll; condll="$(find "$con/bin" -name 'Consumer.dll' | head -1)"
 	[[ -f "$condll" ]] || { fail library "consumer dll not emitted"; return; }
+	local outdir="${condll%/*}" runtime_refs
+	runtime_refs="$(awk '$0 == "--runtime-refs" { getline; print; exit }' "$con/obj/Debug/net10.0/dotkt-ilemit.rsp")"
+	if [[ "$runtime_refs" != *MyDotKtLib.dll* || "$runtime_refs" != *DotKt.Stdlib.dll* ||
+	      "$runtime_refs" == *DotKt.Private.Stdlib.dll* || -e "$outdir/MyDotKtLib.dll" || -e "$outdir/DotKt.Stdlib.dll" ]]; then
+		fail library "emit-time runtime references must be independent of output copying" "$runtime_refs"; return
+	fi
 	# The emitted dll must declare the call — proves the cross-package reference resolved through bir2cir+ilemit.
 	if [[ -x "$REFCHECK/bin/refcheck" || -f "$REFCHECK/bin/refcheck.dll" ]]; then
 		if ! dotnet "$REFCHECK/bin/refcheck.dll" "$condll" "consumer.ConsumerKt" "compute" "$libdll" >"$con/refcheck.log" 2>&1; then
