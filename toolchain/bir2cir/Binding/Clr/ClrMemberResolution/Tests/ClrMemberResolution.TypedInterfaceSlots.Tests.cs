@@ -8,6 +8,7 @@ static partial class ClrMemberResolution
     internal static void SelfTestTypedInterfaceSlots()
     {
         TypedInterfaceConstraintSelfTest();
+        MetadataConstructedSlotsSelfTest();
         var text = new TypeNode.Fqn("System.String");
         var owner = new TypeNode.Fqn("Fixture.Interface", new TypeNode[] { new TypeNode.Fqn("System.Object"), text });
         var get = new BirFunctionDeclaration { Name = "get_Value", PropertyName = "Value", PropertyAccessor = "get",
@@ -69,6 +70,30 @@ static partial class ClrMemberResolution
     }
 
     static void TypedInterfaceConstraintProbe<T>() where T : class, IComparable<T>, new() { }
+
+    interface IMetadataSlot<T> { void Put(T value); void Ping(); }
+    interface IMetadataPair : IMetadataSlot<int>, IMetadataSlot<string> { }
+
+    static void MetadataConstructedSlotsSelfTest()
+    {
+        var owner = new TypeNode.Fqn(typeof(IMetadataPair).FullName);
+        var text = new TypeNode.Fqn("System.String");
+        using var refs = ReferenceMetadataIndex.Build([typeof(object).Assembly.Location, typeof(IMetadataPair).Assembly.Location]);
+        BirMethodImpl Resolve(string name, params TypeNode[] parameters)
+        {
+            var descriptor = new BirMethodImpl { Owner = owner, Member = name, Arity = 0,
+                Params = parameters, Ret = MemberRefNode.Void };
+            var cls = new BirClassDefinition { Name = "Fixture.Pair", Methods = new[] {
+                new BirFunctionDeclaration { Name = "body", ClrInterfaceImpls = new[] { descriptor } } } };
+            ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { cls } }], refs, metadataBuild: true);
+            return descriptor;
+        }
+        if (Resolve("Put", text).Owner.Value != new TypeNode.Fqn(typeof(IMetadataSlot<>).FullName, [text]))
+            throw new InvalidOperationException("Metadata MethodImpl did not select the constructed string declaration");
+        try { Resolve("Ping"); }
+        catch (InvalidOperationException error) when (error.Message.Contains("resolves to 2 external declaration(s)")) { return; }
+        throw new InvalidOperationException("Distinct constructed metadata slots collapsed to one MethodDef");
+    }
 
     static void TypedInterfaceConstraintSelfTest()
     {

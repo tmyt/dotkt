@@ -285,7 +285,7 @@ static class ReferenceMetadataReader
     // MetadataLoadContext so the metadata-only assembly reads cleanly. Per-type try/catch: one malformed type is
     // skipped, never aborting the whole scan (the failure mode that left Assembly.LoadFrom's index empty).
     internal static ReferenceDotKtMetadata Read(string reference, MetadataLoadContext mlc,
-        Func<MethodBase, NativeSignatureReader.Signature> methodSignature, Func<ParameterInfo, TypeNode> signatureSlot)
+        NativeSignatureReader signatures, bool metadataBuild, Func<ParameterInfo, TypeNode> signatureSlot)
     {
         var metadata = new ReferenceDotKtMetadata();
         try
@@ -664,7 +664,9 @@ static class ReferenceMetadataReader
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
-                        var nativeSignature = methodSignature(method);
+                        var nativeSignature = signatures.Method(method);
+                        var valueMember = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
+                            attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute) : null;
                         var countRange = CountRangeOf(method);
                         var collectionFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
@@ -767,12 +769,9 @@ static class ReferenceMetadataReader
                         {
                             SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
                             ReflectedWitnessIndices = declarationIdentity?.ReflectedWitnessIndices,
-                            ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
-                                attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
-                                ?.ConstructorArguments[0].Value as string : null,
-                            ValueSlot = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
-                                attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
-                                ?.ConstructorArguments[1].Value as string : null,
+                            ValueAdapter = valueMember?.ConstructorArguments[0].Value as string,
+                            ValueSlot = valueMember?.ConstructorArguments[1].Value as string,
+                            MetadataValueSignature = metadataBuild && valueMember != null ? signatures.ExactMethod(method) : null,
                             SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(signatureSlot).ToArray(),
@@ -2969,6 +2968,27 @@ static class ReferenceMetadataReader
     // Unlike TypeNodeOf (a best-effort static-result helper), generic parameters are meaningful
     // here and must retain their CLR owner space and position.
     internal static TypeNode DeclarationTypeNode(Type type) => DeclarationTypeNode(type, nominalDelegates: false);
+
+    internal static IEnumerable<(string Scope, string Name, TypeNode.Fqn Edge)> DeclaredMetadataInterfaces(
+        MetadataReader reader, Type definition)
+    {
+        var row = reader.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(definition.MetadataToken));
+        foreach (var handle in row.GetInterfaceImplementations())
+        {
+            var edge = reader.GetInterfaceImplementation(handle).Interface;
+            var head = edge;
+            if (head.Kind == HandleKind.TypeSpecification)
+            {
+                var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)head).Signature);
+                var code = blob.ReadSignatureTypeCode();
+                if (code == SignatureTypeCode.GenericTypeInstance) code = blob.ReadSignatureTypeCode();
+                if (code != SignatureTypeCode.TypeHandle) throw new InvalidDataException("InterfaceImpl has no nominal declaration");
+                head = blob.ReadTypeHandle();
+            }
+            var (scope, name) = DotKt.Toolchain.RawSignatureTypeProvider<object>.NominalLeaf(reader, head);
+            yield return (scope, name, (TypeNode.Fqn)NativeSignatureReader.Type(reader, edge));
+        }
+    }
 
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
         DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
