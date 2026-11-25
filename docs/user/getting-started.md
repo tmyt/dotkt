@@ -64,7 +64,7 @@ From that workspace, install the templates. **Pin the version** to select a know
 across feed updates:
 
 ```bash
-dotnet new install DotKt.Templates@0.9.33 --nuget-source https://dotkt.utatane.dev/nuget/index.json
+dotnet new install DotKt.Templates@0.9.34 --nuget-source https://dotkt.utatane.dev/nuget/index.json
 ```
 
 The template install's source argument does not configure package restore for generated projects;
@@ -83,7 +83,7 @@ The template generates two files: `hello.csproj` and `Program.kt`. The project u
 `DotKt.Sdk`, so the `.csproj` extension does not make it a C# compilation. The project file:
 
 ```xml
-<Project Sdk="DotKt.Sdk/0.9.33">
+<Project Sdk="DotKt.Sdk/0.9.34">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
