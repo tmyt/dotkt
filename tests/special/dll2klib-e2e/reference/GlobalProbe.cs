@@ -14,13 +14,13 @@ public static class GlobalWidgetExtensions
     public static int GlobalBump(this Probe.Widget widget, int value) => widget.Add(value) + 2;
 }
 
-// Both package workers index the same CLR base during the serial/parallel KLIB comparison.
+// These distinct packages share a virtual index; lookup affects parameter nullability in both.
 namespace OverrideProjection.First
 {
-    public abstract class Base { public abstract string? Describe(); }
-    public sealed class Derived : Base { public override string Describe() => ""; }
+    public abstract class Base { public abstract string Describe(string value); }
+    public sealed class Derived : Base { public override string Describe(string? value) => value ?? ""; }
 }
 namespace OverrideProjection.Second
 {
-    public sealed class Derived : First.Base { public override string Describe() => ""; }
+    public sealed class Derived : First.Base { public override string Describe(string? value) => value ?? ""; }
 }
