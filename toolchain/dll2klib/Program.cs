@@ -7884,6 +7884,7 @@ internal sealed record SignatureDecoderSeeds(
         "kotlin.Unit", "kotlin.Boolean", "kotlin.Char", "kotlin.Byte", "kotlin.UByte",
         "kotlin.Short", "kotlin.UShort", "kotlin.Int", "kotlin.UInt",
         "kotlin.Long", "kotlin.ULong", "kotlin.Float", "kotlin.Double",
+        "System.IntPtr", "System.UIntPtr",
     ];
 
     internal static SignatureDecoderSeeds Discover(MetadataReader md, ArityNames arityNames)
@@ -8266,6 +8267,8 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
         PrimitiveTypeCode.UInt32 => Named("kotlin.UInt"),
         PrimitiveTypeCode.Int64 => Named("kotlin.Long"),
         PrimitiveTypeCode.UInt64 => Named("kotlin.ULong"),
+        PrimitiveTypeCode.IntPtr => Named("System.IntPtr"),
+        PrimitiveTypeCode.UIntPtr => Named("System.UIntPtr"),
         PrimitiveTypeCode.Single => Named("kotlin.Float"),
         PrimitiveTypeCode.Double => Named("kotlin.Double"),
         PrimitiveTypeCode.String => Platform("kotlin.String"),
@@ -8863,8 +8866,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
     //
     // The signature-only positions need explicit accounting, which measures out differently per shape (all against
     // csc, `<Nullable>enable</Nullable>`):
-    //   * a native `nint`/`nuint`/`IntPtr` holds NO byte (`Dictionary<nint, string?>` is `[1, 2]`,
-    //     `delegate*<nint, string?, void>` is `[0, 2]`) while one is consumed here — a SHIFT of every later byte;
+    //   * native-sized integers are value types with no byte (`Dictionary<nint, string?>` is `[1, 2]`);
     //   * a function POINTER flattens its own node plus its return and parameters (`delegate*<string?, string?>` is
     //     `[0, 2, 2]`) while one is consumed here — a SHIFT;
     //   * an ordinary pointer holds exactly one byte (`delegate*<int*, string?, void>` is `[0, 0, 2]`); its preserved
