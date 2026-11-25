@@ -1,6 +1,7 @@
 import NUnit.Framework.TestAttribute
 import DictionaryContracts.GenericOnlyDictionary
 import DictionaryContracts.NativeDictionaries
+import CollectionStorageInterop.ForeignListFaces
 
 private fun <K, V> nativeReadonlyKeys(map: Map<K, V>): Set<K> = map.keys
 private fun <K, V> nativeReadonlyEntries(map: Map<K, V>): Set<Map.Entry<K, V>> = map.entries
@@ -18,7 +19,7 @@ class MapSnapshotPolicyInteropTests {
         val keys = nativeReadonlyKeys(readonly)
         val entries = nativeReadonlyEntries(readonly)
         val values = readonly.values
-        check(native.EnumeratorsDisposed == 0)
+        check(native.EnumeratorsCreated == 0)
         check(NativeDictionaries.FirstAndDispose(values) == "one" && native.EnumeratorsDisposed == 1)
         check(nativeSnapshotText(keys) == "[1]" && keys == setOf(1) && keys.hashCode() == 1)
         check(!keys.equals(setOf("unrelated")) && !keys.equals(setOf<Int?>(null)))
@@ -42,6 +43,24 @@ class MapSnapshotPolicyInteropTests {
         val folded = NativeDictionaries.IgnoreCase() as Map<String, String>
         check("KEY" in folded.keys && folded.entries.contains(mapOf("kEy" to "value").entries.single()))
         check(!folded.entries.contains(mapOf("key" to "other").entries.single()))
+        val other = setOf("KEY")
+        check(folded.keys != other && other != folded.keys)
+        check(folded.keys == setOf("Key") && folded.keys.hashCode() == setOf("Key").hashCode())
+        check(folded.entries != mapOf("KEY" to "value").entries)
+        val disposalCount = native.EnumeratorsDisposed
+        check(!folded.keys.containsAll(values) && native.EnumeratorsDisposed == disposalCount + 1)
+        val nullable = GenericOnlyDictionary<Int, String?>()
+        nullable.Add(1, null)
+        val nullValues = ((nullable as Any) as Map<Int, String?>).values
+        val widenedKeys: Set<String?> = folded.keys
+        var nullRejected = false
+        try { widenedKeys.containsAll(nullValues) } catch (_: System.ArgumentNullException) { nullRejected = true }
+        check(nullRejected && nullable.EnumeratorsDisposed == 1)
+        val candidates = ForeignListFaces.ExactViews() as Collection<String>
+        val matches = (System.Collections.Hashtable() as Any) as MutableMap<String, Int>
+        matches["string-view"] = 0
+        matches["second"] = 1
+        check((matches as Map<String, Int>).keys.containsAll(candidates))
     }
 
     @TestAttribute

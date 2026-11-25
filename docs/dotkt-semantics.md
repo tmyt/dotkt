@@ -1102,6 +1102,9 @@ Consequences and remaining implementation limitations:
   fresh iterators use the same selected dictionary. Keys and entries are sets; key lookup uses the native
   comparer, including its behavior for unsupported keys. A retained entry reads the current value for its key.
   An iterator follows its native enumerator's mutation rules; the view does not promise concurrent enumeration.
+  CLR enumeration forwards `Dispose` when the underlying Kotlin iterator implements `AutoCloseable`.
+  Fully consuming the map-view iterator releases the native enumerator. Kotlin's `Iterator` protocol
+  has no implicit close operation when a caller abandons an iterator before exhaustion.
   `MutableMap.entries` still snapshots entry membership and its mutable entries write through.
   `MutableMap.keys` is a live identity-bearing Kotlin view:
   remove/clear write through and add is unsupported. `MutableMap.values` is also a live Kotlin collection, including

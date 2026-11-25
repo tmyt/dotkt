@@ -18,7 +18,7 @@ class MapSnapshotPolicyTests {
         nativeKeys.Add("a")
         check(keys.equals(nativeKeys))
         check(keys.containsAll((nativeKeys as Any) as Set<String>))
-        check(!keys.equals(setOf(1)))
+        check(!keys.equals(setOf(1)) && !keys.equals(setOf<String?>(null)))
         check(!keys.isEmpty() && keys.containsAll(listOf("a")) && !keys.contains("missing"))
         check(keys !is MutableSet<*>)
         mutable["b"] = 2
@@ -78,7 +78,7 @@ class MapSnapshotPolicyTests {
         var rejectedNull = false
         try { erasedKeys.containsAll(listOf(null)) }
         catch (_: System.ArgumentNullException) { rejectedNull = true }
-        check(rejectedNull && !keys.equals(setOf("one", "two")))
+        check(rejectedNull && !keys.equals(setOf("one", "two")) && !keys.equals(setOf<Int?>(null, 2)))
         val entries = snapshotEntries(mutable)
         check(entries == mapOf(1 to null, 2 to 0).entries)
         check(entries.hashCode() == mapOf(1 to null, 2 to 0).entries.hashCode())
