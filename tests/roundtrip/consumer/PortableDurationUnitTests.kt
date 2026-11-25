@@ -26,6 +26,9 @@ class PortableDurationUnitTests {
         }
         val iso = importedDuration(-1250L, DurationUnit.MILLISECONDS).toIsoString()
         check(iso == "-PT1.250S") { iso }
+        val fractional = importedDuration(9999L, DurationUnit.MILLISECONDS)
+        check(fractional.toString(DurationUnit.SECONDS, 2) == "10.00s")
+        check(importedDuration(1L, DurationUnit.SECONDS).toString(DurationUnit.SECONDS, 20) == "1.000000000000s")
     }
 
     @TestAttribute fun importedRichEnumPropertiesUseProducerFieldFacts() {

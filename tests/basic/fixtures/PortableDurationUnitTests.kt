@@ -74,6 +74,8 @@ class PortableDurationUnitTests {
         check(duration.toIsoString() == "PT1H2M3.500S")
         check(Duration.parseIsoString("-PT1.25S").inWholeNanoseconds == -1_250_000_000L)
         check(Duration.parse("0.000000001s").toLong(DurationUnit.NANOSECONDS) == 1L)
+        check(1250.toDuration(DurationUnit.MILLISECONDS).toString(DurationUnit.SECONDS, 1) == "1.2s")
+        check((-1750).toDuration(DurationUnit.MILLISECONDS).toString(DurationUnit.SECONDS, 1) == "-1.8s")
     }
 
     @TestAttribute fun monotonicMarksKeepTheirUnitsAndOrdering() {
