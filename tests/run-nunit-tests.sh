@@ -63,7 +63,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=277
 	["tests/roundtrip/consumer"]=813
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=3
-	["tests/roundtrip/bidirectional/consumer"]=57
+	["tests/roundtrip/bidirectional/consumer"]=58
 	["tests/interop/consumer"]=531
 )
 
