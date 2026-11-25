@@ -285,7 +285,7 @@ static class ReferenceMetadataReader
     // MetadataLoadContext so the metadata-only assembly reads cleanly. Per-type try/catch: one malformed type is
     // skipped, never aborting the whole scan (the failure mode that left Assembly.LoadFrom's index empty).
     internal static ReferenceDotKtMetadata Read(string reference, MetadataLoadContext mlc,
-        Func<MethodBase, NativeSignatureReader.Signature> methodSignature, Func<ParameterInfo, TypeNode> signatureSlot)
+        NativeSignatureReader signatures, Func<ParameterInfo, TypeNode> signatureSlot)
     {
         var metadata = new ReferenceDotKtMetadata();
         try
@@ -664,7 +664,9 @@ static class ReferenceMetadataReader
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
-                        var nativeSignature = methodSignature(method);
+                        var nativeSignature = signatures.Method(method);
+                        var valueMember = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
+                            attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute) : null;
                         var countRange = CountRangeOf(method);
                         var collectionFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
@@ -767,12 +769,9 @@ static class ReferenceMetadataReader
                         {
                             SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
                             ReflectedWitnessIndices = declarationIdentity?.ReflectedWitnessIndices,
-                            ValueAdapter = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
-                                attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
-                                ?.ConstructorArguments[0].Value as string : null,
-                            ValueSlot = dotKtAuthored ? method.GetCustomAttributesData().SingleOrDefault(attribute =>
-                                attribute.AttributeType.FullName == ValueRepresentationLowering.MemberAttribute)
-                                ?.ConstructorArguments[1].Value as string : null,
+                            ValueAdapter = valueMember?.ConstructorArguments[0].Value as string,
+                            ValueSlot = valueMember?.ConstructorArguments[1].Value as string,
+                            MetadataValueSignature = valueMember == null ? null : signatures.ExactMethod(method),
                             SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(signatureSlot).ToArray(),
@@ -2970,12 +2969,16 @@ static class ReferenceMetadataReader
     // here and must retain their CLR owner space and position.
     internal static TypeNode DeclarationTypeNode(Type type) => DeclarationTypeNode(type, nominalDelegates: false);
 
+    internal static TypeNode MetadataEdgeArgument(Type type) =>
+        DeclarationTypeNode(type, nominalDelegates: true, preserveNestedIdentity: true, nativeNames: true, exactPrimitiveNames: true);
+
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
         DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
 
-    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false)
+    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false,
+        bool exactPrimitiveNames = false)
     {
-        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity, nativeNames);
+        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity, nativeNames, exactPrimitiveNames);
         string Name(Type def) => nativeNames || preserveNestedIdentity && def.IsNested ? ExactPhysicalMetadataName(def)
             : DottedFqn(StripGenericArity(def.FullName ?? def.Name));
         if (type == null) return null;
@@ -3009,7 +3012,7 @@ static class ReferenceMetadataReader
         }
         // This is an exact reflected declaration, not Kotlin's Unit-return convention. A real Unit class must stay
         // a value-position token here, particularly beneath constructed interfaces; only System.Void denotes no value.
-        var prim = type.FullName == "kotlin.Unit" ? null : PrimitiveBirName(type);
+        var prim = exactPrimitiveNames || type.FullName == "kotlin.Unit" ? null : PrimitiveBirName(type);
         return new TypeNode.Fqn(prim ?? Name(type));
     }
 

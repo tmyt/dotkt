@@ -13,7 +13,8 @@ need_fe_klib
 need_stdlib_ref
 need_stdlib_rt
 collect_stdlib_sources
-STDLIB_CLR+=("$ROOT/tests/stdlib-source-array/SourceArrayProbe.kt" "$ROOT/tests/stdlib-source-array/NativeMetadataSlots.kt")
+STDLIB_CLR+=("$ROOT/tests/stdlib-source-array/SourceArrayProbe.kt" "$ROOT/tests/stdlib-source-array/NativeMetadataSlots.kt"
+    "$ROOT/tests/stdlib-source-array/MetadataPropertyReference.kt")
 stdlib_fragment_args
 stdlib_reference_args
 rm -rf -- "$OUT/bir"
@@ -69,6 +70,18 @@ dotnet "$ILEMIT_DLL" "$OUT/metadata-dll" NativeMetadataSlots --compile-refs "$me
     "$OUT/metadata-cir/NativeMetadataSlots.cir.json" > "$OUT/metadata-ilemit.log" 2>&1
 cp "$STDLIB_REF_DLL" "$OUT/metadata-dll/"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/metadata-dll/NativeMetadataSlots.dll"
+
+# Unlike the native-only slot probe, the property reference derives from a class in the private stdlib.
+dotnet "$BIR2CIR_DLL" "$OUT/property-cir" --compile-refs "$metadata_refs" --build-stdlib=metadata \
+    "$OUT/bir/MetadataPropertyReference.bir.json" > "$OUT/property-bir2cir.log" 2>&1
+property_cir="$OUT/property-cir/MetadataPropertyReference.cir.json"
+jq -e '[.types[] | select(.base.name? == "kotlin.reflect.ClrPropertyStub`1") | .ctors[].baseCtorRef] |
+    length == 1 and .[0].assembly == "DotKt.Private.Stdlib" and .[0].parameterTypes[0].name == "kotlin.String"
+    and .[0].declaringType.args[0].name == "kotlin.Int"' "$property_cir" >/dev/null
+dotnet "$ILEMIT_DLL" "$OUT/metadata-dll" MetadataPropertyReference --compile-refs "$metadata_refs" \
+    --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=metadata \
+    "$property_cir" > "$OUT/property-ilemit.log" 2>&1
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/metadata-dll/MetadataPropertyReference.dll"
 
 # This tiny source-owned builtin exercises the same checker split without another
 # whole-stdlib compile. Each invalid Kotlin form must still produce its diagnostic.

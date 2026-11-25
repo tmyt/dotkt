@@ -164,6 +164,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     // Borrowed read-only declaration facts, as in the shared decoder's contract.
     internal NativeSignatureReader.Signature NativeMethodSignature(MethodBase method) => _nativeSignatures.Method(method);
+    internal NativeSignatureReader.Signature MetadataMethodSignature(MethodBase method) => _nativeSignatures.ExactMethod(method);
     internal TypeNode NativeFieldSignature(FieldInfo field) => _nativeSignatures.Field(field);
 
     internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
@@ -4983,7 +4984,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 reference,
                 identity.Name ?? Path.GetFileNameWithoutExtension(reference),
                 identity.Version?.ToString() ?? "",
-                ReferenceMetadataReader.Read(reference, mlc, nativeSignatures.Method,
+                ReferenceMetadataReader.Read(reference, mlc, nativeSignatures,
                     parameter => ReadDeclarationSignatureSlot(parameter, nativeSignatures))));
         }
 
@@ -5717,6 +5718,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     public int[] ReflectedWitnessIndices { get; init; }
     public string ValueAdapter { get; init; }
     public string ValueSlot { get; init; }
+    public NativeSignatureReader.Signature MetadataValueSignature { get; init; }
     public bool SignatureAllocated { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }

@@ -1309,7 +1309,7 @@ sealed class Pipeline
         foreach (var root in physicalDocuments)
         {
             ClrMemberResolution.ApplyDeclarationBindings(root, refs, emittedLocalTypes);
-            ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes);
+            ClrMemberResolution.ResolveBaseConstructors(root, refs, emittedLocalTypes, _options.RefBuild);
         }
         // Retain the original prepared declaration membership and exact source
         // anchors. The captured ID keys already

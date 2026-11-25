@@ -39,7 +39,7 @@ sealed partial class ValueRepresentationLowering
         bindings = sourcePolicy.Bindings;
         foreach (var member in refs?.ValueMembers ?? Array.Empty<MemberBinding>())
         {
-            members[member.DeclarationId] = (member.Owner, new LiveMethod(member), member.ValueSlot);
+            members[member.DeclarationId] = (member.Owner, new LiveMethod(member, refBuild), member.ValueSlot);
         }
     }
 
