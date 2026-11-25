@@ -883,6 +883,7 @@ EOF
 	fi
 	local libdll; libdll="$(find "$lib/bin" -name 'MyDotKtLib.dll' | head -1)"
 	[[ -f "$libdll" ]] || { fail library "second-library dll not emitted"; return; }
+	[[ -f "${libdll%/*}/DotKt.Stdlib.dll" ]] || { fail library "default library build stopped copying its runtime dependency"; return; }
 
 	# (b) pack the emitted dll as a NuGet package into the feed. Build-time only; it lives under $WS, so NuGet's
 	#     upward config walk picks up the isolated nuget.config just like the scenarios do.
@@ -941,6 +942,28 @@ EOF
 	      "$runtime_refs" == *DotKt.Private.Stdlib.dll* || -e "$outdir/MyDotKtLib.dll" || -e "$outdir/DotKt.Stdlib.dll" ]]; then
 		fail library "emit-time runtime references must be independent of output copying" "$runtime_refs"; return
 	fi
+	# Query only asset resolution: both copy policies must select the same single runtime conflict winner.
+	local conflicts="$WS/conflict-assets" mode
+	mkdir -p "$conflicts/a" "$conflicts/b"
+	cp "$libdll" "$conflicts/a/Equal.dll"; cp "$libdll" "$conflicts/b/Equal.dll"
+	for mode in true false; do
+		if ! (cd "$con" && dotnet msbuild Consumer.ktproj -nologo -t:DotKtResolveReferenceSets \
+			-p:CopyLocalLockFileAssemblies="$mode" -p:ConflictDirectory="$conflicts" \
+			-p:CustomAfterMicrosoftCommonTargets="$ROOT/tests/packaged-sdk/fixtures/EqualRuntimeAssets.targets" \
+			-getItem:_DotKtRuntimeReference > "$conflicts/$mode.json"); then
+			fail library "runtime asset resolution failed with copying $mode"; return
+		fi
+	done
+	if ! python3 - "$conflicts" <<'PY'
+import json, pathlib, sys
+def winners(mode):
+    assets = json.loads((pathlib.Path(sys.argv[1]) / (mode + ".json")).read_text())["Items"]["_DotKtRuntimeReference"]
+    return [a["FullPath"] for a in assets if a["Filename"] == "Equal"]
+a, b = winners("true"), winners("false")
+if len(a) != 1 or a != b:
+    sys.exit(f"runtime conflict winners differ: {a} vs {b}")
+PY
+	then fail library "emit-time conflict selection differs by copy policy"; return; fi
 	# The emitted dll must declare the call — proves the cross-package reference resolved through bir2cir+ilemit.
 	if [[ -x "$REFCHECK/bin/refcheck" || -f "$REFCHECK/bin/refcheck.dll" ]]; then
 		if ! dotnet "$REFCHECK/bin/refcheck.dll" "$condll" "consumer.ConsumerKt" "compute" "$libdll" >"$con/refcheck.log" 2>&1; then

@@ -29,7 +29,7 @@
     <DotKtKlibZipFileAccessorCacheLimit Condition="'$(DotKtKlibZipFileAccessorCacheLimit)' == ''">256</DotKtKlibZipFileAccessorCacheLimit>
     <!-- Non-file compile options (raw kotc flags, KLIB cache limit and MPP config) hashed into a manifest so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
-    <!-- Preserve the package output default. Explicitly disabling copying must not change emit-time binding. -->
+    <!-- Preserve DotKt's output default. Explicitly disabling copying must not change emit-time binding. -->
     <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
@@ -67,7 +67,26 @@
     </ItemGroup>
   </Target>
 
-  <!-- Resolve references ONCE.  MSBuild/RAR owns selection and conflict resolution; the DotKt tools consume these
+  <!-- With copying disabled the SDK still computes the selected package assets, but classifies them as
+       "other runtime" during conflict resolution. That category does not use its CopyLocal tie-breaker.
+       Ask the same SDK task for the emit-time winners without modifying the build's real copy list. -->
+  <Target Name="DotKtResolveUncopiedRuntimeAssets" BeforeTargets="_HandlePackageFileConflicts"
+          Condition="'$(CopyLocalLockFileAssemblies)' == 'false' and '@(_ResolvedCopyLocalBuildAssets)' != ''">
+    <ItemGroup>
+      <_DotKtOriginalCopyPaths Include="@(ReferenceCopyLocalPaths)" />
+      <_DotKtEmitCopyCandidates Include="@(ReferenceCopyLocalPaths);@(_ResolvedCopyLocalBuildAssets)" />
+      <_DotKtOtherRuntimeItems Include="@(RuntimeCopyLocalItems);@(NativeCopyLocalItems);@(ResourceCopyLocalItems);@(RuntimeTargetsCopyLocalItems)"
+                              Exclude="@(_DotKtEmitCopyCandidates)" />
+    </ItemGroup>
+    <ResolvePackageFileConflicts References="@(Reference)" ReferenceCopyLocalPaths="@(_DotKtEmitCopyCandidates)"
+        OtherRuntimeItems="@(_DotKtOtherRuntimeItems)" PlatformManifests="@(PackageConflictPlatformManifests)"
+        TargetFrameworkDirectories="$(TargetFrameworkDirectory)" PackageOverrides="@(PackageConflictOverrides)"
+        PreferredPackages="$(PackageConflictPreferredPackages)">
+      <Output TaskParameter="ReferenceCopyLocalPathsWithoutConflicts" ItemName="_DotKtEmitCopyWinners" />
+    </ResolvePackageFileConflicts>
+  </Target>
+
+  <!-- MSBuild/RAR owns selection and conflict resolution; the DotKt tools consume these
        exact files and never reconstruct the graph by scanning neighbouring directories.  The runtime set is
        narrowed only to DLL-shaped assets to avoid passing pdb/json files; managed-vs-native is decided from the PE
        CLI header by the shared tool-side reference catalog. -->
@@ -77,14 +96,9 @@
            same PE even when the implementation uses a different type-forwarding scope. -->
       <_DotKtCompileReference Include="@(ReferencePathWithRefAssemblies)" />
       <_DotKtCompileReference Include="@(ReferencePath)" Condition="'@(ReferencePathWithRefAssemblies)' == ''" />
-      <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
-      <!-- ResolveLockFileCopyLocalFiles computes these even when it does not add them to the copy list.
-           Apply the SDK's runtime conflict exclusions without touching what gets copied to bin/. -->
-      <_DotKtUncopiedRuntimeAsset Include="@(_ResolvedCopyLocalBuildAssets)"
-                                  Exclude="@(_DotKtRuntimeReference)"
-                                  Condition="'$(CopyLocalLockFileAssemblies)' == 'false' and '%(Extension)' == '.dll'" />
-      <_DotKtUncopiedRuntimeAsset Remove="@(_ConflictPackageFiles)" Condition="'%(_ConflictPackageFiles.ConflictItemType)' != 'Reference'" />
-      <_DotKtRuntimeReference Include="@(_DotKtUncopiedRuntimeAsset)" />
+      <_DotKtRuntimeReference Include="@(_DotKtEmitCopyWinners)" Condition="'%(Extension)' == '.dll'" />
+      <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Exclude="@(_DotKtOriginalCopyPaths);@(_DotKtRuntimeReference)"
+                              Condition="'%(Extension)' == '.dll'" />
       <_DotKtKlibReference Include="@(_DotKtCompileReference)"
                            Condition="'%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
         <KlibPath>$(DotKtReferenceKlibPath)/%(Filename).klib</KlibPath>
@@ -380,12 +394,6 @@
            Text="DotKt: Portable PDB emission requires one SDK intermediate symbol path." />
     <ItemGroup>
       <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.$(_DotKtCirFormat)" />
-      <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
-           (DotKt.Stdlib, real kotlin.* bodies — resolves kotlin.io.ConsoleKt.println etc.), plus every user
-           PackageReference / ProjectReference / explicit <Reference> runtime dll a call may cross into. The
-           @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib) is a compile-only <Reference Private=false>, so it is
-           never copy-local. Framework contract assemblies come from @(_DotKtCompileReference), never the host runtime.
-           CopyLocalLockFileAssemblies=true (set above) makes the runtime set complete for a Library. -->
       <!-- The [Kotlin*] round-trip metadata attributes bir2cir supplies and ilemit stamps so this library round-trips (is consumable AS
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
            [KotlinFunction] restores infix/operator/suspend, etc.) use per-assembly DotKt-owned carrier definitions.

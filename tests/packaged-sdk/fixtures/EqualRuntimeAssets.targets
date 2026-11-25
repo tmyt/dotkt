@@ -1,0 +1,9 @@
+<Project>
+  <!-- Model two runtime-only packages with the same destination, assembly version and file version. -->
+  <Target Name="AddEqualRuntimeAssets" BeforeTargets="ResolveLockFileCopyLocalFiles">
+    <ItemGroup>
+      <RuntimeCopyLocalItems Include="$(ConflictDirectory)/a/Equal.dll" CopyLocal="true" NuGetPackageId="Equal.A" DestinationSubPath="Equal.dll" />
+      <RuntimeCopyLocalItems Include="$(ConflictDirectory)/b/Equal.dll" CopyLocal="true" NuGetPackageId="Equal.B" DestinationSubPath="Equal.dll" />
+    </ItemGroup>
+  </Target>
+</Project>
