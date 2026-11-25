@@ -6,12 +6,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Read-only Kotlin map views over CLR dictionaries reflect subsequent updates without copying the dictionary's keys, values, or entries (#1605).
+- Preserve the original mutable collection when a Kotlin generic call takes both a projected key and an independently constructed collection for the same type parameter (#1917).
+
 - Fixed-decimal duration formatting no longer depends on the CLR floating-point formatter; the output and ties-to-even rounding are unchanged (#1612).
 - Preserve a valid CLR interface type argument when directly constructing a Kotlin generic class with a star-projected value and multiple interface bounds (#1912).
 - Visit matches of an imported right-to-left CLR Regex in Kotlin input order for search, splitting, and transform replacement, without changing which matches the CLR engine chooses (#1722).
 - Format Kotlin primitive numbers with invariant culture in `toString()`, string templates, and `StringBuilder.append` (#1780).
 - Honor `STAThreadAttribute` and `MTAThreadAttribute` on the CLR entry point for Kotlin programs, including suspend main (#1921).
 - Pass literal null to a captured native generic parameter using its actual closed CLR type, including calls with a span argument (#1919).
+- Preserve the actual type argument of a projected invariant CLR type, such as `List<out Stream>`, passed to an NRT-oblivious generic method (#1913).
 - Inspect a runtime-backed Kotlin `KClass` via `kotlin.reflect.full.isInterface` and
   `companionObjectInstance`, including generic declarations imported from another DLL (#1925).
 - Avoid a PE-sized temporary allocation when writing an assembly without deterministic output or debug symbols (#1312).

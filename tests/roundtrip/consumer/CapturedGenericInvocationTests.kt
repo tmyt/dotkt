@@ -15,8 +15,15 @@ private fun appendJoint(witness: roundtrip.constrainedbound.NativeChoice<*>, xs:
 private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
 private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Long>) = xs.Add(leaf)
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
+private fun <T> missingKey(): PlainKey<T>? = null
+private fun <T> copyCount(key: PlainKey<T>?, xs: MutableList<T>): Int =
+    GenericValueInterop.CollectionStorageApi.Copy<T>(xs).size
+private fun copyUsingListWitness(xs: MutableList<*>): Int = copyCount(missingKey(), xs)
+private fun collectWithToken(key: kotlin.reflect.KClass<*>): Int = collectTokenSize(key, mutableListOf())
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
+private fun countOblivious(items: CsList<out System.IO.Stream>): Int =
+    GenericValueInterop.CollectionStorageApi.CountOblivious(items)
 private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
     GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
@@ -66,6 +73,8 @@ class CapturedGenericInvocationTests {
         check(derived.Count == 0)
     }
     @TestAttribute fun projectedNativeListKeepsItsActualElementAndStorage() {
+        check(countOblivious(CsList<System.IO.Stream>()) == 0)
+        check(countOblivious(CsList<System.IO.MemoryStream>()) == 0)
         val leaf = NativeListLeaf(42L)
         val narrow = CsList<NativeListLeaf<Long>>()
         narrow.Add(leaf)
@@ -152,6 +161,16 @@ class CapturedGenericInvocationTests {
     @TestAttribute fun independentCapturesCloseTheirOwnMethodSlots() {
         check(readTwoKeys(TextKey, IntegerKey) == "two-keys")
         check(readTwoKeys(IntegerKey, TextKey) == "two-keys")
+    }
+    @TestAttribute fun erasedListDoesNotConstrainAnIndependentKey() {
+        check(collectHere(TextKey) == 0)
+        check(collectWithToken(String::class) == 0)
+        val shared = mutableListOf<Any?>("original")
+        @Suppress("UNCHECKED_CAST")
+        fun <T> existing(): MutableList<T> = shared as MutableList<T>
+        fun clear(key: PlainKey<*>): Any = clearCollected(existing(), key)
+        check(clear(IntegerKey) === shared && shared.isEmpty())
+        check(copyUsingListWitness(mutableListOf(17)) == 1)
     }
     @TestAttribute fun superCallKeepsNonVirtualDispatch() {
         check(DerivedKeyReader().readBase(TextKey) == "base-key")

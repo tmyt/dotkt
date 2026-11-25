@@ -86,9 +86,10 @@ static partial class CapturedGenericInvocation
             && replacement.Method.Value == runtime.Name.Value && replacement.Args.Value.Length == RuntimeSignature.Length
             && !helper.RoundtripTypeHeaderPending.HasValue && !helper.Methods.Value[0].RoundtripMetadataPending.HasValue,
             "typed invocation must continue live owners, preserve module order and append fresh unmarked helpers");
-        var witnessIndices = (BirNewArray)replacement.Args.Value[5];
-        Require(witnessIndices.Elems.Value.Length == 1
-            && ((BirLiteral.IntegerLiteral)((BirConstant)witnessIndices.Elems.Value[0]).Value.Value).Value == 0,
+        var coordinates = (BirNewArray)replacement.Args.Value[6];
+        Require(coordinates.Elems.Value.Length == 5
+            && ((BirLiteral.IntegerLiteral)((BirConstant)coordinates.Elems.Value[0]).Value.Value).Value == 1
+            && ((BirLiteral.IntegerLiteral)((BirConstant)coordinates.Elems.Value[1]).Value.Value).Value == 0,
             "source capture witnesses must survive the metadata frontier");
         FrontierGuards();
         CapturedValueReceiverInvocation.SelfTest();

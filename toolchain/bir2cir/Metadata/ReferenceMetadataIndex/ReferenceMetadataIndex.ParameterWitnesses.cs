@@ -12,10 +12,10 @@ sealed partial class ReferenceMetadataIndex
 
     // Value slots may be nominal carriers while a captured method still needs its source constructor's frame.
     // Consume the producer's KotlinType correspondence, not the carrier name or a method body.
-    internal TypeNode[] CapturedParameterWitnesses(string identity, IReadOnlyList<TypeNode> physical,
+    internal (TypeNode Construction, bool StorageOnly)[] CapturedParameterWitnesses(string identity, IReadOnlyList<TypeNode> physical,
         Func<TypeNode, TypeNode.Fqn> captureConstruction = null)
     {
-        if (identity == null || !_declarationById.TryGetValue(identity, out var binding)) return physical.ToArray();
+        if (identity == null || !_declarationById.TryGetValue(identity, out var binding)) return physical.Select(t => (t, false)).ToArray();
         var frames = new InnerApplicationFrames(Array.Empty<JsonNode>(), this)
             .Project(_ownerNullableFrames, retainPhysicalOrder: true);
         foreach (var (semantic, named) in _physicalTypeBySemanticName)
@@ -32,16 +32,16 @@ sealed partial class ReferenceMetadataIndex
         {
             var source = binding.KotlinParameterTypes?.ElementAtOrDefault(index);
             if (captureConstruction?.Invoke(source) is { } marker)
-                return BirTypeLowering.LowerPhysicalType(types.Slot(marker), Aliases, IsValueType, PhysicalTypeNames, typeArg: false);
-            if (Core(type) is not TypeNode.Fqn actual || Core(source) is not TypeNode.Fqn logical) return type;
+                return (BirTypeLowering.LowerPhysicalType(types.Slot(marker), Aliases, IsValueType, PhysicalTypeNames, typeArg: false), false);
+            if (Core(type) is not TypeNode.Fqn actual || Core(source) is not TypeNode.Fqn logical) return (type, false);
             var carrierValue = TryExistentialPhysicalOwner(logical.Name, out var carrier)
                 && (actual.Name == carrier || actual.Name == RecordedPhysicalTypeName(carrier));
             // Opaque transport does not erase the producer's declared alias construction.
             var opaqueAliasValue = actual.Name is "object" or "System.Object"
                 && AliasVarianceRepresentation.RequiresErasure(logical, this);
-            if (!carrierValue && !opaqueAliasValue) return type;
-            return BirTypeLowering.LowerPhysicalType(types.Slot(source), Aliases, IsValueType, PhysicalTypeNames,
-                typeArg: false, nullableFrames: opaqueAliasValue ? frames : null);
+            if (!carrierValue && !opaqueAliasValue) return (type, false);
+            return (BirTypeLowering.LowerPhysicalType(types.Slot(source), Aliases, IsValueType, PhysicalTypeNames,
+                typeArg: false, nullableFrames: opaqueAliasValue ? frames : null), opaqueAliasValue && !carrierValue);
         }).ToArray();
     }
 }

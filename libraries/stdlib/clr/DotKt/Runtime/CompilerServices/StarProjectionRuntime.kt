@@ -568,14 +568,7 @@ private fun starProjectionCloseIntersection(
     }
     // Captures are exact: an invariant IKey<string> fixes its method slot to
     // string. Only slots still missing an intersection proof can be widened.
-    val captured = if (captureOwners == null) null else arrayOfNulls<StarProjectionType>(authored.size).also { found ->
-        val plan = capturePlan!!
-        for (i in captureOwners.indices) {
-            val row = 4 * i
-            starProjectionBindCapture(found, arguments[plan[row]], captureOwners[i],
-                plan[row + 1], plan[row + 2], plan[row + 3])
-        }
-    }
+    val captured = starProjectionCollectCaptures(authored.size, arguments, captureOwners, capturePlan)
     val initial = if (captured == null) authored else Array<StarProjectionType>(authored.size) { captured[it] ?: authored[it] }
     val missing = slots.indices.filter { captured?.get(slots[it]) == null && !facets[it].isAssignableFrom(initial[slots[it]]) }
         .map { slots[it] }.distinct().toIntArray()
@@ -711,6 +704,25 @@ private fun starProjectionBindCapture(inferred: Array<StarProjectionType?>, argu
     if (nullableSlot >= 0) inferred[nullableSlot] = if (actual.isValueType) Any::class as StarProjectionType else actual
 }
 
+private fun starProjectionCollectCaptures(arity: Int, arguments: Array<Any?>,
+    owners: Array<StarProjectionType>?, coordinates: IntArray?): Array<StarProjectionType?>? {
+    if (owners == null) return null
+    val plan = coordinates!!
+    val found = arrayOfNulls<StarProjectionType>(arity)
+    val nominalCount = plan[0]
+    // Only a non-null witness fixes a slot. An opaque argument's backing type
+    // can still supply a missing slot, even when a nominal parameter exists.
+    val fixed = if (nominalCount > 0 && nominalCount < owners.size) BooleanArray(arity) else null
+    for (i in owners.indices) {
+        val row = 1 + 4 * i
+        val slot = plan[row + 2]
+        if (i >= nominalCount && fixed != null && fixed[slot]) continue
+        starProjectionBindCapture(found, arguments[plan[row]], owners[i], plan[row + 1], slot, plan[row + 3])
+        if (i < nominalCount && fixed != null && found[slot] != null) fixed[slot] = true
+    }
+    return found
+}
+
 // A captured invocation carries explicit argument witnesses and method-slot ownership. Other slots retain the
 // compiler-authored type arguments, even if variance permits a witness to expose a different physical view.
 @PublishedApi
@@ -720,11 +732,8 @@ internal fun starProjectionInvokeCapturedHelper(
     memberName: String,
     parameterTypeKeys: Array<String>,
     authoredTypeArguments: Array<StarProjectionType>,
-    capturedArgumentIndices: IntArray,
-    capturedOwners: Array<StarProjectionType>,
-    capturedOwnerPositions: IntArray,
-    capturedMethodSlots: IntArray,
-    capturedNullableSlots: IntArray,
+    capturedOwners: Array<StarProjectionType>?,
+    capturePlan: IntArray?,
     arguments: Array<Any?>,
 ): Any? {
     val method = starProjectionOpenMethod(declaringType, metadataToken, memberName,
@@ -732,14 +741,8 @@ internal fun starProjectionInvokeCapturedHelper(
     val parameters = method.getParameters()
     if (!method.isStatic || parameters.size != arguments.size)
         throw IllegalStateException("Projected helper declaration does not match its call")
-    val inferred = arrayOfNulls<StarProjectionType>(authoredTypeArguments.size)
-    var capture = 0
-    while (capture < capturedArgumentIndices.size) {
-        starProjectionBindCapture(inferred, arguments[capturedArgumentIndices[capture]], capturedOwners[capture],
-            capturedOwnerPositions[capture], capturedMethodSlots[capture], capturedNullableSlots[capture])
-        capture++
-    }
-    val closedArguments = Array<StarProjectionType>(authoredTypeArguments.size) { slot ->
+    val inferred = starProjectionCollectCaptures(authoredTypeArguments.size, arguments, capturedOwners, capturePlan)
+    val closedArguments = if (inferred == null) authoredTypeArguments else Array<StarProjectionType>(authoredTypeArguments.size) { slot ->
         inferred[slot] ?: authoredTypeArguments[slot]
     }
     val target = if (closedArguments.isEmpty()) method else method.makeGenericMethod(closedArguments)
@@ -757,15 +760,12 @@ internal fun starProjectionInvokeCapturedHelperUnit(
     memberName: String,
     parameterTypeKeys: Array<String>,
     authoredTypeArguments: Array<StarProjectionType>,
-    capturedArgumentIndices: IntArray,
-    capturedOwners: Array<StarProjectionType>,
-    capturedOwnerPositions: IntArray,
-    capturedMethodSlots: IntArray,
-    capturedNullableSlots: IntArray,
+    capturedOwners: Array<StarProjectionType>?,
+    capturePlan: IntArray?,
     arguments: Array<Any?>,
 ) {
     starProjectionInvokeCapturedHelper(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authoredTypeArguments, capturedArgumentIndices, capturedOwners, capturedOwnerPositions, capturedMethodSlots, capturedNullableSlots, arguments)
+        authoredTypeArguments, capturedOwners, capturePlan, arguments)
 }
 
 // A boxed generic value receiver must be written back even when its method throws. Keep the invoke result separate
