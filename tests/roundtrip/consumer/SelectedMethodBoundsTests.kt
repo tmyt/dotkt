@@ -6,6 +6,7 @@ import roundtrip.selectedbounds.*
 
 class ImportedFactory : JointFactory<Concrete>, NominalFactory<Concrete> {
     override fun <A : Concrete> make(): Any = Product<A>()
+    override fun <A : Concrete> select(value: A): A = value
 }
 
 class SelectedMethodBoundsTests {
@@ -16,6 +17,8 @@ class SelectedMethodBoundsTests {
             val second = joint.make<Item>()
             check(JoinedSlot.IsValue<Item>(first) && JoinedSlot.IsValue<Item>(second))
             check(!JoinedSlot.IsValue<Concrete>(first) && !JoinedSlot.IsValue<Concrete>(second))
+            val item = Item()
+            check(nominal.select(item) === item && joint.select(item) === item)
         }
         val local = LocalFactory()
         val imported = ImportedFactory()

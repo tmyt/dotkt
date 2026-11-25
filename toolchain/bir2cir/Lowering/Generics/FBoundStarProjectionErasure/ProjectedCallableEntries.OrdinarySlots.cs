@@ -20,7 +20,7 @@ sealed partial class ProjectedCallableEntries
         Func<TypeNode.Fqn, TypeNode[]> sourceArguments;
         if (originalSlots.TryGetValue(id, out var local))
         {
-            if (local.Owner.Kind.OrDefault() != "interface" || !local.Method.Abstract.OrDefault()) return;
+            if (local.Owner.Kind.OrDefault() != "interface") return;
             var m = local.Method;
             rows = m.TypeParams.OrEmpty();
             bounds = (m.RoundtripMethodBounds.OrDefault() ?? m.MethodTypeParameterBoundsPre.OrDefault())?.Bounds;
@@ -50,10 +50,28 @@ sealed partial class ProjectedCallableEntries
         if (selected.SourceArity != destination.SourceArity) throw new InvalidOperationException("Selected override source arities disagree");
         // Nondependent virtual contracts do not grant the caller any additional
         // proofs. A nominal class bound is what permits a CLR variance conversion.
-        var anchors = bounds.OrderBy(p => p.Key).SelectMany(p => p.Value.OfType<TypeNode.Tv>()
+        var proofs = bounds.OrderBy(p => p.Key).SelectMany(p => p.Value.OfType<TypeNode.Tv>()
             .Where(v => v.Scope == "type" && Nominal(rows[selected.SourcePosition(p.Key)]))
-            .Select(v => (Source: p.Key, Bound: sourceOwner[v.I]))).ToArray();
-        if (anchors.Length == 0) return;
+            .Select(v => (Position: selected.SourcePosition(p.Key), Bound: sourceOwner[v.I]))).ToList();
+        if (proofs.Count == 0) return;
+        var weakRows = rows.Select(p => CapturedGenericInvocation.CloneParameter(p, Close)).ToArray();
+        // A separately represented storage argument is not the nominal A.
+        // Preserve that argument, transporting only its missing interface proofs.
+        for (int position = 0; position < selected.PhysicalArity; position++)
+        {
+            var role = selected.PhysicalSlot(position);
+            if (role.Representation == NullableRepresentationFrame.Role.Ordinary) continue;
+            var row = Enumerable.Range(0, destination.PhysicalArity).FirstOrDefault(i => destination.PhysicalSlot(i) == role, -1);
+            if (row < 0) continue;
+            foreach (var required in entry.Plan.Parameters[row].Constraints.OrEmpty().OfType<TypeNode.Fqn>())
+            {
+                if (weakRows[position].Constraints.OrEmpty().Contains(required)) continue;
+                bool dependsOnMethod = false;
+                BirGraphNameFields.VisitTypeNodes(required, t => dependsOnMethod |= t is TypeNode.Tv { Scope: "method" });
+                if (!dependsOnMethod) proofs.Add((position, required));
+            }
+        }
+        var anchors = proofs.Distinct().ToArray();
         var file = files.Single(f => f.Types.OrEmpty().Contains(owner));
         var stem = owner.Name.Value + "$" + target.Name.Value + "$operation";
         var opName = stem;
@@ -63,14 +81,13 @@ sealed partial class ProjectedCallableEntries
         TypeNode[] inContext = Enumerable.Range(0, context.Length).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
         var operationRows = context.Concat(anchors.Select((_, i) => new BirTypeParameter { Name = "$bound" + i, Variance = "in" })).ToArray();
         var implemented = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => a.Bound)).ToArray());
-        var viewed = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => (TypeNode)new TypeNode.Tv("method", selected.SourcePosition(a.Source)))).ToArray());
-        var weakRows = rows.Select(p => CapturedGenericInvocation.CloneParameter(p, Close)).ToArray();
+        var viewed = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => (TypeNode)new TypeNode.Tv("method", a.Position))).ToArray());
         BirTypeParameter[] Strengthen(TypeNode[] arguments)
         {
             var result = weakRows.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
             for (int i = 0; i < anchors.Length; i++)
             {
-                var p = result[selected.SourcePosition(anchors[i].Source)];
+                var p = result[anchors[i].Position];
                 p.Constraints = p.Constraints.OrEmpty().Append(arguments[i]).Distinct().ToArray();
             }
             return result;

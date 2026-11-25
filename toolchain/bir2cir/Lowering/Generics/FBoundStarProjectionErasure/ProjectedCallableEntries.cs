@@ -232,9 +232,10 @@ sealed partial class ProjectedCallableEntries
         foreach (var id in (method.SelectedGenericOverrides ?? []).OrderBy(IsInterface))
         {
             string declaringOwner;
-            if (originalSlots.TryGetValue(id, out var local) && MethodFrame(local.Method) is { } localFrame)
+            if (originalSlots.TryGetValue(id, out var local))
             {
-                plan = DeclarationPlan(local.Owner, local.Method, localFrame);
+                plan = DeclarationPlan(local.Owner, local.Method, MethodFrame(local.Method));
+                if (plan == null) continue;
                 declaringOwner = local.Owner.Name.Value;
             }
             else if (references.TryDeclarationSignatureSlot(EntryId(id), out var slot))
@@ -248,7 +249,7 @@ sealed partial class ProjectedCallableEntries
                 .Select(e => e.spec).Distinct().Single(t => t.Name == declaringOwner);
             return declarationPlans[method] = plan.OnOwner(application.Args ?? []);
         }
-        return declarationPlans[method] = ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
+        return declarationPlans[method] = frame == null ? null : ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
             method.LocalBodyEntry?.Frame ?? method.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault(),
             method.Ret.OrDefault(), i => Nominal(method.TypeParams.Value[i]));
     }
@@ -268,12 +269,22 @@ sealed partial class ProjectedCallableEntries
                 bodyEntry = (DeclarationIdentityBinding.InheritedProjectionId(owner.Name.Value, implemented), null);
             if (HasFixedAbi(m, null, references) || (bodyEntry?.Id ?? identity?.DeclarationId.OrDefault()) is not string id ||
                 bodyEntry == null && !carrierSlot && id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||
-                m.TypeParams.OrEmpty() is not { Length: > 0 } parameters || MethodFrame(m) is not { } frame) continue;
+                m.TypeParams.OrEmpty() is not { Length: > 0 } parameters) continue;
+            var ownFrame = MethodFrame(m);
+            var plan = DeclarationPlan(owner, m, ownFrame);
+            if (plan == null) continue;
             // This is also the override point for C# subclasses: use an identifier
             // that C# source can name. The binding is still by identity, not suffix.
             var name = m.Name.Value + "Projected";
             for (var i = 0; !names.Add(name); i++) name = m.Name.Value + "Projected" + i;
-            var plan = DeclarationPlan(owner, m, frame);
+            if (ownFrame == null)
+                foreach (var facet in plan.Facets)
+                {
+                    // The exact facade supplies this same argument for each nominal
+                    // facet. These are the requirements of its selected virtual ABI.
+                    var row = parameters[facet.OwnerIndex];
+                    row.Constraints = row.Constraints.OrEmpty().Concat(facet.Evidence).Distinct().ToArray();
+                }
             var entry = new Entry(name, plan, parameters, bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault(),
                 AddressSignature(plan, m));
             if (m.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
