@@ -4156,7 +4156,11 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // Empty for a type this index does not know, which is a supertype no bridge decision may be made about.
     public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(TypeNode.Fqn owner)
     {
-        if (owner == null || !TryReferenceTypeShapeValue(owner, out var shape))
+        if (owner == null) yield break;
+        // A non-generic native base is already an exact CLR TypeDef, even though its
+        // name contains no arity marker. Keep the physical declarations of its parents.
+        if ((HasDotKtOwner(owner.Name) || !_referenceTypeShapesByPhysicalOwner.TryGetValue(owner.Name, out var shape))
+            && !TryReferenceTypeShapeValue(owner, out shape))
             yield break;
         foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return (i, true);
         if (shape.Base != null) yield return (shape.Base, false);
