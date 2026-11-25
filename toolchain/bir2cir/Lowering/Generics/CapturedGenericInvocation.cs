@@ -174,6 +174,17 @@ static partial class CapturedGenericInvocation
                 new BirInterfaceDefinition { Name = "external.Invariant", Kind = "interface" },
             } })._capturedGenericArgument.IsPresent)
             throw new InvalidOperationException("Missing local type parameters fell back to a same-named reference declaration");
+        bool CapturesOblivious(TypeNode slot) => Imported(externalInput with {
+            Methods = new[] { input.Methods.Value[0] with { Body = new IBirStatement[] {
+                new BirExpressionStatement { Expr = externalCall with {
+                    Sig = new TypeNode[] { new TypeNode.Fqn("external.Invariant", new TypeNode[] { new TypeNode.Oblivious(slot) }) },
+                } },
+            } } },
+        })._capturedGenericArgument.IsPresent;
+        var methodSlot = new TypeNode.Tv("method", 1);
+        if (!CapturesOblivious(methodSlot) || CapturesOblivious(new TypeNode.Nullable(methodSlot))
+            || CapturesOblivious(new TypeNode.Tv("type", 0)) || CapturesOblivious(Formal("Local", 1)))
+            throw new InvalidOperationException("Oblivious capture must identify a direct declaration method slot");
         var reader = new System.Text.Json.Utf8JsonReader(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(captured.ToDom()));
         if (!reader.Read()) throw new InvalidOperationException();
         var roundtrip = BirGraphJson.ReadBirCallStatic(ref reader);
