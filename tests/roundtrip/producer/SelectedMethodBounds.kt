@@ -15,8 +15,14 @@ interface JointFactory<K> where K : Base, K : ILeft, K : IRight {
 }
 open class Concrete : Base(), ILeft, IRight
 class Item : Concrete()
+class Leaf<T> : Concrete()
 class Product<T> : IJoinedValue<T> where T : Base, T : ILeft, T : IRight
-class LocalFactory : NominalFactory<Concrete>, JointFactory<Concrete> {
+interface LocalDefault : NominalFactory<Concrete>, JointFactory<Concrete> {
     override fun <A : Concrete> make(): Any = Product<A>()
     override fun <A : Concrete> select(value: A): A = value
 }
+class LocalFactory : LocalDefault
+
+interface LeftFactory<K> where K : Base, K : ILeft { fun <A : K> make(): Any }
+interface RightFactory<K> where K : Base, K : IRight { fun <A : K> make(): Any }
+interface DefaultFactory<K : ILeft> { fun <A : K> make(): Any = "default" }

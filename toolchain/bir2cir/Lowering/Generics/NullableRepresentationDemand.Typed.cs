@@ -106,7 +106,8 @@ static partial class NullableRepresentationDemand
         {
             if (!method.View.CanExtendBodyFrame && method.View.Overrides.Length == 0 && method.View.OwnsValueSlots(policy))
                 for (var index = 0; index < method.TypeParameters.Length; index++)
-                    if (policy.NeedsVirtualStorageWitness(NullableRepresentationMaterialization.StorageClassifierBounds(
+                    if (method.TypeParameters[index].Constraints.OrEmpty().Any(c => c is TypeNode.Tv { Scope: "type" })
+                        || policy.NeedsVirtualStorageWitness(NullableRepresentationMaterialization.StorageClassifierBounds(
                         method.TypeParameters, index, "method", null, owner.View.Parameters.OrEmpty(), null)))
                         method.Signature.Add(new TypeNode.Tv("method", index), RepresentationRole.Storage);
             if (method.View.Id is string id && declaredMethods?.GetValueOrDefault(id) is { } declared)

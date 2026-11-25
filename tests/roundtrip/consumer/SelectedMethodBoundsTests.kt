@@ -9,6 +9,10 @@ class ImportedFactory : JointFactory<Concrete>, NominalFactory<Concrete> {
     override fun <A : Concrete> select(value: A): A = value
 }
 
+class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFactory<Concrete> {
+    override fun <A : Concrete> make(): Any = Product<A>()
+}
+
 class SelectedMethodBoundsTests {
     @TestAttribute
     fun eitherSelectedSlotKeepsTheExactArgument() {
@@ -17,6 +21,8 @@ class SelectedMethodBoundsTests {
             val second = joint.make<Item>()
             check(JoinedSlot.IsValue<Item>(first) && JoinedSlot.IsValue<Item>(second))
             check(!JoinedSlot.IsValue<Concrete>(first) && !JoinedSlot.IsValue<Concrete>(second))
+            check(JoinedSlot.IsValue<Leaf<*>>(nominal.make<Leaf<*>>()))
+            check(JoinedSlot.IsValue<Leaf<*>>(joint.make<Leaf<*>>()))
             val item = Item()
             check(nominal.select(item) === item && joint.select(item) === item)
         }
@@ -24,5 +30,12 @@ class SelectedMethodBoundsTests {
         val imported = ImportedFactory()
         checkViews(local, local)
         checkViews(imported, imported)
+        val factory = FacetFactory()
+        val left: LeftFactory<Concrete> = factory
+        val right: RightFactory<Concrete> = factory
+        val fallback: DefaultFactory<Concrete> = factory
+        check(JoinedSlot.IsValue<Item>(left.make<Item>()))
+        check(JoinedSlot.IsValue<Item>(right.make<Item>()))
+        check(JoinedSlot.IsValue<Item>(fallback.make<Item>()))
     }
 }

@@ -108,8 +108,7 @@ sealed partial class ProjectedCallableEntries
                 bool local = localSlots.TryGetValue(id, out var slot);
                 if (!local && !references.TryDeclarationSignatureSlot(EntryId(id), out slot))
                 {
-                    if (owner.Kind.OrDefault() == "class")
-                        DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id);
+                    DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id);
                     continue;
                 }
                 var constructed = SupertypeGraph.Reachable(hierarchy[owner.Name.Value], hierarchy, references)
@@ -126,8 +125,25 @@ sealed partial class ProjectedCallableEntries
                 }
                 if (slot.IsInterface)
                 {
+                    if (owner.Kind.OrDefault() == "interface")
+                    {
+                        if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
+                            RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
+                                source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
+                                source.Method.Ret.Value, true, false));
+                        else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
+                            references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade);
+                    }
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
+                    if (entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
+                        references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound))))
+                    {
+                        DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract);
+                        continue;
+                    }
                     var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
+                    if (owner.Kind.OrDefault() == "interface")
+                        arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
                     if (arguments != null)
                     {
                         AddInterfaceForwarder(owner, method, descriptor, contract, arguments);
@@ -159,10 +175,11 @@ sealed partial class ProjectedCallableEntries
             Name = name, Params = descriptor.Params.Value.Select((type, i) => new BirParameter {
                 Name = target.Params.Value[i].Name, Type = BirGraphValue.CopyType(type) }).ToArray(),
             Ret = descriptor.Ret, TypeParams = contract.CloneParameters(),
-            Vis = "private", Virtual = true, ClrFinal = true, Static = false, Generated = true,
+            Vis = "private", Virtual = true, Abstract = false, ClrFinal = true, Static = false, Generated = true,
             ClrInterfaceImpls = new[] { descriptor },
         };
         bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody() : ForwardBody(owner, bridge, target, arguments);
+        if (owner.Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
     }
 
@@ -229,6 +246,7 @@ sealed partial class ProjectedCallableEntries
         bool IsInterface(string id) => originalSlots.TryGetValue(id, out var local)
             ? local.Owner.Kind.OrDefault() == "interface" :
                 references.TryDeclarationSignatureSlot(EntryId(id), out var slot) && slot.IsInterface;
+        var interfaces = new List<ProjectedMethodPlan>();
         foreach (var id in (method.SelectedGenericOverrides ?? []).OrderBy(IsInterface))
         {
             string declaringOwner;
@@ -247,7 +265,25 @@ sealed partial class ProjectedCallableEntries
             var graph = classHierarchy.Value;
             var application = SupertypeGraph.Reachable(graph[owner.Name.Value], graph, references)
                 .Select(e => e.spec).Distinct().Single(t => t.Name == declaringOwner);
-            return declarationPlans[method] = plan.OnOwner(application.Args ?? []);
+            var closed = plan.OnOwner(application.Args ?? []);
+            if (!IsInterface(id)) return declarationPlans[method] = closed;
+            interfaces.Add(closed);
+        }
+        if (interfaces.Count != 0)
+        {
+            bool Covers(ProjectedMethodPlan p, ProjectedMethodPlan q) => q.Facets.All(t => p.Facets.Any(s =>
+                s.OwnerIndex == t.OwnerIndex && references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound)));
+            if (interfaces.FirstOrDefault(p => interfaces.All(q => Covers(p, q))) is { } covering)
+                return declarationPlans[method] = covering;
+            // Independent interfaces may each publish only part of the evidence
+            // available to the implementing body. Split the combined requirements
+            // once; neither interface's declaration order selects the body's ABI.
+            var parameters = interfaces[0].Parameters.Take(interfaces[0].PrimaryArity)
+                .Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+            for (int i = 0; i < parameters.Length; ++i)
+                parameters[i].Constraints = interfaces.SelectMany(p => p.Parameters[i].Constraints.OrEmpty()
+                    .Concat(p.Facets.Where(f => f.OwnerIndex == i).Select(f => f.Bound))).Distinct().ToArray();
+            frame = Frame(parameters, true);
         }
         return declarationPlans[method] = frame == null ? null : ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
             method.LocalBodyEntry?.Frame ?? method.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault(),
@@ -277,7 +313,15 @@ sealed partial class ProjectedCallableEntries
             // that C# source can name. The binding is still by identity, not suffix.
             var name = m.Name.Value + "Projected";
             for (var i = 0; !names.Add(name); i++) name = m.Name.Value + "Projected" + i;
-            if (ownFrame == null)
+            if (m.SelectedGenericOverrides is { Count: > 0 })
+            {
+                for (var i = 0; i < plan.PrimaryArity; i++)
+                {
+                    var row = parameters[i];
+                    foreach (var required in plan.Parameters[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>())
+                        if (!row.Constraints.OrEmpty().Any(c => c == required || Proves(c, required)))
+                            row.Constraints = row.Constraints.OrEmpty().Where(c => !Proves(required, c)).Append(required).ToArray();
+                }
                 foreach (var facet in plan.Facets)
                 {
                     // The exact facade supplies this same argument for each nominal
@@ -285,6 +329,7 @@ sealed partial class ProjectedCallableEntries
                     var row = parameters[facet.OwnerIndex];
                     row.Constraints = row.Constraints.OrEmpty().Concat(facet.Evidence).Distinct().ToArray();
                 }
+            }
             var entry = new Entry(name, plan, parameters, bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault(),
                 AddressSignature(plan, m));
             if (m.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
