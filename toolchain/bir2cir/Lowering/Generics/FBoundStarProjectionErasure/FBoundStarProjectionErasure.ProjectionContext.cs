@@ -596,8 +596,9 @@ static partial class FBoundStarProjectionErasure
             // class in the nominal method slot, including when the published slot
             // only requires an interface. A later override can use that class;
             // the existential interface spelling is not itself a CLR class.
-            var separateMaterial = scope == "method" && selected.Role is { Representation: NullableRepresentationFrame.Role.Ordinary } role
-                && frame.StorageIndices.Contains(role.SourceIndex);
+            var separateMaterial = scope == "method" && linked.Any(i =>
+                entry.Slot(i).Role is { Representation: NullableRepresentationFrame.Role.Ordinary } role &&
+                frame.StorageIndices.Contains(role.SourceIndex));
             if (bounds.Length == 0 && !separateMaterial) return null;
             TypeNode Identity(TypeNode type) => ConstraintKey(type);
             var classBound = bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class");
