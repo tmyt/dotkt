@@ -350,10 +350,9 @@ static class TypedPhysicalValueCoercion
         if (target is TypeNode.ByRef or TypeNode.Mod && SignatureValueTypes.Of(target) is TypeNode.ByRef to)
         {
             var location = value is BirByRefOf address ? address.Inner.OrDefault() : value;
-            if (location is BirLocal or BirFieldGet or BirStaticFieldGet
-                && ExprType(Graph(location), scope, index) is { } storage
-                && DifferentNullableStorage(storage is TypeNode.ByRef pointer ? pointer.Of : storage, to.Of))
-                throw new InvalidOperationException($"Cannot pass this location by reference: its CLR storage type {TypeNode.ToJson(storage)} differs from the required pointee {TypeNode.ToJson(to.Of)}");
+            if (location is BirLocal or BirFieldGet or BirStaticFieldGet or BirByRefLoad
+                && ExprType(Graph(location), scope, index) is { } storage)
+                CheckNullableLocation(storage is TypeNode.ByRef pointer ? pointer.Of : storage, to.Of);
             if (scope.ProjectedCallable && ManagedAddress(location, scope, index) is { Of: TypeNode.Tv } from && from.Of != to.Of)
                 return CheckedAddressView(value, from, to, index);
         }
@@ -454,6 +453,12 @@ static class TypedPhysicalValueCoercion
         var a = Slot(left);
         var b = Slot(right);
         return a is TypeNode.Nullable an && Slot(an.Of) == b || b is TypeNode.Nullable bn && a == Slot(bn.Of);
+    }
+
+    static void CheckNullableLocation(TypeNode storage, TypeNode requested)
+    {
+        if (DifferentNullableStorage(storage, requested))
+            throw new InvalidOperationException($"Cannot pass this location by reference: its CLR storage type '{FieldLegality.Render(storage)}' differs from the required pointee '{FieldLegality.Render(requested)}'");
     }
 
     // Explicit casts, assignments, calls and returns must agree on what a Kotlin
@@ -787,7 +792,11 @@ static class TypedPhysicalValueCoercion
         if (node is BirByRefLoad load)
         {
             var pointer = load.Ptr.OrDefault() ?? (load.Local.HasValue ? new BirLocal { Name = load.Local.Value } : null);
-            if (ExprType(Graph(pointer), scope, index) is TypeNode.ByRef reference) load.Elem = reference.Of;
+            if (ExprType(Graph(pointer), scope, index) is TypeNode.ByRef reference)
+            {
+                if (load.Elem.HasValue) CheckNullableLocation(reference.Of, load.Elem.Value);
+                load.Elem = reference.Of;
+            }
         }
         if (node is BirByRefStore store)
         {
