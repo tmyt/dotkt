@@ -48,6 +48,11 @@ static partial class ClrMemberResolution
     sealed record InterfaceCandidate(MethodInfo Method, MemberRefNode Reference,
         TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return);
 
+    // A local declaration at another arity can hide the reference spelling,
+    // but not the runtime interface that owns a resolved MethodImpl.
+    static Type ExternalSlotOwner(TypeNode.Fqn face, ReferenceMetadataIndex refs) =>
+        ResolveOwnerType(face, refs) ?? refs.PhysicalTypeNamed(face.Name, face.Args?.Length ?? 0);
+
     static void StampInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IBirTypeDeclaration type,
         IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild)
     {
@@ -58,6 +63,7 @@ static partial class ClrMemberResolution
             .Select(descriptor => (Owner: (TypeNode.Fqn)descriptor.Owner.Value, Descriptor: descriptor)).ToArray();
         if (descriptors.Length == 0) return;
         var slotSets = new Dictionary<string, BirInterfaceSlotSet>(StringComparer.Ordinal);
+        var owners = new List<(TypeNode.Fqn Spec, Type External)>();
         foreach (var group in descriptors.GroupBy(entry => SupertypeGraph.TypeKey(entry.Owner), StringComparer.Ordinal))
         {
             var iface = group.First().Owner;
@@ -68,9 +74,10 @@ static partial class ClrMemberResolution
                     || refs.PhysicalTypeNamed(iface.Name, TypeParameterFrame.Count(local)) == null))
             {
                 ResolveLocalInterfaceDescriptors(iface, local, group.Select(entry => entry.Descriptor));
+                owners.Add((iface, null));
                 continue;
             }
-            var open = ResolveOwnerType(iface, refs) ?? refs.PhysicalTypeNamed(iface.Name)
+            var open = ExternalSlotOwner(iface, refs)
                 ?? throw new InvalidOperationException($"bir2cir: interface MethodImpl owner '{iface.Name}' does not resolve in the reference set");
             var arguments = iface.Args ?? Array.Empty<TypeNode>();
             var declarationOwners = metadataBuild ? refs.MetadataInterfaceOwners(open, arguments).ToArray()
@@ -129,6 +136,7 @@ static partial class ClrMemberResolution
                 if (selected.Reference.DeclaringType is not TypeNode.Fqn declaringOwner)
                     throw new InvalidOperationException($"bir2cir: interface MethodImpl '{iface.Name}.{member}`{arity}' resolved without a declaring type");
                 descriptor.Owner = BirGraphValue.CopyType(declaringOwner);
+                owners.Add((declaringOwner, selected.Method.DeclaringType));
                 descriptor.Member = selected.Reference.Name;
                 descriptor.Params = selected.Parameters.Select(BirGraphValue.CopyType).ToArray();
                 descriptor.Ret = BirGraphValue.CopyType(selected.Return);
@@ -150,7 +158,60 @@ static partial class ClrMemberResolution
         // Normalize to exact declarations before deduplication: mixed Kotlin/CLR
         // spellings such as int/System.Int32 must not be guessed equivalent early.
         DeduplicateResolvedInterfaceDescriptors(methods);
+        DeclareReimplementedInterfaces(type, owners, definitions, refs);
         if (slotSets.Count != 0) SetInterfaceSlotSets(type, slotSets.Values.ToArray());
+    }
+
+    // A MethodImpl identifies an exact constructed interface slot. The CLI requires its
+    // declaring interface to be implemented here, not solely through the base class.
+    static void DeclareReimplementedInterfaces(IBirTypeDeclaration type,
+        List<(TypeNode.Fqn Spec, Type External)> owners,
+        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs)
+    {
+        if (type.Base.OrDefault() is not TypeNode.Fqn) return;
+        var direct = type.Interfaces.OrEmpty();
+        // Keep the selected TypeDef across imported edges: a nested arity or the
+        // defining assembly can distinguish two otherwise identical owner spellings.
+        (Type, TypeNode) Key(Type external, TypeNode.Fqn spec)
+        {
+            if (external?.IsConstructedGenericType == true) external = external.GetGenericTypeDefinition();
+            return (external, BirTypeLowering.CanonicalPhysicalSlotType(new TypeNode.Fqn(external?.FullName ?? spec.Name, spec.Args)));
+        }
+        var declared = new HashSet<(Type, TypeNode)>();
+        void Include(TypeNode.Fqn face, HashSet<(Type, TypeNode)> result, Type external = null)
+        {
+            var args = face.Args ?? [];
+            if (external == null && definitions.TryGetValue((face.Name, args.Length), out var local)
+                && (!local.Generated.OrDefault() || !ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(face.Name)
+                    || refs.PhysicalTypeNamed(face.Name, args.Length) == null))
+            {
+                if (!result.Add(Key(null, face))) return;
+                foreach (var parent in local.Interfaces.OrEmpty().OfType<TypeNode.Fqn>())
+                    Include((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, args), result);
+                return;
+            }
+            external ??= ExternalSlotOwner(face, refs);
+            if (external == null || !result.Add(Key(external, face))) return;
+            if (external.IsConstructedGenericType) external = external.GetGenericTypeDefinition();
+            foreach (var (definition, spec) in refs.MetadataInterfaceOwners(external, args))
+                result.Add(Key(definition, spec));
+        }
+        foreach (var face in direct.OfType<TypeNode.Fqn>()) Include(face, declared);
+        // A required child already covers every ancestor it declares. Compute
+        // coverage before adding rows so MethodDef order cannot affect the result.
+        var pending = owners.DistinctBy(x => Key(x.External, x.Spec))
+            .Where(x => !declared.Contains(Key(x.External, x.Spec))).ToArray();
+        foreach (var (face, external) in pending)
+        {
+            var closure = new HashSet<(Type, TypeNode)>();
+            Include(face, closure, external);
+            closure.Remove(Key(external, face));
+            declared.UnionWith(closure);
+        }
+        var added = new List<TypeNode>();
+        foreach (var (face, external) in pending)
+            if (!declared.Contains(Key(external, face))) added.Add(face);
+        if (added.Count != 0) type.Interfaces = direct.Concat(added).ToArray();
     }
 
     static (string Member, int Arity, TypeNode[] Parameters, TypeNode Return) ReadInterfaceDescriptor(

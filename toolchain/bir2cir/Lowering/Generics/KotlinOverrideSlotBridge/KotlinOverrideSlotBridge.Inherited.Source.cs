@@ -89,7 +89,8 @@ static partial class KotlinOverrideSlotBridge
 
     internal sealed record SelectedInheritedSourceMethod(TypeNode.Fqn Owner, SelectedMethodHeader Method,
         BirGraphValue Fact, IReadOnlyList<BirOverride> Overrides, bool IsDefault, TypeNode[] DeclarationSignature,
-        string DeclarationId, TypeNode[] QueryBounds, TypeNode[] SelectionParameters, TypeNode.Fqn DefaultProvider = null)
+        string DeclarationId, TypeNode[] QueryBounds, TypeNode[] SelectionParameters, TypeNode.Fqn DefaultProvider = null,
+        int MetadataToken = 0)
     {
         internal BirFunctionDeclaration Source => Method.Source;
     }
@@ -276,14 +277,14 @@ static partial class KotlinOverrideSlotBridge
                                 ? source.QueryParameterBound?.Invoke(index) : null).ToArray(), logical,
                         callOwner, null,
                         collectionQueries ? SupertypeGraph.SubstOwnerTvs(source.Return, args) : null,
-                        defaults && accessor != null ? source.KotlinParameters : null);
+                        defaults && accessor != null ? source.KotlinParameters : null, source.MetadataToken);
                 }
 
                 void Publish(SelectedMethodHeader selectedSource, TypeNode[] physicalParams, TypeNode physicalRet,
                     bool returnsValue, string physicalMember, BirTypeParameter[] typeParams, NullableRepresentationFrame frame,
                     byte[][] nullableFlags, TypeNode[] signature, string declarationId, TypeNode[] queryBounds,
                     TypeNode logicalResult, TypeNode.Fqn callOwner, OverrideOwner sourceOwner, TypeNode selectedKotlinReturn = null,
-                    TypeNode[] kotlinParameters = null)
+                    TypeNode[] kotlinParameters = null, int metadataToken = 0)
                 {
                     var projected = selectedSource?.SuspendSourceParameters.HasValue == true;
                     var header = new SelectedMethodHeader {
@@ -317,7 +318,7 @@ static partial class KotlinOverrideSlotBridge
                         signature, declarationId, queryBounds?.Select(type => type == null ? null : SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                         physicalParams.Select((type, index) => kotlinParameters?[index] is {} semantic
                             ? SupertypeGraph.SubstOwnerTvs(semantic, refs.NullableTypeFrames.GetValueOrDefault(spec.Name)?.OrdinaryArguments(args) ?? args)
-                            : index < factParams.Length ? factParams[index] : type).ToArray(), defaults ? spec : null));
+                            : index < factParams.Length ? factParams[index] : type).ToArray(), defaults ? spec : null, metadataToken));
                 }
             }
         }
