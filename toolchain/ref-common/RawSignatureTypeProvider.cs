@@ -78,8 +78,26 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
         return true;
     }
     private readonly Func<MetadataReader, EntityHandle, string>? _typeIdentity;
-    public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null) =>
-        _typeIdentity = typeIdentity;
+    readonly ImmutableArray<string> _ownerArguments;
+    public RawSignatureTypeProvider(Func<MetadataReader, EntityHandle, string>? typeIdentity = null,
+        ImmutableArray<string> ownerArguments = default) =>
+        (_typeIdentity, _ownerArguments) = (typeIdentity, ownerArguments);
+
+    // A base edge is a nominal type or GENERICINST. Decode its arguments with the same
+    // scoped identity provider as a candidate method; method variables never use this frame.
+    internal ImmutableArray<string> BaseArguments(MetadataReader reader, EntityHandle edge, TContext context)
+    {
+        if (edge.Kind != HandleKind.TypeSpecification) return [];
+        var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)edge).Signature);
+        if (blob.ReadSignatureTypeCode() != SignatureTypeCode.GenericTypeInstance ||
+            blob.ReadSignatureTypeCode() != SignatureTypeCode.TypeHandle)
+            throw new BadImageFormatException("Expected a constructed CLR base type");
+        blob.ReadTypeHandle();
+        var args = ImmutableArray.CreateBuilder<string>(blob.ReadCompressedInteger());
+        var decoder = new System.Reflection.Metadata.Ecma335.SignatureDecoder<string,TContext>(this, reader, context);
+        while (args.Count < args.Capacity) args.Add(decoder.DecodeType(ref blob));
+        return args.MoveToImmutable();
+    }
 
     internal static string ScopedReferenceIdentity(MetadataReader reader, TypeReferenceHandle handle)
     {
@@ -122,7 +140,8 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
     public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments) =>
         $"{genericType}<{string.Join(",", typeArguments)}>";
     public string GetGenericMethodParameter(TContext genericContext, int index) => $"!!{index}";
-    public string GetGenericTypeParameter(TContext genericContext, int index) => $"!{index}";
+    public string GetGenericTypeParameter(TContext genericContext, int index) =>
+        !_ownerArguments.IsDefaultOrEmpty ? _ownerArguments[index] : $"!{index}";
     public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired) =>
         $"{(isRequired ? "modreq" : "modopt")}<{modifier}>({unmodifiedType})";
     public string GetPinnedType(string elementType) => $"pinned<{elementType}>";

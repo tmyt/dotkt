@@ -2224,6 +2224,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         var metadataNamespace = _md.GetString(def.Namespace);
         var kotlinName = KotlinDefinitionPath(handle).Chain[^1];
         var isClrDelegate = IsSystemType(def.BaseType, "System", "MulticastDelegate");
+        List<OverrideBase>? overrideBases = null;
         var isInterface = isClrDelegate || (def.Attributes & TypeAttributes.Interface) != 0;
         var isEnum = IsSystemType(def.BaseType, "System", "Enum");
         var isFlagsEnum = isEnum && IsExactSystemFlagsEnum(handle, def);
@@ -2584,6 +2585,9 @@ internal sealed partial class AssemblyScanner : IDisposable
                             declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
                     };
                     function.Flags = CallableVisibility(methodHandle, function.Flags);
+                    if (!_attrs.IsDotKtAssembly && (method.Attributes & (MethodAttributes.Virtual | MethodAttributes.NewSlot)) == MethodAttributes.Virtual)
+                        ReconcileOverrideNullability(function, method, context, names, signatures,
+                            overrideBases ??= OverrideBases(def, typeContext, names, signatures));
                     PromoteContextParameters(method, function);
                     ApplySourceFunctionPriority(function, kotlinFlags, names);
                     // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
