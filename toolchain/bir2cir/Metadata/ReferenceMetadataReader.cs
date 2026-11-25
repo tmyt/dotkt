@@ -285,7 +285,7 @@ static class ReferenceMetadataReader
     // MetadataLoadContext so the metadata-only assembly reads cleanly. Per-type try/catch: one malformed type is
     // skipped, never aborting the whole scan (the failure mode that left Assembly.LoadFrom's index empty).
     internal static ReferenceDotKtMetadata Read(string reference, MetadataLoadContext mlc,
-        NativeSignatureReader signatures, Func<ParameterInfo, TypeNode> signatureSlot)
+        NativeSignatureReader signatures, bool metadataBuild, Func<ParameterInfo, TypeNode> signatureSlot)
     {
         var metadata = new ReferenceDotKtMetadata();
         try
@@ -771,7 +771,7 @@ static class ReferenceMetadataReader
                             ReflectedWitnessIndices = declarationIdentity?.ReflectedWitnessIndices,
                             ValueAdapter = valueMember?.ConstructorArguments[0].Value as string,
                             ValueSlot = valueMember?.ConstructorArguments[1].Value as string,
-                            MetadataValueSignature = valueMember == null ? null : signatures.ExactMethod(method),
+                            MetadataValueSignature = metadataBuild && valueMember != null ? signatures.ExactMethod(method) : null,
                             SignatureAllocated = declarationIdentity?.SignatureAllocated == true,
                             LateinitState = dotKtAuthored ? ReadLateinitState(method) : null,
                             SignatureParameters = method.GetParameters().Select(signatureSlot).ToArray(),
@@ -2969,16 +2969,33 @@ static class ReferenceMetadataReader
     // here and must retain their CLR owner space and position.
     internal static TypeNode DeclarationTypeNode(Type type) => DeclarationTypeNode(type, nominalDelegates: false);
 
-    internal static TypeNode MetadataEdgeArgument(Type type) =>
-        DeclarationTypeNode(type, nominalDelegates: true, preserveNestedIdentity: true, nativeNames: true, exactPrimitiveNames: true);
+    internal static IEnumerable<(string Scope, string Name, TypeNode.Fqn Edge)> DeclaredMetadataInterfaces(
+        MetadataReader reader, Type definition)
+    {
+        var row = reader.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(definition.MetadataToken));
+        foreach (var handle in row.GetInterfaceImplementations())
+        {
+            var edge = reader.GetInterfaceImplementation(handle).Interface;
+            var head = edge;
+            if (head.Kind == HandleKind.TypeSpecification)
+            {
+                var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)head).Signature);
+                var code = blob.ReadSignatureTypeCode();
+                if (code == SignatureTypeCode.GenericTypeInstance) code = blob.ReadSignatureTypeCode();
+                if (code != SignatureTypeCode.TypeHandle) throw new InvalidDataException("InterfaceImpl has no nominal declaration");
+                head = blob.ReadTypeHandle();
+            }
+            var (scope, name) = DotKt.Toolchain.RawSignatureTypeProvider<object>.NominalLeaf(reader, head);
+            yield return (scope, name, (TypeNode.Fqn)NativeSignatureReader.Type(reader, edge));
+        }
+    }
 
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
         DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
 
-    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false,
-        bool exactPrimitiveNames = false)
+    static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false)
     {
-        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity, nativeNames, exactPrimitiveNames);
+        TypeNode Project(Type t) => DeclarationTypeNode(t, nominalDelegates, preserveNestedIdentity, nativeNames);
         string Name(Type def) => nativeNames || preserveNestedIdentity && def.IsNested ? ExactPhysicalMetadataName(def)
             : DottedFqn(StripGenericArity(def.FullName ?? def.Name));
         if (type == null) return null;
@@ -3012,7 +3029,7 @@ static class ReferenceMetadataReader
         }
         // This is an exact reflected declaration, not Kotlin's Unit-return convention. A real Unit class must stay
         // a value-position token here, particularly beneath constructed interfaces; only System.Void denotes no value.
-        var prim = exactPrimitiveNames || type.FullName == "kotlin.Unit" ? null : PrimitiveBirName(type);
+        var prim = type.FullName == "kotlin.Unit" ? null : PrimitiveBirName(type);
         return new TypeNode.Fqn(prim ?? Name(type));
     }
 

@@ -32,7 +32,8 @@ static partial class ClrMemberResolution
                     : ClrDeclarationMatching.PickDeclaredConstructor(refs, candidates, signature,
                         $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(signature)})",
                         metadataBuild ? InterfaceSlotTypeComparer.Instance : null);
-                var reference = metadataBuild ? ClrMemberReferences.MetadataDeclaration(refs, winner, baseFqn.Args ?? [])
+                var reference = metadataBuild ? ClrMemberReferences.MetadataDeclaration(refs, winner,
+                    new TypeNode.Fqn(winner.DeclaringType.FullName, baseFqn.Args))
                     : MemberRefOf(localTypes, refs, winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
                 ctor.BaseCtorRef = BirMemberReference.FromPhysical(reference);
                 // BaseCtorRef owns the physical slots. Keep the selected Kotlin

@@ -334,7 +334,7 @@ sealed class Pipeline
     {
         Directory.CreateDirectory(_options.OutDir);
 
-        using var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
+        using var refs = ReferenceMetadataIndex.Build(_options.CompileReferences, metadataBuild: _options.RefBuild);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).

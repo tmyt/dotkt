@@ -192,7 +192,8 @@ sealed partial class ValueRepresentationLowering
         internal LiveMethod(MemberBinding reference, bool metadataBuild)
         {
             this.reference = reference;
-            if (metadataBuild) metadataSignature = reference.MetadataValueSignature;
+            if (metadataBuild) metadataSignature = reference.MetadataValueSignature
+                ?? throw new InvalidOperationException($"Missing metadata declaration for value member '{reference.DeclarationId}'");
         }
         internal bool HasSource => source != null;
         internal BirFunctionDeclaration SourceOccurrence => source

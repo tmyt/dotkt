@@ -104,19 +104,15 @@ static class ClrMemberReferences
 
     // A metadata build links the MethodDef in the compile image itself, not its shipped twin.
     // Its signature stays open; only the declaring edge is instantiated in the caller's frame.
-    internal static MemberRefNode MetadataDeclaration(ReferenceMetadataIndex refs, MethodBase selected, TypeNode[] arguments)
+    internal static MemberRefNode MetadataDeclaration(ReferenceMetadataIndex refs, MethodBase selected, TypeNode.Fqn owner)
     {
-        var edge = selected.DeclaringType;
         var member = OpenDeclarationOf(selected);
         var signature = refs.MetadataMethodSignature(member);
-        var ownerArgs = edge.GetGenericArguments().Select(ReferenceMetadataReader.MetadataEdgeArgument)
-            .Select(arg => SupertypeGraph.SubstOwnerTvs(arg, arguments)).ToArray();
         var ctor = member is ConstructorInfo;
         var reference = new MemberRefNode(ctor ? MemberRefNode.Kinds.Ctor : MemberRefNode.Kinds.Method,
-            member.Module.Assembly.GetName().Name, new TypeNode.Fqn(member.DeclaringType.FullName,
-                ownerArgs.Length == 0 ? null : ownerArgs), ctor ? MemberRefNode.CtorName : member.Name,
+            member.Module.Assembly.GetName().Name, owner, ctor ? MemberRefNode.CtorName : member.Name,
             member.IsGenericMethod ? member.GetGenericArguments().Length : 0,
-            ctor || signature.Return is TypeNode.Fqn { Name: "System.Void" } ? MemberRefNode.Void : signature.Return,
+            ctor ? MemberRefNode.Void : signature.Return,
             ConventionOf(member), signature.Parameters);
         reference.Validate();
         return reference;

@@ -165,6 +165,31 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // Borrowed read-only declaration facts, as in the shared decoder's contract.
     internal NativeSignatureReader.Signature NativeMethodSignature(MethodBase method) => _nativeSignatures.Method(method);
     internal NativeSignatureReader.Signature MetadataMethodSignature(MethodBase method) => _nativeSignatures.ExactMethod(method);
+    readonly Dictionary<Type, (Type Definition, TypeNode.Fqn Edge)[]> _metadataInterfaces = new();
+    internal IEnumerable<(Type Definition, TypeNode.Fqn Owner)> MetadataInterfaceOwners(Type root, TypeNode[] args)
+    {
+        var seen = new HashSet<(Type, TypeNode.Fqn)>();
+        var pending = new Stack<(Type Definition, TypeNode.Fqn Owner)>();
+        pending.Push((root, new(root.FullName, args.Length == 0 ? null : args)));
+        while (pending.TryPop(out var item))
+        {
+            if (!seen.Add(item)) continue;
+            yield return item;
+            if (!_metadataInterfaces.TryGetValue(item.Definition, out var edges))
+            {
+                var reader = _universe.ModuleMetadata(item.Definition.Module);
+                edges = DeclaredMetadataInterfaces(reader, item.Definition).Select(row => {
+                    var target = row.Scope == item.Definition.Assembly.FullName ? item.Definition.Assembly.GetType(row.Name)
+                        : ResolveRefTypeIn(row.Name, new AssemblyName(row.Scope).Name);
+                    return (target ?? throw new InvalidOperationException(
+                        $"bir2cir: metadata interface '{row.Name}' not found in '{row.Scope}'"), row.Edge);
+                }).ToArray();
+                _metadataInterfaces.Add(item.Definition, edges);
+            }
+            foreach (var edge in edges)
+                pending.Push((edge.Definition, (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(edge.Edge, item.Owner.Args ?? [])));
+        }
+    }
     internal TypeNode NativeFieldSignature(FieldInfo field) => _nativeSignatures.Field(field);
 
     internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
@@ -4965,7 +4990,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
 
 
-    public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs)
+    public static ReferenceMetadataIndex Build(IReadOnlyList<string> refs, bool metadataBuild = false)
     {
         MetadataDeclaredMembers.EnsureAvailable();
         // bir2cir is a ref-READER: a consumed cross-module DotKt library references the RUNTIME stdlib
@@ -4984,7 +5009,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 reference,
                 identity.Name ?? Path.GetFileNameWithoutExtension(reference),
                 identity.Version?.ToString() ?? "",
-                ReferenceMetadataReader.Read(reference, mlc, nativeSignatures,
+                ReferenceMetadataReader.Read(reference, mlc, nativeSignatures, metadataBuild,
                     parameter => ReadDeclarationSignatureSlot(parameter, nativeSignatures))));
         }
 
