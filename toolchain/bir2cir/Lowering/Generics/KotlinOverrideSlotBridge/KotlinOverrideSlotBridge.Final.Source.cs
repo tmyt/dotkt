@@ -77,6 +77,15 @@ static partial class KotlinOverrideSlotBridge
         }
         internal bool CarrierSeam(TypeNode left, TypeNode right) =>
             CarrierConstruction(left, right) != null || CarrierConstruction(right, left) != null;
+        internal Def FacesForInheritedBody(Def owner, SelectedSlot slot)
+        {
+            // The class's own existential view exposes its base class's interfaces, too.
+            // Exposing an inherited slot is not a new declaration that reimplements it.
+            if (owner.Base == null || carriers == null || !carriers.TryGetValue(owner.Name, out var carrier)
+                || slot.DescriptorSpec.Name == carrier || !SupertypeGraph.Reaches(owner.Base, slot.SemanticSpec, Index.Definitions, References))
+                return owner;
+            return new Def { Interfaces = owner.Interfaces.Where(face => face.Name != carrier).ToArray() };
+        }
         internal void Append(IBirTypeDeclaration owner, BirFunctionDeclaration method)
         {
             owner.Methods = owner.Methods.OrEmpty().Append(method).ToArray();
@@ -194,9 +203,11 @@ static partial class KotlinOverrideSlotBridge
                 || SupertypeGraph.Reaches(provider, slot.SemanticSpec, defs, refs)
                 || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [provider] },
                     slot.DescriptorSpec, defs, refs, isValue, context.LocalNames))) return;
+            var faces = selectedBody is { IsDefault: false } && slot.IsInterface && slot.Referenced
+                ? context.FacesForInheritedBody(definition, slot) : definition;
             var reimplements = slot.IsInterface && definition.Kind == "class"
-                && (ReachesFromDeclaredInterface(definition, slot.SemanticSpec, defs, refs)
-                    || slot.Referenced && ReachesFromDeclaredPhysicalInterface(definition, slot.DescriptorSpec,
+                && (ReachesFromDeclaredInterface(faces, slot.SemanticSpec, defs, refs)
+                    || slot.Referenced && ReachesFromDeclaredPhysicalInterface(faces, slot.DescriptorSpec,
                         defs, refs, isValue, context.LocalNames));
             // Owned claims are selected before inherited bodies. Reintroducing a face for
             // one member makes the CLR reconsider implicit bindings for its siblings, too.

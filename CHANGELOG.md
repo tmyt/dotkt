@@ -12,6 +12,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Read-only Kotlin map views over CLR dictionaries reflect subsequent updates without copying the dictionary's keys, values, or entries (#1605).
 - Preserve the exact method type argument when two specialized Kotlin interfaces select the same override with different CLR constraint frames (#1922).
+- Calls through a constructed CLR interface now reach the Kotlin override when a non-generic native base inherits the default implementation (#1976).
 - A nullability smart cast no longer redirects a by-reference write to a copy of a local. DotKt rejects passing a value-type location where the CLR requires a nullable value-type address, or vice versa (#1901).
 - Preserve the original mutable collection when a Kotlin generic call takes both a projected key and an independently constructed collection for the same type parameter (#1917).
 - Resolve package runtime assemblies for IL emission even when `CopyLocalLockFileAssemblies=false`, without copying them into the build output (#1944).

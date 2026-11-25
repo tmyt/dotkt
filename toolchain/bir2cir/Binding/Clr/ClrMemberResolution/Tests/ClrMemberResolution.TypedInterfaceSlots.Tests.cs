@@ -57,6 +57,12 @@ static partial class ClrMemberResolution
         var externalClass = new BirClassDefinition { Name = "Fixture.External", Kind = "class", Methods = new[] { externalMethod } };
         var externalRoot = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { externalClass } };
         var native = ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location });
+        var bareAction = new TypeNode.Fqn("System.Action", [text]);
+        var exactAction = new TypeNode.Fqn("System.Action`1", [text]);
+        if (!native.SameNativeDeclaration(bareAction, exactAction)
+            || native.SameNativeDeclaration(new TypeNode.Fqn("System.Action"), exactAction)
+            || native.SameNativeDeclaration(new TypeNode.Fqn("System.Action", [text, text]), exactAction))
+            throw new InvalidOperationException("Native slot ownership lost the selected TypeDef or confused same-named declarations of different arities");
         ResolveInterfaceSlots(null, new[] { externalRoot }, native);
         var set = externalClass.InterfaceSlotRefs.Value.Single();
         var slot = set.Slots.Value.Single();

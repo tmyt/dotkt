@@ -4182,6 +4182,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         if (shape.Base != null) yield return (shape.Base, false);
     }
 
+    // The source hierarchy and a CLR override marker may spell a native owner
+    // differently. Both views were read from a TypeDef; compare that declaration
+    // without substituting its physical graph for Kotlin's semantic supertypes.
+    internal bool SameNativeDeclaration(TypeNode.Fqn left, TypeNode.Fqn right) =>
+        TryReferenceTypeShapeValue(left, out var a) && a.NativeDeclaration != null
+        && TryReferenceTypeShapeValue(right, out var b) && a.NativeDeclaration == b.NativeDeclaration;
+
     SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
         HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams,
         out MethodSlotIdentity declaredMethod,
@@ -5731,7 +5738,7 @@ sealed class ReferenceDotKtMetadata
 // a cross-module call site must know "is this referenced callee suspend?" (its CLR shape is the Task<T> kickoff).
 // NO consumer reads it yet — bundle 6 wires it.
 sealed record ReferenceTypeShape(int TypeParamCount, string Kind, TypeNode.Fqn Base, TypeNode.Fqn[] Interfaces,
-    JsonObject SourceFacts = null);
+    JsonObject SourceFacts = null, Type NativeDeclaration = null);
 
 // The outcome of looking for one member at one owner (#86 D1). `NotDeclared` is the ONLY one that lets the search
 // continue to the supertypes: a member declared at this level is the declaration the call binds to whether or not it

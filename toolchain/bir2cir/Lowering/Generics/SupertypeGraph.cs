@@ -193,6 +193,8 @@ static class SupertypeGraph
             var spec = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
             if (exactConstruction ? TypeKey(spec) == ownerKey : SameDeclaration(spec, owner, refs?.PhysicalTypeNames)) return true;
+            if (!exactConstruction && !defs.ContainsKey(spec.Name) && !defs.ContainsKey(owner.Name)
+                && refs?.SameNativeDeclaration(spec, owner) == true) return true;
             if (defs.TryGetValue(spec.Name, out var def))
             {
                 var args = EffectiveArgs(spec, def.Arity);

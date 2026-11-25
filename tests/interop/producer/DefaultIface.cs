@@ -8,4 +8,9 @@ namespace DefaultIface {
         U Echo<U>(U value) => value;
         int Required(int value);
     }
+    public interface IDefaultValue<T> { int Read() => 1; }
+    public class StringDefault : IDefaultValue<string> { }
+    public static class DefaultValueCaller {
+        public static int Read(IDefaultValue<string> value) => value.Read();
+    }
 }

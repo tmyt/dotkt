@@ -43,6 +43,8 @@ import Cbk.IBox
 import Cbk.StringBox
 // CLR default interface implementations: only the genuinely abstract member is an implementation obligation.
 import DefaultIface.IDefaultArithmetic
+import DefaultIface.DefaultValueCaller
+import DefaultIface.StringDefault
 // #205: generic interface deriving a member-bearing non-generic base interface
 import IfaceBaseGen.Source as IfaceBaseSource
 import IfaceBaseGen.IPingable as IfaceBasePingable
@@ -107,6 +109,8 @@ private fun <T : IMarker> constrainedOpenGenericUnitResultDelegate(value: Constr
 
 private fun <T : IBox<U>, U> dependentConstraintUnitResultDelegate(value: T): Any? =
     GenericCallbacks.UseDependent<T, U>({ _: T -> Unit }, value)
+
+private class ReplaceStringDefault : StringDefault() { override fun Read(): Int = 3 }
 
 class DefaultArithmetic : IDefaultArithmetic {
     override fun Required(value: Int): Int = value * 2
@@ -212,6 +216,9 @@ class CSharpInterfaceAndGenericTests {
         assertEquals(10, collisionAsInterface.Offset)
         assertEquals(99, collision.get_Offset())
         assertEquals(21, collisionAsInterface.Required(7))
+        val replacement = ReplaceStringDefault()
+        assertEquals(3, replacement.Read())
+        assertEquals(3, DefaultValueCaller.Read(replacement))
     }
 
     // #205: a generic interface (IReader<Doc>) deriving a member-bearing non-generic base interface (IPingable).
