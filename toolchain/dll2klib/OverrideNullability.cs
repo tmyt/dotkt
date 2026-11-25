@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -10,7 +11,7 @@ internal sealed partial class AssemblyScanner
     private sealed record OverrideBase(MetadataReader Reader, TypeDefinitionHandle Owner, string? Path,
         SignatureDecoder Decoder, RawSignatureTypeProvider Physical, ImmutableArray<KType> Arguments,
         ILookup<string, MethodDefinitionHandle> Virtuals);
-    private readonly Dictionary<(MetadataReader, TypeDefinitionHandle), ILookup<string, MethodDefinitionHandle>> _virtualIndices = new();
+    private readonly ConcurrentDictionary<(MetadataReader Reader, TypeDefinitionHandle Owner), ILookup<string, MethodDefinitionHandle>> _virtualIndices = new();
 
     private RawSignatureTypeProvider SlotIdentity(string? path, ImmutableArray<string> arguments = default) =>
         new((md, entity) => _publicTypeCatalog.TryResolveDefinition(md, entity, out var def, path)
@@ -38,10 +39,10 @@ internal sealed partial class AssemblyScanner
             arguments = decoder.DeclarationArguments(parent.Handle, constructed);
             definition = reader.GetTypeDefinition(parent.Handle);
             context = new GenericContext(parent.Handle, default, definition.GetGenericParameters().ToDictionary(h => h, h => reader.GetGenericParameter(h).Index));
-            if (!_virtualIndices.TryGetValue((reader, parent.Handle), out var methods))
-                _virtualIndices[(reader, parent.Handle)] = methods = definition.GetMethods()
-                    .Where(h => (reader.GetMethodDefinition(h).Attributes & MethodAttributes.Virtual) != 0)
-                    .ToLookup(h => reader.GetString(reader.GetMethodDefinition(h).Name), StringComparer.Ordinal);
+            var methods = _virtualIndices.GetOrAdd((reader, parent.Handle), static key =>
+                key.Reader.GetTypeDefinition(key.Owner).GetMethods()
+                    .Where(h => (key.Reader.GetMethodDefinition(h).Attributes & MethodAttributes.Virtual) != 0)
+                    .ToLookup(h => key.Reader.GetString(key.Reader.GetMethodDefinition(h).Name), StringComparer.Ordinal));
             result.Add(new(reader, parent.Handle, path, decoder, raw, arguments, methods));
         }
         return result;
