@@ -279,7 +279,11 @@ static class TypedCallEvalLowering
             else if (!StaysWithoutPin(Expr(slot.Value)))
             {
                 var value = slot.Value;
-                var type = StaticTypeOf(value) ?? throw new InvalidOperationException("Cannot type an address-location operand");
+                // Pin a dereference's pointer with its requested element. Deriving its type from
+                // the underlying location loses the byref contract if an inline body drops the read.
+                var type = location is BirByRefLoad load && ReferenceEquals(value, load.Ptr.OrDefault())
+                    ? new TypeNode.ByRef(load.Elem.Value)
+                    : StaticTypeOf(value) ?? throw new InvalidOperationException("Cannot type an address-location operand");
                 var name = CallEvalLowering.FreshBindingId();
                 statements.Add(new BirVariable { Name = name, Type = type, Init = Field(Expr(value)) });
                 slot.Replace(new BirLocal { Name = name, Sty = type });

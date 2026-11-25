@@ -1807,6 +1807,11 @@ are checked value conversions into that type; loading it into a Kotlin value slo
 as required. Neither an unchecked Kotlin cast nor a variance conversion relaxes the native location's type
 requirement. Passing the same local twice preserves aliasing during the call, rather than using
 copy-in/copy-out temporaries.
+Narrowing a nullable reference local, such as a `String?` checked against null, does not change its
+location: a write through `ClrRef<String>` updates that same local, including when it is captured.
+A value-type local backed by CLR `T` and one backed by `Nullable<T>` have different locations
+for this purpose. Passing either as a reference to the other is a compile-time error. A null
+check narrows the value read from the local; it does not convert its writable storage.
 A generic Kotlin backing field addressed by `ref`/`out` likewise keeps its ordinary CLR type-variable slot,
 not the separate Kotlin value-storage companion. Its layout is fixed for the instance's entire lifetime,
 including ordinary property writes before and after a native call; those writes check the exact field type.
