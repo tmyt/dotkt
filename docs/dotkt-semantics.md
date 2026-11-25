@@ -159,6 +159,10 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   the source-named entry with both original constraints; this non-overridable entry forwards to the virtual
   implementation. A C# subclass overrides the projected implementation, not the forwarding entry.
   Kotlin callers and subclasses keep the original source signature. Imported C# virtual slots are unchanged.
+  When two Kotlin interfaces specialize the same source method with different CLR constraint frames,
+  calls through either interface dispatch to the same override with the caller's actual method argument.
+  For a dependent bound such as `A : K`, the specialized owner's `K` proves the bound; it does not
+  replace `A` in a constructed return value.
 - A CLR base class or an implemented CLR interface needs **one actual CLR type** for each of its
   generic parameters. If that parameter requires both a class and an interface, a star-projected
   Kotlin argument is accepted when a common CLR type satisfies both. Otherwise constructing the

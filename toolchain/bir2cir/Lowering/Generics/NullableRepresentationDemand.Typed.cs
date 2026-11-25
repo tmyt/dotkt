@@ -104,10 +104,13 @@ static partial class NullableRepresentationDemand
         foreach (var owner in owners)
         foreach (var method in owner.Methods.Where(method => !method.IsLocal))
         {
-            if (!method.View.CanExtendBodyFrame && method.View.Overrides.Length == 0 && method.View.OwnsValueSlots(policy))
+            if (method.View.Overrides.Length == 0 && method.View.OwnsValueSlots(policy))
                 for (var index = 0; index < method.TypeParameters.Length; index++)
-                    if (policy.NeedsVirtualStorageWitness(NullableRepresentationMaterialization.StorageClassifierBounds(
-                        method.TypeParameters, index, "method", null, owner.View.Parameters.OrEmpty(), null)))
+                    // A final inherited instance method can fill an interface slot introduced by a subclass.
+                    // Publish the owner-dependent argument in the same shape on both declarations.
+                    if ((method.View.Function?.Static.OrDefault() != true && method.TypeParameters[index].Constraints.OrEmpty().Any(c => c is TypeNode.Tv { Scope: "type" }))
+                        || (!method.View.CanExtendBodyFrame && policy.NeedsVirtualStorageWitness(NullableRepresentationMaterialization.StorageClassifierBounds(
+                            method.TypeParameters, index, "method", null, owner.View.Parameters.OrEmpty(), null))))
                         method.Signature.Add(new TypeNode.Tv("method", index), RepresentationRole.Storage);
             if (method.View.Id is string id && declaredMethods?.GetValueOrDefault(id) is { } declared)
             {

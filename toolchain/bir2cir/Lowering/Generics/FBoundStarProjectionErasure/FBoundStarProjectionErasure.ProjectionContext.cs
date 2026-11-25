@@ -592,9 +592,17 @@ static partial class FBoundStarProjectionErasure
                 .Where(r => r.Bound is not TypeNode.Tv tv || tv.Scope != scope || !linked.Contains(tv.I))
                 .Select(r => (r.Index, Bound: StripSourceNullability(selected.CloseBound(r.Bound, closeArgument)))).Distinct().ToArray();
             var bounds = declared.Select(r => r.Bound).Distinct().ToArray();
-            if (bounds.Length == 0) return null;
+            // The value has its own material argument. Keep the most precise common
+            // class in the nominal method slot, including when the published slot
+            // only requires an interface. A later override can use that class;
+            // the existential interface spelling is not itself a CLR class.
+            var separateMaterial = scope == "method" && linked.Any(i =>
+                entry.Slot(i).Role is { Representation: NullableRepresentationFrame.Role.Ordinary } role &&
+                frame.StorageIndices.Contains(role.SourceIndex));
+            if (bounds.Length == 0 && !separateMaterial) return null;
             TypeNode Identity(TypeNode type) => ConstraintKey(type);
-            if (!bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class")) return null;
+            var classBound = bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class");
+            if (!classBound && !separateMaterial) return null;
 
             // A nominal Kotlin value interface cannot witness a CLR class bound. Use a real
             // shared base of the possible constructions only if it proves every constraint.
@@ -608,7 +616,7 @@ static partial class FBoundStarProjectionErasure
                 variances?.ElementAtOrDefault(i) is "in" or "out" ? (TypeNode)new TypeNode.Star() : arg).ToArray() };
             var supers = SupertypeGraph.ReachableFromClass(common, Preparation.SourceSupertypes, References).Skip(1).ToArray();
             StorageWitness split = null;
-            foreach (var (ancestor, isInterface) in supers.Reverse())
+            foreach (var (ancestor, isInterface) in separateMaterial ? supers : supers.Reverse())
             {
                 if (isInterface || ContainsExistentialProjection(ancestor) || acceptsPrimary?.Invoke(ancestor) == false) continue;
                 var nominal = SupertypeGraph.ReachableFromClass(ancestor, Preparation.SourceSupertypes, References)
@@ -617,7 +625,7 @@ static partial class FBoundStarProjectionErasure
                 if (missing.Length == 0) return new(ancestor, []);
                 // The value, not its common base, must implement each additional interface.
                 // Only a projected implementation with independent slots may use this proof.
-                if (allowIntersection && split == null && missing.All(bound => bound is TypeNode.Fqn required
+                if (classBound && allowIntersection && split == null && missing.All(bound => bound is TypeNode.Fqn required
                     && !ContainsExistentialProjection(required) && (supers.Any(edge => edge.isInterface
                         && Identity(edge.spec) == Identity(required)) || TryExistentialCarrier(application.Name, out var carrier)
                         && HasPhysicalSupertype(new TypeNode.Fqn(carrier), required))))
