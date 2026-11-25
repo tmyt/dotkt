@@ -8868,7 +8868,7 @@ internal sealed partial class SignatureDecoder : ISignatureTypeProvider<KType, G
     // csc, `<Nullable>enable</Nullable>`):
     //   * native-sized integers are value types with no byte (`Dictionary<nint, string?>` is `[1, 2]`);
     //   * a function POINTER flattens its own node plus its return and parameters (`delegate*<string?, string?>` is
-    //     `[0, 2, 2]`) while one is consumed here — a SHIFT;
+    //     `[0, 2, 2]`), visiting its return before its parameters;
     //   * an ordinary pointer holds exactly one byte (`delegate*<int*, string?, void>` is `[0, 0, 2]`); its preserved
     //     `ClrPointer<T>` node consumes that byte and nested pointers consume one apiece;
     //   * a `where T : struct` parameter holds one byte valued 0 (`Dictionary<T, string?>` is `[1, 0, 2]`), which is

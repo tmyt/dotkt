@@ -2,6 +2,7 @@ import NativeIntegerSlots.Counter
 import NativeIntegerSlots.Driver
 import NativeIntegerSlots.ICounter
 import NUnit.Framework.TestAttribute
+import System.Collections.Generic.Dictionary
 import System.IntPtr
 import System.UIntPtr
 
@@ -16,5 +17,8 @@ class NativeIntegerSlotTests {
     fun dispatchesThroughImportedInterfaceAndBaseClass() {
         val counter = NativeIntegerCounter()
         check(Driver.Check(counter, counter))
+        val map = Dictionary<IntPtr, String?>()
+        map[IntPtr(1)] = null
+        check(Driver.AcceptNullValue(map))
     }
 }
