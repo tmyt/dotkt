@@ -362,8 +362,7 @@ sealed partial class Emitter
         // member-lookup-residual: exact memberRef field-name+type comparison.
         var hits = candidates.Where(field => field.Name == reference.Name
                 && (NativeSignatures.Field(field) is { } native ? native == reference.ReturnType
-                    : TypeRefEquals(reference.ReturnType, field.FieldType,
-                        field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers())))
+                    : TypeRefEquals(reference.ReturnType, field.FieldType, field.GetModifiedFieldType())))
             .ToList();
         if (hits.Count == 1) return hits[0];
         // member-lookup-residual: diagnostic-only same-name list after exact memberRef matching failed.
@@ -386,15 +385,12 @@ sealed partial class Emitter
         var declared = reference.ParameterTypes ?? System.Array.Empty<TypeNode>();
         if (parameters.Length != declared.Length) return false;
         for (int i = 0; i < parameters.Length; i++)
-            if (!TypeRefEquals(declared[i], parameters[i].ParameterType,
-                    parameters[i].GetRequiredCustomModifiers(), parameters[i].GetOptionalCustomModifiers()))
+            if (!TypeRefEquals(declared[i], parameters[i].ParameterType, parameters[i].GetModifiedParameterType()))
                 return false;
         if (member is MethodInfo method)
         {
             var returnParameter = method.ReturnParameter;
-            if (!TypeRefEquals(reference.ReturnType, method.ReturnType,
-                    returnParameter?.GetRequiredCustomModifiers() ?? Type.EmptyTypes,
-                    returnParameter?.GetOptionalCustomModifiers() ?? Type.EmptyTypes))
+            if (!TypeRefEquals(reference.ReturnType, method.ReturnType, returnParameter.GetModifiedParameterType()))
                 return false;
         }
         return true;
@@ -402,10 +398,13 @@ sealed partial class Emitter
 
     readonly NativeSignatureReader NativeSignatures = new();
 
-    // A slot's declared type WITH its modifiers. Reflection reports modifiers as two sets beside the type;
-    // the reference nests them around it, in the same order, so the comparison unwraps and matches sets.
-    bool TypeRefEquals(TypeNode declared, Type actual, Type[] required, Type[] optional)
+    // The modified reflection view retains modifiers on elements and generic arguments.
+    // Its ordinary companion supplies the nominal identity used by target-universe lookup.
+    bool SlotModifiersEqual(ref TypeNode declared, Type modified)
     {
+        var required = modified?.GetRequiredCustomModifiers() ?? Type.EmptyTypes;
+        var optional = modified?.GetOptionalCustomModifiers() ?? Type.EmptyTypes;
+        if (declared is not TypeNode.Mod) return required.Length == 0 && optional.Length == 0;
         var wantRequired = new List<TypeNode>();
         var wantOptional = new List<TypeNode>();
         while (declared is TypeNode.Mod mod)
@@ -413,8 +412,7 @@ sealed partial class Emitter
             (mod.Req ? wantRequired : wantOptional).Add(mod.M);
             declared = mod.Of;
         }
-        if (!ModifiersEqual(wantRequired, required) || !ModifiersEqual(wantOptional, optional)) return false;
-        return TypeRefEquals(declared, actual);
+        return ModifiersEqual(wantRequired, required) && ModifiersEqual(wantOptional, optional);
     }
 
     bool ModifiersEqual(List<TypeNode> declared, Type[] actual, Func<string, Type> resolveLeaf = null)
@@ -425,21 +423,22 @@ sealed partial class Emitter
         var remaining = actual.ToList();
         foreach (var want in declared)
         {
-            int index = remaining.FindIndex(a => TypeRefEquals(want, a, resolveLeaf));
+            int index = remaining.FindIndex(a => TypeRefEquals(want, a, resolveLeaf: resolveLeaf));
             if (index < 0) return false;
             remaining.RemoveAt(index);
         }
         return true;
     }
 
-    bool TypeRefEquals(TypeNode declared, Type actual, Func<string, Type> resolveLeaf = null)
+    bool TypeRefEquals(TypeNode declared, Type actual, Type modified = null, Func<string, Type> resolveLeaf = null)
     {
+        if (!SlotModifiersEqual(ref declared, modified)) return false;
         switch (declared)
         {
             case TypeNode.ByRef byRef:
-                return actual.IsByRef && TypeRefEquals(byRef.Of, actual.GetElementType(), resolveLeaf);
+                return actual.IsByRef && TypeRefEquals(byRef.Of, actual.GetElementType(), modified?.GetElementType(), resolveLeaf);
             case TypeNode.Ptr pointer:
-                return actual.IsPointer && TypeRefEquals(pointer.Of, actual.GetElementType(), resolveLeaf);
+                return actual.IsPointer && TypeRefEquals(pointer.Of, actual.GetElementType(), modified?.GetElementType(), resolveLeaf);
             case TypeNode.Array array:
             {
                 if (!actual.IsArray) return false;
@@ -447,7 +446,7 @@ sealed partial class Emitter
                 int rank; try { rank = actual.GetArrayRank(); } catch { rank = 1; }
                 // `T[]` and `T[*]` are different types; the reference says which by whether it states a rank.
                 if (array.SzArray != sz || (!array.SzArray && array.Rank != rank)) return false;
-                return TypeRefEquals(array.Elem, actual.GetElementType(), resolveLeaf);
+                return TypeRefEquals(array.Elem, actual.GetElementType(), modified?.GetElementType(), resolveLeaf);
             }
             case TypeNode.Tv variable:
                 if (!actual.IsGenericParameter) return false;
@@ -457,7 +456,7 @@ sealed partial class Emitter
             case TypeNode.Nullable nullable:
                 return actual.IsGenericType && !actual.IsGenericTypeDefinition
                     && actual.GetGenericTypeDefinition()?.FullName == "System.Nullable`1"
-                    && TypeRefEquals(nullable.Of, actual.GetGenericArguments()[0], resolveLeaf);
+                    && TypeRefEquals(nullable.Of, actual.GetGenericArguments()[0], modified?.GetGenericArguments()[0], resolveLeaf);
             case TypeNode.Fqn named:
             {
                 if (named.Args is { Length: > 0 })
@@ -466,9 +465,10 @@ sealed partial class Emitter
                     var definition = actual.GetGenericTypeDefinition();
                     if (!NameEquals(named.Name, definition)) return false;
                     var arguments = actual.GetGenericArguments();
+                    var modifiedArguments = modified?.GetGenericArguments();
                     if (arguments.Length != named.Args.Length) return false;
                     for (int i = 0; i < arguments.Length; i++)
-                        if (!TypeRefEquals(named.Args[i], arguments[i], resolveLeaf)) return false;
+                        if (!TypeRefEquals(named.Args[i], arguments[i], modifiedArguments?[i], resolveLeaf)) return false;
                     return true;
                 }
                 return NameEquals(named.Name, actual, resolveLeaf);
