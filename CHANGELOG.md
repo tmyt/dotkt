@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Imported native-sized integers retain their `System.IntPtr` or `System.UIntPtr` type in Kotlin, including in CLR interface implementations and virtual overrides (#1974).
+
 - Kotlin subclasses of a CLR class no longer need to reimplement a virtual method solely because its override changed a nullable-reference annotation (#1940).
 
 - Read-only Kotlin map views over CLR dictionaries reflect subsequent updates without copying the dictionary's keys, values, or entries (#1605).
