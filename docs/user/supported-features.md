@@ -46,7 +46,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | `out`/`ref` via `byref()`; user Kotlin `ClrRef<T>` parameters as CLR `ref T`; nullable value types (`int?`); .NET enums (including typed `[Flags]` operations) | ✅ |
 | [Native P/Invoke](using-dotnet-from-kotlin.md#5-native-calls-with-dllimportattribute) via top-level `external fun` + CLR `DllImportAttribute`: blittable primitives and enums, `IntPtr`/`UIntPtr`, `ClrRef<T>` of those types, and read-only by-value `String`/`String?` inputs | ✅ |
 | Plain value consumption of a generic method's ref return | 🚧 [Current generic-call emission bug](using-dotnet-from-kotlin.md#4-out--ref-parameters--byref) |
-| Imported BCL signatures containing native-integer `nint`/`nuint` codes | 🚧 [Current projection bug](using-dotnet-from-kotlin.md#imported-native-sized-integers) |
+| [Imported native-sized integers](using-dotnet-from-kotlin.md#imported-native-sized-integers) (`nint`/`nuint`) | ✅ |
 | C# operator overloads and extension methods | ✅ |
 | Kotlin arrays as native `System.Array` (same storage) | ✅ starting with 0.9.20 ([array interop](using-dotnet-from-kotlin.md#kotlin-arrays-as-systemarray)) |
 | Inherit .NET base classes / implement .NET interfaces | ✅ |

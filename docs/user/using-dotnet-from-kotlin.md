@@ -134,12 +134,9 @@ unsupported forms with undefined behavior.
 
 ### Imported native-sized integers
 
-Some BCL signatures encode `nint`/`nuint` as the CLR native-integer primitive signature codes.
-The current DLL-to-KLIB projection falls back to `Any?` for those codes instead of preserving
-`System.IntPtr`/`System.UIntPtr`. For example, a projected `Marshal.AllocHGlobal` result can then
-fail to bind to `Marshal.WriteInt32`'s native-integer parameter. This is a projection bug, not a
-Kotlin restriction; use a CLR helper with a faithfully projected signature for an affected API.
-The Kotlin-declared P/Invoke signature subset below is a separate path.
+Use `System.IntPtr` for a CLR `nint` and `System.UIntPtr` for a CLR `nuint`, including in Kotlin
+implementations of CLR interfaces and overrides of virtual methods. These are distinct value
+types, not aliases for Kotlin `Long` and `ULong`.
 
 ## 5. Native calls with `DllImportAttribute`
 
