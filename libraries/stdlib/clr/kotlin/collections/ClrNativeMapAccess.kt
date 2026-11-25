@@ -64,7 +64,7 @@ private fun invokeMap(method: StarProjectionMethod, source: Any, arguments: Arra
     try { method.invoke(source, arguments) }
     catch (failure: StarProjectionInvocationException) { throw (failure.innerException ?: failure) }
 
-/** Operation-local dispatch plan. The original map, not this plan, crosses Kotlin value boundaries. */
+/** Selected dictionary contract, also retained by its views. The map value itself is never wrapped. */
 internal class ClrNativeMapAccess(private val source: Any, preferred: Any?) {
     // Retain the existing variance-independent raw dictionary path where it exists.
     // Only generic-only implementations need an existential interface dispatch plan.

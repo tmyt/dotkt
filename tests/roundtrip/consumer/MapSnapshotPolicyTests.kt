@@ -3,19 +3,20 @@ import roundtrip.mapsnapshot.*
 
 class CrossModuleMapSnapshotPolicyTests {
     @TestAttribute
-    fun snapshotsRetainInheritedSetPolicyAcrossDllBoundaries() {
+    fun liveViewsRetainInheritedSetPolicyAcrossDllBoundaries() {
         val map = rawSnapshotMap<String, Int>()
         map["a"] = 1
         val keys = importedSnapshotKeys(map)
         check(importedSnapshotText(keys) == "[a]" && (keys as Any).toString() == "[a]")
         check(keys == setOf("a") && keys.hashCode() == setOf("a").hashCode())
-        check(!keys.equals(setOf(1)) && !keys.equals(setOf<String?>(null)))
+        check(!keys.equals(setOf(1)))
         val entries = importedSnapshotEntries(map)
         check(!entries.equals(setOf("unrelated")))
         check(importedSnapshotText(entries) == "[a=1]" && entries == mapOf("a" to 1).entries)
         map["a"] = 2
         map["b"] = 3
-        check(keys.size == 1 && entries.size == 1 && entries.single().value == 2)
+        check(keys.size == 2 && entries.size == 2 && entries.single { it.key == "b" }.value == 3)
+        map.remove("b")
         check(importedSnapshotText(entries) == "[a=2]")
     }
 

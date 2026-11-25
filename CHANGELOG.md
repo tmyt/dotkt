@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Read-only Kotlin map views over CLR dictionaries reflect subsequent updates without copying the dictionary's keys, values, or entries (#1605).
 - Fixed-decimal duration formatting no longer depends on the CLR floating-point formatter; the output and ties-to-even rounding are unchanged (#1612).
 - Preserve a valid CLR interface type argument when directly constructing a Kotlin generic class with a star-projected value and multiple interface bounds (#1912).
 - Visit matches of an imported right-to-left CLR Regex in Kotlin input order for search, splitting, and transform replacement, without changing which matches the CLR engine chooses (#1722).

@@ -112,6 +112,8 @@ class GenericOnlyDictionaryTests {
         val value: Any = native
         val texts = value as Map<String, String>
         val numbers = value as MutableMap<Int, Int>
+        val textKeys = texts.keys
+        val numberEntries = (value as Map<Int, Int>).entries
         check(texts.size == 1 && texts["key"] == "text")
         check(numbers.size == 2 && numbers[7] == 42)
         val copy = (GenericOnlyDictionary<Int, Int>() as Any) as MutableMap<Int, Int>
@@ -125,6 +127,7 @@ class GenericOnlyDictionaryTests {
         check(numbers[7] == 101 && texts["key"] == "text")
         numbers.clear()
         check(numbers.isEmpty() && texts.size == 1)
+        check(numberEntries.isEmpty() && textKeys.single() == "key")
         var rejected = false
         try { projectedDictionarySize(value as Map<*, *>) }
         catch (_: System.InvalidOperationException) { rejected = true }

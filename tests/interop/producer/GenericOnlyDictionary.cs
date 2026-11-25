@@ -65,6 +65,12 @@ public sealed class DualDictionary : GenericOnlyDictionary<string, string>, IDic
 public static class NativeDictionaries
 {
     public static object Raw() => new Hashtable { ["key"] = "raw" };
+    public static object IgnoreCase() => new Hashtable(StringComparer.OrdinalIgnoreCase) { ["Key"] = "value" };
+    public static object FirstAndDispose(object view) {
+        var cursor = ((IEnumerable)view).GetEnumerator();
+        try { return cursor.MoveNext() ? cursor.Current : null; }
+        finally { (cursor as IDisposable)?.Dispose(); }
+    }
     public static object Generic() => new Dictionary<string, int> { ["key"] = 42 };
 }
 

@@ -18,15 +18,17 @@ class MapSnapshotPolicyTests {
         nativeKeys.Add("a")
         check(keys.equals(nativeKeys))
         check(keys.containsAll((nativeKeys as Any) as Set<String>))
-        check(!keys.equals(setOf(1)) && !keys.equals(setOf<String?>(null)))
+        check(!keys.equals(setOf(1)))
         check(!keys.isEmpty() && keys.containsAll(listOf("a")) && !keys.contains("missing"))
         check(keys !is MutableSet<*>)
         mutable["b"] = 2
-        check(keys.size == 1 && !keys.contains("b") && snapshotKeys(mutable).size == 2)
+        check(keys.size == 2 && keys.contains("b"))
+        mutable.remove("a")
+        check(keys.single() == "b")
     }
 
     @TestAttribute
-    fun entrySnapshotsKeepLiveValuesWithoutBecomingLiveSets() {
+    fun capturedEntriesFollowMembershipAndKeepTheirKey() {
         val mutable = snapshotRawMap<Int, String>()
         mutable[1] = "one"
         val entries = snapshotEntries(mutable)
@@ -37,7 +39,9 @@ class MapSnapshotPolicyTests {
         check(!entries.equals(setOf("unrelated")) && !entries.equals(setOf<Any?>(null)))
         mutable[1] = "changed"
         mutable[2] = "two"
-        check(entries.size == 1 && entry.value == "changed")
+        check(entries.size == 2 && entry.value == "changed")
+        check(entry !is MutableMap.MutableEntry<*, *>)
+        mutable.remove(2)
         check(snapshotText(entries) == "[1=changed]")
         check(entries == mapOf(1 to "changed").entries)
         check(entries.hashCode() == mapOf(1 to "changed").entries.hashCode())
@@ -58,7 +62,7 @@ class MapSnapshotPolicyTests {
             check(rejected && !cursor.hasNext())
         }
         mutable[1] = "one"
-        check(keys.isEmpty() && snapshotKeys(mutable).size == 1)
+        check(keys.single() == 1 && !cursor.hasNext())
     }
 
     @TestAttribute
@@ -70,8 +74,11 @@ class MapSnapshotPolicyTests {
         check(keys.size == 2 && keys.containsAll(listOf(1, 2)) && !keys.contains(3))
         check(keys == setOf(2, 1) && keys.hashCode() == 3)
         val erasedKeys: Set<Any?> = keys
-        check(!erasedKeys.containsAll(listOf("unrelated")) && !erasedKeys.containsAll(listOf(null)))
-        check(!keys.equals(setOf("one", "two")) && !keys.equals(setOf<Int?>(null, 2)))
+        check(!erasedKeys.containsAll(listOf("unrelated")))
+        var rejectedNull = false
+        try { erasedKeys.containsAll(listOf(null)) }
+        catch (_: System.ArgumentNullException) { rejectedNull = true }
+        check(rejectedNull && !keys.equals(setOf("one", "two")))
         val entries = snapshotEntries(mutable)
         check(entries == mapOf(1 to null, 2 to 0).entries)
         check(entries.hashCode() == mapOf(1 to null, 2 to 0).entries.hashCode())
@@ -82,10 +89,12 @@ class MapSnapshotPolicyTests {
         val floating = snapshotKeys(numbers)
         check(floating.contains(Double.NaN) && floating == setOf(Double.NaN))
         val nested = snapshotRawMap<List<Int>, Int>()
-        nested[arrayListOf(1, 2)] = 1
+        val key = arrayListOf(1, 2)
+        nested[key] = 1
         val nestedKeys = snapshotKeys(nested)
-        val expected = setOf<List<Int>>(arrayListOf(1, 2))
-        check(nestedKeys.contains(arrayListOf(1, 2)))
+        val expected = setOf<List<Int>>(key)
+        val equal = arrayListOf(1, 2)
+        check(nestedKeys.contains(equal) == nested.containsKey(equal))
         check(nestedKeys == expected && expected == nestedKeys)
         check(nestedKeys.hashCode() == expected.hashCode() && nestedKeys.toString() == "[[1, 2]]")
     }

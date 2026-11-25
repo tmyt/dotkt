@@ -82,39 +82,14 @@ public fun <K, V> clrMapGetOrDefault(m: Any, key: Any?, defaultValue: V, preferr
     return if (d.Contains(key)) (d.rawGet(key) as V) else defaultValue
 }
 
-/** `Map.keys: Set<K>` — snapshot into an identity-bearing Kotlin Set rather than exposing Dictionary.KeyCollection. */
-public fun <K, V> clrMapKeys(m: Any, preferredView: Any? = null): Set<K> {
-    if (m is KotlinMapDefaultSlots) return m.dotktMapKeys() as Set<K>
-    val e = ClrNativeMapAccess(m, preferredView).GetEnumerator()
-    val out = ArrayList<K>()
-    @Suppress("UNCHECKED_CAST")
-    try { while (e.MoveNext()) out.add(e.key() as K) } finally { e.close() }
-    return ClrMapSnapshotSet(out)
-}
+public fun <K, V> clrMapKeys(m: Any, preferredView: Any? = null): Set<K> =
+    if (m is KotlinMapDefaultSlots) m.dotktMapKeys() as Set<K> else ClrReadOnlyMapKeys(ClrNativeMapAccess(m, preferredView))
 
-/** `Map.values: Collection<V>` — an ArrayList (BCL List) IS a Collection (IReadOnlyCollection) — snapshot. */
-public fun <K, V> clrMapValues(m: Any, preferredView: Any? = null): Collection<V> {
-    if (m is KotlinMapDefaultSlots) return m.dotktMapValues() as Collection<V>
-    val e = ClrNativeMapAccess(m, preferredView).GetEnumerator()
-    val out = ArrayList<V>()
-    @Suppress("UNCHECKED_CAST")
-    try { while (e.MoveNext()) out.add(e.value() as V) } finally { e.close() }
-    return out
-}
+public fun <K, V> clrMapValues(m: Any, preferredView: Any? = null): Collection<V> =
+    if (m is KotlinMapDefaultSlots) m.dotktMapValues() as Collection<V> else ClrReadOnlyMapValues(ClrNativeMapAccess(m, preferredView))
 
-/** `Map.entries: Set<Map.Entry<K,V>>` — a pure-Set snapshot of LIVE entries (value reads go through the map). The
- *  element impl is ClrMutableMapEntry (implements MutableEntry TOO), so an entry surfaced through either the Map or
- *  the MutableMap view destructures/casts fine — at runtime every aliased map IS an IDictionary. The entry KEYS are
- *  snapshotted off the non-generic enumerator (covariance-safe); each entry's value read also goes non-generic. */
-public fun <K, V> clrMapEntries(m: Any, preferredView: Any? = null): Set<Map.Entry<K, V>> {
-    if (m is KotlinMapDefaultSlots) return m.dotktMapEntries() as Set<Map.Entry<K, V>>
-    val d = ClrNativeMapAccess(m, preferredView)
-    val e = d.GetEnumerator()
-    val out = ArrayList<Map.Entry<K, V>>()
-    @Suppress("UNCHECKED_CAST")
-    try { while (e.MoveNext()) out.add(ClrMutableMapEntry(d, e.key() as K)) } finally { e.close() }
-    return ClrMapSnapshotSet(out)
-}
+public fun <K, V> clrMapEntries(m: Any, preferredView: Any? = null): Set<Map.Entry<K, V>> =
+    if (m is KotlinMapDefaultSlots) m.dotktMapEntries() as Set<Map.Entry<K, V>> else ClrReadOnlyMapEntries(ClrNativeMapAccess(m, preferredView))
 
 // ---- MutableMap defaults ------------------------------------------------------------------------------------------
 
@@ -250,12 +225,76 @@ private class ClrMutableMapEntry<K, V>(private val raw: ClrNativeMapAccess, over
     override fun toString(): String = key.toString() + "=" + value.toString()
 }
 
-/** Map read views retain their snapshot storage and share the upstream Kotlin Set policy. */
-private class ClrMapSnapshotSet<E>(private val elements: List<E>) : AbstractSet<E>() {
-    override val size: Int get() = elements.size
-    // Set equality may query unrelated element types; do not narrow them into the CLR element frame.
-    override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll<Any?>(this.elements, elements)
-    override fun iterator(): Iterator<E> = clrListListIterator(elements, 0)
+private class ClrReadOnlyMapIterator<E>(
+    private val cursor: ClrNativeMapCursor, private val read: (ClrNativeMapCursor) -> E
+) : Iterator<E>, AutoCloseable {
+    private var buffered = false
+    private var closed = false
+    override fun close() {
+        if (closed) return
+        closed = true
+        buffered = false
+        cursor.close()
+    }
+    override fun hasNext(): Boolean {
+        if (closed || buffered) return buffered
+        try {
+            buffered = cursor.MoveNext()
+            if (!buffered) close()
+            return buffered
+        } catch (error: Throwable) { close(); throw error }
+    }
+    override fun next(): E {
+        if (!hasNext()) throw NoSuchElementException()
+        buffered = false
+        try { return read(cursor) }
+        catch (error: Throwable) { close(); throw error }
+    }
+}
+
+private abstract class ClrReadOnlyMapSet<E>(protected val raw: ClrNativeMapAccess) : AbstractSet<E>() {
+    override val size: Int get() = raw.count()
+    protected abstract fun hasElement(element: Any?): Boolean
+    override fun contains(element: E): Boolean = hasElement(element)
+    // Set.equals can supply an unrelated Set; do not narrow its elements to E.
+    override fun containsAll(elements: Collection<E>): Boolean {
+        val it = clrProjectedIterator<Any?>(elements)
+        while (it.hasNext()) if (!hasElement(it.next())) return false
+        return true
+    }
+}
+
+private class ClrReadOnlyMapKeys<K>(raw: ClrNativeMapAccess) : ClrReadOnlyMapSet<K>(raw) {
+    override fun hasElement(element: Any?): Boolean = raw.Contains(element)
+    override fun iterator(): Iterator<K> = ClrReadOnlyMapIterator(raw.GetEnumerator()) { it.key() as K }
+}
+
+private class ClrReadOnlyMapValues<V>(private val raw: ClrNativeMapAccess) : AbstractCollection<V>() {
+    override val size: Int get() = raw.count()
+    override fun iterator(): Iterator<V> = ClrReadOnlyMapIterator(raw.GetEnumerator()) { it.value() as V }
+    override fun contains(element: V): Boolean {
+        val cursor = raw.GetEnumerator()
+        try { while (cursor.MoveNext()) if (cursor.value() == element) return true }
+        finally { cursor.close() }
+        return false
+    }
+}
+
+private class ClrReadOnlyMapEntries<K, V>(raw: ClrNativeMapAccess) : ClrReadOnlyMapSet<Map.Entry<K, V>>(raw) {
+    override fun hasElement(element: Any?): Boolean {
+        if (element !is Map.Entry<*, *>) return false
+        val key = element.key
+        return raw.Contains(key) && raw.rawGet(key) == element.value
+    }
+    override fun iterator(): Iterator<Map.Entry<K, V>> =
+        ClrReadOnlyMapIterator(raw.GetEnumerator()) { ClrReadOnlyMapEntry<K, V>(raw, it.key() as K) }
+}
+
+private class ClrReadOnlyMapEntry<K, V>(private val raw: ClrNativeMapAccess, override val key: K) : Map.Entry<K, V> {
+    override val value: V get() = raw.rawGet(key) as V
+    override fun equals(other: Any?): Boolean = AbstractMap.entryEquals(this, other)
+    override fun hashCode(): Int = AbstractMap.entryHashCode(this)
+    override fun toString(): String = key.toString() + "=" + value.toString()
 }
 
 private class ClrMapNativeValueIterator<V>(private val raw: ClrNativeMapAccess) : MutableIterator<V> {

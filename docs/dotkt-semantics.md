@@ -1098,10 +1098,12 @@ Consequences and remaining implementation limitations:
   contract. A sole native contract can still serve an erased/widened Kotlin view. A star is unknown, not `object`;
   genuinely ambiguous multiple contracts are rejected rather than selected by reflection order or argument values.
   This preference belongs to the operation's static view, not to an originating view remembered across `Any` storage.
-- **BCL-backed `Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
-  identity-bearing Kotlin `Set`, `values` a
-  BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
-  added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
+- **BCL-backed `Map.keys`, `values` and `entries` are live, read-only Kotlin views.** Size, membership and
+  fresh iterators use the same selected dictionary. Keys and entries are sets; key lookup uses the native
+  comparer, including its behavior for unsupported keys. A retained entry reads the current value for its key.
+  An iterator follows its native enumerator's mutation rules; the view does not promise concurrent enumeration.
+  `MutableMap.entries` still snapshots entry membership and its mutable entries write through.
+  `MutableMap.keys` is a live identity-bearing Kotlin view:
   remove/clear write through and add is unsupported. `MutableMap.values` is also a live Kotlin collection, including
   when obtained from a native dictionary: removing a value, bulk removal/retention and iterator
   removal update the same backing dictionary; adding is unsupported. Its iterators snapshot keys and read current
@@ -1144,8 +1146,7 @@ removal (no guarantee). DotKt binds them to insertion-ordered containers instead
 
 Kotlin-owned map entry, key and value iterators are live and fail fast after structural mutation with
 `ConcurrentModificationException`; iterator-owned removal remains supported. Native dictionary enumerators and
-native key/value enumerators translate that failure to CLR `InvalidOperationException`. This does not change the
-remaining Kotlin snapshot views over native BCL maps described in §5c.
+native key/value enumerators over those Kotlin-owned views translate that failure to CLR `InvalidOperationException`.
 
 `LinkedHashSet` iterators use the backing map's live values view, including through Kotlin `Set` and
 `MutableSet` views; structural changes are detected by that map's iterator. Concrete Kotlin `HashSet`
@@ -3168,7 +3169,7 @@ Current deliberate limits are:
 - `suspend fun` has no Continuation parameter — it returns `Task<T>`, and it starts **hot** (like C# `async`), not cold. §4.
 - A `Span`/`ref struct` value is fine inside a `suspend fun` — until it has to survive a suspension, or be captured by a (non-inline) lambda; both are compile-time errors, mirroring C# CS4007/CS4012/CS8352. §4d.
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
-- Kotlin `Map` and `MutableMap` value slots surface to C# as `object`, preserving Kotlin covariance and unchecked casts; exact native dictionary declarations remain reified. Authored maps preserve their views; BCL-backed read views remain snapshots. §5c.
+- Kotlin `Map` and `MutableMap` value slots surface to C# as `object`, preserving Kotlin covariance and unchecked casts; exact native dictionary declarations remain reified. Authored maps preserve their views; BCL-backed read-only views retain the selected dictionary. §5c.
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
   `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
   23 and above has no CLR delegate at all and is refused — the frontend accepts it, the representation cannot.

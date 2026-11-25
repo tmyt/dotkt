@@ -111,7 +111,19 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>() }) },
         });
         reset.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerator), "Reset", new TypeNode.Fqn("void")) };
-        var dispose = SourceMethod("Dispose", "public", new TypeNode.Fqn("void"), Array.Empty<IBirStatement>(), terminates: false);
+        // A Kotlin iterator need not own a resource. If it does, CLR foreach must be able
+        // to release it through the adapter even when it stops before the last element.
+        var disposable = new TypeNode.Fqn(IDisposable);
+        var dispose = SourceMethod("Dispose", "public", new TypeNode.Fqn("void"), new IBirStatement[] {
+            new BirIf { Branches = new[] { new BirBranch {
+                Cond = E(new BirIsInstance { Type = disposable, E = E(Field("_it")) }),
+                Body = new IBirStatement[] { new BirExpressionStatement { Expr = E(new BirCallInstance {
+                    OwnerType = disposable, Virtual = true, Method = "Dispose", Ret = new TypeNode.Fqn("void"),
+                    Recv = E(new BirCast { Type = disposable, E = E(Field("_it")) }),
+                    Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(),
+                }) } },
+            } } },
+        }, terminates: false);
         dispose.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IDisposable), "Dispose", new TypeNode.Fqn("void")) };
         return new BirClassDefinition {
             Name = name, Kind = "class", Generated = true, Abstract = false, Final = true,
