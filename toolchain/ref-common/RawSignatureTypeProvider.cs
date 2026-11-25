@@ -33,7 +33,7 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
         return leaves.Count == 0 ? shape : shape + "|" + JsonSerializer.Serialize(leaves);
     }
 
-    static (string, string) NominalLeaf(MetadataReader md, EntityHandle type)
+    internal static (string Scope, string Name) NominalLeaf(MetadataReader md, EntityHandle type)
     {
         // Assembly.GetType consumes reflection names, in which '+' separates nested
         // names and the other special characters must be escaped when literal.

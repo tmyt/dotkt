@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - A nullability smart cast no longer redirects a by-reference write to a copy of a local. DotKt rejects passing a value-type location where the CLR requires a nullable value-type address, or vice versa (#1901).
+- Preserve the original mutable collection when a Kotlin generic call takes both a projected key and an independently constructed collection for the same type parameter (#1917).
 
 - Fixed-decimal duration formatting no longer depends on the CLR floating-point formatter; the output and ties-to-even rounding are unchanged (#1612).
 - Preserve a valid CLR interface type argument when directly constructing a Kotlin generic class with a star-projected value and multiple interface bounds (#1912).
@@ -13,6 +14,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Format Kotlin primitive numbers with invariant culture in `toString()`, string templates, and `StringBuilder.append` (#1780).
 - Honor `STAThreadAttribute` and `MTAThreadAttribute` on the CLR entry point for Kotlin programs, including suspend main (#1921).
 - Pass literal null to a captured native generic parameter using its actual closed CLR type, including calls with a span argument (#1919).
+- Preserve the actual type argument of a projected invariant CLR type, such as `List<out Stream>`, passed to an NRT-oblivious generic method (#1913).
 - Inspect a runtime-backed Kotlin `KClass` via `kotlin.reflect.full.isInterface` and
   `companionObjectInstance`, including generic declarations imported from another DLL (#1925).
 - Avoid a PE-sized temporary allocation when writing an assembly without deterministic output or debug symbols (#1312).
@@ -22,6 +24,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Keep raw strings intact when an inherited suspend implementation forwards its `CharSequence?`
   result into an object slot across assemblies (#1898).
 - Keep the actual CLR element type of an invariant container passed to a Kotlin method with class and interface bounds. Writes affect the original container, including for star-projected elements (#1926).
+- Bind property-reference base constructors and interface slots to the private stdlib when producing stdlib metadata (#1713).
 
 ## 0.9.33 (2026-11-24)
 

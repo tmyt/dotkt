@@ -73,26 +73,26 @@ static partial class ClrMemberResolution
             var open = ResolveOwnerType(iface, refs) ?? refs.PhysicalTypeNamed(iface.Name)
                 ?? throw new InvalidOperationException($"bir2cir: interface MethodImpl owner '{iface.Name}' does not resolve in the reference set");
             var arguments = iface.Args ?? Array.Empty<TypeNode>();
+            var declarationOwners = metadataBuild ? refs.MetadataInterfaceOwners(open, arguments).ToArray()
+                : new[] { open }.Concat(open.GetInterfaces())
+                    .Select(owner => owner.IsConstructedGenericType ? owner.GetGenericTypeDefinition() : owner)
+                    .Distinct().Select(owner => (Definition: owner, Owner: (TypeNode.Fqn)null)).ToArray();
             foreach (var entry in group)
             {
                 var descriptor = entry.Descriptor;
                 var (member, arity, parameters, result) = ReadInterfaceDescriptor(iface, descriptor, local: false);
-                var declarationOwners = new[] { open }.Concat(open.GetInterfaces())
-                    .Select(owner => owner.IsGenericType && !owner.IsGenericTypeDefinition ? owner.GetGenericTypeDefinition() : owner)
-                    .GroupBy(owner => (owner.Module, owner.MetadataToken)).Select(owners => owners.First());
-                var allCandidates = declarationOwners.SelectMany(owner => owner.GetMethods(
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                    .Where(method => IsPublicOrProtected(method) && method.GetGenericArguments().Length == arity
+                var named = declarationOwners.SelectMany(edge => edge.Definition.GetMethods(
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                    .Where(method => method.Name == member && IsPublicOrProtected(method) && method.GetGenericArguments().Length == arity
                         && method.GetParameters().Length == parameters.Length)
                     .Select(method => {
-                        var reference = metadataBuild ? ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, arguments)
+                        var reference = metadataBuild ? ClrMemberReferences.MetadataDeclaration(refs, method, edge.Owner)
                             : MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, arguments);
                         var declaringArguments = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
                         return new InterfaceCandidate(method, reference, declaringArguments,
                             reference.ParameterTypes.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArguments)).ToArray(),
                             SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArguments));
-                    }).ToList();
-                var named = allCandidates.Where(candidate => candidate.Method.Name == member).ToList();
+                    })).ToList();
                 var candidates = named.Where(candidate => candidate.Parameters.SequenceEqual(parameters, InterfaceSlotTypeComparer.Instance)
                     && SameInterfaceSlotType(candidate.Return, result)).ToList();
                 if (descriptor.TypeParams.HasValue)
@@ -112,7 +112,8 @@ static partial class ClrMemberResolution
                     candidates = candidates.Where(candidate => candidate.Method.Module == winner.Module
                         && candidate.Method.MetadataToken == winner.MetadataToken).ToList();
                 }
-                var declarations = candidates.GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
+                var declarations = candidates.GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken,
+                        candidate.Reference.DeclaringType))
                     .Select(methods => methods.First()).ToList();
                 if (declarations.Count != 1)
                 {
