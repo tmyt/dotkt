@@ -2351,7 +2351,11 @@ private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): B
 	if (storage is IrGetValue && pointee != null && storage.symbol.owner.type.makeNotNull() == pointee.makeNotNull()) {
 		val location = localAddress(storage)
 		val requested = birType(pointee)
-		return if (requested == birType(storage.symbol.owner.type)) location
+		val declared = birType(storage.symbol.owner.type)
+		// Platform flexibility alone is not a Kotlin conversion of the lvalue (T to T!,
+		// for example). Leave the location visible to native generic address selection.
+		fun inflexible(t: TypeNode): TypeNode = if (t is TypeNode.Oblivious) t.of else t
+		return if (inflexible(requested) == inflexible(declared)) location
 		else BirByRefLoad(elem = requested, ptr = BirByRefOf(inner = location))
 	}
 	return byrefBackingField(arg) ?: expr(arg)

@@ -550,6 +550,10 @@ static class TypedPhysicalValueCoercion
                     if (node.LocationOperandFacts.OrDefault()?.Contains(i) == true) continue;
                     if (SignatureValueTypes.Of(callParameters[i]) is not TypeNode.ByRef reference) continue;
                     var location = arguments[i] is BirByRefOf address ? address.Inner.OrDefault() : arguments[i];
+                    // A pointee annotation can wrap the same location in *(&location).
+                    // Allocate that declaration, not a temporary copy of its loaded value.
+                    while (location is BirByRefLoad load && load.Ptr.OrDefault() is BirByRefOf annotated)
+                        location = annotated.Inner.OrDefault();
                     if (location is not BirLocal { Name.HasValue: true } local
                         || !declarations.TryGetValue(local.Name.Value, out var declaration)
                         || !PhysicalValueCoercion.NativeLocalEligible(genericParametersOnly,
