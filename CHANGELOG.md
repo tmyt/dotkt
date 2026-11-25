@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.34 (2026-11-25)
+
+- Fixed a race in `dll2klib` when importing virtual methods from multiple namespaces in parallel (#1978).
+
 - Derived classes inherit their base class's default-interface dispatch without redundant forwarding methods. Explicit interface overrides now carry the interface declarations needed by the IL trimmer (#1971).
 - Imported native-sized integers retain their `System.IntPtr` or `System.UIntPtr` type in Kotlin, including in CLR interface implementations and virtual overrides (#1974).
 
