@@ -261,7 +261,10 @@
     <WriteLinesToFile File="$(DotKtCompilerResponseFile)"
                       Lines="@(_DotKtEscapedKotlinCompile->'&quot;%(Identity)&quot;');@(_DotKtKotcResponseArgument->'%(Value)')"
                       Overwrite="true" />
-    <Exec Condition="'@(KotlinCompile)' != ''"
+    <ItemGroup>
+      <_DotKtKotcEnvironment Include="JAVA_HOME=$([MSBuild]::Escape($(DotKtJavaHome)))" Condition="'$(DotKtJavaHome)' != ''" />
+    </ItemGroup>
+    <Exec Condition="'@(KotlinCompile)' != ''" EnvironmentVariables="@(_DotKtKotcEnvironment)"
           Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(_DotKtPluginArguments) $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
   </Target>
