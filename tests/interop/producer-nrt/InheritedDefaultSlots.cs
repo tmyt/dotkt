@@ -7,10 +7,15 @@ namespace InheritedDefaultSlots;
 
 public interface IValue { int Read() => 1; }
 public class DefaultBase : IValue { }
+public class IntroducesVirtualBody : DefaultBase { public virtual int Read() => 70; }
 public class VirtualBase : IValue { public virtual int Read() => 2; }
+public interface IWithProperty { int Read() => 1; int Value => 1; }
+public class WithProperty : IWithProperty { public int Value => 2; }
 
 public static class Driver
 {
+    public static int ReadProperty(IWithProperty instance) => instance.Value;
+    public static int ReadInterface(IValue instance) => instance.Read();
     public static bool Check(IValue inherited, IValue replaced)
     {
         if (inherited.Read() != 2 || replaced.Read() != 3) return false;

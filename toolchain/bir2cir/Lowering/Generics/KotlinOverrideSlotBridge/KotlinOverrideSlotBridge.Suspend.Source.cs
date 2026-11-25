@@ -73,7 +73,8 @@ static partial class KotlinOverrideSlotBridge
                             index.Definitions, refs, isValue, localTypeNames));
                 // Inheriting both the class body and its interface map introduces no new obligation.
                 var inheritedDefault = slot.IsInterface && definition.Kind == "class" && !reimplements
-                    && slot.HasDefault && selectedBody?.IsDefault != false;
+                    && slot.HasDefault && (selectedBody?.IsDefault != false || slot.Referenced
+                        && refs.IntroducesBodyOutsideInterfaceMap(selectedBody.Owner, selectedBody.MetadataToken, slot.DescriptorSpec));
                 if (slot.IsInterface && definition.Kind == "class" && !reimplements && !inheritedDefault) return;
                 var fit = AssessFit(implementation, ownArguments, slot.Parameters, slot.Return, slot.UnitValueReturn,
                     slot.Signature, slot.IsInterface, slot.Referenced, slot.DescriptorSpec, slot.PropertyAccessor,
