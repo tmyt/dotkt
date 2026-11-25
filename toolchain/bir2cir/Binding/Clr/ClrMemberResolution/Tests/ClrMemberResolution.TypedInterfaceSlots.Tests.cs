@@ -79,12 +79,25 @@ static partial class ClrMemberResolution
 
     interface IMetadataSlot<T> { void Put(T value); void Ping(); }
     interface IMetadataPair : IMetadataSlot<int>, IMetadataSlot<string> { }
+    class MetadataOuter<T> { internal interface IFace<U> { } }
+    class MetadataOuter { internal interface IFace<T, U> { void Ping(); } }
+    class MetadataBase : MetadataOuter.IFace<string, int> { public void Ping() { } }
 
     static void MetadataConstructedSlotsSelfTest()
     {
         var owner = new TypeNode.Fqn(typeof(IMetadataPair).FullName);
         var text = new TypeNode.Fqn("System.String");
         using var refs = ReferenceMetadataIndex.Build([typeof(object).Assembly.Location, typeof(IMetadataPair).Assembly.Location]);
+        var arguments = new TypeNode[] { text, new TypeNode.Fqn("System.Int32") };
+        var direct = new TypeNode.Fqn(typeof(MetadataOuter<>.IFace<>).FullName, arguments);
+        var required = new TypeNode.Fqn(typeof(MetadataOuter.IFace<,>).FullName, arguments);
+        var derived = new BirClassDefinition { Name = "Fixture.Derived", Base = new TypeNode.Fqn(typeof(MetadataBase).FullName),
+            Interfaces = new TypeNode[] { direct }, Methods = new[] { new BirFunctionDeclaration { Name = "replacement",
+                ClrInterfaceImpls = new[] { new BirMethodImpl { Owner = required, Member = "Ping", Arity = 0,
+                    Params = Array.Empty<TypeNode>(), Ret = MemberRefNode.Void } } } } };
+        ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { derived } }], refs, metadataBuild: true);
+        if (!derived.Interfaces.Value.SequenceEqual(new TypeNode[] { direct, required }))
+            throw new InvalidOperationException("An unrelated nested TypeDef covered an inherited interface MethodImpl");
         BirMethodImpl Resolve(string name, params TypeNode[] parameters)
         {
             var descriptor = new BirMethodImpl { Owner = owner, Member = name, Arity = 0,

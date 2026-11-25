@@ -181,6 +181,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 edges = DeclaredMetadataInterfaces(reader, item.Definition).Select(row => {
                     var target = row.Scope == item.Definition.Assembly.FullName ? item.Definition.Assembly.GetType(row.Name)
                         : ResolveRefTypeIn(row.Name, new AssemblyName(row.Scope).Name);
+                    // A compiler-produced interface row can explicitly name the shipped twin.
+                    // It is not part of the ordinary compile-reference lookup after twin collapse.
+                    if (target == null && _universe.PhysicalStdlib is { } shipped && row.Scope == shipped.FullName)
+                        target = shipped.GetType(row.Name);
                     return (target ?? throw new InvalidOperationException(
                         $"bir2cir: metadata interface '{row.Name}' not found in '{row.Scope}'"), row.Edge);
                 }).ToArray();
@@ -191,6 +195,22 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         }
     }
     internal TypeNode NativeFieldSignature(FieldInfo field) => _nativeSignatures.Field(field);
+
+    // A newly introduced class method cannot retroactively enter an interface
+    // map inherited from a base. Read the selected MethodDef, not a namesake.
+    internal bool IntroducesBodyOutsideInterfaceMap(TypeNode.Fqn owner, int token, TypeNode.Fqn face)
+    {
+        if (token == 0 || ClrMemberResolution.ResolveOwnerType(owner, this) is not { IsInterface: false } type
+            || ClrMemberResolution.ResolveOwnerType(face, this) is not { IsInterface: true } target) return false;
+        var reader = _universe.ModuleMetadata(type.Module);
+        var handle = (System.Reflection.Metadata.MethodDefinitionHandle)
+            System.Reflection.Metadata.Ecma335.MetadataTokens.EntityHandle(token);
+        var attributes = reader.GetMethodDefinition(handle).Attributes;
+        if ((attributes & (MethodAttributes.Virtual | MethodAttributes.NewSlot)) == MethodAttributes.Virtual) return false;
+        return !MetadataInterfaceOwners(type, owner.Args ?? []).Any(edge => edge.Definition == target
+            && Equals(ClrMemberResolution.MethodImplComparisonType(edge.Owner, this),
+                ClrMemberResolution.MethodImplComparisonType(face, this)));
+    }
 
     internal ConstructorInfo SelectConstructorDeclaration(IEnumerable<ConstructorInfo> constructors, string identity) =>
         SelectDeclarationTwin(constructors, constructor => KotlinDeclarationIdentityPayload(
@@ -3364,7 +3384,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             CloneReferencedTypeParameters(match.MethodTypeParams), match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
+        { MetadataToken = match.MetadataToken, ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
 
@@ -3467,7 +3487,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             CloneReferencedTypeParameters(match.MethodTypeParams), match.ReturnTypeNode is not TypeNode.Fqn { Name: "void" or "System.Void", Args: null },
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
-        { KotlinParameters = match.KotlinParameterTypes, ParameterNullableFlags = match.ParameterNullableFlags,
+        { MetadataToken = match.MetadataToken, KotlinParameters = match.KotlinParameterTypes, ParameterNullableFlags = match.ParameterNullableFlags,
             QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
         return true;
     }
@@ -5764,6 +5784,7 @@ sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Para
     TypeNode PhysicalReturn, NullableRepresentationFrame NullableFrame, TypeNode[] SignatureParameters,
     string DeclarationId)
 {
+    public int MetadataToken { get; init; }
     public TypeNode[] KotlinParameters { get; init; }
     public byte[][] ParameterNullableFlags { get; init; }
     public Func<int, TypeNode> QueryParameterBound { get; init; }
