@@ -478,15 +478,14 @@ static partial class CapturedGenericInvocation
                     if (logical is not int sourceSlot) continue;
                     var nullable = frame?.NullableIndices.Contains(sourceSlot) == true
                         ? frame.NullableVariable(new TypeNode.Tv("method", sourceSlot)).I : -1;
-                    rows.Add(new(index, head, pos, variable.I, nullable));
+                    rows.Add(new(index, head, pos, variable.I, nullable,
+                        FBoundStarProjectionErasure.IsObjectish(declarationParameters[index])));
                 }
             }
             // A declaration transported as object accepts the existing value independently
             // of its closed backing type. Its recovered construction can supply an otherwise
             // unknown slot, but cannot constrain a slot witnessed by a nominal parameter.
-            bool Opaque(CaptureRow row) => FBoundStarProjectionErasure.IsObjectish(declarationParameters[row.Argument]);
-            var required = rows.Where(row => !Opaque(row)).Select(row => row.Slot).ToHashSet();
-            return rows.Where(row => !Opaque(row) || !required.Contains(row.Slot)).ToArray();
+            return rows.OrderBy(row => row.Opaque).ToArray();
         }
 
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,
@@ -669,9 +668,7 @@ static partial class CapturedGenericInvocation
             var runtimeMethod = returnsVoid && receiverPlan == null ? "starProjectionInvokeCapturedHelperUnit" : "starProjectionInvokeCapturedHelper";
             var runtimeArguments = new IBirExpression[] { ClassRef(new TypeNode.Fqn(name)), Number(0), Text("Invoke"),
                 NewArray(String, parameterTypes.Select(type => (IBirExpression)Text(RuntimeKey(type, refs)))), NewArray(Type, fallback.Select(type => (IBirExpression)ClassRef(type))),
-                NewArray(Int, rows.Select(r => Number(r.Argument + (call.Instance ? 1 : 0)))), NewArray(Type, rows.Select(r => ClassRef(r.Owner))),
-                NewArray(Int, rows.Select(r => Number(r.Position))), NewArray(Int, rows.Select(r => Number(r.Slot))),
-                NewArray(Int, rows.Select(r => Number(r.Nullable))), NewArray(Object, values) };
+                CaptureOwners(rows), CaptureCoordinates(rows, call.Instance ? 1 : 0), NewArray(Object, values) };
             var runtimeCall = RuntimeCall(runtimeMethod, runtimeArguments, returnsVoid && receiverPlan == null, refs);
             ForeignStarProjectionBinding.RequireRuntimeFallback();
             var invocation = receiverPlan == null ? runtimeCall : CapturedValueReceiverInvocation.Invoke(receiverPlan, call.Receiver, runtimeCall, name, RuntimeSignature.Length - 1);
@@ -693,8 +690,8 @@ static partial class CapturedGenericInvocation
             // the runtime twin's physical storage is not a new overload policy.
             var runtimeType = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.StarProjectionType");
             var signature = new TypeNode[] { runtimeType, new TypeNode.Fqn("kotlin.Int"), new TypeNode.Fqn("kotlin.String"), new TypeNode.Array(new TypeNode.Fqn("kotlin.String")),
-                new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(runtimeType), new TypeNode.Fqn("kotlin.IntArray"),
-                new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Fqn("kotlin.IntArray"), new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
+                new TypeNode.Array(runtimeType), new TypeNode.Nullable(new TypeNode.Array(runtimeType)),
+                new TypeNode.Nullable(new TypeNode.Fqn("kotlin.IntArray")), new TypeNode.Array(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"))) };
             if (!refs.TryResolveStaticMemberSignature(RuntimeOwner, name, 0, true, signature, null, out _, out var declaration, out var declaringType))
                 throw new InvalidOperationException("Captured invocation runtime helper has no exact declaration");
             var member = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, refs, declaration, "method", declaringType, null));

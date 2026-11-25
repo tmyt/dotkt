@@ -15,6 +15,10 @@ private fun appendJoint(witness: roundtrip.constrainedbound.NativeChoice<*>, xs:
 private fun clearProjected(xs: CsList<in NativeListLeaf<Long>>) = clearNativeList(xs)
 private fun addNested(xs: CsList<NativeListRoot>, leaf: NativeListLeaf.Nested<Long>) = xs.Add(leaf)
 private fun readRepeated(key: VariantKey<String, out String>): Int = repeatedKeyTag(key)
+private fun <T> missingKey(): PlainKey<T>? = null
+private fun <T> copyCount(key: PlainKey<T>?, xs: MutableList<T>): Int =
+    GenericValueInterop.CollectionStorageApi.Copy<T>(xs).size
+private fun copyUsingListWitness(xs: MutableList<*>): Int = copyCount(missingKey(), xs)
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
 private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
@@ -160,6 +164,7 @@ class CapturedGenericInvocationTests {
         fun <T> existing(): MutableList<T> = shared as MutableList<T>
         fun clear(key: PlainKey<*>): Any = clearCollected(existing(), key)
         check(clear(IntegerKey) === shared && shared.isEmpty())
+        check(copyUsingListWitness(mutableListOf(17)) == 1)
     }
     @TestAttribute fun superCallKeepsNonVirtualDispatch() {
         check(DerivedKeyReader().readBase(TextKey) == "base-key")
