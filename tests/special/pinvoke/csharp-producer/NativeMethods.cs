@@ -33,3 +33,9 @@ public class ProtectedOnlyAttribute : Attribute
 {
     protected ProtectedOnlyAttribute(int value) { }
 }
+
+public class NullableOverloadAttribute : Attribute
+{
+    public NullableOverloadAttribute(string? value) { }
+    public NullableOverloadAttribute(string value, params int[] rest) { }
+}

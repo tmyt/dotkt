@@ -2508,12 +2508,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 var namedArgumentsForConstructor = isAnnotation && primary
                     ? attributeNamedArguments : Array.Empty<AttributeNamedArgument>();
                 if (namedArgumentsForConstructor.Length != 0)
-                    RenameFixedAttributeParameters(
-                        parameters,
-                        PhysicalParameters(method).Skip(isKotlinInner ? 1 : 0)
-                            .Select(parameter => _md.GetString(parameter.Row.Name)).ToArray(),
-                        namedArgumentsForConstructor,
-                        names);
+                    RenameFixedAttributeParameters(parameters, namedArgumentsForConstructor, names);
                 var constructor = new Constructor
                 {
                     Flags = CallableVisibility(methodHandle, Flags.Constructor(method.Attributes, primary)),
@@ -2636,7 +2631,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         }
         if (!_attrs.IsDotKtAssembly)
         {
-            AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names);
+            // An annotation application resolves only its primary, never a narrowed view of a sibling overload.
+            if (!isAnnotation) AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names);
             AddNrtParamsOverloadBridges(projectedFunctions, result.Function, names);
         }
         if (comparisons != null)
@@ -6800,13 +6796,13 @@ internal sealed partial class AssemblyScanner : IDisposable
 
     private static void RenameFixedAttributeParameters(
         IReadOnlyList<ValueParameter> parameters,
-        IReadOnlyList<string> parameterNames,
         IReadOnlyList<AttributeNamedArgument> namedArguments,
         NameTable names)
     {
+        var parameterNames = parameters.Select(parameter => names.StringValue(parameter.Name)).ToArray();
         var reserved = namedArguments.Select(argument => argument.Name).ToHashSet(StringComparer.Ordinal);
         var used = parameterNames.Concat(reserved).ToHashSet(StringComparer.Ordinal);
-        for (var i = 0; i < parameters.Count && i < parameterNames.Count; i++)
+        for (var i = 0; i < parameters.Count; i++)
         {
             var original = parameterNames[i];
             if (!reserved.Contains(original)) continue;

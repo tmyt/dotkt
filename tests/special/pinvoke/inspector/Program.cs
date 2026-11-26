@@ -187,6 +187,10 @@ static void VerifyCSharpKlib(string path)
     var protectedOnly = fragment.Class.Single(candidate =>
         QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.ProtectedOnlyAttribute");
     Require(!protectedOnly.Constructor.Any(Primary), "a protected-only CLR attribute acquired a primary constructor");
+    var narrowed = fragment.Class.Single(candidate =>
+        QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.NullableOverloadAttribute");
+    Require(narrowed.Constructor.Single(Primary).ValueParameter.Single().Type.Nullable,
+        "a synthetic overload displaced the nullable annotation primary");
 }
 
 static void VerifyProjectedAttributes(string path)
