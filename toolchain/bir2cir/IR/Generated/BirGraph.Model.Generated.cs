@@ -11179,6 +11179,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
 {
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
     internal ExistentialCallableRole ExistentialCallable { get; set; }
+    internal string? ImplicitExistentialImplementationId { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }
     internal bool SourceCallableVirtual { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }

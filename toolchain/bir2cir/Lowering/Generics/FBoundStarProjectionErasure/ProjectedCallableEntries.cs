@@ -241,6 +241,11 @@ sealed partial class ProjectedCallableEntries
     ProjectedMethodPlan DeclarationPlan(IBirTypeDeclaration owner, BirFunctionDeclaration method, ProjectedClassStorageFrame frame)
     {
         if (declarationPlans.TryGetValue(method, out var plan)) return plan;
+        if (method.ImplicitExistentialImplementationId is string origin)
+        {
+            var implementation = originalSlots[origin];
+            return declarationPlans[method] = DeclarationPlan(implementation.Owner, implementation.Method, MethodFrame(implementation.Method));
+        }
         // A CLR class has only one inherited base slot. Keep it as the
         // override point; interface MethodImpls can adapt to that frame.
         bool IsInterface(string id) => originalSlots.TryGetValue(id, out var local)
@@ -252,6 +257,10 @@ sealed partial class ProjectedCallableEntries
             string declaringOwner;
             if (originalSlots.TryGetValue(id, out var local))
             {
+                // This slot mirrors our declaration, so it cannot supply an
+                // independent inherited contract when choosing our plan.
+                if (local.Method.ImplicitExistentialImplementationId is string implementationId
+                    && ReferenceEquals(originalSlots[implementationId].Method, method)) continue;
                 plan = DeclarationPlan(local.Owner, local.Method, MethodFrame(local.Method));
                 if (plan == null) continue;
                 declaringOwner = local.Owner.Name.Value;
@@ -306,6 +315,9 @@ sealed partial class ProjectedCallableEntries
             if (HasFixedAbi(m, null, references) || (bodyEntry?.Id ?? identity?.DeclarationId.OrDefault()) is not string id ||
                 bodyEntry == null && !carrierSlot && id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||
                 m.TypeParams.OrEmpty() is not { Length: > 0 } parameters) continue;
+            var contractSource = m.ImplicitExistentialImplementationId is string origin ? originalSlots[origin].Method : m;
+            if (!ReferenceEquals(contractSource, m))
+                m.TypeParams = parameters = contractSource.TypeParams.Value.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
             var ownFrame = MethodFrame(m);
             var plan = DeclarationPlan(owner, m, ownFrame);
             if (plan == null) continue;
@@ -313,7 +325,7 @@ sealed partial class ProjectedCallableEntries
             // that C# source can name. The binding is still by identity, not suffix.
             var name = m.Name.Value + "Projected";
             for (var i = 0; !names.Add(name); i++) name = m.Name.Value + "Projected" + i;
-            if (m.SelectedGenericOverrides is { Count: > 0 })
+            if (contractSource.SelectedGenericOverrides is { Count: > 0 })
             {
                 for (var i = 0; i < plan.PrimaryArity; i++)
                 {
@@ -330,9 +342,13 @@ sealed partial class ProjectedCallableEntries
                     row.Constraints = row.Constraints.OrEmpty().Concat(facet.Evidence).Distinct().ToArray();
                 }
             }
-            var entry = new Entry(name, plan, parameters, bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault(),
-                AddressSignature(plan, m));
-            if (m.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
+            var methodFrame = ReferenceEquals(contractSource, m) ? bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault()
+                : contractSource.LocalBodyEntry?.Frame ?? contractSource.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault();
+            // The downstream entry must consult the same ordinary/nullable/storage
+            // frame as local calls. A mirrored slot has no semantic frame of its own.
+            plan = plan with { RepresentationDeclaration = m.ImplicitExistentialImplementationId };
+            var entry = new Entry(name, plan, parameters, methodFrame, AddressSignature(plan, m));
+            if (contractSource.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
                 foreach (var sourceIndex in representations.StorageIndices)
                 {
                     // The exact forwarder passes its storage unchanged to the inherited
@@ -574,7 +590,7 @@ sealed partial class ProjectedCallableEntries
         if (!references.TryDeclarationIdentity(EntryId(id), out var name, out _, out _, out _) ||
             references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true) is not { } parameters ||
             references.ProjectedMethod(EntryId(id)) is not { } plan) return null;
-        return entries[id] = new(name, plan, parameters, references.NullableMethodFrame(id),
+        return entries[id] = new(name, plan, parameters, references.NullableMethodFrame(plan.RepresentationDeclaration ?? id),
             plan.AddressOperands.Length == 0 && plan.NativeIndices.Length == 0 ? [] : references.SelectedPhysicalMethod(id).GetParameters()
                 .Select(references.DeclarationSignatureSlot).ToArray());
     }

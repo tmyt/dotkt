@@ -7,6 +7,7 @@ using DotKt.Cir;
 sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Facets, int[] AddressOperands)
 {
     internal int[] NativeIndices { get; init; } = [];
+    internal string RepresentationDeclaration { get; init; }
     internal int PrimaryArity => Parameters.Length - Facets.Length - NativeIndices.Length - AddressOperands.Length;
 
     internal TypeNode NativeArgument(TypeNode argument) =>

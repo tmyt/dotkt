@@ -46,7 +46,9 @@ static partial class RoundtripMetadata
     internal static void StampProjectedMethod(BirFunctionDeclaration method, ProjectedMethodPlan plan)
         => method.Attrs = method.Attrs.OrEmpty().Append(PlacementCarrier(AKProjectedMethod,
             BirCarrier.EncodeMetadata(plan, static (ref MessagePackWriter writer, ProjectedMethodPlan p) => {
-                writer.WriteMapHeader(3); writer.Write("facets");
+                writer.WriteMapHeader(p.RepresentationDeclaration == null ? 3 : 4);
+                if (p.RepresentationDeclaration != null) { writer.Write("representationDeclaration"); writer.Write(p.RepresentationDeclaration); }
+                writer.Write("facets");
                 writer.WriteArrayHeader(p.Facets.Length);
                 foreach (var f in p.Facets)
                 {
