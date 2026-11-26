@@ -155,6 +155,7 @@ import starprojection.OverloadedStarSink
 import starprojection.overloadedStarSink
 import starprojection.CollisionHost
 import starprojection.collisionHost
+import starprojection.nullableCollisionHost
 import starprojection.deliverStarContinuationFailure
 import starprojection.isConcreteStarKey
 import starprojection.ReferencedStarBase
@@ -225,6 +226,13 @@ private class CrossModuleContinuationDispatcher : RoundtripContinuationDispatche
 private interface LocalStarDerived<T> : ReferencedStarBase<T>
 private class LocalStarDerivedImpl : LocalStarDerived<String> {
     override fun inherited(): String = "referenced-base"
+}
+
+private fun replaceWideStarLocal(next: Any): Any {
+    var current: Any = collisionHost()
+    check(current !== next)
+    current = next
+    return current
 }
 
 private fun <X, D : ReferencedInnerLeaf<*>> constructReferencedInnerThroughBound(ignored: X, value: D): String =
@@ -686,6 +694,13 @@ class GenericMetadataRoundtripTests {
 
         val collision: CollisionHost<*> = collisionHost()
         ClassicAssert.AreEqual("collision-safe", collision.value())
+        ClassicAssert.AreEqual("replacement", replaceWideStarLocal("replacement"))
+        for (present in listOf(false, true)) {
+            var wide: Any? = nullableCollisionHost(present)
+            ClassicAssert.AreEqual(present, wide != null)
+            wide = "next"
+            ClassicAssert.AreEqual("next", wide)
+        }
 
         val inner: ReferencedInnerLeaf<*> = referencedInnerLeaf("cross")
         ClassicAssert.AreEqual("cross:i7", inner.Entry(7).render())

@@ -18,6 +18,8 @@ static partial class GenericDowncastRealignment
         var operand = new BirNativeInstance { Type = Face(text), Ret = Face(any), Sty = Face(new TypeNode.Fqn("kotlin.Int")) };
         var cast = new BirCast { Type = Derived(text), E = E(operand) };
         var local = new BirVariable { Name = "item", Type = Derived(text), Init = E(cast) };
+        var widerCast = (BirCast)cast.DeepClone();
+        var wider = new BirVariable { Name = "wide", Type = Face(any), Init = E(widerCast) };
         var receiver = new BirLocal { Name = "item", Sty = Derived(text) };
         var call = new BirCallInstance { OwnerType = Derived(text), Method = "read", Recv = E(receiver) };
         var uninitialized = new BirVariable { Name = "uninitialized", Type = Derived(text) };
@@ -33,7 +35,7 @@ static partial class GenericDowncastRealignment
         var nullTarget = new BirCast { Type = OptionalField<TypeNode>.Null, E = E(new BirLocal { Name = "item" }) };
         var shadow = new BirCallInstance { OwnerType = Derived(text), Method = "read", Recv = E(new BirLocal { Name = "item" }) };
         var method = new BirFunctionDeclaration { Name = "use", Params = Array.Empty<BirParameter>(),
-            Body = new IBirStatement[] { uninitialized, nullInitializer, local, new BirExpressionStatement { Expr = E(call) },
+            Body = new IBirStatement[] { uninitialized, nullInitializer, local, wider, new BirExpressionStatement { Expr = E(call) },
                 new BirExpressionStatement { Expr = E(missingOwner) }, new BirExpressionStatement { Expr = E(nullOwner) },
                 new BirExpressionStatement { Expr = E(missingReceiver) }, new BirExpressionStatement { Expr = E(nullReceiver) },
                 new BirVariable { Name = "missingTarget", Type = Derived(text), Init = E(missingTarget) },
@@ -47,6 +49,8 @@ static partial class GenericDowncastRealignment
         // The caller passes this SAME earlier hierarchy, not a later recapture.
         definition.Interfaces = new TypeNode[] { Face(text) };
         Apply(root, snapshot);
+        Need(widerCast.Type.Value == Derived(any) && wider.Type.Value == Face(any),
+            "realigning a cast narrowed its wider destination");
         Need(cast.Type.Value == Derived(any) && local.Type.Value == Derived(any) && call.OwnerType.Value == Derived(any)
             && shadow.OwnerType.Value == Derived(text) && snapshot["RealignDerived"].Interfaces[0] == capturedEdge,
             "ret/type priority, sequential local continuation, method scope or frozen hierarchy changed");

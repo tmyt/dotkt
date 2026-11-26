@@ -37,7 +37,8 @@ static partial class ReferenceExistentialAbiBinding
         var read = new BirCallStatic { Owner = new TypeNode.Fqn("abi.Owner"), Method = "read",
             Args = Array.Empty<IBirExpression>(), Ret = semantic, Sty = semantic };
         var block = new BirValueBlock { Type = semantic, Result = E(read) };
-        var local = new BirVariable { Name = "local", Type = semantic, Init = E(block) };
+        var wide = new TypeNode.Fqn("kotlin.Any");
+        var local = new BirVariable { Name = "local", Type = wide, Init = E(block) };
         var input = new BirLocal { Name = "input" };
         var frontendResult = new TypeNode.Fqn("System.Collections.Generic.List", new TypeNode[] { text });
         var inputOnly = new BirCallStatic { OwnerType = new TypeNode.Fqn("abi.Owner"), Method = "inputOnly",
@@ -57,8 +58,8 @@ static partial class ReferenceExistentialAbiBinding
             && bind.Ret.Value is TypeNode.Fn closed && closed.Ret == carrier
             && closed.Params[0] == ownerVariable && closed.Recv == methodVariable && !bind.Sty.IsPresent,
             "selected physical positions or simultaneous caller/owner/method result closure changed");
-        Need(read.Ret.Value == carrier && !read.Sty.IsPresent && local.Type.Value == carrier,
-            "local alignment ran before physical call projection or used the valueBlock's stale own type");
+        Need(read.Ret.Value == carrier && !read.Sty.IsPresent && local.Type.Value == wide,
+            "binding the imported result must not narrow its destination");
         Need(inputOnly.Sig.Value[0] == carrier && inputOnly.Ret.Value == frontendResult && inputOnly.Sty.Value == frontendResult,
             "a physically existential input laundered an unrelated frontend result");
         Need(nullStamp.Ret.Value == carrier && nullStamp.Sty.IsNull && !nullStamp.Sig.Value.Any()
@@ -73,15 +74,7 @@ static partial class ReferenceExistentialAbiBinding
             && ReferenceEquals(inputOnly.Args.Value[0], input)
             && rows[0].ParamTypeNodes[0] == new TypeNode.Array(carrier) && rows[0].ReturnTypeNode == physicalResult,
             "source/operand ownership or authoritative reference metadata was mutated");
-        var typed = new BirNativeInstance { Type = text, Ret = carrier, Sty = semantic };
-        Need(SourceAbiExpressionType(new BirInstanceOrNull { Type = carrier }) == carrier,
-            "a safe cast must retain its target representation for local storage");
-        Need(SourceAbiExpressionType(typed) == carrier, "initializer ret lost priority over type and sty");
-        typed.Ret = OptionalField<TypeNode>.Null;
-        Need(SourceAbiExpressionType(typed) == text, "initializer type lost priority over sty after null ret");
-        Need(SourceAbiExpressionType(new BirValueBlock { Type = carrier, Result = OptionalField<IBirExpression>.Null }) == null,
-            "an absent valueBlock result incorrectly fell through to its own type");
-        Console.WriteLine("[owning referenced existential ABI] self-test OK (selected signatures, two-pass locals, exact frame/result precedence, presence and operand identity)");
+        Console.WriteLine("[owning referenced existential ABI] self-test OK (selected signatures, declared storage, exact frame, presence and operand identity)");
         static OptionalField<IBirExpression> E(IBirExpression value) => OptionalField<IBirExpression>.Of(value);
     }
 }
