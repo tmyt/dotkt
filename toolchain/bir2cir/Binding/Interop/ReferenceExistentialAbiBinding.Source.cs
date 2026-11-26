@@ -4,11 +4,7 @@ using DotKt.Cir;
 
 static partial class ReferenceExistentialAbiBinding
 {
-    internal static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs)
-    {
-        BindSourceCalls(root, refs);
-        AlignSourceLocals(root, refs);
-    }
+    internal static void Apply(BirFileDeclaration root, ReferenceMetadataIndex refs) => BindSourceCalls(root, refs);
 
     static void BindSourceCalls(BirGraphValue node, ReferenceMetadataIndex refs)
     {
@@ -63,30 +59,5 @@ static partial class ReferenceExistentialAbiBinding
             }
         }
         node.VisitChildren(child => BindSourceCalls(child, refs));
-    }
-
-    static void AlignSourceLocals(BirGraphValue node, ReferenceMetadataIndex refs)
-    {
-        if (node is IBirExecutablePayload) return;
-        if (node is BirVariable variable && SourceAbiExpressionType(variable.Init.OrDefault() as BirGraphValue)
-            is TypeNode.Fqn physical && refs.IsExistentialPhysicalOwner(physical.Name))
-            variable.Type = BirGraphValue.CopyType(physical);
-        node.VisitChildren(child => AlignSourceLocals(child, refs));
-    }
-
-    // This owner's initializer reader is intentionally NOT Sty-first Surface.
-    // A valueBlock with no result does not fall through to its own type/sty.
-    static TypeNode SourceAbiExpressionType(BirGraphValue node)
-    {
-        if (node == null) return null;
-        // Only these two classifier operands differ from the stored value; a cast returns the target representation.
-        if (node is BirClassReference or BirIsInstance) return BirNodeType.Of((BirGraphNode)node);
-        TypeNode result = null;
-        node.VisitOwnTypeFields((field, type) => { if (field == "ret") result = type; });
-        if (result != null) return result;
-        if (node is BirValueBlock block) return SourceAbiExpressionType(block.Result.OrDefault() as BirGraphValue);
-        TypeNode own = null, stamp = null;
-        node.VisitOwnTypeFields((field, type) => { if (field == "type") own = type; else if (field == "sty") stamp = type; });
-        return own ?? stamp;
     }
 }
