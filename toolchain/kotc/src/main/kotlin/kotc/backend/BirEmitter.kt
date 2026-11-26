@@ -485,10 +485,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// True only while projecting a compiler-generated `equals` body for a data or value class. Its peer comparison
 	// reads backing fields from a successful raw-classifier cast whose CLR representation may be existential.
 	internal var activeGeneratedEqualsFieldRead: Boolean = false
-	// Per-file prefix for SYNTHETIC type names (closures, ref cells, sequence SMs). Each file is compiled by its own
-	// BirEmitter with a fresh `closureCounter`, so unprefixed names like `dotkt$Closure0` COLLIDE across files when
-	// ilemit links all BIR into one assembly (the dup overwrites in `_types` -> orphaned TypeBuilder -> Save crash).
-	// `fileClass` is unique per file, so it disambiguates. Stays under the `dotkt$` prefix (ilemit marks those).
+	// The facade prefix is descriptive, not unique: several source files may share a facade.
+	// Synthetic declarations use module-wide ordinals to distinguish them within the compilation.
 	internal val synthScope: String get() = fileClass.replace(Regex("[^A-Za-z0-9]"), "_")
 	/** The `<File>Kt` class name of a top-level declaration's DEFINING file (so cross-file top-level property
 	 *  access targets the owning file class, not whichever file is being emitted). */
@@ -819,6 +817,8 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	)
 	/** identity key -> ref-cell representation facts. One entry per DISTINCT cell shape in the file. */
 	internal val refTypes = LinkedHashMap<String, RefTypeFact>()
+	private lateinit var refCellSource: String
+	private var nextRefCellId = 0
 	private val refTypeByVariable = java.util.IdentityHashMap<IrValueDeclaration, RefTypeFact>()
 	private val refTypeParameterIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Int>()
 	internal val localFunctionOwnerByVariable = java.util.IdentityHashMap<IrValueDeclaration, String>()
@@ -832,8 +832,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	 * between them gives it one class's bounds and instantiates it with the other's argument — rejected downstream if
 	 * the bounds conflict, and a bound the argument does not satisfy if they merely differ. So the key closes over the
 	 * declaration identity and bounds of every variable the element mentions. Equal bounds do not make two lexical
-	 * parameters interchangeable: they can occupy different slots when captured together in a lifted class. A second
-	 * distinct cell for the same printed element gets a suffixed name.
+	 * parameters interchangeable: they can occupy different slots when captured together in a lifted class.
 	 */
 	internal fun refTypeName(d: IrValueDeclaration): String {
 		refTypeByVariable[d]?.let { return it.name }
@@ -848,9 +847,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			refTypeByVariable[d] = it
 			return it.name
 		}
-		val base = "dotkt\$${synthScope}\$Ref\$" + mangle(elem)
-		val taken = refTypes.values.count { it.name == base || it.name.startsWith("$base\$") }
-		val name = if (taken == 0) base else "$base\$$taken"
+		// Inline publication can bring cells from another compilation into this file.
+		// An ordinal alone could bind a producer's cell to an unrelated local element type.
+		val shapeId = MessageDigest.getInstance("SHA-256").digest((refCellSource + '\u0000' + key).toByteArray()).toHexString()
+		val name = "dotkt\$${synthScope}\$Ref\$$shapeId\$${nextRefCellId++}"
 		val parameters = ArrayList<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 		val seen = java.util.Collections.newSetFromMap(
 			java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Boolean>())
@@ -1064,6 +1064,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			return null
 		val className = fileClassName(file)
 		fileClass = className
+		refCellSource = file.packageFqName.asString() + '\u0000' + File(file.fileEntry.name).name
 		// Prefer the argv form over main() when both are present in the file.
 		val entry = functions.filter { fn ->
 			fn.name.asString() == "main" && fn.typeParameters.isEmpty() && fn.returnType.isUnit() &&

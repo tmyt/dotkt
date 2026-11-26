@@ -979,7 +979,7 @@ BCL method, not an encoded structure — but its target should resolve through t
 Synthetic CLR type names are built by **lossy regex-mangle** of a type FQN
 (`"<>dotkt_ClrH_" + Regex.Replace(fqn, "[^A-Za-z0-9]", "_")` and peers). The abbreviation zoo — `ClrH`
 (CLR helper), `K*` (`KIterator`/`KIterable`/`KProperty` Kotlin synthetics), `RW`/`RO` (read-write/read-only
-property), `Ref` (ref cell), `tryval` (try-expr temp), `obj` (object-expr) — encodes a TYPE into a NAME
+property), `tryval` (try-expr temp), `obj` (object-expr) — encodes a TYPE into a NAME
 lossily: `kotlin.Char` and a hypothetical `kotlin$Char` collide (both → `kotlin_Char`), and it is not
 reversible. FREEZE: derive synthetic names through a **single registry** that assigns a stable, collision-free
 unique name per DISTINCT structured `Type` (dedup by the `Type` node, not by the mangled string), with the
@@ -1086,6 +1086,9 @@ values are:
 **Deferred mutable captures.** An `inlineLambda.captures` descriptor for a mutable local not already represented by
 shared storage carries `sharedCellType`, a structured type referencing its `refTypes` declaration in the current
 generic frame. A local function's leading capture parameter carries the same fact when it forwards that location.
+kotc reuses a cell declaration for the same capture shape within one file. A module-wide ordinal distinguishes
+local allocations, while a fingerprint of the originating file's package, basename and capture shape
+keeps a published inline body's cells distinct from unrelated consumer cells. The facade is not a file identity.
 An inline capture also carries `sharedCellTypeParams`, the cell's complete generic declarations in the cell's own
 frame. Those bounds are instantiated against `sharedCellType.args` when declaring a materialized carrier's frame;
 ordinary inline substitution must not reinterpret the independent cell-declaration frame.

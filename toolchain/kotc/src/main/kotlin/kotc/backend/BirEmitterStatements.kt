@@ -119,7 +119,7 @@ private fun BirEmitter.stmtCore(node: org.jetbrains.kotlin.ir.IrElement): List<B
 		BirVariable(name = localSlotName(node), type = birType(node.type),
 			init = init?.let { BirField.Value(it) } ?: BirField.Null)
 	}
-	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell). The cell's `v` field —
+	// A captured `var x = init` allocates its registered heap cell. The cell's `v` field —
 	// and thus the synthesized ctor param — is the FULL element type `birType(node.type)`; when that is a value-type
 	// nullable (`Int?` = `Nullable<T>`) the bare initializer (`= 5`, a `kotlin.Int`) must be wrapped to the `Nullable<T>`
 	// the ctor expects. Carry the element type as the ctor's `argTypes` so ilemit coerces the arg (bare `T` -> `Nullable<T>`,
