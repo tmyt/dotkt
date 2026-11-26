@@ -98,6 +98,11 @@ public class NestedCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, i
 {
     public int Read() => NativeWideCallbacks.Read(callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17));
 }
+public sealed class NativeCallbackOwner<T>(DotKt.Runtime.CompilerServices.KFunc<T, int, int, int, int, int,
+    int, int, int, int, int, int, int, int, int, int, int, T> callback)
+{
+    public T Read(T first) => callback(first, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+}
 public delegate WideIntCallback WideFactory();
 public static class NativeWideCallbacks
 {
