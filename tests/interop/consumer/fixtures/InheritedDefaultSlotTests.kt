@@ -18,6 +18,13 @@ private class PreserveExplicitDefault : ExplicitDefaultBase<String>() {
 private class CovariantNamesake : ExplicitDefaultBase<String>() {
     override fun Read(key: String): String = "covariant"
 }
+private open class ReplaceDefaultBesideExplicit : ExplicitDefaultBase<String>() {
+    override fun Read(key: String): Any = "class"
+    override fun Tick(): Int = 9
+}
+private class DerivedReplacement : ReplaceDefaultBesideExplicit() {
+    override fun Read(key: String): Any = "derived"
+}
 private class InheritNewNamesake : NewDefaultNamesake()
 private class InheritChannel : TextChannel(), ITextChannel
 private class UseNewVirtualSlot : HiddenChannel(), ITextChannel
@@ -44,6 +51,10 @@ class InheritedDefaultSlotTests {
         check(Driver.ReadDefaultBase(explicit) == "exact" && Driver.ReadDefaultChannel(explicit) == "explicit")
         val covariant = CovariantNamesake()
         check(Driver.ReadDefaultBase(covariant) == "covariant" && Driver.ReadDefaultChannel(covariant) == "explicit")
+        for ((instance, expected) in listOf(ReplaceDefaultBesideExplicit() to "class", DerivedReplacement() to "derived")) {
+            check(instance.Read("x") == expected && Driver.ReadDefaultBase(instance) == expected)
+            check(Driver.ReadDefaultChannel(instance) == "explicit" && Driver.Tick(instance) == 9)
+        }
         val inherited = InheritNewNamesake()
         check(inherited.Read("x") == "new" && Driver.ReadDefaultChannel(inherited) == "explicit")
         check(Driver.CheckChannel(InheritChannel(), UseNewVirtualSlot()))
