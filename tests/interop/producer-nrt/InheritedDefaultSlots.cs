@@ -6,6 +6,11 @@ using System.Reflection.PortableExecutable;
 namespace InheritedDefaultSlots;
 
 public interface IValue { int Read() => 1; }
+public interface IOverloadedReader<T> {
+    int Read(T value) => 1;
+    int Read(string? value) => 2;
+}
+public class IntReader : IOverloadedReader<int> { }
 public interface IDefaultChannel<T> {
     object Read(T key) => "default";
     int Tick() => 11;
@@ -45,6 +50,8 @@ public class ExplicitChannel : IChannel<string> {
 
 public static class Driver
 {
+    public static int ReadNumber(IOverloadedReader<int> reader) => reader.Read(1);
+    public static int ReadTextValue(IOverloadedReader<int> reader) => reader.Read("x");
     public static object ReadDefaultChannel(IDefaultChannel<string> channel) => channel.Read("x");
     public static object ReadDefaultBase(ExplicitDefaultBase<string> instance) => instance.Read("x");
     public static object ReadBoxBase(ExplicitDefaultBase<KeyBox<string>> instance) => instance.Read(new());

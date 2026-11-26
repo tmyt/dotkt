@@ -461,6 +461,7 @@ static partial class KotlinOverrideSlotBridge
                 // fills a differently-named member (`compareTo` -> `CompareTo`), and the MethodImpl has to name the
                 // member the interface actually declares.
                 var descriptorOwner = accessorKind != null ? physicalSelectedSpec : spec;
+                System.Reflection.MethodInfo selectedInterfaceMethod = null;
                 var descriptorMember = selectedPhysicalMember ?? ownName;
                 if (accessorKind != null)
                 {
@@ -547,15 +548,15 @@ static partial class KotlinOverrideSlotBridge
                             && IsNativeSlotOwner(selectedDescriptorOwner.Name, defs, refs.HasDotKtOwner)
                             ? (TypeNode.Fqn)BirTypeLowering.LowerSlot(selectedDescriptorOwner, metadataProjection,
                                 BirTypeLowering.PhysicalSlotRole.Owner) : null;
-                        if (!ClrMemberResolution.TryResolveAliasedInterfaceSlotByShape(
+                        selectedInterfaceMethod = ClrMemberResolution.ResolveAliasedInterfaceMethodByShape(
                                 null, refs, loweredOwner, descriptorMember, methodArity, comparableParams,
                                 MethodTypeParameterShapeKey(selectedSlotTypeParams, metadataOwner != null ? loweredOwner.Args : selectedSlotArgs),
                                 out var declarationOwner, out var declarationMember,
                                 out var physicalParams, out var physicalRet,
                                 // Bindings such as Comparable deliberately collapse their owner arguments.
                                 // Their existing physical selection remains authoritative.
-                                usesSelectionFrame ? selectionOwnerArgs : null, emittedOwnerArgs: metadataOwner?.Args))
-                            continue;
+                                usesSelectionFrame ? selectionOwnerArgs : null, emittedOwnerArgs: metadataOwner?.Args);
+                        if (selectedInterfaceMethod == null) continue;
                         descriptorOwner = declarationOwner;
                         descriptorMember = declarationMember;
                         slotParams = physicalParams;
@@ -582,8 +583,9 @@ static partial class KotlinOverrideSlotBridge
                     : value;
                 var slotSignature = signatureParameters?.Select((signature, index) =>
                     WithModifiers(signature, slotParams[index])).ToArray();
-                var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
-                    descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
+                var slotHasDefault = descriptorIsInterface && (selectedInterfaceMethod != null
+                    ? selectedInterfaceMethod.IsPublic && !selectedInterfaceMethod.IsAbstract
+                    : refs.IsPublicConcreteInstanceMethod(descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet));
                 // The semantic and native hierarchy walks may reach the same TypeDef through different
                 // spellings. A physical MethodImpl must not bind again by the unqualified arity-free name.
                 if (descriptorIsInterface && phase == Phase.PhysicalBridges)
