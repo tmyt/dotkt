@@ -30,8 +30,12 @@ public static class Driver
         var type = inherited.GetType();
         using var stream = System.IO.File.OpenRead(type.Assembly.Location);
         using var pe = new PEReader(stream);
-        var def = pe.GetMetadataReader().GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(type.MetadataToken));
+        var md = pe.GetMetadataReader();
+        var def = md.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(type.MetadataToken));
+        var hiddenTarget = hidden.GetType().GetInterfaceMap(typeof(IChannel<string>)).TargetMethods.Single(m => m.ReturnType == typeof(int) && m.GetParameters().Length == 1);
         return def.GetMethodImplementations().Count == 0
+            && !def.GetMethods().Any(h => md.GetString(md.GetMethodDefinition(h).Name).StartsWith("dotkt$ovslot$", System.StringComparison.Ordinal))
+            && hiddenTarget.DeclaringType == hidden.GetType() && hiddenTarget.IsPrivate
             && type.GetInterfaceMap(typeof(IChannel<string>)).TargetMethods.All(m => m.DeclaringType == typeof(Channel<string>))
             && inherited.Count == 10 && inherited.Read("x") == 11 && hidden.Count == 10 && hidden.Read("x") == 12;
     }

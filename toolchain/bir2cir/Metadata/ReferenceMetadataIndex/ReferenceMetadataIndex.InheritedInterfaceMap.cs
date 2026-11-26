@@ -5,6 +5,9 @@ using static ReferenceMetadataReader;
 
 sealed partial class ReferenceMetadataIndex
 {
+    // The interface closure is independent of the member under consideration.
+    readonly Dictionary<Type, (ILookup<Type, TypeNode.Fqn> Edges, HashSet<Type> Ambiguous)> _nativeInterfaceEdges = new();
+
     // A new derived interface does not replace the base's existing mapping of
     // its parent. Elide a forwarder only if its selected MethodDef is in the
     // same virtual slot as the native implicit implementation. On ambiguity
@@ -23,28 +26,42 @@ sealed partial class ReferenceMetadataIndex
         const BindingFlags declared = BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly;
         var actual = baseType.Args ?? [];
         var expected = parameters.Append(result).Select(Key).ToArray();
-        TypeNode[] Signature(MethodInfo method, TypeNode[] args)
+        // The descriptor represents names without assembly scopes. Prove that
+        // the actual signature leaves resolve to the same TypeDefs before using it.
+        bool Scoped(Type t) => t.IsGenericParameter || (!t.IsFunctionPointer && (t.HasElementType
+            ? (!t.IsArray || t.IsSZArray) && Scoped(t.GetElementType())
+            : ResolveRefType(Def(t).FullName) == Def(t) && (!t.IsConstructedGenericType || t.GetGenericArguments().All(Scoped))));
+        bool Plain(TypeNode t) => t switch {
+            TypeNode.Fqn f => f.Args == null || f.Args.All(Plain), TypeNode.Tv => true,
+            TypeNode.Array a => Plain(a.Elem), TypeNode.ByRef r => Plain(r.Of), _ => false,
+        };
+        bool Fits(MethodInfo method, TypeNode[] args, TypeNode[] target)
         {
+            if (!Scoped(method.ReturnType) || !method.GetParameters().All(p => Scoped(p.ParameterType))) return false;
             var signature = MetadataMethodSignature(method);
-            return signature.Parameters.Append(signature.Return).Select(p => Key(Close(p, args))).ToArray();
+            var types = signature.Parameters.Append(signature.Return);
+            return types.All(Plain) && types.Select(p => Key(Close(p, args))).SequenceEqual(target);
         }
         IEnumerable<MethodInfo> Named(Type type, BindingFlags flags) =>
-            type.GetMember(member, MemberTypes.Method, flags).OfType<MethodInfo>().Where(m => m.GetGenericArguments().Length == arity);
-        var slots = Named(iface, declared).Where(m => Signature(m, face.Args ?? []).SequenceEqual(expected)).Take(2).ToArray();
-        if (slots.Length != 1) return false;
+            type.GetMember(member, MemberTypes.Method, flags).OfType<MethodInfo>()
+                .Where(m => m.GetGenericArguments().Length == arity && m.GetParameters().Length == parameters.Length);
+        var slots = Named(iface, declared).Take(2).ToArray();
+        if (slots.Length != 1 || !Fits(slots[0], face.Args ?? [], expected)) return false;
         var stack = new Stack<Type>();
         for (var t = root; t != null; t = t.BaseType) stack.Push(t);
         bool occupied = false, mapped = false, found = false;
         while (stack.TryPop(out var type))
         {
             var definition = Def(type);
+            if (!Scoped(type)) return false;
             var args = Args(type).Select(p => Close(p, actual)).ToArray();
             var spec = new TypeNode.Fqn(definition.FullName, args.Length == 0 ? null : args);
-            var candidates = Named(definition, declared).Where(m => Signature(m, args).SequenceEqual(expected)).Take(2).ToArray();
+            var candidates = Named(definition, declared | BindingFlags.NonPublic).Take(2).ToArray();
             if (candidates.Length > 1) return false;
             if (candidates is [var method])
             {
-                if (!method.IsVirtual || occupied && (method.Attributes & MethodAttributes.NewSlot) != 0)
+                if (!method.IsPublic || !method.IsVirtual || occupied && (method.Attributes & MethodAttributes.NewSlot) != 0
+                    || !Fits(method, args, expected))
                     return false;
                 occupied = true;
                 found |= definition == selected && method.MetadataToken == token && Key(spec) == Key(body);
@@ -53,19 +70,24 @@ sealed partial class ReferenceMetadataIndex
             var row = reader.GetTypeDefinition((System.Reflection.Metadata.TypeDefinitionHandle)MetadataTokens.Handle(definition.MetadataToken));
             foreach (var h in row.GetMethodImplementations())
             {
-                var declaration = reader.GetMethodImplementation(h).MethodDeclaration;
-                if (TryMethodImplMember(reader, declaration, out var parent, out var name) && name == member
-                    && Key(Close(NativeSignatureReader.Type(reader, parent), args)) == Key(face)) return false;
+                var impl = reader.GetMethodImplementation(h);
+                if (TryMethodImplMember(reader, impl.MethodDeclaration, out _, out var name) && name == member
+                    || TryMethodImplMember(reader, impl.MethodBody, out _, out var bodyName) && bodyName == member) return false;
             }
             // Bind in the *declaring class's open frame*, not just the user's
             // closed application: M(T) and M(int) can coincide at Base<int>.
-            foreach (var edge in MetadataInterfaceOwners(definition, Args(definition)))
+            if (!_nativeInterfaceEdges.TryGetValue(definition, out var interfaces))
+                _nativeInterfaceEdges.Add(definition, interfaces = (MetadataInterfaceOwners(definition, Args(definition))
+                    .ToLookup(edge => edge.Definition, edge => edge.Owner), definition.GetInterfaces().Where(t => !Scoped(t)).Select(Def).ToHashSet()));
+            if (interfaces.Ambiguous.Contains(iface)) return false;
+            foreach (var edge in interfaces.Edges[iface])
             {
-                if (edge.Definition != iface || Key(Close(edge.Owner, args)) != Key(face)) continue;
-                var openSlot = Signature(slots[0], edge.Owner.Args ?? []);
-                var matches = Named(definition, BindingFlags.Instance | BindingFlags.Public)
-                    .Where(m => m.IsVirtual && Signature(m, Args(m.DeclaringType)).SequenceEqual(openSlot)).Take(2).ToArray();
-                if (matches.Length != 1) return false;
+                if (Key(Close(edge, args)) != Key(face)) continue;
+                var slot = MetadataMethodSignature(slots[0]);
+                var openSlot = slot.Parameters.Append(slot.Return).Select(t => Key(Close(t, edge.Args ?? []))).ToArray();
+                var matches = Named(definition, BindingFlags.Instance | BindingFlags.Public).Take(2).ToArray();
+                if (matches.Length != 1 || !matches[0].IsVirtual || !Scoped(matches[0].DeclaringType)
+                    || !Fits(matches[0], Args(matches[0].DeclaringType), openSlot)) return false;
                 mapped = true;
             }
         }
