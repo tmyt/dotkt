@@ -41,6 +41,13 @@ sealed class TypedPhysicalDelegateAdapter
         return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural);
     }
 
+    internal IBirExpression AdaptNominalValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
+        TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods)
+    {
+        var plan = ClrMemberResolution.NominalDelegateValuePlan(references, source, target, isValue, owners, methods, out var slot);
+        return plan == null ? null : AdaptValue(document, expression, source, target, slot, plan, null);
+    }
+
     IBirExpression AdaptValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
         TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view)
     {
@@ -67,7 +74,7 @@ sealed class TypedPhysicalDelegateAdapter
                 Cond = new BirBinaryOperation {
                     Op = "==", Lhs = Read(), Rhs = Null(),
                 },
-                Then = Null(), Else = view == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
+                Then = Null(), Else = view == null && plan.NominalSource == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
                     Type = target, Cond = new BirIsInstance { Type = slot, E = Read() },
                     Then = new BirCast { Type = slot, E = Read() }, Else = adapted }),
             },

@@ -68,6 +68,56 @@ static partial class ClrMemberResolution
         return null;
     }
 
+    // A CLR variant generic argument may vary only through reference conversions.
+    // Kotlin's boxed value conversion also applies inside covariant delegate results
+    // and contravariant delegate parameters. Keep the *named* source Invoke slot.
+    internal static DelegateAdapterPlan NominalDelegateValuePlan(ReferenceMetadataIndex refs,
+        TypeNode source, TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods,
+        out TypeNode.Fqn slot)
+    {
+        slot = DelegateSlotCore(target) as TypeNode.Fqn;
+        if (refs == null || DelegateSlotCore(source) is not TypeNode.Fqn from || slot == null || !NeedsBridge(from, slot))
+            return null;
+        bool NeedsBridge(TypeNode.Fqn a, TypeNode.Fqn b)
+        {
+            if (a == b || a.Args is not { Length: > 0 } aa || b.Args is not {} bb || aa.Length != bb.Length
+                || WithoutArity(a.Name) != WithoutArity(b.Name) || SameDelegate(a, b)) return false;
+            var definition = ResolveOwnerType(a, refs);
+            if (definition == null || !IsDelegate(definition) || ResolveOwnerType(b, refs) != definition) return false;
+            var parameters = definition.GetGenericArguments();
+            var needed = false;
+            for (var i = 0; i < aa.Length; i++)
+            {
+                if (SameDelegate(aa[i], bb[i])) continue;
+                if ((parameters[i].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) == 0) return false;
+                var l = DelegateSlotCore(aa[i]); var r = DelegateSlotCore(bb[i]);
+                needed |= l is TypeNode.Tv || r is TypeNode.Tv || l is TypeNode.Fqn x && isValue(x)
+                    || r is TypeNode.Fqn y && isValue(y) || l is TypeNode.Fqn ld && r is TypeNode.Fqn rd && NeedsBridge(ld, rd);
+            }
+            return needed;
+        }
+
+        var open = false;
+        BirGraphNameFields.VisitTypeNodes(from, t => open |= t is TypeNode.Tv);
+        BirGraphNameFields.VisitTypeNodes(slot, t => open |= t is TypeNode.Tv);
+        owners = open ? owners ?? [] : [];
+        methods = open ? methods ?? [] : [];
+        TypeNode InAdapter(TypeNode t) => open ? CapturedGenericInvocation.Map(t,
+            v => new TypeNode.Tv("type", v.I + (v.Scope == "method" ? owners.Length : 0))) : t;
+        var frame = owners.Concat(methods).Select((p, i) => {
+            var q = CapturedGenericInvocation.CloneParameter(p, InAdapter);
+            q.Name = "T" + i; q.Variance = default;
+            return q;
+        }).ToArray();
+        var actual = owners.Select((_, i) => (TypeNode)new TypeNode.Tv("type", i))
+            .Concat(methods.Select((_, i) => new TypeNode.Tv("method", i))).ToArray();
+        var capture = (TypeNode.Fqn)InAdapter(from);
+        var natural = PhysicalFunctionShape(refs, capture, includeNominal: true);
+        var dest = PhysicalFunctionShape(refs, InAdapter(slot), includeNominal: true);
+        return new(natural, dest.DelegateParams.Length, dest.Ret, dest.DelegateParams, frame.Length, actual,
+            NominalSource: capture, LexicalFrame: frame);
+    }
+
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,
         IReadOnlyDictionary<string, string> localCarriers, TypeNode source, TypeNode target, out TypeNode.Fqn slot)
     {
