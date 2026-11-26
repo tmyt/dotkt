@@ -91,7 +91,7 @@ static partial class SuspendColdLowering
 
             void AddNamedWrappers()
             {
-                if (_name == "main" && _ownerClass == null) methods.Add(DrainMain());
+                if (IsEntryPoint) methods.Add(DrainMain());
                 if (WantsBridge) methods.Add(BuildBridge());
             }
             SourceBuildResult Finish() => new(methods, types, NeedsRootContinuation, _methodProjections);

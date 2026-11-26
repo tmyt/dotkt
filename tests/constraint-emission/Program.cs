@@ -10,7 +10,7 @@ if (args[0] == "generate")
 {
     var source = JsonNode.Parse(File.ReadAllText(args[1]))!;
     var root = new JsonObject {
-        ["fileClass"] = "ConstraintMethods", ["hasMain"] = false,
+        ["fileClass"] = "ConstraintMethods",
         ["wellKnownRefs"] = source["wellKnownRefs"]!.DeepClone(),
         ["fields"] = new JsonArray(), ["types"] = new JsonArray(), ["methods"] = new JsonArray()
     };

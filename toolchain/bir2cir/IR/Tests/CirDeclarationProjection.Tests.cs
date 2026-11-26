@@ -28,7 +28,7 @@ static partial class CirDeclarationProjection
             [new TypeNode.Fqn("kotlin.Int")])]);
         var method = new BirFunctionDeclaration { Name = "M", Static = true, Override = false, Virtual = false,
             Params = new[] { new BirParameter { Name = "value", Type = nested } }, Ret = nested, Body = Array.Empty<IBirStatement>() };
-        var source = new BirFileDeclaration { FileClass = "Probe", HasMain = false, Methods = new[] { method },
+        var source = new BirFileDeclaration { FileClass = "Probe", Methods = new[] { method },
             Fields = new[] { new BirFieldDeclaration { Name = "F", Type = nested } },
             Properties = new[] { new BirPropertyDeclaration { Name = "P", Type = nested } }, Types = Array.Empty<IBirTypeDeclaration>() };
         CollectionIdentityRecord.RecordMemberSlots(source);
@@ -91,7 +91,7 @@ static partial class CirDeclarationProjection
     };
 
     static JsonObject File(params JsonObject[] methods) => new() {
-        ["fileClass"] = "Probe", ["hasMain"] = false, ["fields"] = new JsonArray(),
+        ["fileClass"] = "Probe", ["fields"] = new JsonArray(),
         ["methods"] = new JsonArray(methods.Cast<JsonNode>().ToArray()), ["types"] = new JsonArray()
     };
 

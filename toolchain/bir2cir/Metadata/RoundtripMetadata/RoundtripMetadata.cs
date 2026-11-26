@@ -287,7 +287,7 @@ static partial class RoundtripMetadata
             AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))) };
         return new CirFileDeclaration
         {
-            FileClass = "", HasMain = false, Methods = [], Fields = [], Types = types,
+            FileClass = "", Methods = [], Fields = [], Types = types,
         };
     }
 

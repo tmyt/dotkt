@@ -16,7 +16,7 @@ CORE_REF="$(find "$DOTNET_REF_PACK" -path '*/ref/net10.0/System.Runtime.dll' -pr
 [[ -n "$CORE_REF" ]] || { echo "companion-negative: System.Runtime reference assembly not found" >&2; exit 1; }
 
 BIR="$WORK/probe.bir.json"
-printf '%s\n' '{"fileClass":"CompanionNegativeProbeKt","hasMain":false,"fields":[],"methods":[],"types":[]}' >"$BIR"
+printf '%s\n' '{"fileClass":"CompanionNegativeProbeKt","fields":[],"methods":[],"types":[]}' >"$BIR"
 
 run_rejected() {
     local tool="$1"

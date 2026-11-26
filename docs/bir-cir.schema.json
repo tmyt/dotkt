@@ -162,7 +162,7 @@
         "pos": { "$ref": "#/$defs/birDeclarationPosition" }
       } },
       "properties": {
-        "fileClass": { "type": "string" }, "hasMain": { "type": "boolean" },
+        "fileClass": { "type": "string" },
         "fields": { "type": "array", "items": { "$ref": "#/$defs/birFieldDeclaration" } },
         "methods": { "type": "array", "items": { "$ref": "#/$defs/birFunctionDeclaration" } },
         "properties": { "type": "array", "items": { "$ref": "#/$defs/birPropertyDeclaration" } },
@@ -172,7 +172,7 @@
         "sourceCallables": { "type": "array", "items": { "$ref": "#/$defs/birSourceCallable" } },
         "dslScopes": { "type": "array", "items": { "$ref": "#/$defs/birSourceDslScope" } }
       },
-      "required": ["fileClass", "hasMain", "fields", "methods", "properties", "types", "refTypes", "typeAliases"], "additionalProperties": false
+      "required": ["fileClass", "fields", "methods", "properties", "types", "refTypes", "typeAliases"], "additionalProperties": false
     },
 
     "birExpressionNode": {
@@ -646,6 +646,7 @@
         "companionReceiver": { "type": "string", "x-dotkt-kotlin-json-type": true }, "companionMemberKind": { "type": "string" }, "companionSourceName": { "type": "string" },
         "retCtxFnType": { "type": "integer" }, "attrs": { "x-dotkt-representation-role": "Attributes", "type": "array", "items": { "$ref": "#/$defs/birAttribute" } }, "pos": { "$ref": "#/$defs/birDeclarationPosition" },
         "propertyName": { "type": "string" }, "propertyAccessor": { "type": "string" }, "propertyAssociation": { "type": "string" },
+        "entryPoint": { "type": "boolean", "description": "The selected Kotlin entry declaration in this source file." },
         "eventProperty": { "type": "boolean" }, "fakeOverride": { "type": "boolean" },
         "inheritedImplementation": { "x-dotkt-representation-role": "InheritedImplementation", "$ref": "#/$defs/birInheritedImplementation" },
         "_syntheticTypeArgs": { "x-dotkt-frame-role": "SyntheticApplication", "type": "array", "items": { "$ref": "#/$defs/type" }, "x-dotkt-kotlin-name": "syntheticTypeArgs" }
@@ -1670,10 +1671,10 @@
 
     "//== PHYSICAL CIR DECLARATIONS ==//": null,
     "cirFile": {
-      "type": "object", "x-dotkt-model": { "name": "CirFileDeclaration", "domain": "cirDeclarations", "interfaces": ["ICirContainer"], "sourceDefaults": { "hasMain": false, "methods": [], "fields": [], "types": [] } },
+      "type": "object", "x-dotkt-model": { "name": "CirFileDeclaration", "domain": "cirDeclarations", "interfaces": ["ICirContainer"], "sourceDefaults": { "methods": [], "fields": [], "types": [] } },
       "description": "Physical output unit. Declaration records contain only typed fields; executable subtrees have a named temporary adapter until node migration.",
       "properties": {
-        "fileClass": { "type": "string" }, "hasMain": { "type": "boolean" },
+        "fileClass": { "type": "string" },
         "methods": { "type": "array", "items": { "$ref": "#/$defs/cirMethod" } },
         "fields": { "type": "array", "items": { "$ref": "#/$defs/cirField" } },
         "types": { "type": "array", "items": { "$ref": "#/$defs/cirTypeDeclaration" } },
@@ -1682,7 +1683,7 @@
         "attrs": { "x-dotkt-representation-role": "Attributes", "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } },
         "wellKnownRefs": { "type": "object", "additionalProperties": { "$ref": "#/$defs/memberRef" }, "x-dotkt-csharp-type": "System.Collections.Generic.Dictionary<string, MemberRefNode>" },
         "pos": { "$ref": "#/$defs/pos" }
-      }, "required": ["fileClass", "hasMain", "methods", "fields", "types"], "additionalProperties": false
+      }, "required": ["fileClass", "methods", "fields", "types"], "additionalProperties": false
     },
     "cirTypeKind": {
       "x-dotkt-model": { "name": "CirTypeKind", "domain": "cirDeclarations" },
@@ -1753,6 +1754,7 @@
         "inlineBir": { "type": "string", "contentEncoding": "base64", "x-dotkt-csharp-type": "byte[]" },
         "retNothing": { "type": "boolean" }, "retNullableFlags": { "type": "array", "items": { "type": "integer" } },
         "retSuspendFnType": { "$ref": "#/$defs/type" }, "suspendRet": { "$ref": "#/$defs/type" }, "retCtxFnType": { "type": "integer" },
+        "entryPoint": { "type": "boolean", "description": "Exact static method targeted by the executable startup wrapper." },
         "entryPointAttrs": { "type": "array", "items": { "$ref": "#/$defs/cirAttributeApplication" } }
       }, "required": ["name", "static", "override", "virtual", "params", "ret"], "additionalProperties": false
     },

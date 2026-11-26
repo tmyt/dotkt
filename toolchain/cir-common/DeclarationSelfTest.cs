@@ -46,7 +46,7 @@ public static class DeclarationSelfTest
         var method = new CirMethod { Name = "M", Static = false, Override = true, Virtual = true,
             Abstract = false, Vis = "protected", Params = [parameter], Ret = integer,
             Body = new ICirStatement[] { new CirReturn { Value = new CirLocal { Name = "value" } } },
-            TypeParams = new[] { generic }, Attrs = attributes, EntryPointAttrs = attributes, RetAttrs = attributes, Mods = modifiers,
+            TypeParams = new[] { generic }, Attrs = attributes, EntryPoint = true, EntryPointAttrs = attributes, RetAttrs = attributes, Mods = modifiers,
             Pos = position, Generated = true, ObjectOverride = true, ClrFinal = false, SpecialName = false,
             ClrInterfaceSlotBridge = true, RequiresClrOverride = true, ClrOverrideRef = reference, SuspendBridge = false,
             ClrInterfaceImpls = new[] { descriptor }, ClrBaseImpls = new[] { descriptor }, Extern = false,
@@ -78,7 +78,7 @@ public static class DeclarationSelfTest
             Methods = new[] { method }, Properties = new[] { property }, Attrs = attributes, Mods = modifiers,
             Pos = position, InterfaceSlotRefs = new[] { slots }, ClrEvents = new[] { @event }, Underlying = integer,
             Entries = new[] { entry }, Params = new[] { parameter }, Ret = integer, RetAttrs = attributes };
-        var file = new CirFileDeclaration { FileClass = "Facade", HasMain = false, Methods = [method],
+        var file = new CirFileDeclaration { FileClass = "Facade", Methods = [method],
             Fields = [field], Types = [type], Properties = new[] { property }, AssemblyAttrs = attributes,
             Attrs = attributes, WellKnownRefs = new Dictionary<string, MemberRefNode> { ["physical"] = reference }, Pos = position };
         var json = DeclarationJson.Write(file);

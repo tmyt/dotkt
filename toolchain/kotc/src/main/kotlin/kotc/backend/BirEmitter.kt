@@ -1064,13 +1064,17 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			return null
 		val className = fileClassName(file)
 		fileClass = className
-		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
-		val hasMain = functions.any {
-			it.name.asString() == "main" && run {
-				val regs = it.parameters.filter { p -> p.kind == IrParameterKind.Regular }
-				regs.isEmpty() || (regs.size == 1 && isArrayType(regs[0].type))
-			}
-		}
+		// Prefer the argv form over main() when both are present in the file.
+		val entry = functions.filter { fn ->
+			fn.name.asString() == "main" && fn.typeParameters.isEmpty() && fn.returnType.isUnit() &&
+				(fn.parameters.isEmpty() || fn.parameters.singleOrNull()?.let { p ->
+					val array = p.type as? IrSimpleType
+					val element = array?.arguments?.singleOrNull() as? IrTypeProjection
+					array != null && array.isBoxedArray &&
+						element != null && element.variance != org.jetbrains.kotlin.types.Variance.IN_VARIANCE &&
+						element.type.classFqName?.asString() == "kotlin.String"
+				} == true)
+		}.maxByOrNull { it.parameters.size }
 		// Top-level `val`/`var` -> static fields of the file class. Although the frontend inlines reads of a `const`,
 		// its declaration must still cross a DLL/KLIB boundary; preserve the Kotlin const fact so bir2cir can select a
 		// CLR Literal field and dll2klib can project the public declaration for another Kotlin module.
@@ -1115,7 +1119,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) + nestedInterfaces(it) + nestedEnums(it) + nestedAnnotationClasses(it) }
 			.mapNotNull { semanticCompanion(it) }.distinct()
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
-		val fnMethods = functions.map { sourceMethod(it, static = true) }
+		val fnMethods = functions.map { fn ->
+			val method = sourceMethod(fn, static = true)
+			if (fn === entry) method.copy(entryPoint = true) else method
+		}
 		// A top-level property's get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`) — emitted
 			// for a NO-backing-field property (an EXTENSION property `val T.p`, or a computed `val p get() = …`) and for
 			// every role of a backing-field property once EITHER role is custom. A partial custom `var` must expose both
@@ -1167,7 +1174,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// declaration graphs, while deliberately retaining same-name/different-body entries for a loud
 		// downstream collision.
 		val types = (typeDefs + liftedTypes).distinct()
-		return kotc.bir.BirFileDeclaration(className, hasMain, statFields, methods, topPropRecords, types,
+		return kotc.bir.BirFileDeclaration(className, statFields, methods, topPropRecords, types,
 			refTypeDeclarations(), typeAliases.toList())
 	}
 

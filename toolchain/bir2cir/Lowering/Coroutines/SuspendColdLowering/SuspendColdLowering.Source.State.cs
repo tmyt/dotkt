@@ -173,8 +173,9 @@ static partial class SuspendColdLowering
             && !(nullable.Of is TypeNode.Fqn value && _isValueFqn(value)) ? nullable.Of : type;
         int NextLabel() => ++_label;
         bool IsExactOuterStorage(string name) => _isMember && name == ThisField || _isLambda && name == _capturedOuterName;
-        bool WantsBridge => !_isLambda && _name != "main" && !_baseIsLocal;
-        internal bool NeedsRootContinuation => !_memberAbstract && ((_name == "main" && _ownerClass == null) || WantsBridge);
+        bool IsEntryPoint => !_isLambda && _m.EntryPoint.OrDefault();
+        bool WantsBridge => !_isLambda && !IsEntryPoint && !_baseIsLocal;
+        internal bool NeedsRootContinuation => !_memberAbstract && (IsEntryPoint || WantsBridge);
         BirThis StateMachineSelf()
         {
             var self = new BirThis();

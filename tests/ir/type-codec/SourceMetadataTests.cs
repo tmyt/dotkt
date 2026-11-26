@@ -27,7 +27,7 @@ internal static class SourceMetadataTests
             // Exercise the actual production input boundary and freezer, not a second codec copy.
             var tool = typeof(SourceTypeAlias).Assembly;
             var input = new JsonObject {
-                ["fileClass"] = "SourceMetadataProbeKt", ["hasMain"] = false,
+                ["fileClass"] = "SourceMetadataProbeKt",
                 ["fields"] = new JsonArray(), ["methods"] = new JsonArray(), ["properties"] = new JsonArray(),
                 ["types"] = new JsonArray(), ["refTypes"] = new JsonArray(),
                 ["typeAliases"] = new JsonArray(expected.DeepClone()),

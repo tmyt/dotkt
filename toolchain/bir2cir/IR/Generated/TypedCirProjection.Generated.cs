@@ -168,7 +168,6 @@ sealed partial class TypedCirProjection
         return new CirFileDeclaration
         {
             FileClass = Require(value.FileClass),
-            HasMain = value.HasMain.IsPresent ? Require(value.HasMain) : false,
             Methods = value.Methods.IsPresent ? Require(value.Methods).Select(item0 => ProjectCirMethod(item0)).ToArray() : [],
             Fields = value.Fields.IsPresent ? Require(value.Fields).Select(item0 => ProjectCirField(item0)).ToArray() : [],
             Types = value.Types.IsPresent ? Require(value.Types).Select(item0 => ProjectCirTypeDeclaration(item0)).ToArray() : [],
@@ -378,6 +377,7 @@ sealed partial class TypedCirProjection
             RetSuspendFnType = ProjectOptional(value.RetSuspendFnType, item => item, allowNull: false),
             SuspendRet = ProjectOptional(value.SuspendRet, item => item, allowNull: false),
             RetCtxFnType = ProjectOptional(value.RetCtxFnType, item => item, allowNull: false),
+            EntryPoint = ProjectOptional(value.EntryPoint, item => item, allowNull: false),
             EntryPointAttrs = ProjectOptional(value.EntryPointAttrs, item => item.Where(AdmitAttribute).Select(item0 => ProjectAttribute(item0)).ToArray(), allowNull: false),
         };
     }

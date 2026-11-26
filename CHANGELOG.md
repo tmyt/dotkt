@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- A top-level `main` renamed with `@ClrName` remains the executable entry point, including when it is a suspend function (#1933).
+
 ## 0.9.34 (2026-11-25)
 
 - Fixed a race in `dll2klib` when importing virtual methods from multiple namespaces in parallel (#1978).

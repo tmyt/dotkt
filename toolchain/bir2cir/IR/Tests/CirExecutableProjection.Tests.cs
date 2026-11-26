@@ -111,7 +111,7 @@ static partial class CirDeclarationProjection
                 throw new InvalidOperationException("Enum object-slot binding changed an operand or retained call-only facts");
         }
         var metadataOnly = new CirFileDeclaration {
-            FileClass = "ReferenceLiteral", HasMain = false, Types = [], Methods = [],
+            FileClass = "ReferenceLiteral", Types = [], Methods = [],
             Fields = new[] { new CirField {
                 Name = "value", Type = new TypeNode.Fqn("kotlin.Double"),
                 Init = new CirConstant { Type = new TypeNode.Fqn("kotlin.Double"), Value = new AttributeArgument.Float64Value(BitConverter.DoubleToInt64Bits(1.0)) },

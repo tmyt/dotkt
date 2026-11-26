@@ -1,6 +1,5 @@
 {
   "fileClass": "ProtectedConditionalTransfer",
-  "hasMain": false,
   "fields": [], "types": [], "refTypes": [],
   "methods": [
     {

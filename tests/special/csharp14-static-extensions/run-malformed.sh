@@ -16,7 +16,7 @@ CORE_REF="$(find "$DOTNET_REF_PACK" -path '*/ref/net10.0/System.Runtime.dll' -pr
 [[ -n "$CORE_REF" ]] || { echo "csharp14-malformed: System.Runtime reference assembly not found" >&2; exit 1; }
 
 BIR="$WORK/probe.bir.json"
-printf '%s\n' '{"fileClass":"CSharp14MalformedProbeKt","hasMain":false,"fields":[],"methods":[],"types":[]}' >"$BIR"
+printf '%s\n' '{"fileClass":"CSharp14MalformedProbeKt","fields":[],"methods":[],"types":[]}' >"$BIR"
 
 generate() {
     local mode="$1"

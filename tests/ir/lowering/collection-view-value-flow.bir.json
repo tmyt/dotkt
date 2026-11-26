@@ -1,6 +1,5 @@
 {
   "fileClass": "CollectionViewValueFlowProbeKt",
-  "hasMain": false,
   "fields": [
     {
       "name": "readonlyField",
