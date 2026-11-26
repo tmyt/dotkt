@@ -435,15 +435,6 @@ static class TypedPhysicalValueCoercion
         if (value is IBirExpression expression
             && index.DelegateAdapters?.AdaptUnitDelegateValue(index.LocalCarriers, index.Document, expression, got, target) is { } adapter)
             return Graph(adapter);
-        // The selected member returns its exact native delegate. Its Kotlin result
-        // stamp describes the source type, not the delegate already on the stack.
-        if (value is IBirExpression operand && Underlying(target) is TypeNode.Fn { Suspend: false, Clr: not null } function
-            && !index.ReferenceBuild && index.References != null
-            && Underlying(PhysicalResult(value, scope, index)) is TypeNode.Fqn physical
-            && BirTypeLowering.DelegateFqnOf(function) is { } slot
-            && !ClrMemberResolution.SameInterfaceSlotType(physical, slot)
-            && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } source)
-            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, function, slot, source));
         if (FunctionViewOperand(value, got, target, index) is { } view) return Cast(view, target);
         return NeedsConversion(got, target, index) ? Cast(value, target) : value;
     }
@@ -476,6 +467,16 @@ static class TypedPhysicalValueCoercion
     {
         if (index.References == null || index.ReferenceBuild || value == null || source == null) return null;
         var from = Underlying(source); var to = Underlying(target);
+        // A native member projected as a Kotlin function still returns its exact
+        // CLR delegate. Use the same callable view for storage and for type tests;
+        // a nominal CLR delegate is not implicitly a Kotlin function of like arity.
+        if (to is TypeNode.Fn { Suspend: false, Clr: not null } destination && from is TypeNode.Fqn physical
+            && value is IBirExpression operand && SelectedFunctionResult(value) is { } selected
+            && selected.DelegateParams.Length == destination.DelegateParams.Length
+            && BirTypeLowering.DelegateFqnOf(destination) is { } delegateSlot
+            && !ClrMemberResolution.SameInterfaceSlotType(physical, delegateSlot)
+            && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native)
+            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, destination, delegateSlot, native, nativeSource: true));
         if (to is TypeNode.Tv slot && from != to && (from is TypeNode.Tv or TypeNode.Fn { Suspend: false }
             || from is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }))
         {
@@ -875,6 +876,14 @@ static class TypedPhysicalValueCoercion
     // first, then expose the same vectors immediately before the native call.
     static BirGraphValue ExposeNativeArrayArguments(BirGraphValue call, BirGraphValue result, Scope scope, Index index)
     {
+        if (call is BirDelegateInvoke { SourceClrBoundary: true } invoke)
+        {
+            var target = invoke.InvokeRef.Value;
+            var signature = target.ParameterTypes.Value.Select(t => Close(t, OwnerArgs(target), [])).ToArray();
+            var preamble = StageNativeArrayOperands(invoke, target, invoke.Args.Value, signature, scope, index, foreign: true);
+            return preamble == null ? result : new BirValueBlock { Type = ExprType(result, scope, index) ?? Void,
+                Stmts = preamble, Result = Field(Expression(result)) };
+        }
         if (call is not (BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance or
             BirGenericStatic or BirGenericInstance or BirNew or BirNewClr)) return result;
         var member = Member(call);
@@ -1355,7 +1364,13 @@ static class TypedPhysicalValueCoercion
         if (PhysicalResult(node, scope, index) is { } physical)
         {
             if (node is BirNativeStatic or BirNativeInstance && physical is TypeNode.ByRef reference) physical = reference.Of;
-            return SignatureValueTypes.Of(FunctionSlot(physical, DeclaredResult(node), index));
+            // A staged call stores the value actually returned by the member, not
+            // its source-language callable view. Keep a distinct delegate's identity
+            // until its consuming slot chooses the conversion.
+            var slot = FunctionSlot(physical, DeclaredResult(node), index);
+            if (Underlying(slot) is TypeNode.Fn { Clr: not null } fn && Underlying(physical) is TypeNode.Fqn named
+                && !ClrMemberResolution.SameInterfaceSlotType(named, BirTypeLowering.DelegateFqnOf(fn))) slot = physical;
+            return SignatureValueTypes.Of(slot);
         }
         var inferred = BirNodeType.Of(node as BirGraphNode, child => ExprType(child, scope, index),
             name => BirTypeLowering.PrimArrayElem.TryGetValue(name, out var element) ? element : null);
@@ -1520,6 +1535,10 @@ static class TypedPhysicalValueCoercion
             default: throw new InvalidOperationException("Unaccounted resolved receiver " + node.GetType().Name);
         }
     }
+    static TypeNode.Fn SelectedFunctionResult(BirGraphValue value) =>
+        value is BirValueBlock { Result.HasValue: true } block ? SelectedFunctionResult(Graph(block.Result.Value))
+        : Underlying(DeclaredResult(value)) as TypeNode.Fn;
+
     static TypeNode DeclaredResult(BirGraphValue node) => node switch {
         BirCallStatic value => value.Ret.OrDefault() ?? value.DynRet.OrDefault(),
         BirCallInstance value => value.Ret.OrDefault() ?? value.DynRet.OrDefault(),

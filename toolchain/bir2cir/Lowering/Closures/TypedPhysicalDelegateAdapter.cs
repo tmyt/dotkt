@@ -34,9 +34,9 @@ sealed class TypedPhysicalDelegateAdapter
     }
 
     internal IBirExpression AdaptFunctionView(BirFileDeclaration document, IBirExpression view, TypeNode.Fn selected,
-        TypeNode.Fqn slot, TypeNode.Fn knownView = null)
+        TypeNode.Fqn slot, TypeNode.Fn knownView = null, bool nativeSource = false)
     {
-        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural);
+        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural, nativeSource);
         if (plan == null) return new BirCast { Type = slot, E = OptionalField<IBirExpression>.Of(view) };
         return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural);
     }

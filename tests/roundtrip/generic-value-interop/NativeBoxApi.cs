@@ -89,8 +89,9 @@ public class NativeCallbackBase(DotKt.Runtime.CompilerServices.KFunc<object, obj
 public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int,
     int, int, int, int, int, int, int, int, int, int, int, int> callback)
 {
-    public DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
-        int, int, int, int, int, int, int, int, int> Callback { get; set; } = callback;
+    public int CallbackReads { get; private set; }
+    public WideIntCallback Callback { get { CallbackReads++; return callback; } set => callback = value; }
+    public WideIntCallback ReadCallback(object tag) => Callback;
     public int Read() => Callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
 public class NestedCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,

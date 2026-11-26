@@ -18,15 +18,16 @@ static partial class ClrMemberResolution
         => test(ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location }));
 
     internal static DelegateAdapterPlan FunctionViewPlan(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes,
-        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural)
+        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural, bool nativeSource = false)
     {
         var view = knownView ?? FunctionValueRepresentation.OrdinaryView(selected, references.IsByRefLikeFqn);
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
         if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
         var target = PhysicalFunctionShape(references, slot, includeNominal: true);
         return ReturnedFunctionPlan(references, ReturnedFunctionType(selected), natural, target) ?? BoxedDelegateAdapterPlan(natural, target) with {
-            PublishReturn = TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
-                && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references) };
+            PublishReturn = !nativeSource && TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
+                && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references),
+            PublishArguments = nativeSource && natural.DelegateParams.Any(t => TypedPhysicalValueCoercion.MayHoldArray(t, references)) };
     }
 
     internal static TypeNode.Fn ReturnedFunctionType(TypeNode.Fn function) =>

@@ -165,7 +165,7 @@ static partial class ClrMemberResolution
     // than borrowing the enclosing method's frame or reproducing its constraints.
     internal sealed record DelegateAdapterPlan(TypeNode.Fn Frame, int Arity, TypeNode Return,
         TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments, bool PublishReturn = false,
-        ReturnedFunction ResultFunction = null);
+        ReturnedFunction ResultFunction = null, bool PublishArguments = false);
     internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source);
 
     // This is representation policy over immutable TypeNodes, shared by the
@@ -283,7 +283,7 @@ static partial class ClrMemberResolution
     internal static string DelegateAdapterKey(DelegateAdapterPlan plan) =>
         DelegateAdapterKey(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity)
         + (plan.ResultFunction is {} result ? "|function-result:" + TypeNode.ToJson(result.Selected) : "")
-        + (plan.PublishReturn ? "|native-array-return" : "");
+        + (plan.PublishReturn ? "|native-array-return" : "") + (plan.PublishArguments ? "|native-array-arguments" : "");
 
     static string DelegateAdapterKey(TypeNode.Fn frame, int arity, TypeNode slotReturn,
         TypeNode[] slotParameters, int? genericArity) =>
