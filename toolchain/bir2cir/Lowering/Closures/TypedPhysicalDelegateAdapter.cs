@@ -80,7 +80,9 @@ sealed class TypedPhysicalDelegateAdapter
                 Cond = new BirBinaryOperation {
                     Op = "==", Lhs = Read(), Rhs = Null(),
                 },
-                Then = Null(), Else = view == null && plan.NominalSource == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
+                // CLR covariance can make the outer delegate assignable while
+                // its Invoke still returns a native rather than a Kotlin callable.
+                Then = Null(), Else = (view == null && plan.NominalSource == null) || plan.ResultFunction?.NativeSource == true ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
                     Type = target, Cond = new BirIsInstance { Type = slot, E = Read() },
                     Then = new BirCast { Type = slot, E = Read() }, Else = adapted }),
             },
@@ -109,7 +111,7 @@ sealed class TypedPhysicalDelegateAdapter
                 result.Source != null ? value : FunctionValueRepresentation.RuntimeViewCall(
                     new BirCast { Type = new TypeNode.Fqn("System.Object"), E = OptionalField<IBirExpression>.Of(value) },
                     result.Selected.DelegateParams.Length, localTypes?.Contains(FunctionValueRepresentation.FunctionRuntime) != true),
-                result.Selected, result.Slot, result.Source));
+                result.Selected, result.Slot, result.Source, result.NativeSource));
         var name = declaration.Name.Value;
         document.Types = document.Types.OrEmpty().Append(declaration).ToArray();
         adapters[key] = name;

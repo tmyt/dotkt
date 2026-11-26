@@ -169,7 +169,7 @@ static partial class ClrMemberResolution
         TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments, bool PublishReturn = false,
         ReturnedFunction ResultFunction = null, bool PublishArguments = false,
         TypeNode.Fqn NominalSource = null, BirTypeParameter[] LexicalFrame = null);
-    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source);
+    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source, bool NativeSource);
 
     // This is representation policy over immutable TypeNodes, shared by the
     // owning construction and final value-flow consumers.
@@ -288,7 +288,7 @@ static partial class ClrMemberResolution
         + (plan.NominalSource is {} source ? "|nominal:" + TypeNode.ToJson(source) + "|" +
             string.Join(";", plan.LexicalFrame.Select(p => string.Join(",", p.SpecialConstraints.OrEmpty()) + ":" +
                 string.Join(",", p.Constraints.OrEmpty().Select(TypeNode.ToJson)))) : "")
-        + (plan.ResultFunction is {} result ? "|function-result:" + TypeNode.ToJson(result.Selected) : "")
+        + (plan.ResultFunction is {} result ? "|function-result:" + result.NativeSource + ":" + TypeNode.ToJson(result.Selected) : "")
         + (plan.PublishReturn ? "|native-array-return" : "") + (plan.PublishArguments ? "|native-array-arguments" : "");
 
     static string DelegateAdapterKey(TypeNode.Fn frame, int arity, TypeNode slotReturn,

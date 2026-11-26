@@ -16,6 +16,9 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
+private typealias WideFactory = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> WideIntCallback
+private fun nativeFactory(): WideFactory = GenericValueInterop.NativeWideCallbacks.Factory
+private fun <T> stagedFactory(tag: T): WideFactory = GenericValueInterop.NativeWideCallbacks.SelectFactory<T>(tag)
 private class DerivedCallbackScope : GenericValueInterop.NativeCallbackScope() {
     fun visitStored(f: WideCallback<Unit>) = Visit<String>(f)
 }
@@ -106,7 +109,10 @@ class WideFunctionTypeTests {
     }
 
     @TestAttribute
-    fun aNativeConsumerCanInvokeTheReturnedFunction() {
+    fun returnedFunctionsAreCallableOnBothSidesOfTheNativeBoundary() {
+        fun invokeFactory(factory: WideFactory) = invokeWithRange(factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
+        assertEquals(-32, invokeFactory(nativeFactory()))
+        assertEquals(-32, invokeFactory(stagedFactory("tag")))
         val factory = CallbackFactory()
         assertEquals(36, NestedCallbackDerived(factory).Read())
         val stored: WideCallback<WideIntCallback> = factory

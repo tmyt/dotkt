@@ -24,19 +24,30 @@ static partial class ClrMemberResolution
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
         if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
         var target = PhysicalFunctionShape(references, slot, includeNominal: true);
-        return ReturnedFunctionPlan(references, ReturnedFunctionType(selected), natural, target) ?? BoxedDelegateAdapterPlan(natural, target) with {
+        var result = ReturnedFunctionType(selected);
+        TypeNode.Fqn ordinaryResult = null;
+        if (nativeSource && result is { Suspend: false } && PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret)) != null)
+        {
+            var ordinary = FunctionValueRepresentation.OrdinaryView(result, references.IsByRefLikeFqn);
+            ordinaryResult = BirTypeLowering.DelegateFqnOf((TypeNode.Fn)BirTypeLowering.LowerFnDelegate(
+                ordinary, DelegatePhysicalContext(localTypes, references), false));
+        }
+        var plan = ReturnedFunctionPlan(references, result, natural, target, ordinaryResult);
+        if (plan != null && !nativeSource) return plan;
+        return (plan ?? BoxedDelegateAdapterPlan(natural, target)) with {
             PublishReturn = !nativeSource && TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references)
                 && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references),
             PublishArguments = nativeSource && natural.DelegateParams.Any(t => TypedPhysicalValueCoercion.MayHoldArray(t, references)) };
     }
 
-    internal static TypeNode.Fn ReturnedFunctionType(TypeNode.Fn function) =>
-        DelegateSlotCore(function?.Ret) as TypeNode.Fn;
+    internal static TypeNode.Fn FunctionTypeOf(TypeNode type) => DelegateSlotCore(type) as TypeNode.Fn;
+    internal static TypeNode.Fn ReturnedFunctionType(TypeNode.Fn function) => FunctionTypeOf(function?.Ret);
 
-    static DelegateAdapterPlan ReturnedFunctionPlan(ReferenceMetadataIndex references, TypeNode.Fn result, TypeNode.Fn natural, TypeNode.Fn target)
+    static DelegateAdapterPlan ReturnedFunctionPlan(ReferenceMetadataIndex references, TypeNode.Fn result, TypeNode.Fn natural, TypeNode.Fn target,
+        TypeNode.Fqn ordinaryResult = null)
     {
         if (result is { Suspend: false }
-            && DelegateSlotCore(target.Ret) is TypeNode.Fqn resultSlot && references.IsClrDelegate(resultSlot))
+            && (ordinaryResult ?? DelegateSlotCore(target.Ret)) is TypeNode.Fqn resultSlot && references.IsClrDelegate(resultSlot))
         {
             // Keep the delegate shapes that Invoke must construct, but capture
             // complete slots: Box<T> must not become Box<!0> without T's constraints.
@@ -62,8 +73,8 @@ static partial class ClrMemberResolution
             var parameters = target.DelegateParams.Select(Bind).ToArray();
             var ret = (TypeNode.Fqn)Bind(resultSlot);
             var source = PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret));
-            var nested = new ReturnedFunction((TypeNode.Fn)Bind(result), ret, (TypeNode.Fn)Bind(source));
-            return new(frame, parameters.Length, ret, parameters, captures.Count, captures.ToArray(), ResultFunction: nested);
+            var nested = new ReturnedFunction((TypeNode.Fn)Bind(result), ret, (TypeNode.Fn)Bind(source), ordinaryResult != null);
+            return new(frame, parameters.Length, Bind(target.Ret), parameters, captures.Count, captures.ToArray(), ResultFunction: nested);
         }
         return null;
     }

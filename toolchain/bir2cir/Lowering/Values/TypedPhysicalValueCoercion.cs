@@ -482,7 +482,7 @@ static class TypedPhysicalValueCoercion
             && BirTypeLowering.DelegateFqnOf(destination) is { } delegateSlot
             && !ClrMemberResolution.SameInterfaceSlotType(physical, delegateSlot)
             && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native)
-            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, destination, delegateSlot, native, nativeSource: true));
+            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, selected, delegateSlot, native, nativeSource: true));
         if (to is TypeNode.Tv slot && from != to && (from is TypeNode.Tv or TypeNode.Fn { Suspend: false }
             || from is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }))
         {
@@ -1543,7 +1543,7 @@ static class TypedPhysicalValueCoercion
     }
     static TypeNode.Fn SelectedFunctionResult(BirGraphValue value) =>
         value is BirValueBlock { Result.HasValue: true } block ? SelectedFunctionResult(Graph(block.Result.Value))
-        : Underlying(DeclaredResult(value)) as TypeNode.Fn;
+        : value.ProjectedFunctionResult ?? Underlying(DeclaredResult(value)) as TypeNode.Fn;
 
     static TypeNode DeclaredResult(BirGraphValue node) => node switch {
         BirCallStatic value => value.Ret.OrDefault() ?? value.DynRet.OrDefault(),

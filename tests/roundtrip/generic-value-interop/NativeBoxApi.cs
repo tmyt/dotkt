@@ -7,6 +7,9 @@ using WideUnitCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int
 
 namespace GenericValueInterop;
 
+using WideIntFactory = DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+    object, object, object, object, object, object, object, object, object, object, object, WideIntCallback>;
+
 public interface ILeftMark { }
 public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
@@ -132,6 +135,9 @@ public abstract class NativeVisitor
 }
 public static class NativeWideCallbacks
 {
+    public static WideIntFactory Factory => (a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q) =>
+        (first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last) => (int)a - (int)q + first - last;
+    public static WideIntFactory SelectFactory<T>(T tag) => Factory;
     public static bool VisitExtension(this NativeCallbackScope scope, WideUnitCallback callback) => VisitUnit(callback);
     public static bool VisitUnit(WideUnitCallback callback) =>
         callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) is not null;

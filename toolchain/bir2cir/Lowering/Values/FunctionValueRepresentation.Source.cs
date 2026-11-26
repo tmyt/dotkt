@@ -19,6 +19,9 @@ static partial class FunctionValueRepresentation
         if (node is BirSamConversion or BirNewClosure or BirNewDelegate or BirNewBoundDelegate or BirBoundClrDelegate or BirClrStaticDelegate
             && node.FunctionTypeStamp is TypeNode.Fn functionType)
             node.SourceFunctionResult = ClrMemberResolution.ReturnedFunctionType(functionType);
+        else if (node is BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance or BirPropertyGet
+            or BirClrStaticField || node.SourceClrBoundary)
+            node.ProjectedFunctionResult = ClrMemberResolution.FunctionTypeOf(node.ResultTypeStamp);
         var invocationResult = node is BirDelegateInvoke { FuncType.HasValue: true } invoke
             && invoke.FuncType.Value is TypeNode.Fn { Suspend: false, Clr: null } function
                 ? function.Ret : null;
