@@ -9,6 +9,8 @@ import InheritedDefaultSlots.HiddenChannel
 import InheritedDefaultSlots.ExplicitChannel
 import InheritedDefaultSlots.ExplicitDefaultBase
 import InheritedDefaultSlots.NewDefaultNamesake
+import InheritedDefaultSlots.KeyBox
+import InheritedDefaultSlots.SlotFamily
 import NUnit.Framework.TestAttribute
 
 private class InheritVirtualBody : VirtualBase()
@@ -18,13 +20,14 @@ private class PreserveExplicitDefault : ExplicitDefaultBase<String>() {
 private class CovariantNamesake : ExplicitDefaultBase<String>() {
     override fun Read(key: String): String = "covariant"
 }
-private open class ReplaceDefaultBesideExplicit : ExplicitDefaultBase<String>() {
-    override fun Read(key: String): Any = "class"
+private open class ReplaceDefaultBesideExplicit : ExplicitDefaultBase<KeyBox<String>>() {
+    override fun Read(key: KeyBox<String>): Any = "class"
     override fun Tick(): Int = 9
 }
 private class DerivedReplacement : ReplaceDefaultBesideExplicit() {
-    override fun Read(key: String): Any = "derived"
+    override fun Read(key: KeyBox<String>): Any = "derived"
 }
+private class ReplaceProtectedDefault : SlotFamily.Native() { override fun Tick(): Int = 9 }
 private class InheritNewNamesake : NewDefaultNamesake()
 private class InheritChannel : TextChannel(), ITextChannel
 private class UseNewVirtualSlot : HiddenChannel(), ITextChannel
@@ -52,9 +55,10 @@ class InheritedDefaultSlotTests {
         val covariant = CovariantNamesake()
         check(Driver.ReadDefaultBase(covariant) == "covariant" && Driver.ReadDefaultChannel(covariant) == "explicit")
         for ((instance, expected) in listOf(ReplaceDefaultBesideExplicit() to "class", DerivedReplacement() to "derived")) {
-            check(instance.Read("x") == expected && Driver.ReadDefaultBase(instance) == expected)
-            check(Driver.ReadDefaultChannel(instance) == "explicit" && Driver.Tick(instance) == 9)
+            check(instance.Read(KeyBox<String>()) == expected && Driver.ReadBoxBase(instance) == expected)
+            check(Driver.ReadBoxChannel(instance) == "explicit" && Driver.Tick(instance) == 9)
         }
+        check(SlotFamily.Tick(ReplaceProtectedDefault()) == 9)
         val inherited = InheritNewNamesake()
         check(inherited.Read("x") == "new" && Driver.ReadDefaultChannel(inherited) == "explicit")
         check(Driver.CheckChannel(InheritChannel(), UseNewVirtualSlot()))

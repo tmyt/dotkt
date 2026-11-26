@@ -10,6 +10,12 @@ public interface IDefaultChannel<T> {
     object Read(T key) => "default";
     int Tick() => 11;
 }
+public class KeyBox<T> {}
+public class SlotFamily {
+    protected interface IProtected { int Tick() => 11; }
+    public class Native : SlotFamily, IProtected {}
+    public static int Tick(Native instance) => ((IProtected)instance).Tick();
+}
 public class ExplicitDefaultBase<T> : IDefaultChannel<T> {
     object IDefaultChannel<T>.Read(T key) => "explicit";
     public virtual object Read(T key) => "base";
@@ -41,7 +47,9 @@ public static class Driver
 {
     public static object ReadDefaultChannel(IDefaultChannel<string> channel) => channel.Read("x");
     public static object ReadDefaultBase(ExplicitDefaultBase<string> instance) => instance.Read("x");
-    public static int Tick(IDefaultChannel<string> channel) => channel.Tick();
+    public static object ReadBoxBase(ExplicitDefaultBase<KeyBox<string>> instance) => instance.Read(new());
+    public static object ReadBoxChannel(IDefaultChannel<KeyBox<string>> channel) => channel.Read(new());
+    public static int Tick(IDefaultChannel<KeyBox<string>> channel) => channel.Tick();
     public static int ReadChannel(IChannel<string> channel) => channel.Read("x");
     public static int ReadText(ITextChannel channel) => channel.Read("x");
     public static int ReadProperty(IWithProperty instance) => instance.Value;

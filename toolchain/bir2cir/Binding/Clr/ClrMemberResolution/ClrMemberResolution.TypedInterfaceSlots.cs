@@ -29,15 +29,16 @@ static partial class ClrMemberResolution
             var bridges = new List<IBirTypeDeclaration>();
             TypeNode MakeInheritedEdge(IBirTypeDeclaration owner, TypeNode[] faces)
             {
-                var stem = owner.Name.Value + "$inheritedSlots";
+                // The implementing class can name protected types through its base.
+                // Its private nested helper must have that same family access.
+                var stem = owner.Name.Value + ".$inheritedSlots";
                 var name = stem;
-                for (var i = 1; !names.Add(name); i++) name = stem + i;
+                var arity = TypeParameterFrame.Count(owner);
+                for (var i = 1; !names.Add(name) || refs.ReferenceNameOccupied(name, arity); i++) name = stem + i;
                 static BirTypeParameter[] Invariant(BirTypeParameter[] frame) => frame
                     .Select(p => (BirTypeParameter)p.DeepClone() with { Variance = default }).ToArray();
-                var bridge = new BirInterfaceDefinition { Name = name, Kind = "interface", Vis = "internal", Generated = true,
-                    NestedIn = owner.NestedIn, Interfaces = faces,
-                    TypeParams = Invariant(owner.TypeParams.OrEmpty()), CapturedTypeParams = Invariant(owner.CapturedTypeParams.OrEmpty()) };
-                var arity = TypeParameterFrame.Count(bridge);
+                var bridge = new BirInterfaceDefinition { Name = name, Kind = "interface", Vis = "private", Generated = true,
+                    NestedIn = owner.Name, Interfaces = faces, CapturedTypeParams = Invariant(TypeParameterFrame.Declarations(owner).ToArray()) };
                 definitions.Add((name, arity), bridge);
                 bindingLocalTypes?.Add(name);
                 bridges.Add(bridge);
@@ -208,7 +209,7 @@ static partial class ClrMemberResolution
         (Type, TypeNode) Key(Type external, TypeNode.Fqn spec)
         {
             if (external?.IsConstructedGenericType == true) external = external.GetGenericTypeDefinition();
-            return (external, BirTypeLowering.CanonicalPhysicalSlotType(new TypeNode.Fqn(external?.FullName ?? spec.Name, spec.Args)));
+            return (external, MethodImplComparisonType(new TypeNode.Fqn(external?.FullName ?? spec.Name, spec.Args), refs));
         }
         var declared = new HashSet<(Type, TypeNode)>();
         void Include(TypeNode.Fqn face, HashSet<(Type, TypeNode)> result, Type external = null, HashSet<(Type, TypeNode)> required = null)
