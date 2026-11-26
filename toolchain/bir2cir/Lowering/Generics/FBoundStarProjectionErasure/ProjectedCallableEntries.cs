@@ -16,6 +16,7 @@ sealed partial class ProjectedCallableEntries
     readonly Dictionary<string, (IBirTypeDeclaration Owner, BirFunctionDeclaration Method)> originalSlots = new(StringComparer.Ordinal);
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
+    readonly Dictionary<string, ReferencedDeclarationSlot> localSlots = new(StringComparer.Ordinal);
     readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
@@ -55,7 +56,6 @@ sealed partial class ProjectedCallableEntries
             foreach (var method in type.Methods.OrEmpty())
                 if (method.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() is string identity)
                     originalSlots.Add(identity, (type, method));
-        var localSlots = new Dictionary<string, ReferencedDeclarationSlot>(StringComparer.Ordinal);
         foreach (var file in files)
         {
             if (file.Methods.HasValue) file.Methods = Declare(file.Methods.Value, null, bodies, localSlots);
@@ -177,19 +177,26 @@ sealed partial class ProjectedCallableEntries
     {
         // Independently published interfaces can order the same witnesses
         // differently. Their MethodImpls forward to the same Kotlin body.
+        var bridge = NewInterfaceForwarder(owner, target, descriptor, contract.CloneParameters());
+        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
+    }
+
+    static BirFunctionDeclaration NewInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
+        BirMethodImpl descriptor, BirTypeParameter[] parameters)
+    {
         var names = owner.Methods.Value.Select(m => m.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
         var name = target.Name.Value + "$forward";
         for (int suffix = 0; names.Contains(name); suffix++) name = target.Name.Value + "$forward" + suffix;
         var bridge = new BirFunctionDeclaration {
             Name = name, Params = descriptor.Params.Value.Select((type, i) => new BirParameter {
                 Name = target.Params.Value[i].Name, Type = BirGraphValue.CopyType(type) }).ToArray(),
-            Ret = descriptor.Ret, TypeParams = contract.CloneParameters(),
+            Ret = descriptor.Ret, TypeParams = parameters,
             Vis = "private", Virtual = true, Abstract = false, ClrFinal = true, Static = false, Generated = true,
             ClrInterfaceImpls = new[] { descriptor },
         };
-        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
         if (owner.Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
+        return bridge;
     }
 
     ProjectedClassStorageFrame Frame(BirTypeParameter[] parameters, bool locations = false) => ProjectedClassStorageFrame.Plan(parameters,
@@ -442,10 +449,15 @@ sealed partial class ProjectedCallableEntries
         exact.ClrBaseImpls = default;
         exact.ClrInterfaceImpls = default;
         if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(references); return; }
+        exact.Body = ForwardBody(owner, exact, implementation, ExactFacadeArguments(exact, plan));
+    }
+
+    static TypeNode[] ExactFacadeArguments(BirFunctionDeclaration exact, ProjectedMethodPlan plan)
+    {
         var original = Enumerable.Range(0, exact.TypeParams.Value.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
         var exactLocations = plan.AddressOperands.Select(i => ((TypeNode.ByRef)SignatureValueTypes.Of(exact.Params.Value[i].Type.Value)).Of);
-        exact.Body = ForwardBody(owner, exact, implementation, original.Concat(plan.Facets.Select(f => original[f.OwnerIndex]))
-            .Concat(plan.NativeIndices.Select(i => original[i])).Concat(exactLocations).ToArray());
+        return original.Concat(plan.Facets.Select(f => original[f.OwnerIndex]))
+            .Concat(plan.NativeIndices.Select(i => original[i])).Concat(exactLocations).ToArray();
     }
 
     static IBirStatement[] ForwardBody(IBirTypeDeclaration owner, BirFunctionDeclaration exact,
@@ -458,13 +470,14 @@ sealed partial class ProjectedCallableEntries
     }
 
     static IBirStatement[] ForwardBody(TypeNode.Fqn ownerType, IBirExpression receiver, BirFunctionDeclaration exact,
-        BirFunctionDeclaration implementation, TypeNode[] arguments)
+        BirFunctionDeclaration implementation, TypeNode[] arguments, BirMemberReference member = null)
     {
         var call = new BirCallInstance { OwnerType = ownerType, Method = implementation.Name, Virtual = true,
             Recv = OptionalField<IBirExpression>.Of(receiver), Ret = exact.Ret, CalleeRet = implementation.Ret,
             TypeArgs = arguments,
             Sig = implementation.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
             Args = exact.Params.OrEmpty().Select(p => (IBirExpression)new BirLocal { Name = p.Name }).ToArray() };
+        if (member != null) call.MemberRef = member;
         return exact.Ret.Value is TypeNode.Fqn { Name: "void" or "System.Void" }
             ? new IBirStatement[] { new BirExpressionStatement { Expr = OptionalField<IBirExpression>.Of(call) }, new BirReturn() }
             : new IBirStatement[] { new BirReturn { Value = OptionalField<IBirExpression>.Of(call) } };
