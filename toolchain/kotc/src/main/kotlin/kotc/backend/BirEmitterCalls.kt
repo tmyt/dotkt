@@ -2358,6 +2358,18 @@ private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): B
 	var storage = arg
 	while (storage is IrTypeOperatorCall && storage.operator == IrTypeOperator.IMPLICIT_CAST && storage !in planReads)
 		storage = storage.argument
+	if (storage is IrGetValue && pointee != null) {
+		val declared = storage.symbol.owner.type.classifierOrNull
+		if (declared != null && arg.type.classifierOrNull != declared && pointee.classifierOrNull != declared) {
+			// Flow typing narrows a read, not the type that every alias may write.
+			// An authored cast is a value expression and never reaches this local.
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"cannot pass '${storage.symbol.owner.name}' by reference through an implicit change of type; " +
+					"request its declared type or use a separate local of the required type", locationOf(arg))
+			return kotc.bir.BirUnsupportedExpression("incompatible byref location")
+		}
+	}
 	if (storage is IrGetValue && pointee != null && storage.symbol.owner.type.makeNotNull() == pointee.makeNotNull()) {
 		val location = localAddress(storage)
 		val requested = birType(pointee)
