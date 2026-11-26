@@ -112,10 +112,6 @@ static partial class DeclarationSignatureIdentity
             return parameter with { NominalParameterSignatureIdentity = nominal,
                 GenericParameterSignatureBounds = bounds.Length == 0 ? parameter.GenericParameterSignatureBounds : bounds };
         }).ToArray();
-    static TypeNode.Fqn SelectedLocalOwner(SupertypeGraph.Def source, string selectedOwner,
-        IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex refs) =>
-        SupertypeGraph.Reachable(source, definitions, refs).Select(edge => edge.spec)
-            .Where(spec => spec.Name == selectedOwner).Distinct().Single();
     static TypeNode WithIdentityModifiers(TypeNode signature, TypeNode valueType)
     {
         if (signature is not TypeNode.Mod modifier) return valueType;

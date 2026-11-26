@@ -1648,7 +1648,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             {
                 using var referenceContract = _attrs.CarrierDocument(handle,
                     MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
-                if (referenceContract is not null)
+                if (referenceContract is not null || _attrs.ExactBareMarkerCount(handle, MetadataAttributes.DotKtNs + "KotlinConstructedDispatchAttribute") != 0)
                 {
                     _existentialCarriers.Add(handle);
                     continue;
@@ -3471,7 +3471,7 @@ internal sealed partial class AssemblyScanner : IDisposable
             ? _attrs : SignatureDecoderSeeds.Attributes(resolved.Reader);
         using var contract = attributes.CarrierDocument(resolved.Handle,
             MetadataAttributes.DotKtNs + "KotlinManagedReferenceContractAttribute");
-        if (contract is not null) return true;
+        if (contract is not null || attributes.ExactBareMarkerCount(resolved.Handle, MetadataAttributes.DotKtNs + "KotlinConstructedDispatchAttribute") != 0) return true;
         // Referenced existential views carry the same explicit source-type
         // metadata as local views; their physical parents are not source edges.
         var definition = resolved.Reader.GetTypeDefinition(resolved.Handle);

@@ -111,6 +111,25 @@ static class SupertypeGraph
         foreach (var edge in Walk(queue, defs, refs, sourceFrames)) yield return edge;
     }
 
+    internal static TypeNode.Fqn[] SelectedOverrideOwners(Def owner, IReadOnlyDictionary<string, Def> hierarchy, ReferenceMetadataIndex refs,
+        IReadOnlyList<(string Id, TypeNode.Fqn Owner)> selections, string id, string declaringOwner, string referencedId)
+    {
+        // The selected MethodDef identifies the TypeDef across reference spellings;
+        // the Kotlin override edge distinguishes applications of that declaration.
+        var definition = referencedId == null ? null : refs.SelectedPhysicalMethod(referencedId)?.DeclaringType
+            ?? throw new InvalidOperationException("Selected override has no declaring CLR type");
+        bool Declares(TypeNode.Fqn s) => definition == null ? s.Name == declaringOwner :
+            !hierarchy.ContainsKey(s.Name) && ClrMemberResolution.ResolveOwnerType(s, refs) == definition;
+        var candidates = Reachable(owner, hierarchy, refs).Select(e => e.spec).Where(Declares)
+            .Select(s => s with { Name = declaringOwner }).Distinct().ToArray();
+        if (candidates.Length == 1) return candidates;
+        var selected = (selections ?? []).Where(e => e.Id == id && Declares(e.Owner))
+            .Select(e => e.Owner with { Name = declaringOwner }).Distinct().ToArray();
+        if (selected.Length == 0 || selected.Any(s => !candidates.Contains(s)))
+            throw new InvalidOperationException($"Selected override of '{declaringOwner}' has no matching constructed supertype on '{owner.Name}'");
+        return selected;
+    }
+
     public static IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReachableFromClass(TypeNode.Fqn construction,
         IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
     {

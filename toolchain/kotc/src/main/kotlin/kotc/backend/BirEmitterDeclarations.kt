@@ -1512,9 +1512,17 @@ internal fun BirEmitter.overrideDeclarations(fn: IrSimpleFunction, ordinaryPrope
 		val ordered = LinkedHashSet<IrSimpleFunction>()
 		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
 		walk(fn)
-		ordered.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
+		val selected = constructedOverrides?.forMethod(fn).orEmpty()
+		val originals = selected.map { it.declaration }.toSet()
+		val selectedIds = originals.mapNotNull(::declarationIdForPhysicalAllocation).toSet()
+		fun replaced(m: IrSimpleFunction): Boolean = m in originals ||
+			declarationIdForPhysicalAllocation(m) in selectedIds ||
+			(m.isFakeOverride && m.overriddenSymbols.any { replaced(it.owner) })
+		ordered.filterNot { selected.isNotEmpty() && replaced(it) }.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
 			kotc.bir.BirOverride(overrideOwnerType(fn, owner), m.name.asString(), "method", emittedParamCount(m),
-				declarationId = declarationIdForPhysicalAllocation(m)) } }
+				declarationId = declarationIdForPhysicalAllocation(m)) } } + selected.map { (m, owner) ->
+			kotc.bir.BirOverride(birType(owner), m.name.asString(), "method", emittedParamCount(m),
+				declarationId = declarationIdForPhysicalAllocation(m)) }
 	}
 	return items.takeIf { it.isNotEmpty() }
 }
@@ -2358,7 +2366,7 @@ private fun BirEmitter.validatePInvokeDeclaration(fn: IrSimpleFunction, static: 
  *  `inline` = the "inline body must travel" fact (isInlineWithLambda), the only inline shape ilemit splices. */
 internal fun BirEmitter.functionModifiers(fn: IrSimpleFunction, inline: Boolean = false): kotc.bir.BirModifiers? {
 	val inlineOnly = fn.annotations.any { it.type.classFqName?.asString() == "kotlin.internal.InlineOnly" }
-	val overrides = fn.overriddenSymbols.isNotEmpty()
+	val overrides = fn.overriddenSymbols.isNotEmpty() || !constructedOverrides?.forMethod(fn).isNullOrEmpty()
 	val open = fn.modality == Modality.OPEN
 	if (!inline && !inlineOnly && !fn.isInfix && !fn.isOperator && !fn.isSuspend && !fn.isExternal && !overrides && !open) return null
 	return kotc.bir.BirModifiers(isInline = true.takeIf { inline }, isInlineOnly = true.takeIf { inlineOnly },

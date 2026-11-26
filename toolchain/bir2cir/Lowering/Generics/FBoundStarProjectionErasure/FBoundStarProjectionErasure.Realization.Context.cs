@@ -15,6 +15,7 @@ static partial class FBoundStarProjectionErasure
         internal TypeNode[] FrozenSignature { get; }
         internal SourceReferenceContract ReferenceContract { get; set; }
         internal BirFunctionDeclaration EmittedSlot { get; set; }
+        internal BirFunctionDeclaration InterfaceForwarder { get; set; }
         internal DeclarationBinding EmittedBinding { get; set; }
 
         internal SourceSlot(DeclarationBinding original, BirFunctionDeclaration slot, TypeNode[] signature)
@@ -39,6 +40,7 @@ static partial class FBoundStarProjectionErasure
 
     internal sealed class SourceCarrierDeclarations
     {
+        internal Dictionary<string, (string Owner, string Member, TypeNode[] Parameters)> ConstructedDispatch { get; } = new(StringComparer.Ordinal);
         internal Dictionary<string, (string Owner, string Name, ProjectedConstructorPlan Plan)> ProjectedConstructors { get; } = new(StringComparer.Ordinal);
         internal Dictionary<string, (string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Result)> ProjectedInnerFactories { get; } = new(StringComparer.Ordinal);
         readonly Dictionary<Owner, Dictionary<DeclarationBinding, SourceSlot>> slots = new();
