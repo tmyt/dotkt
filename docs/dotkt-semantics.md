@@ -2021,8 +2021,9 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
   public interface declaration. Kotlin subclasses therefore do not inherit a fictional abstract obligation, while
   private implementation signatures and bodies do not become ordinary class API. Colliding explicit method,
   property, indexer, and event slots remain distinct through their interface-typed receivers. A derived Kotlin class
-  may replace one of those mappings only by explicitly re-listing that interface; merely declaring a same-named
-  member keeps the base class's `MethodImpl`. If the CLR base also has a final public member with the same source
+  can reimplement a slot by declaring its interface, or a derived interface that inherits that same constructed
+  interface, and overriding the member. Merely declaring a same-named member does not reintroduce the
+  interface. If the CLR base also has a final public member with the same source
   signature, that member remains directly callable and is source-open only enough to express the separately owned
   interface reimplementation; its non-virtual CLR slot is not rewritten into a physical base override.
 

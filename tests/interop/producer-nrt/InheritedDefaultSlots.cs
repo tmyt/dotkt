@@ -20,9 +20,16 @@ public class Channel<T> : IChannel<T> {
 }
 public class TextChannel : Channel<string> {}
 public class HiddenChannel : TextChannel { public new virtual int Read(string key) => 12; }
+public class ExplicitChannel : IChannel<string> {
+    public int Count => 10;
+    public virtual int Read(string key) => 5;
+    int IChannel<string>.Read(string key) => 4;
+}
 
 public static class Driver
 {
+    public static int ReadChannel(IChannel<string> channel) => channel.Read("x");
+    public static int ReadText(ITextChannel channel) => channel.Read("x");
     public static int ReadProperty(IWithProperty instance) => instance.Value;
     public static int ReadInterface(IValue instance) => instance.Read();
     public static bool CheckChannel(ITextChannel inherited, ITextChannel hidden)

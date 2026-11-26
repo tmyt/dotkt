@@ -4228,6 +4228,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         TryReferenceTypeShapeValue(left, out var a) && a.NativeDeclaration != null
         && TryReferenceTypeShapeValue(right, out var b) && a.NativeDeclaration == b.NativeDeclaration;
 
+    internal TypeNode.Fqn PhysicalInterfaceSlotOwner(TypeNode.Fqn owner) =>
+        !HasExactOwnerPunctuation(owner.Name) && TryReferenceTypeShapeValue(owner, out var shape)
+            && shape.Kind == "interface" && shape.NativeDeclaration != null
+            && TryExactPhysicalTypeName(owner.Name, owner.Args?.Length ?? 0, out var exact) && exact != null
+                ? owner with { Name = exact } : owner;
+
     SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
         HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams,
         out MethodSlotIdentity declaredMethod,
