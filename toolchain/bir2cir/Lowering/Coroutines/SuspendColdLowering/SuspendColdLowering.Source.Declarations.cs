@@ -25,13 +25,15 @@ static partial class SuspendColdLowering
             if (_isMember) { args.Add(new BirThis { Outer = true }); parameters.Add(_selfType); }
             foreach (var parameter in _params) { args.Add(Local(parameter.Name)); parameters.Add(parameter.Type); }
             args.Add(Local(CompletionParameter)); parameters.Add(ContAny());
-            return ColdMethod(new IBirStatement[] {
+            var entry = ColdMethod(new IBirStatement[] {
                 new BirVariable { Name = StateMachineLocal, Type = sm,
                     Init = new BirNew { Type = sm, ArgTypes = parameters.Select(BirGraphValue.CopyType).ToArray(), Args = args.ToArray() } },
                 Ret(new BirCallInstance { OwnerType = sm, Virtual = true, Recv = Local(StateMachineLocal),
                     Method = "invokeSuspend", Sig = new TypeNode[] { AnyTn },
                     Args = new IBirExpression[] { NullConst(AnyTn) }, Ret = AnyTn }),
             });
+            entry.ColdEntryMachine = (_smType, _ownerTypeParams.Count);
+            return entry;
         }
 
         BirFunctionDeclaration ColdEntryDirect(IBirStatement[] body)
@@ -80,6 +82,8 @@ static partial class SuspendColdLowering
             if (_declarationId != null)
             {
                 method.DeclarationId = _declarationId + "|cold";
+                if (_m.NullableRepresentationFrame.OrDefault() is { } frame)
+                    method.ColdRepresentation = (_declarationId, frame);
                 method.DeclarationSourceName = _declarationSourceName
                     ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
             }
@@ -88,12 +92,20 @@ static partial class SuspendColdLowering
 
         void CarryOverrideMarkers(BirFunctionDeclaration method, bool coldEntry = false)
         {
+            method.SourceCallableVirtual = _m.SourceCallableVirtual;
+            method.HasNativeOverrideSlot = _m.HasNativeOverrideSlot;
             if (_overrideMarkers.Length == 0) return;
             var markers = _overrideMarkers.Select(marker => (BirOverride)marker.DeepClone()).ToArray();
             if (coldEntry)
                 foreach (var marker in markers)
                     if (marker.DeclarationId.HasValue) marker.PhysicalDeclarationId = marker.DeclarationId.Value + "|cold";
             method.Overrides = markers;
+            // Each entry implements the corresponding entry of the selected source
+            // declaration. A generated carrier forwarder is not another source override.
+            if (_m.SourceCallableVirtual && _typeParams.Count != 0)
+                method.SignatureOverrideDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
+                    .Select(edge => edge.PhysicalDeclarationId.OrDefault() ?? edge.DeclarationId.Value)
+                    .Distinct(StringComparer.Ordinal).ToArray();
         }
 
         void CarrySourceDeclaration(BirFunctionDeclaration method)
@@ -107,6 +119,7 @@ static partial class SuspendColdLowering
 
         void CarryKotlinDeclarationMetadata(BirFunctionDeclaration method)
         {
+            if (_m.NullableRepresentationFrame.IsPresent) method.NullableRepresentationFrame = _m.NullableRepresentationFrame;
             CallableVisibilityLowering.Copy(_m, method);
             RoundtripMetadata.CopySourceOverloadPriority(_m, method);
             var source = _m.Mods.OrDefault();
@@ -121,7 +134,6 @@ static partial class SuspendColdLowering
             if (_m.InlineBir.IsPresent) method.InlineBir = _m.InlineBir.HasValue
                 ? OptionalField<byte[]>.Of(_m.InlineBir.Value.ToArray()) : _m.InlineBir;
             if (_m.MethodTypeParameterBoundsPre.IsPresent) method.MethodTypeParameterBoundsPre = _m.MethodTypeParameterBoundsPre;
-            if (_m.NullableRepresentationFrame.IsPresent) method.NullableRepresentationFrame = _m.NullableRepresentationFrame;
             if (_m.SemanticReifiedIndices.IsPresent) method.SemanticReifiedIndices = _m.SemanticReifiedIndices.HasValue
                 ? OptionalField<int[]>.Of(_m.SemanticReifiedIndices.Value.ToArray()) : _m.SemanticReifiedIndices;
             if (_m.NullableWitnessIndices.IsPresent) method.NullableWitnessIndices = _m.NullableWitnessIndices.HasValue

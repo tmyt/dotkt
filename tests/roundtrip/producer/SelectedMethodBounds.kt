@@ -14,6 +14,12 @@ interface JointFactory<K> where K : Base, K : ILeft, K : IRight {
     fun <A : K> make(): Any
     fun <A : K> select(value: A): A
 }
+interface SuspendFactory<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> make(): Any
+}
+open class SuspendParent : SuspendFactory<Concrete> {
+    override suspend fun <A : Concrete> make(): Any = Product<A>()
+}
 open class Concrete : Base(), ILeft, IRight
 class Item : Concrete()
 class Leaf<T> : Concrete()

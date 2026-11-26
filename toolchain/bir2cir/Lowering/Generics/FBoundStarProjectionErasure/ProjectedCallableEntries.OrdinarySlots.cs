@@ -53,8 +53,7 @@ sealed partial class ProjectedCallableEntries
             selectedFrame = references.NullableMethodFrame(id);
         }
         if (rows is not { Length: > 0 } || selectedFrame == null || !selectedFrame.StorageIndices.Any()) return;
-        var selectedOwner = SupertypeGraph.Reachable(hierarchy[owner.Name.Value], hierarchy, references)
-            .Select(edge => edge.spec).Distinct().Single(s => s.Name == slot.Owner);
+        var selectedOwner = SelectedConstruction(hierarchy, owner, slot.Owner, local.Method == null ? id : null);
         var physicalOwner = selectedOwner.Args ?? [];
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, physicalOwner);
         var selected = selectedFrame;

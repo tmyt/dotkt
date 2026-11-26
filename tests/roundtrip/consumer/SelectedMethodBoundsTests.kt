@@ -3,6 +3,8 @@ package roundtrip.consumer.selectedbounds
 import NUnit.Framework.TestAttribute
 import RoundtripDependentNative.JoinedSlot
 import System.Collections.Generic.Queue
+import GenericValueInterop.InheritedSuspendTaskApi
+import kotlin.coroutines.*
 import roundtrip.selectedbounds.*
 
 class ImportedFactory : JointFactory<Concrete>, NominalFactory<Concrete> {
@@ -16,7 +18,32 @@ class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFacto
 
 private fun <A : Concrete> takeNullable(parent: GenericParent<*>, queue: Queue<A?>): Any = parent.take<A>(queue)
 
+private class SuspendChild : SuspendParent() {
+    var calls = 0
+    override suspend fun <A : Concrete> make(): Any {
+        pause()
+        calls++
+        return Product<A>()
+    }
+}
+
+private suspend fun pause(): Unit = suspendCoroutine { it.resume(Unit) }
+
 class SelectedMethodBoundsTests {
+    @TestAttribute
+    fun suspendOverrideRetainsTheColdAndTaskSlots() {
+        val child = SuspendChild()
+        val factory: SuspendFactory<Concrete> = child
+        var matched = false
+        val cold: suspend () -> Any = { factory.make<Item>() }
+        cold.startCoroutine(object : Continuation<Any> {
+            override val context: CoroutineContext get() = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Any>) { matched = JoinedSlot.IsValue<Item>(result.getOrThrow()) }
+        })
+        check(matched && child.calls == 1)
+        check(JoinedSlot.IsValue<Item>(InheritedSuspendTaskApi.ThroughConstrainedTask(factory)) && child.calls == 2)
+    }
+
     @TestAttribute
     fun eitherSelectedSlotKeepsTheExactArgument() {
         fun checkViews(nominal: NominalFactory<Concrete>, joint: JointFactory<Concrete>) {
