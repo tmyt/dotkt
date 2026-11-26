@@ -214,18 +214,6 @@ static partial class KotlinOverrideSlotBridge
                 && (ReachesFromDeclaredInterface(faces, slot.SemanticSpec, defs, refs)
                     || slot.Referenced && ReachesFromDeclaredPhysicalInterface(faces, slot.DescriptorSpec,
                         defs, refs, isValue, context.LocalNames));
-            // Owned claims are selected before inherited bodies. Reintroducing a face for
-            // one member makes the CLR reconsider implicit bindings for its siblings, too.
-            // Preserve the selected inherited body if an unrelated local method can hide it.
-            if (!reimplements && selectedBody is { IsDefault: false } && slot.IsInterface
-                && owner.Methods.Any(m => !m.Static && (m.ExplicitClrName ?? m.Name) == slot.DescriptorMember
-                    && m.Arity == implementation.Arity && m.Parameters.Length == slot.Parameters.Length))
-            {
-                var claimed = declaration.Methods.OrEmpty().SelectMany(m => m.ClrInterfaceImpls.OrEmpty())
-                    .Select(d => d.Owner.OrDefault()).OfType<TypeNode.Fqn>().Distinct().ToArray();
-                reimplements = ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = claimed },
-                    slot.DescriptorSpec, defs, refs, isValue, context.LocalNames);
-            }
             var inheritedDefault = slot.IsInterface && definition.Kind == "class" && !reimplements
                 && slot.HasDefault && (selectedBody?.IsDefault != false || slot.Referenced
                     && refs.IntroducesBodyOutsideInterfaceMap(selectedBody.Owner, selectedBody.MetadataToken, slot.DescriptorSpec));

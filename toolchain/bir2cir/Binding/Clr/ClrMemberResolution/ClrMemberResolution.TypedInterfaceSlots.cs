@@ -14,7 +14,7 @@ static partial class ClrMemberResolution
     /// </remarks>
     // Final physical declarations are indexed module-wide before any owner is stamped.
     // This inventory retains the actual mutable MethodDefs, not reconstructed source declarations.
-    public static void ResolveInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IReadOnlyList<BirFileDeclaration> roots,
+    public static void ResolveInterfaceSlots(HashSet<string> bindingLocalTypes, IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs, bool metadataBuild = false)
     {
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
@@ -22,11 +22,34 @@ static partial class ClrMemberResolution
         foreach (var root in roots)
             foreach (var type in root.Types.OrEmpty())
                 if (type.Name.HasValue) definitions[(type.Name.Value, TypeParameterFrame.Count(type))] = type;
+        var names = definitions.Keys.Select(key => key.Name).ToHashSet(StringComparer.Ordinal);
+        if (bindingLocalTypes != null) names.UnionWith(bindingLocalTypes);
         foreach (var root in roots)
+        {
+            var bridges = new List<IBirTypeDeclaration>();
+            TypeNode MakeInheritedEdge(IBirTypeDeclaration owner, TypeNode[] faces)
+            {
+                // The implementing class can name protected types through its base.
+                // Its private nested helper must have that same family access.
+                var stem = owner.Name.Value + ".$inheritedSlots";
+                var name = stem;
+                var arity = TypeParameterFrame.Count(owner);
+                for (var i = 1; !names.Add(name) || refs.ReferenceNameOccupied(name, arity); i++) name = stem + i;
+                static BirTypeParameter[] Invariant(BirTypeParameter[] frame) => frame
+                    .Select(p => (BirTypeParameter)p.DeepClone() with { Variance = default }).ToArray();
+                var bridge = new BirInterfaceDefinition { Name = name, Kind = "interface", Vis = "private", Generated = true,
+                    NestedIn = owner.Name, Interfaces = faces, CapturedTypeParams = Invariant(TypeParameterFrame.Declarations(owner).ToArray()) };
+                definitions.Add((name, arity), bridge);
+                bindingLocalTypes?.Add(name);
+                bridges.Add(bridge);
+                return new TypeNode.Fqn(name, arity == 0 ? null : Enumerable.Range(0, arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+            }
             root.Visit(node => {
                 if (node is IBirTypeDeclaration type && type.Name.HasValue)
-                    StampInterfaceSlots(bindingLocalTypes, type, definitions, refs, metadataBuild);
+                    StampInterfaceSlots(bindingLocalTypes, type, definitions, refs, metadataBuild, MakeInheritedEdge);
             });
+            if (bridges.Count != 0) root.Types = root.Types.Value.Concat(bridges).ToArray();
+        }
     }
 
     static OptionalField<BirInterfaceSlotSet[]> InterfaceSlotSets(IBirTypeDeclaration type) => type switch {
@@ -72,7 +95,8 @@ static partial class ClrMemberResolution
         ResolveOwnerType(face, refs) ?? refs.PhysicalTypeNamed(face.Name, face.Args?.Length ?? 0);
 
     static void StampInterfaceSlots(IReadOnlySet<string> bindingLocalTypes, IBirTypeDeclaration type,
-        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild)
+        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs, bool metadataBuild,
+        Func<IBirTypeDeclaration, TypeNode[], TypeNode> makeInheritedEdge)
     {
         if (InterfaceSlotSets(type).IsPresent || !type.Methods.HasValue) return;
         var methods = type.Methods.Value;
@@ -167,7 +191,7 @@ static partial class ClrMemberResolution
         // Normalize to exact declarations before deduplication: mixed Kotlin/CLR
         // spellings such as int/System.Int32 must not be guessed equivalent early.
         DeduplicateResolvedInterfaceDescriptors(methods);
-        DeclareReimplementedInterfaces(type, owners, definitions, refs);
+        DeclareReimplementedInterfaces(type, owners, definitions, refs, makeInheritedEdge);
         if (slotSets.Count != 0) SetInterfaceSlotSets(type, slotSets.Values.ToArray());
     }
 
@@ -175,19 +199,20 @@ static partial class ClrMemberResolution
     // declaring interface to be implemented here, not solely through the base class.
     static void DeclareReimplementedInterfaces(IBirTypeDeclaration type,
         List<(TypeNode.Fqn Spec, Type External)> owners,
-        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<(string Name, int Arity), IBirTypeDeclaration> definitions, ReferenceMetadataIndex refs,
+        Func<IBirTypeDeclaration, TypeNode[], TypeNode> makeInheritedEdge)
     {
-        if (type.Base.OrDefault() is not TypeNode.Fqn) return;
+        if (type.Base.OrDefault() is not TypeNode.Fqn baseType) return;
         var direct = type.Interfaces.OrEmpty();
         // Keep the selected TypeDef across imported edges: a nested arity or the
         // defining assembly can distinguish two otherwise identical owner spellings.
         (Type, TypeNode) Key(Type external, TypeNode.Fqn spec)
         {
             if (external?.IsConstructedGenericType == true) external = external.GetGenericTypeDefinition();
-            return (external, BirTypeLowering.CanonicalPhysicalSlotType(new TypeNode.Fqn(external?.FullName ?? spec.Name, spec.Args)));
+            return (external, MethodImplComparisonType(new TypeNode.Fqn(external?.FullName ?? spec.Name, spec.Args), refs));
         }
         var declared = new HashSet<(Type, TypeNode)>();
-        void Include(TypeNode.Fqn face, HashSet<(Type, TypeNode)> result, Type external = null)
+        void Include(TypeNode.Fqn face, HashSet<(Type, TypeNode)> result, Type external = null, HashSet<(Type, TypeNode)> required = null)
         {
             var args = face.Args ?? [];
             if (external == null && definitions.TryGetValue((face.Name, args.Length), out var local)
@@ -197,6 +222,8 @@ static partial class ClrMemberResolution
                 if (!result.Add(Key(null, face))) return;
                 foreach (var parent in local.Interfaces.OrEmpty().OfType<TypeNode.Fqn>())
                     Include((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, args), result);
+                if (required != null && !required.IsSubsetOf(result) && local.Base.OrDefault() is TypeNode.Fqn localBase)
+                    Include((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(localBase, args), result, required: required);
                 return;
             }
             external ??= ExternalSlotOwner(face, refs);
@@ -204,6 +231,9 @@ static partial class ClrMemberResolution
             if (external.IsConstructedGenericType) external = external.GetGenericTypeDefinition();
             foreach (var (definition, spec) in refs.MetadataInterfaceOwners(external, args))
                 result.Add(Key(definition, spec));
+            if (required != null && !required.IsSubsetOf(result) && external.BaseType is { } parentType)
+                Include((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(ReferenceMetadataReader.NativeDeclarationType(parentType), args),
+                    result, ClrDeclarationMatching.SafeDef(parentType), required);
         }
         foreach (var face in direct.OfType<TypeNode.Fqn>()) Include(face, declared);
         // A required child already covers every ancestor it declares. Compute
@@ -217,10 +247,17 @@ static partial class ClrMemberResolution
             closure.Remove(Key(external, face));
             declared.UnionWith(closure);
         }
-        var added = new List<TypeNode>();
-        foreach (var (face, external) in pending)
-            if (!declared.Contains(Key(external, face))) added.Add(face);
-        if (added.Count != 0) type.Interfaces = direct.Concat(added).ToArray();
+        var missing = pending.Where(x => !declared.Contains(Key(x.External, x.Spec))).ToArray();
+        if (missing.Length == 0) return;
+        var inherited = new HashSet<(Type, TypeNode)>();
+        Include(baseType, inherited, required: missing.Select(x => Key(x.External, x.Spec)).ToHashSet());
+        var added = missing.Where(x => !inherited.Contains(Key(x.External, x.Spec))).Select(x => (TypeNode)x.Spec).ToList();
+        var mapped = missing.Where(x => inherited.Contains(Key(x.External, x.Spec))).Select(x => (TypeNode)x.Spec).ToArray();
+        // A direct reintroduction lets CLR implicitly rebind sibling slots, even those
+        // mapped to private base bodies. A derived face makes the exact MethodImpl legal
+        // without asking CLR to rebuild the inherited interface map.
+        if (mapped.Length != 0) added.Add(makeInheritedEdge(type, mapped));
+        type.Interfaces = direct.Concat(added).ToArray();
     }
 
     static (string Member, int Arity, TypeNode[] Parameters, TypeNode Return) ReadInterfaceDescriptor(
