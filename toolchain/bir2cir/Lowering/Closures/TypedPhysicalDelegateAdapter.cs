@@ -12,6 +12,7 @@ sealed class TypedPhysicalDelegateAdapter
     readonly Func<IBirExpression> unitValue;
     readonly PhysicalDelegateDeclarations declarations;
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
+    readonly RecursiveDelegateMaps recursiveMaps;
     BirFileDeclaration document;
     string scope;
 
@@ -22,6 +23,7 @@ sealed class TypedPhysicalDelegateAdapter
         this.localTypes = localTypes;
         this.unitValue = unitValue;
         this.declarations = declarations;
+        recursiveMaps = new(localTypes, references, scope => declarations.FreshAdapterName(scope, "DelegateMap"));
     }
 
     internal IBirExpression AdaptUnitDelegateValue(IReadOnlyDictionary<string, string> localCarriers,
@@ -45,6 +47,9 @@ sealed class TypedPhysicalDelegateAdapter
         TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods)
     {
         var plan = ClrMemberResolution.NominalDelegateValuePlan(references, localTypes, source, target, isValue, owners, methods, out var slot);
+        if (plan != null && recursiveMaps.TryMap(document,
+                (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(plan.NominalSource, plan.Arguments), slot, expression) is {} recursive)
+            return recursive;
         return plan == null ? null : AdaptValue(document, expression, source, target, slot, plan, null);
     }
 

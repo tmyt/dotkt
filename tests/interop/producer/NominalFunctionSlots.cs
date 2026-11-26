@@ -6,6 +6,8 @@ public delegate Span<int> SpanFactory();
 public delegate int Sink<in T>(T value);
 public delegate T Write<out T>(ref int value);
 public delegate ref int Address<in T>(T key);
+public delegate Step<Func<T>> Step<out T>(Action<T> read);
+public delegate Chain<T, K> Chain<out T, K>(Action<T> read) where K : T;
 public abstract class CallbackHost {
     public abstract int Apply(Func<int, int> callback, int value);
 }
@@ -32,6 +34,19 @@ public static class Callbacks {
         ref int result = ref address(21);
         result *= 2;
         return cell;
+    }
+    static Step<T> StepFrom<T>(T value) => read => { read(value); return StepFrom<Func<T>>(() => value); };
+    public static Step<int> Steps() => StepFrom(14);
+    public static Chain<int, int> ChainSource() => read => { read(42); return ChainSource(); };
+    public static int ReadChain(Chain<object, int> chain) {
+        int result = 0; _ = chain(value => result = (int)value); return result;
+    }
+    public static int ReadSteps(Step<object> step) {
+        int total = 0;
+        var next = step(value => total += (int)value);
+        var third = next(read => total += (int)read());
+        _ = third(read => total += (int)read()());
+        return total;
     }
     public static int Apply(Func<int, int> callback, int value) => callback(value);
     public static Func<int, int> Identity(Func<int, int> callback) => callback;

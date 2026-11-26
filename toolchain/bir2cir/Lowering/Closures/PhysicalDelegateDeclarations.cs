@@ -10,12 +10,13 @@ sealed class PhysicalDelegateDeclarations
     int nextValue;
 
     internal string FreshValueTemporary() => $"dotkt$unitDelegateValue{nextValue++}";
+    internal string FreshAdapterName(string scope, string role) => $"dotkt${scope}${role}{nextAdapter++}";
 
     internal BirClassDefinition CreateAdapter(IReadOnlySet<string> localTypes, string scope, ClrMemberResolution.DelegateAdapterPlan plan,
         ReferenceMetadataIndex references, Func<IBirExpression> unitValue,
         Func<IBirExpression, ClrMemberResolution.ReturnedFunction, IBirExpression> adaptResult)
     {
-        var name = $"dotkt${scope}$UnitDelegateAdapter{nextAdapter++}";
+        var name = FreshAdapterName(scope, "UnitDelegateAdapter");
         var self = new TypeNode.Fqn(name);
         TypeNode captured = (TypeNode)plan.NominalSource ?? plan.Frame;
         var arguments = Enumerable.Range(0, plan.Arity)

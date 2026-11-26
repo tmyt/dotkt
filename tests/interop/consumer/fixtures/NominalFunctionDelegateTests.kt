@@ -17,6 +17,8 @@ class NominalFunctionDelegateTests {
         check(Callbacks.ApplySink(Callbacks.NativeSink()) == 6)
         check(Callbacks.WritesOriginal(Callbacks.Writer()))
         check(Callbacks.WriteThroughResult(Callbacks.AddressOf()) == 42)
+        check(Callbacks.ReadSteps(Callbacks.Steps()) == 42)
+        check(Callbacks.ReadChain(Callbacks.ChainSource()) == 42)
         check(Callbacks.SameReference(Callbacks.BoxedInput()))
     }
 
