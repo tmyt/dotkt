@@ -38,12 +38,12 @@ static partial class CollectionHelperBinding
             if (!aliases.ContainsKey(owner.Name))
             {
                 if (operation.Method.OrDefault() != "iterator" || arguments.Length != 0) return operation;
-                var declaresIterator = MemberCallSubstitution.HasDeclaredIterator(owner, captured.DeclaredIterators,
-                    captured.Definitions, references, aliases, sourceFrames: true);
+                var protocol = MemberCallSubstitution.ResolveIteratorProtocol(owner, captured.DeclaredIterators,
+                    captured.Definitions, references, aliases, out var enumeratorOwner, sourceFrames: true);
                 var plan = MemberCallSubstitution.SelectMissingCollectionIterator(operation.Method.OrDefault(), arguments.Length,
-                    declaresIterator, KotlinPropertyAccessors.HasIdentity(operation.PropertyName.OrDefault(), operation.PropertyAccessor.OrDefault())
+                    protocol, KotlinPropertyAccessors.HasIdentity(operation.PropertyName.OrDefault(), operation.PropertyAccessor.OrDefault())
                         || operation.Prop.OrDefault() is "get" or "set", operation.TypeArgs.OrEmpty().Length,
-                    operation.Sty.OrDefault() ?? operation.Ret.OrDefault());
+                    operation.Sty.OrDefault() ?? operation.Ret.OrDefault(), enumeratorOwner);
                 if (plan == null) return operation;
                 call = RenderCollectionOperation(plan, operation, references, MemberCallSubstitution.CollectionOperationPhase.Source);
             }
@@ -118,7 +118,15 @@ static partial class CollectionHelperBinding
         IBirExpression Operand(IBirExpression expression) => phase == MemberCallSubstitution.CollectionOperationPhase.Source
             ? expression : (IBirExpression)((BirGraphValue)expression).DeepClone();
         var operands = new List<IBirExpression>();
-        if (operation.Recv.HasValue) operands.Add(Operand(operation.Recv.Value));
+        if (operation.Recv.HasValue)
+        {
+            var receiver = Operand(operation.Recv.Value);
+            operands.Add(plan.EnumeratorOwner == null ? receiver : new BirNativeInstance {
+                Type = plan.EnumeratorOwner, Method = "GetEnumerator", Recv = OptionalField<IBirExpression>.Of(receiver),
+                ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(),
+                Ret = new TypeNode.Fqn("System.Collections.Generic.IEnumerator`1", new[] { plan.Element })
+            });
+        }
         if (plan.NativePreference != null)
             operands.Add(MemberCallSubstitution.CollectionPreferenceType(plan.PreferenceView, references, plan.NativePreference,
                 phase) is { } preference

@@ -11,20 +11,24 @@ static partial class MemberCallSubstitution
     // The source and physical graph owners render the same argument layout.
     internal sealed record CollectionOperationPlan(string Owner, string Method, TypeNode Element,
         TypeNode.Fqn PreferenceView = null, string NativePreference = null, int? Family = null,
-        bool DefaultIndex = false, TypeNode Result = null);
+        bool DefaultIndex = false, TypeNode Result = null, TypeNode.Fqn EnumeratorOwner = null);
 
     internal static TypeNode CollectionVariableType(TypeNode type) => type switch {
         TypeNode.Nullable value => CollectionVariableType(value.Of),
         TypeNode.Oblivious value => CollectionVariableType(value.Of), _ => type,
     };
 
-    internal static CollectionOperationPlan SelectMissingCollectionIterator(string member, int count, bool declaresIterator,
-        bool property, int typeArguments, TypeNode result)
+    internal static CollectionOperationPlan SelectMissingCollectionIterator(string member, int count, IteratorProtocol binding,
+        bool property, int typeArguments, TypeNode result, TypeNode.Fqn patternOwner = null)
     {
-        if (member != "iterator" || count != 0 || declaresIterator || property || typeArguments != 0
+        if (member != "iterator" || count != 0 || binding == IteratorProtocol.Declared || property || typeArguments != 0
             || result is not TypeNode.Fqn { Args: { Length: 1 } elements } protocol
             || protocol.Name is not ("kotlin.collections.Iterator" or "kotlin.collections.MutableIterator")) return null;
         var mutable = protocol.Name == "kotlin.collections.MutableIterator";
+        if (!mutable && binding == IteratorProtocol.NonGeneric)
+            return patternOwner == null
+                ? new("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverRawEnumerable", null)
+                : new("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerator", elements[0], EnumeratorOwner: patternOwner);
         return new(mutable ? "kotlin.collections.ClrCollectionDefaultsKt" : "kotlin.collections.ClrIteratorBridgeKt",
             mutable ? "clrMutableIterator" : "iteratorOverEnumerable", elements[0]);
     }
