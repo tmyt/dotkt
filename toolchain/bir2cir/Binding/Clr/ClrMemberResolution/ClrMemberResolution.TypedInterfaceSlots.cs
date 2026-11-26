@@ -64,7 +64,7 @@ static partial class ClrMemberResolution
     static List<InterfaceCandidate> OrdinaryInterfaceWinners(List<InterfaceCandidate> candidates) =>
         candidates.Where(candidate => !candidates.Any(other => other.Edge != candidate.Edge
                 && other.Edge.GetInterfaces().Contains(candidate.Edge)))
-            .DistinctBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken, candidate.Reference.DeclaringType)).ToList();
+            .DistinctBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken, candidate.Edge)).ToList();
 
     // A local declaration at another arity can hide the reference spelling,
     // but not the runtime interface that owns a resolved MethodImpl.
@@ -82,6 +82,7 @@ static partial class ClrMemberResolution
         if (descriptors.Length == 0) return;
         var slotSets = new Dictionary<string, BirInterfaceSlotSet>(StringComparer.Ordinal);
         var owners = new List<(TypeNode.Fqn Spec, Type External)>();
+        var slotComparer = metadataBuild ? InterfaceSlotTypeComparer.Instance : new InterfaceSlotTypeComparer(refs);
         foreach (var group in descriptors.GroupBy(entry => SupertypeGraph.TypeKey(entry.Owner), StringComparer.Ordinal))
         {
             var iface = group.First().Owner;
@@ -112,14 +113,14 @@ static partial class ClrMemberResolution
                         && method.GetParameters().Length == parameters.Length)
                     .Select(method => {
                         var reference = metadataBuild ? ClrMemberReferences.MetadataDeclaration(refs, method, edge.Owner)
-                            : ClrMemberReferences.MemberRefOf(refs, bindingLocalTypes, method, MemberRefNode.Kinds.Method, open, arguments, selectedEdge: edge.Edge);
+                            : ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, arguments, edge.Edge);
                         var declaringArguments = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
                         return new InterfaceCandidate(method, reference, declaringArguments,
                             reference.ParameterTypes.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArguments)).ToArray(),
                             SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArguments), edge.Edge);
                     })).ToList();
-                var candidates = named.Where(candidate => candidate.Parameters.SequenceEqual(parameters, InterfaceSlotTypeComparer.Instance)
-                    && SameInterfaceSlotType(candidate.Return, result)).ToList();
+                var candidates = named.Where(candidate => candidate.Parameters.SequenceEqual(parameters, slotComparer)
+                    && slotComparer.Equals(candidate.Return, result)).ToList();
                 if (descriptor.TypeParams.HasValue)
                 {
                     var shape = KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(descriptor.TypeParams.Value, Array.Empty<TypeNode>());

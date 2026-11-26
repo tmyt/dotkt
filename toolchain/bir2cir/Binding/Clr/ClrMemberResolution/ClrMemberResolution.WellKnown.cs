@@ -143,6 +143,7 @@ static partial class ClrMemberResolution
         var open = ResolveOwnerType(physicalOwner, refs: refs) ?? refs.PhysicalTypeNamed(physicalOwner.Name);
         if (open == null || !open.IsInterface) return false;
         var ownerArgs = physicalOwner.Args ?? Array.Empty<TypeNode>();
+        var slotComparer = new InterfaceSlotTypeComparer(refs);
         var candidates = new List<InterfaceCandidate>();
         foreach (var edge in new[] { open }.Concat(open.GetInterfaces()))
         foreach (var method in ClrDeclarationMatching.SafeDef(edge).GetMethods(
@@ -158,7 +159,7 @@ static partial class ClrMemberResolution
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
             var returnType = SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArgs);
-            if (wantedReturn != null && !SameInterfaceSlotType(returnType, wantedReturn)) continue;
+            if (wantedReturn != null && !slotComparer.Equals(returnType, wantedReturn)) continue;
             // Select the declaration in the binding's ordinary frame, then instantiate that SAME
             // MethodDef in the physical storage frame. Comparing the latter to Kotlin scalar
             // parameters would lose Add(E) when the interface is ICollection<S(E)>.
@@ -171,7 +172,7 @@ static partial class ClrMemberResolution
             }
             var selectionParameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, selectionArgs)).ToArray();
-            if (!selectionParameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)) continue;
+            if (!selectionParameters.SequenceEqual(wantedParams, slotComparer)) continue;
             if (wantedShape != null)
             {
                 var declaredTypeParams = method.GetGenericArguments()
@@ -355,12 +356,11 @@ static partial class ClrMemberResolution
         _ => type,
     };
 
-    sealed class InterfaceSlotTypeComparer : IEqualityComparer<TypeNode>
+    sealed class InterfaceSlotTypeComparer(ReferenceMetadataIndex refs = null) : IEqualityComparer<TypeNode>
     {
         public static readonly InterfaceSlotTypeComparer Instance = new();
-        public bool Equals(TypeNode left, TypeNode right) =>
-            left != null && right != null && SameInterfaceSlotType(left, right);
-        public int GetHashCode(TypeNode type) =>
-            CanonicalInterfaceSlotType(type).GetHashCode();
+        TypeNode Key(TypeNode type) => refs == null ? CanonicalInterfaceSlotType(type) : MethodImplComparisonType(type, refs);
+        public bool Equals(TypeNode left, TypeNode right) => left != null && right != null && Key(left).Equals(Key(right));
+        public int GetHashCode(TypeNode type) => Key(type).GetHashCode();
     }
 }

@@ -82,6 +82,7 @@ static partial class ClrMemberResolution
     interface IMixed<T> : IMetadataSlot<int>, IMetadataSlot<T[]> { }
     class MetadataOuter<T> { internal interface IFace<U> { } }
     class MetadataOuter { internal interface IFace<T, U> { void Ping(); } }
+    interface INestedPair : IMetadataSlot<MetadataOuter<string>.IFace<int>>, IMetadataSlot<MetadataOuter.IFace<string,int>> { }
     class MetadataBase : MetadataOuter.IFace<string, int> { public void Ping() { } }
 
     static void MetadataConstructedSlotsSelfTest()
@@ -116,22 +117,31 @@ static partial class ClrMemberResolution
         ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { derived } }], refs, metadataBuild: true);
         if (!derived.Interfaces.Value.SequenceEqual(new TypeNode[] { direct, required }))
             throw new InvalidOperationException("An unrelated nested TypeDef covered an inherited interface MethodImpl");
-        BirMethodImpl Resolve(bool metadata, string name, params TypeNode[] parameters)
+        BirMethodImpl Resolve(bool metadata, TypeNode.Fqn receiver, string name, params TypeNode[] parameters)
         {
-            var descriptor = new BirMethodImpl { Owner = owner, Member = name, Arity = 0,
+            var descriptor = new BirMethodImpl { Owner = receiver, Member = name, Arity = 0,
                 Params = parameters, Ret = MemberRefNode.Void };
             var cls = new BirClassDefinition { Name = "Fixture.Pair", Methods = new[] {
                 new BirFunctionDeclaration { Name = "body", ClrInterfaceImpls = new[] { descriptor } } } };
             ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { cls } }], refs, metadataBuild: metadata);
             return descriptor;
         }
+        var nestedPair = new TypeNode.Fqn(typeof(INestedPair).FullName);
+        foreach (var argument in new[] { direct, required })
+            if (Resolve(false, nestedPair, "Put", argument).Owner.Value is not TypeNode.Fqn { Args: [var exact] } || exact != argument)
+                throw new InvalidOperationException("Nested generic TypeDefs with different declaring arities selected the same slot");
+        var nullable = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
+        var nestedArray = new TypeNode.Array(nullable);
+        if (Resolve(false, new TypeNode.Fqn(typeof(IMixed<>).FullName, [nullable]), "Put", nestedArray).Owner.Value
+            is not TypeNode.Fqn { Args: [var array] } || array != nestedArray)
+            throw new InvalidOperationException("Final MethodImpl slot re-lowered a physical nullable owner argument");
         foreach (var metadata in new[] { false, true })
         {
-            var selectedOwner = Resolve(metadata, "Put", text).Owner.Value;
+            var selectedOwner = Resolve(metadata, owner, "Put", text).Owner.Value;
             if (selectedOwner is not TypeNode.Fqn { Args: [var selected] } || selected != text
                 || metadata && selectedOwner != new TypeNode.Fqn(typeof(IMetadataSlot<>).FullName, [text]))
                 throw new InvalidOperationException("MethodImpl did not select the constructed string declaration");
-            try { Resolve(metadata, "Ping"); }
+            try { Resolve(metadata, owner, "Ping"); }
             catch (InvalidOperationException error) when (error.Message.Contains("resolves to 2 external declaration(s)")) { continue; }
             throw new InvalidOperationException("Distinct constructed slots collapsed to one MethodDef");
         }
