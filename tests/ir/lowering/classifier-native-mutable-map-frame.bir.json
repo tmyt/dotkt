@@ -1,6 +1,6 @@
 {
   "fileClass": "NativeMutableMapClassifierFrameKt",
-  "hasMain": false, "fields": [], "types": [], "refTypes": [],
+  "fields": [], "types": [], "refTypes": [],
   "methods": [
     {
       "name": "permuted", "declarationId": "mutable-native-permuted", "static": true,

@@ -76,6 +76,7 @@ cat > "$main_fault/App.kt" <<'KOTLIN'
 import System.Threading.Tasks.Task
 
 @System.MTAThreadAttribute
+@kotlin.clr.ClrName("StartAsync")
 suspend fun main() {
     val entry = System.Reflection.Assembly.GetEntryAssembly()!!.EntryPoint!!
     check(entry.GetCustomAttributes(false).any { it is System.MTAThreadAttribute })
@@ -120,13 +121,17 @@ KTPROJ
 # so a build/run that prints "12" then fails is not silently accepted.)
 cat > "$incr/App.kt" <<'KOTLIN'
 @System.STAThreadAttribute
+@kotlin.clr.ClrName("Start")
 fun main(args: Array<out String>) {
     val entry = System.Reflection.Assembly.GetEntryAssembly()!!.EntryPoint!!
+    check(entry.DeclaringType!!.GetMethod("Start") != null)
     check(entry.GetCustomAttributes(false).any { it is System.STAThreadAttribute })
     if (System.OperatingSystem.IsWindows())
         check(System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA)
     println(Shape(3, 4).area())
 }
+fun main(decoy: Int) { error("wrong overload: $decoy") }
+fun main() { error("selected main() instead of main(args)") }
 KOTLIN
 printf 'class Shape(val w: Int, val h: Int) { fun area() = w * h }\n' > "$incr/Shape.kt"
 incr_rc1=0; incr1="$(ktproj_run "$incr/app.ktproj" "$incr/run1.err")" || incr_rc1=$?

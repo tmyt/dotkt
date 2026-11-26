@@ -202,7 +202,6 @@ internal static class BirGraphDom
             switch (field.Key)
             {
                 case "fileClass": break;
-                case "hasMain": break;
                 case "fields": break;
                 case "methods": break;
                 case "properties": break;
@@ -221,7 +220,6 @@ internal static class BirGraphDom
         return new BirFileDeclaration
         {
             FileClass = Field<string>(fields, "fileClass", value => value!.GetValue<string>()),
-            HasMain = Field<bool>(fields, "hasMain", value => value!.GetValue<bool>()),
             Fields = Field<BirFieldDeclaration[]>(fields, "fields", value => ((JsonArray)value!).Select(item0 => ReadBirFieldDeclaration(item0!)).ToArray()),
             Methods = Field<BirFunctionDeclaration[]>(fields, "methods", value => ((JsonArray)value!).Select(item0 => ReadBirFunctionDeclaration(item0!)).ToArray()),
             Properties = Field<BirPropertyDeclaration[]>(fields, "properties", value => ((JsonArray)value!).Select(item0 => ReadBirPropertyDeclaration(item0!)).ToArray()),
@@ -1744,6 +1742,7 @@ internal static class BirGraphDom
                 case "propertyName": break;
                 case "propertyAccessor": break;
                 case "propertyAssociation": break;
+                case "entryPoint": break;
                 case "eventProperty": break;
                 case "fakeOverride": break;
                 case "inheritedImplementation": break;
@@ -1841,6 +1840,7 @@ internal static class BirGraphDom
             PropertyName = Field<string>(fields, "propertyName", value => value!.GetValue<string>()),
             PropertyAccessor = Field<string>(fields, "propertyAccessor", value => value!.GetValue<string>()),
             PropertyAssociation = Field<string>(fields, "propertyAssociation", value => value!.GetValue<string>()),
+            EntryPoint = Field<bool>(fields, "entryPoint", value => value!.GetValue<bool>()),
             EventProperty = Field<bool>(fields, "eventProperty", value => value!.GetValue<bool>()),
             FakeOverride = Field<bool>(fields, "fakeOverride", value => value!.GetValue<bool>()),
             InheritedImplementation = Field<BirInheritedImplementation>(fields, "inheritedImplementation", value => ReadBirInheritedImplementation(value!)),

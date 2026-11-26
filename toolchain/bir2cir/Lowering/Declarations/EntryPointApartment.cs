@@ -23,7 +23,7 @@ static class EntryPointApartment
     // the exact target method: multiple CIR files may contribute methods to the same file facade.
     internal static void Bind(BirFileDeclaration file, ReferenceMetadataIndex refs)
     {
-        var main = Array.FindLast(file.Methods.OrEmpty(), m => m.Name.OrDefault() == "main");
+        var main = Array.Find(file.Methods.OrEmpty(), m => m.EntryPoint.OrDefault());
         if (main == null) return;
         var attrs = main.Attrs.OrEmpty().Where(a => a.AttrExternal.OrDefault()
             && a.MemberRef.OrDefault() is {} ctor && ctor.Kind.OrDefault() == MemberRefNode.Kinds.Ctor

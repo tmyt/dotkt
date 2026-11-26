@@ -1,5 +1,5 @@
 {
-  "fileClass": "SharedPropertyFacade", "hasMain": false,
+  "fileClass": "SharedPropertyFacade",
   "fields": [], "refTypes": [], "types": [],
   "properties": [{
     "name": "physicalProperty", "type": { "t": "fqn", "name": "kotlin.Int" },

@@ -30,7 +30,7 @@ class TypeNodeTest {
 
     private fun reportBinaryNode(node: BirNode) {
         val body = if (node is BirStatement) listOf(node) else listOf(BirExpressionStatement(node as BirExpression))
-        reportBinaryFile(BirFileDeclaration("BinarySampleKt", false, emptyList(),
+        reportBinaryFile(BirFileDeclaration("BinarySampleKt", emptyList(),
             listOf(BirFunctionDeclaration(emptyList(), TypeNode.Fqn("kotlin.Unit"), body, name = "sample")),
             emptyList(), emptyList(), emptyList(), emptyList()))
     }
@@ -46,7 +46,7 @@ class TypeNodeTest {
         val method = BirFunctionDeclaration(listOf(BirParameter("value", frame)), frame,
             listOf(BirReturn(BirLocal("value", sty = frame))), name = "identity", declarationId = "selected-id",
             typeParams = listOf(TypeParameterDeclaration("T", constraints = listOf(TypeNode.Fqn("kotlin.Any")))))
-        reportBinaryFile(BirFileDeclaration("BinaryMetadataKt", false, emptyList(), listOf(method),
+        reportBinaryFile(BirFileDeclaration("BinaryMetadataKt", emptyList(), listOf(method),
             emptyList(), emptyList(), emptyList(), listOf(alias)))
         org.msgpack.core.MessagePack.newDefaultBufferPacker().use { packer ->
             assertFailsWith<IllegalArgumentException> { BirMessagePack.write(alias, packer, 1023) }

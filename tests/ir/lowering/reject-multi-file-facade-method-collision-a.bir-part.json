@@ -1,5 +1,5 @@
 {
-  "fileClass": "SharedMethodFacade", "hasMain": false,
+  "fileClass": "SharedMethodFacade",
   "fields": [], "properties": [], "refTypes": [], "types": [],
   "methods": [{
     "name": "colliding", "declarationId": "method-a",

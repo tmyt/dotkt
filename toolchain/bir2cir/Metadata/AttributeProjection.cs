@@ -131,7 +131,7 @@ static class AttributeProjection
             ["attrs"] = Attrs(), ["retAttrs"] = Attrs(), ["params"] = new JsonArray(Parameter()),
         };
         var source = new JsonObject {
-            ["fileClass"] = "Probe.File", ["hasMain"] = false, ["attrs"] = Attrs(), ["assemblyAttrs"] = Attrs(),
+            ["fileClass"] = "Probe.File", ["attrs"] = Attrs(), ["assemblyAttrs"] = Attrs(),
             ["methods"] = new JsonArray(Method()),
             ["fields"] = new JsonArray(new JsonObject { ["name"] = "field", ["type"] = TypeJson.Fqn("System.Int32"), ["attrs"] = Attrs() }),
             ["properties"] = new JsonArray(new JsonObject { ["name"] = "property", ["type"] = TypeJson.Fqn("System.Int32"), ["attrs"] = Attrs() }),

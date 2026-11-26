@@ -622,7 +622,7 @@ sealed partial class Emitter
         // The public startup wrapper always takes string[], even if the Kotlin target takes System.Array.
         MethodBuilder entry = null;
         foreach (var ti in _types.Values)
-            if (ti.Def is CirFileDeclaration { HasMain: true } && ti.Methods.TryGetValue("main", out var mainMb))
+            if (ti.EntryPointTarget is {} mainMb)
             {
                 entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
                 StampMemberAttrs(entry.SetCustomAttribute, ti.EntryPointAttrs);
@@ -925,7 +925,11 @@ sealed partial class Emitter
         if (m.Generated.OrDefault())
             StampCompilerGenerated(mb);
         ti.Methods[name] = mb;
-        if (ti.IsFileClass && name == "main") ti.EntryPointAttrs = m.EntryPointAttrs;
+        if (ti.IsFileClass && m.EntryPoint.OrDefault())
+        {
+            ti.EntryPointTarget = mb;
+            ti.EntryPointAttrs = m.EntryPointAttrs;
+        }
         ti.MethodsBySig[DefinitionSigKey(name, m)] = mb;
         ti.MethodDeclarationReturns[mb] = DefinitionSigKey(name, m).Return;
         // Keep a partial call-side alias only while it is unique. Return-distinct definitions must never

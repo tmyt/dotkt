@@ -1,5 +1,5 @@
 {
-  "fileClass": "CollisionOwnerKt", "hasMain": false, "fields": [], "methods": [],
+  "fileClass": "CollisionOwnerKt", "fields": [], "methods": [],
   "types": [{
     "name": "CollisionBox", "kind": "class", "typeParams": [{"name":"T"}], "base": null, "interfaces": [],
     "fields": [], "ctors": [],

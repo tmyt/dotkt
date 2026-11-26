@@ -154,7 +154,7 @@ static partial class SuspendColdLowering
             body.Add(new BirExpressionStatement { Expr = new BirNativeInstance { Type = awaiter, Method = "GetResult",
                 Recv = OptionalField<IBirExpression>.Of(getAwaiter), ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(), Ret = UnitTn } });
             body.Add(Label(skip));
-            return new BirFunctionDeclaration { Name = "main", Static = true, Override = false, Virtual = false,
+            return new BirFunctionDeclaration { Name = _name, EntryPoint = true, Static = true, Override = false, Virtual = false,
                 Abstract = false, ObjectOverride = false, Vis = "public", Params = CloneNamedParameters(),
                 Ret = UnitTn, Body = body.ToArray(),
                 Attrs = EntryPointApartment.ForDrain(_m, _refs) };
