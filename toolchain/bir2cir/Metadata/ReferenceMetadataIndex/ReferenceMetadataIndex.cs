@@ -1308,6 +1308,31 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && !storageFaces.Contains(face));
     }
 
+    // Compare TypeDefs in this compile set: a user-defined interface can have the same
+    // arity-free name as the BCL protocol without providing its GetEnumerator slot.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<Type, (bool Raw, bool Generic, bool TypedPattern)> _enumerableFaces = new();
+
+    internal (bool Raw, bool Generic, bool TypedPattern) EnumerableFaces(TypeNode.Fqn owner)
+    {
+        var resolved = ResolveNetType(ExactReflectedOwner(owner.Name, owner.Args?.Length ?? 0), owner.Args?.Length ?? 0);
+        if (resolved == null) return default;
+        if (_enumerableFaces.TryGetValue(resolved, out var cached)) return cached;
+        var raw = _universe.CoreType("System.Collections.IEnumerable");
+        var typed = _universe.CoreType("System.Collections.Generic.IEnumerable`1");
+        bool hasRaw = false, hasGeneric = false;
+        foreach (var face in resolved.GetInterfaces().Append(resolved))
+        {
+            hasRaw |= face == raw;
+            hasGeneric |= face.IsGenericType && face.GetGenericTypeDefinition() == typed;
+        }
+        var enumerator = _universe.CoreType("System.Collections.Generic.IEnumerator`1");
+        var pattern = hasRaw && !hasGeneric && !resolved.IsInterface &&
+            resolved.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Any(m => m.Name == "GetEnumerator" && !m.IsGenericMethod && m.GetParameters().Length == 0 &&
+                    m.ReturnType.IsGenericType && m.ReturnType.GetGenericTypeDefinition() == enumerator);
+        return _enumerableFaces[resolved] = (hasRaw, hasGeneric, pattern);
+    }
+
     // ---- Call-substitution lookups (consumed by MemberCallSubstitution) ----
 
     // The open identity of a current structured Fqn's name. Generic arguments live in Fqn.Args; the name may carry

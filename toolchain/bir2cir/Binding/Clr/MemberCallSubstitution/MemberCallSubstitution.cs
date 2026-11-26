@@ -124,17 +124,22 @@ static partial class MemberCallSubstitution
 
     internal static IteratorProtocol ResolveIteratorProtocol(TypeNode.Fqn owner, IReadOnlySet<string> declaredTypes,
         IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, string> aliases, bool sourceFrames = false)
+        IReadOnlyDictionary<string, string> aliases, out TypeNode.Fqn patternOwner, bool sourceFrames = false)
     {
         bool raw = false, generic = false;
+        patternOwner = null;
         foreach (var (candidate, _) in SupertypeGraph.Reachable(
             new SupertypeGraph.Def { Base = owner }, definitions, references, sourceFrames))
         {
             // An alias's source declaration is implemented through its native face, not a Kotlin MethodDef.
             var alias = aliases != null && aliases.TryGetValue(candidate.Name, out var target) ? target : null;
-            var name = ReferenceMetadataIndex.BareOwnerFqn(alias ?? candidate.Name);
-            raw |= name == "System.Collections.IEnumerable";
-            generic |= name == "System.Collections.Generic.IEnumerable";
+            if (references != null)
+            {
+                var faces = references.EnumerableFaces(candidate);
+                raw |= faces.Raw;
+                generic |= faces.Generic;
+                if (faces.TypedPattern) patternOwner ??= candidate;
+            }
             if (alias != null) continue;
             if (declaredTypes.Contains(candidate.Name)
                 || references?.DeclaresExactInstanceMember(candidate.Name, "iterator", 0,
@@ -478,6 +483,7 @@ static partial class MemberCallSubstitution
         var ps = (owner, method) switch
         {
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
+            ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerator") => new[] { Gen("kotlin.collections.ClrEnumerator") },
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverRawEnumerable") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
             (_, "clrProjectedCollAdd") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },

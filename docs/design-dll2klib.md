@@ -426,7 +426,12 @@ as additional metadata-only declarations:
 - a conforming `GetEnumerator` pattern produces `operator fun iterator()`.
   Kotlin subclasses inherit this view from CLR classes implementing non-generic
   `System.Collections.IEnumerable`, including explicit implementations. The
-  generic and non-generic interfaces retain their own enumeration slots;
+  generic and non-generic interfaces retain their own enumeration slots.
+  Relisting the non-generic interface does not widen a typed iterator inherited
+  from a referenced CLR base. If a raw-only implementer exposes a public
+  `GetEnumerator(): IEnumerator<T>` and separately implements the raw slot,
+  iteration through the class uses the typed pattern; iteration through
+  `System.Collections.IEnumerable` uses the raw slot;
 - a conforming `GetAwaiter` pattern produces a suspend `await()` declaration;
   the declaration carries `kotlin.clr.ClrAwaitBridge` so `bir2cir` can lower
   the await protocol; and

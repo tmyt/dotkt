@@ -239,9 +239,9 @@ static partial class CollectionHelperBinding
             ["probe.Derived"] = new() { Base = iteratorOwner },
         };
         if (MemberCallSubstitution.ResolveIteratorProtocol(new TypeNode.Fqn("probe.Derived"), declaredIterators,
-                iteratorDefinitions, null, new Dictionary<string, string>()) != MemberCallSubstitution.IteratorProtocol.Declared
+                iteratorDefinitions, null, new Dictionary<string, string>(), out _) != MemberCallSubstitution.IteratorProtocol.Declared
             || MemberCallSubstitution.ResolveIteratorProtocol(new TypeNode.Fqn("probe.Derived"), declaredIterators,
-                iteratorDefinitions, null, new Dictionary<string, string> { [iteratorOwner.Name] = "System.Object" }) == MemberCallSubstitution.IteratorProtocol.Declared)
+                iteratorDefinitions, null, new Dictionary<string, string> { [iteratorOwner.Name] = "System.Object" }, out _) == MemberCallSubstitution.IteratorProtocol.Declared)
             throw new InvalidOperationException("Iterator binding lost inheritance or treated an alias as a Kotlin slot");
         var methods = new JsonArray(new[] { "clrProjectedViewIsEmpty", "clrProjectedViewIterator",
                 "clrProjectedViewContains", "clrProjectedViewContainsAll", "clrProjectedViewListIterator", "clrProjectedCollAdd" }

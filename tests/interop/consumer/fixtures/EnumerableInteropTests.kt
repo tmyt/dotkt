@@ -37,6 +37,13 @@ private class DelegatingNativeProbe<T>(values: kotlin.collections.ClrEnumerable<
 private class InheritedPublicRaw : Kfc.PublicRaw()
 private class InheritedExplicitRaw : Kfc.ExplicitRaw()
 private class InheritedDual : Kfc.DualEnumerable()
+private class InheritedRelisted : Kfc.Relisted()
+private class InheritedPattern : Kfc.PatternAndRaw()
+
+private fun firstRawElement(source: System.Collections.IEnumerable): Any? {
+    for (element in source) return element
+    return null
+}
 
 class EnumerableInteropTests {
     @TestAttribute
@@ -53,6 +60,13 @@ class EnumerableInteropTests {
         check(dual.iterator().next() == "typed")
         val raw = dual as System.Collections.IEnumerable
         check(raw.iterator().next() == "raw")
+        check(firstRawElement(raw) == "raw")
+        check(InheritedExplicitRaw().iterator(5) == 5)
+        val fromBase: String = InheritedRelisted().iterator().next()
+        check(fromBase == "base")
+        val pattern = InheritedPattern()
+        val fromPattern: String = pattern.iterator().next()
+        check(fromPattern == "pattern" && firstRawElement(pattern) == 17)
     }
 
     @TestAttribute

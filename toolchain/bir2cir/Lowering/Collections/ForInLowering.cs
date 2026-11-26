@@ -63,8 +63,11 @@ static partial class ForInLowering
         while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
         if (type is not TypeNode.Fqn owner) return false;
         var fqn = ReferenceMetadataIndex.ReflectedOwnerFqn(owner.Name);
-        return fqn == "kotlin.sequences.Sequence"
-            || refs != null && refs.ResolveNetType(fqn, owner.Args?.Length ?? 0) != null;
+        if (fqn == "kotlin.sequences.Sequence") return true;
+        if (refs?.ResolveNetType(fqn, owner.Args?.Length ?? 0) == null) return false;
+        // A raw source does not implement IEnumerable<object>. Keep the selected
+        // iterator call, including when the source expression is just a parameter.
+        return refs.EnumerableFaces(owner) is not (true, false, _);
     }
 
     static bool IsCountedRange(TypeNode type, bool stdlibBuild) => type is TypeNode.Fqn owner

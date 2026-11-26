@@ -52,7 +52,18 @@ namespace Kfc {
     }
 
     public class ExplicitRaw : IEnumerable {
+        public int iterator(int n) => n;
         IEnumerator IEnumerable.GetEnumerator() => new object[] { "explicit" }.GetEnumerator();
+    }
+
+    public class Relisted : System.Collections.ObjectModel.Collection<string>, IEnumerable {
+        public Relisted() => Add("base");
+        IEnumerator IEnumerable.GetEnumerator() => new object[] { 42 }.GetEnumerator();
+    }
+
+    public class PatternAndRaw : IEnumerable {
+        public IEnumerator<string> GetEnumerator() => ((IEnumerable<string>)new[] { "pattern" }).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => new object[] { 17 }.GetEnumerator();
     }
 
     public class DualEnumerable : IEnumerable<object> {

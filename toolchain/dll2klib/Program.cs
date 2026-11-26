@@ -4582,7 +4582,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         SignatureDecoder signatures,
         ResolvedTypeDefinition? rawEnumerable)
     {
-        if (result.Function.Any(f => names.StringValue(f.Name) == "iterator"))
+        if (result.Function.Any(f => names.StringValue(f.Name) == "iterator" &&
+                f.ValueParameter.Count == 0 && f.TypeParameter.Count == 0 && f.ReceiverType == null))
             return;
         var self = new KType { ClassName = ClassName(handle, names) };
         foreach (var parameter in def.GetGenericParameters())
@@ -4601,9 +4602,18 @@ internal sealed partial class AssemblyScanner : IDisposable
                 new HashSet<string>(StringComparer.Ordinal),
                 out var element) &&
             (rawEnumerable == null || !IsInOwnerCoreLibrary(handle, rawEnumerable) ||
-             !TryEnumerableElement(signatures.NamedType("System.Collections.IEnumerable"),
-                names, signatures, new HashSet<string>(StringComparer.Ordinal), out element, rawEnumerable)))
+             !(TryInheritedEnumerableElement() || TryEnumerableElement(signatures.NamedType("System.Collections.IEnumerable"),
+                names, signatures, new HashSet<string>(StringComparer.Ordinal), out element, rawEnumerable))))
             return;
+
+        bool TryInheritedEnumerableElement()
+        {
+            if (def.BaseType.IsNil || !_publicTypeCatalog.TryResolveDefinition(_md, def.BaseType, out var parent, _definitionPath))
+                return false;
+            var context = new GenericContext(handle, default, def.GetGenericParameters().ToDictionary(h => h, h => _md.GetGenericParameter(h).Index));
+            var baseType = signatures.DecodeEntity(def.BaseType, context, platform: false);
+            return TryEnumerableElement(baseType, names, signatures, new HashSet<string>(StringComparer.Ordinal), out element, parent);
+        }
 
         var iterator = signatures.NamedType("kotlin.collections.Iterator");
         iterator.Argument.Add(new KType.Types.Argument
@@ -4680,18 +4690,17 @@ internal sealed partial class AssemblyScanner : IDisposable
                 return true;
         }
 
-        // An externally supplied protocol is already the selected interface declaration.
-        // Its slot and enumerator must both be decoded in their declaring assembly.
-        if (protocol != null) return false;
         IEnumerable<EntityHandle> supers = definition.GetInterfaceImplementations()
             .Select(h => reader.GetInterfaceImplementation(h).Interface);
         if (!definition.BaseType.IsNil)
-            supers = supers.Append(definition.BaseType);
+            supers = protocol == null ? supers.Append(definition.BaseType) : supers.Prepend(definition.BaseType);
         foreach (var superHandle in supers)
         {
             var super = signatures.DecodeEntity(superHandle, context, platform: false);
             super = SubstituteTypeParameters(super, enumerableType.Argument);
-            if (TryEnumerableElement(super, names, signatures, visited, out elementType))
+            ResolvedTypeDefinition? resolved = null;
+            if (protocol != null && !_publicTypeCatalog.TryResolveDefinition(reader, superHandle, out resolved, protocol.DefinitionPath)) continue;
+            if (TryEnumerableElement(super, names, signatures, visited, out elementType, resolved))
                 return true;
         }
         return false;
