@@ -46,4 +46,17 @@ namespace Kfc {
         public IEnumerator<string> GetEnumerator() => _w.GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => _w.GetEnumerator();
     }
+
+    public class PublicRaw : IEnumerable {
+        public IEnumerator GetEnumerator() => new object[] { 17, "public" }.GetEnumerator();
+    }
+
+    public class ExplicitRaw : IEnumerable {
+        IEnumerator IEnumerable.GetEnumerator() => new object[] { "explicit" }.GetEnumerator();
+    }
+
+    public class DualEnumerable : IEnumerable<object> {
+        public IEnumerator<object> GetEnumerator() => ((IEnumerable<object>)new object[] { "typed" }).GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => new object[] { "raw" }.GetEnumerator();
+    }
 }

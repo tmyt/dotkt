@@ -423,7 +423,10 @@ trails omitted arguments.
 Some CLR protocols have direct Kotlin language equivalents and are projected
 as additional metadata-only declarations:
 
-- a conforming `GetEnumerator` pattern produces `operator fun iterator()`;
+- a conforming `GetEnumerator` pattern produces `operator fun iterator()`.
+  Kotlin subclasses inherit this view from CLR classes implementing non-generic
+  `System.Collections.IEnumerable`, including explicit implementations. The
+  generic and non-generic interfaces retain their own enumeration slots;
 - a conforming `GetAwaiter` pattern produces a suspend `await()` declaration;
   the declaration carries `kotlin.clr.ClrAwaitBridge` so `bir2cir` can lower
   the await protocol; and

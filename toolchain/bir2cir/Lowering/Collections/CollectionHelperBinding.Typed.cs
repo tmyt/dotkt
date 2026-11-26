@@ -38,10 +38,10 @@ static partial class CollectionHelperBinding
             if (!aliases.ContainsKey(owner.Name))
             {
                 if (operation.Method.OrDefault() != "iterator" || arguments.Length != 0) return operation;
-                var declaresIterator = MemberCallSubstitution.HasDeclaredIterator(owner, captured.DeclaredIterators,
+                var protocol = MemberCallSubstitution.ResolveIteratorProtocol(owner, captured.DeclaredIterators,
                     captured.Definitions, references, aliases, sourceFrames: true);
                 var plan = MemberCallSubstitution.SelectMissingCollectionIterator(operation.Method.OrDefault(), arguments.Length,
-                    declaresIterator, KotlinPropertyAccessors.HasIdentity(operation.PropertyName.OrDefault(), operation.PropertyAccessor.OrDefault())
+                    protocol, KotlinPropertyAccessors.HasIdentity(operation.PropertyName.OrDefault(), operation.PropertyAccessor.OrDefault())
                         || operation.Prop.OrDefault() is "get" or "set", operation.TypeArgs.OrEmpty().Length,
                     operation.Sty.OrDefault() ?? operation.Ret.OrDefault());
                 if (plan == null) return operation;

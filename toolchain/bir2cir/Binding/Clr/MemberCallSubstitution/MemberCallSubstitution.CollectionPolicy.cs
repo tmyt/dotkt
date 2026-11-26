@@ -18,13 +18,15 @@ static partial class MemberCallSubstitution
         TypeNode.Oblivious value => CollectionVariableType(value.Of), _ => type,
     };
 
-    internal static CollectionOperationPlan SelectMissingCollectionIterator(string member, int count, bool declaresIterator,
+    internal static CollectionOperationPlan SelectMissingCollectionIterator(string member, int count, IteratorProtocol binding,
         bool property, int typeArguments, TypeNode result)
     {
-        if (member != "iterator" || count != 0 || declaresIterator || property || typeArguments != 0
+        if (member != "iterator" || count != 0 || binding == IteratorProtocol.Declared || property || typeArguments != 0
             || result is not TypeNode.Fqn { Args: { Length: 1 } elements } protocol
             || protocol.Name is not ("kotlin.collections.Iterator" or "kotlin.collections.MutableIterator")) return null;
         var mutable = protocol.Name == "kotlin.collections.MutableIterator";
+        if (!mutable && binding == IteratorProtocol.NonGeneric)
+            return new("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverRawEnumerable", null);
         return new(mutable ? "kotlin.collections.ClrCollectionDefaultsKt" : "kotlin.collections.ClrIteratorBridgeKt",
             mutable ? "clrMutableIterator" : "iteratorOverEnumerable", elements[0]);
     }

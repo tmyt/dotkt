@@ -34,7 +34,27 @@ private fun sumNativeElements(values: ClrEnumerable<Int>): Int {
 
 private class DelegatingNativeProbe<T>(values: kotlin.collections.ClrEnumerable<T>) : kotlin.collections.ClrEnumerable<T> by values
 
+private class InheritedPublicRaw : Kfc.PublicRaw()
+private class InheritedExplicitRaw : Kfc.ExplicitRaw()
+private class InheritedDual : Kfc.DualEnumerable()
+
 class EnumerableInteropTests {
+    @TestAttribute
+    fun subclassesInheritTheSelectedNativeIterator() {
+        val cursor = InheritedPublicRaw().iterator()
+        check(cursor.hasNext() && cursor.next() == 17)
+        check(cursor.hasNext() && cursor.next() == "public" && !cursor.hasNext())
+        var count = 0
+        for (value in InheritedExplicitRaw()) { check(value == "explicit"); count++ }
+        check(count == 1)
+
+        // Both CLR slots return object elements, but their implementations differ.
+        val dual = InheritedDual()
+        check(dual.iterator().next() == "typed")
+        val raw = dual as System.Collections.IEnumerable
+        check(raw.iterator().next() == "raw")
+    }
+
     @TestAttribute
     fun nativeInterfaceIteration() {
         val ints = EnumerationProbe<Int>(arrayOf(10, 20, 30))

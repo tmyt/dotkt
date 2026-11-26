@@ -245,7 +245,7 @@ static partial class MemberCallSubstitution
             && !refs.TryResolveClrOwner(ownerToken, out _, out _))
         {
             var plan = SelectMissingCollectionIterator(node.Method.OrDefault(), companionArguments.Length,
-                HasDeclaredIterator(owner, _typesWithDeclaredIterator, _iteratorTypeDefinitions, refs, refs.Aliases),
+                ResolveIteratorProtocol(owner, _typesWithDeclaredIterator, _iteratorTypeDefinitions, refs, refs.Aliases),
                 node.HasIdentity(out _, out _), node.TypeArgs.OrEmpty().Length, node.Sty.OrDefault() ?? node.Ret.OrDefault());
             if (plan != null) return CollectionHelperBinding.RenderCollectionOperation(plan, node.Instance, null, CollectionOperationPhase.Physical);
         }

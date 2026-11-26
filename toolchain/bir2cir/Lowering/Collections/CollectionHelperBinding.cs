@@ -205,7 +205,8 @@ static partial class CollectionHelperBinding
             var property = KotlinPropertyAccessors.TryCallIdentity(call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(),
                 call.Method.OrDefault(), call.Prop.OrDefault(), out _, out _);
             var plan = MemberCallSubstitution.SelectMissingCollectionIterator(call.Method.OrDefault(), call.Args.OrEmpty().Length,
-                declared, property, call.TypeArgs.OrEmpty().Length, call.Sty.OrDefault() ?? call.Ret.OrDefault());
+                declared ? MemberCallSubstitution.IteratorProtocol.Declared : MemberCallSubstitution.IteratorProtocol.Generic,
+                property, call.TypeArgs.OrEmpty().Length, call.Sty.OrDefault() ?? call.Ret.OrDefault());
             return plan == null ? null : RenderCollectionOperation(plan, call, null, MemberCallSubstitution.CollectionOperationPhase.Physical);
         }
         if (!declaredIterators.Contains(iteratorOwner.Name)
@@ -237,10 +238,10 @@ static partial class CollectionHelperBinding
         var iteratorDefinitions = new Dictionary<string, SupertypeGraph.Def> {
             ["probe.Derived"] = new() { Base = iteratorOwner },
         };
-        if (!MemberCallSubstitution.HasDeclaredIterator(new TypeNode.Fqn("probe.Derived"), declaredIterators,
-                iteratorDefinitions, null, new Dictionary<string, string>())
-            || MemberCallSubstitution.HasDeclaredIterator(new TypeNode.Fqn("probe.Derived"), declaredIterators,
-                iteratorDefinitions, null, new Dictionary<string, string> { [iteratorOwner.Name] = "System.Object" }))
+        if (MemberCallSubstitution.ResolveIteratorProtocol(new TypeNode.Fqn("probe.Derived"), declaredIterators,
+                iteratorDefinitions, null, new Dictionary<string, string>()) != MemberCallSubstitution.IteratorProtocol.Declared
+            || MemberCallSubstitution.ResolveIteratorProtocol(new TypeNode.Fqn("probe.Derived"), declaredIterators,
+                iteratorDefinitions, null, new Dictionary<string, string> { [iteratorOwner.Name] = "System.Object" }) == MemberCallSubstitution.IteratorProtocol.Declared)
             throw new InvalidOperationException("Iterator binding lost inheritance or treated an alias as a Kotlin slot");
         var methods = new JsonArray(new[] { "clrProjectedViewIsEmpty", "clrProjectedViewIterator",
                 "clrProjectedViewContains", "clrProjectedViewContainsAll", "clrProjectedViewListIterator", "clrProjectedCollAdd" }
