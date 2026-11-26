@@ -76,3 +76,7 @@ internal class KotlinIteratorOverRawEnumerator(private val e: ClrRawEnumerator) 
  *  reason `clrElemToString`/`clrMapGet` cast internally instead of taking the raw facade as their param). */
 public fun iteratorOverRawEnumerable(self: Any): Iterator<Any?> =
     KotlinIteratorOverRawEnumerator((self as ClrRawEnumerable).GetEnumerator())
+
+/** Adapt a previously selected enumerator without dispatching GetEnumerator a second time. */
+public fun iteratorOverRawEnumerator(enumerator: Any): Iterator<Any?> =
+    KotlinIteratorOverRawEnumerator(enumerator as ClrRawEnumerator)

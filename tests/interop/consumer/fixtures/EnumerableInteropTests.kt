@@ -39,8 +39,19 @@ private class InheritedExplicitRaw : Kfc.ExplicitRaw()
 private class InheritedDual : Kfc.DualEnumerable()
 private class InheritedRelisted : Kfc.Relisted()
 private class InheritedPattern : Kfc.PatternAndRaw()
-private class OverridesRaw : Kfc.ExplicitRaw() {
-    override fun iterator(): Iterator<Any?> = listOf<Any?>("replacement").iterator()
+private class OverridesRaw<I : Iterator<Any?>>(val cursor: I) : Kfc.ExplicitRaw() {
+    override fun iterator(): I = cursor
+}
+private class WrapsRaw : Kfc.PublicRaw() {
+    var calls = 0
+    override fun iterator(): Iterator<Any?> {
+        check(++calls == 1)
+        return super.iterator()
+    }
+}
+private class BothRawEntries : System.Collections.IEnumerable {
+    override fun iterator(): Iterator<Any?> = listOf<Any?>("Kotlin").iterator()
+    override fun GetEnumerator(): System.Collections.IEnumerator = Kfc.PublicRaw().GetEnumerator()
 }
 
 private fun firstRawElement(source: System.Collections.IEnumerable): Any? {
@@ -65,9 +76,11 @@ class EnumerableInteropTests {
         check(raw.iterator().next() == "raw")
         check(firstRawElement(raw) == "raw")
         check(InheritedExplicitRaw().iterator(5) == 5)
-        val replacement = OverridesRaw()
-        check(replacement.iterator().next() == "replacement")
+        val replacement = OverridesRaw(listOf<Any?>("replacement").iterator())
         check(Kfc.ExplicitRaw.First(replacement) == "replacement")
+        check(Kfc.ExplicitRaw.First(WrapsRaw()) == 17)
+        val both = BothRawEntries()
+        check(both.iterator().next() == "Kotlin" && Kfc.ExplicitRaw.First(both) == 17)
         val fromBase: String = InheritedRelisted().iterator().next()
         check(fromBase == "base")
         val pattern = InheritedPattern()

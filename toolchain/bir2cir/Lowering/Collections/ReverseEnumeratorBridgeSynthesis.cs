@@ -72,7 +72,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
     // A raw-only reservation has no generic element and owns only IEnumerable.GetEnumerator.
     public sealed record SlotReservation(TypeNode Element)
     {
-        internal BottomSlot Bottom { get; init; }
+        internal ReservedProvider Provider { get; init; }
         public bool Owns(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
             TypeNode result, Func<TypeNode, TypeNode> physical, ReferenceMetadataIndex refs)
         {
@@ -103,15 +103,20 @@ static partial class ReverseEnumeratorBridgeSynthesis
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, SlotReservation> reservations = null)
     {
         if (Plan(def, defs, refs, declarations) is not { } plan) return null;
+        bool bottom = NodeType.IsNothing(plan.Iterator.SemanticReturn);
         var slot = new SlotReservation(plan.Element) {
-            Bottom = NodeType.IsNothing(plan.Iterator.SemanticReturn)
-                ? new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId) : null,
+            Provider = bottom || plan.Element == null
+                ? new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId, bottom) : null,
         };
         if (reservations != null) reservations[def.Name] = slot;
         return slot;
     }
 
-    internal sealed record BottomSlot(string Owner, string Method, string DeclarationId);
+    internal sealed record ReservedProvider(string Owner, string Method, string DeclarationId, bool Bottom);
+
+    static bool OverridesRawMember(BirFunctionDeclaration method, string name, ReferenceMetadataIndex refs) =>
+        method.Overrides.OrEmpty().Any(edge => edge.Member.OrDefault() == name
+            && edge.Owner.OrDefault() is TypeNode.Fqn { Name: IEnumerable } face && refs?.EnumerableFaces(face).Raw == true);
 
     static bool KotlinIterationProtocol(string name) => Bare(name) is "kotlin.collections.Iterable" or "kotlin.sequences.Sequence";
 
@@ -121,7 +126,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
     {
         if (def.Kind != "class") return null;
         var reservation = reserved?.GetValueOrDefault(def.Name);
-        if (reservation?.Bottom is { } slot)
+        if (reservation?.Provider is { } slot)
         {
             // Nothing and Nothing? can both have become System.Object. Bind the
             // reserved provider's current declaring type and physical return.
@@ -139,13 +144,13 @@ static partial class ReverseEnumeratorBridgeSynthesis
             }
             else ret = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
                 .Single(m => m.PhysicalName == slot.Method && m.Parameters.Length == 0).Return;
-            return (new IteratorProvider(owner, name, ret, new TypeNode.Fqn("kotlin.Nothing"), false), reservation.Element);
+            return (new IteratorProvider(owner, name, ret, slot.Bottom ? new TypeNode.Fqn("kotlin.Nothing") : ret, false), reservation.Element);
         }
         if (FindIteratorProvider(def, defs, refs, declarations) is not { } iterator) return null;
-        if (reservation is { Element: null }) return (iterator, null);
         // A raw CLR slot has no element argument. Only a declaration overriding
         // the projected slot can replace its inherited native implementation.
-        bool overridesRaw = iterator.Owner.Name == def.Name && iterator.RawOverride;
+        bool overridesRaw = iterator.Owner.Name == def.Name && iterator.RawOverride &&
+            !declarations[def.Name].Methods.OrEmpty().Any(m => OverridesRawMember(m, GetEnumeratorName, refs));
         if (NodeType.IsNothing(iterator.SemanticReturn))
         {
             if (reserved != null) return null;
@@ -246,9 +251,8 @@ static partial class ReverseEnumeratorBridgeSynthesis
             .Select(method => new IteratorProvider(owner, method.Name,
                 SupertypeGraph.SubstOwnerTvs(method.Return, args),
                 SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract, method.Declaration.DeclarationId.OrDefault(),
-                method.Declaration.Overrides.OrEmpty().Any(edge => edge.Member.OrDefault() == IteratorMember
-                    && edge.Owner.OrDefault() is TypeNode.Fqn { Name: IEnumerable } face && refs?.EnumerableFaces(face).Raw == true)))
-            .Where(provider => NodeType.IsNothing(provider.SemanticReturn) || IteratorElement(provider.SemanticReturn, defs, refs) != null)
+                OverridesRawMember(method.Declaration, IteratorMember, refs)))
+            .Where(provider => provider.RawOverride || NodeType.IsNothing(provider.SemanticReturn) || IteratorElement(provider.SemanticReturn, defs, refs) != null)
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;
     }
