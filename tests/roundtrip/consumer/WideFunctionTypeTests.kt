@@ -31,6 +31,7 @@ private class NativeGetterDerived : GenericValueInterop.NativeCallbackBase(Gener
 private class NativeArrayDerived(op: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any)
     : GenericValueInterop.NativeArrayCallbackBase(op)
 private class CallbackBox<T>(val value: T)
+private fun returnedCallback(source: GenericValueInterop.NativeIntCallbackBase): WideIntCallback = source.Callback
 
 class WideFunctionTypeTests {
     @TestAttribute
@@ -44,6 +45,8 @@ class WideFunctionTypeTests {
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read(FirstPlusLast()))
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read<String>(FirstPlusLast()))
         assertEquals(18, NativeGetterDerived().Read())
+        val returned = returnedCallback(native)
+        assertEquals(18, returned(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
         val array = arrayOf(CallbackBox("text"))
         val returning = NativeArrayDerived { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> array }
         check(returning.Read() === array)

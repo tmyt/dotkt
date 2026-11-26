@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - CLR interface slots inherited at different generic arguments can now be selected by their constructed signatures (#1960).
+- Kotlin functions can return wide callbacks read from CLR properties without losing their callable signature (#1951).
 - Generic classes implementing an interface method with an owner-dependent bound now load and dispatch through both the interface and a star-projected receiver (#1969).
 - Trimmed executables retain the stack depth required after an early return in a value-producing branch (#1981).
 - Files sharing a Kotlin CLR facade can now both capture mutable locals of the same type without generating duplicate storage fields (#1957).

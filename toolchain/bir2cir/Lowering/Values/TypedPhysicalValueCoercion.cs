@@ -435,6 +435,15 @@ static class TypedPhysicalValueCoercion
         if (value is IBirExpression expression
             && index.DelegateAdapters?.AdaptUnitDelegateValue(index.LocalCarriers, index.Document, expression, got, target) is { } adapter)
             return Graph(adapter);
+        // The selected member returns its exact native delegate. Its Kotlin result
+        // stamp describes the source type, not the delegate already on the stack.
+        if (value is IBirExpression operand && Underlying(target) is TypeNode.Fn { Suspend: false, Clr: not null } function
+            && !index.ReferenceBuild && index.References != null
+            && Underlying(PhysicalResult(value, scope, index)) is TypeNode.Fqn physical
+            && BirTypeLowering.DelegateFqnOf(function) is { } slot
+            && !ClrMemberResolution.SameInterfaceSlotType(physical, slot)
+            && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } source)
+            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, function, slot, source));
         if (FunctionViewOperand(value, got, target, index) is { } view) return Cast(view, target);
         return NeedsConversion(got, target, index) ? Cast(value, target) : value;
     }
