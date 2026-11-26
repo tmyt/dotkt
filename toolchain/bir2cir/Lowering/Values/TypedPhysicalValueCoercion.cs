@@ -235,6 +235,7 @@ static class TypedPhysicalValueCoercion
         internal readonly Dictionary<string, TypeNode> Locals;
         internal readonly TypeNode Return, Owner;
         internal bool NativeArrayReturn, ProjectedCallable;
+        internal BirTypeParameter[] OwnerFrame, MethodFrame;
         internal HashSet<string> ManagedAddresses = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, TypeNode> TemporaryFields, TemporaryLocals;
         internal Scope(TypeNode owner = null, TypeNode ret = null, Dictionary<string, TypeNode> locals = null,
@@ -246,10 +247,11 @@ static class TypedPhysicalValueCoercion
             TemporaryLocals = temporaryLocals ?? new(StringComparer.Ordinal);
         }
         internal Scope Copy() => new(Owner, Return, new(Locals, StringComparer.Ordinal), TemporaryFields, TemporaryLocals)
-            { NativeArrayReturn = NativeArrayReturn, ProjectedCallable = ProjectedCallable, ManagedAddresses = new(ManagedAddresses, StringComparer.Ordinal) };
-        internal static Scope Frame(BirParameter[] parameters, IEnumerable<BirGraphValue> parts, TypeNode owner, TypeNode ret)
+            { NativeArrayReturn = NativeArrayReturn, ProjectedCallable = ProjectedCallable, OwnerFrame = OwnerFrame, MethodFrame = MethodFrame, ManagedAddresses = new(ManagedAddresses, StringComparer.Ordinal) };
+        internal static Scope Frame(BirParameter[] parameters, IEnumerable<BirGraphValue> parts, TypeNode owner, TypeNode ret,
+            BirTypeParameter[] owners = null, BirTypeParameter[] methods = null)
         {
-            var scope = new Scope(owner, ret);
+            var scope = new Scope(owner, ret) { OwnerFrame = owners, MethodFrame = methods };
             foreach (var parameter in parameters)
                 if (parameter.Name.HasValue && parameter.Type.HasValue)
                 {
@@ -268,16 +270,16 @@ static class TypedPhysicalValueCoercion
     {
         var type = Shape(declaration);
         RewriteMembers(type.Fields, type.Constructors, type.Methods,
-            type.Name == null ? null : new TypeNode.Fqn(type.Name), index);
+            type.Name == null ? null : new TypeNode.Fqn(type.Name), index, TypeParameterFrame.Declarations(declaration).ToArray());
     }
 
     static void RewriteMembers(BirFieldDeclaration[] fields, BirConstructor[] constructors,
-        BirFunctionDeclaration[] methods, TypeNode owner, Index index)
+        BirFunctionDeclaration[] methods, TypeNode owner, Index index, BirTypeParameter[] ownerFrame = null)
     {
         foreach (var field in fields)
             if (field.Init.HasValue && field.Type.HasValue)
             {
-                var scope = new Scope(owner);
+                var scope = new Scope(owner) { OwnerFrame = ownerFrame };
                 var value = Rewrite(Graph(field.Init.Value), scope, index);
                 field.Init = Field(Expression(index.ReferenceBuild ? value : Coerce(value, field.Type.Value, scope, index)));
             }
@@ -292,7 +294,7 @@ static class TypedPhysicalValueCoercion
                 if (constructor.PreStmts.IsPresent || prefix.Count != 0) constructor.PreStmts = prefix.ToArray();
             }
             var scope = Scope.Frame(constructor.Params.OrEmpty(),
-                constructor.PreStmts.OrEmpty().Cast<BirGraphValue>().Concat(constructor.Body.OrEmpty().Cast<BirGraphValue>()), owner, Void);
+                constructor.PreStmts.OrEmpty().Cast<BirGraphValue>().Concat(constructor.Body.OrEmpty().Cast<BirGraphValue>()), owner, Void, ownerFrame);
             RewriteStatements(constructor.PreStmts.OrEmpty(), scope, index);
             var arguments = constructor.ThisArgs.OrDefault() ?? constructor.BaseArgs.OrDefault();
             RewriteExpressions(arguments, scope, index);
@@ -309,7 +311,8 @@ static class TypedPhysicalValueCoercion
         }
         foreach (var method in methods)
         {
-            var scope = Scope.Frame(method.Params.OrEmpty(), method.Body.OrEmpty().Cast<BirGraphValue>(), owner, method.Ret.OrDefault());
+            var scope = Scope.Frame(method.Params.OrEmpty(), method.Body.OrEmpty().Cast<BirGraphValue>(), owner, method.Ret.OrDefault(),
+                ownerFrame, method.TypeParams.OrEmpty());
             scope.ProjectedCallable = method.Attrs.OrEmpty().Any(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.AKProjectedMethod });
             scope.NativeArrayReturn = MayHoldArray(scope.Return, index) &&
                 (method.SourceClrBoundary || method.Overrides.OrEmpty().Select(o => o.Owner.OrDefault())
@@ -432,6 +435,9 @@ static class TypedPhysicalValueCoercion
             return conditional;
         }
         var got = ExprType(value, scope, index);
+        if (value is IBirExpression native && index.DelegateAdapters?.AdaptNominalValue(index.Document, native, got, target,
+                index.IsValue, scope.OwnerFrame, scope.MethodFrame) is {} nominalAdapter)
+            return Graph(nominalAdapter);
         if (value is IBirExpression expression
             && index.DelegateAdapters?.AdaptUnitDelegateValue(index.LocalCarriers, index.Document, expression, got, target) is { } adapter)
             return Graph(adapter);
@@ -700,12 +706,12 @@ static class TypedPhysicalValueCoercion
         if (node is BirFunctionDeclaration method)
         {
             RewriteStatements(method.Body.OrEmpty(), Scope.Frame(method.Params.OrEmpty(),
-                method.Body.OrEmpty().Cast<BirGraphValue>(), scope.Owner, method.Ret.OrDefault()), index);
+                method.Body.OrEmpty().Cast<BirGraphValue>(), scope.Owner, method.Ret.OrDefault(), scope.OwnerFrame, method.TypeParams.OrEmpty()), index);
             return method;
         }
         if (node is BirClosureDefinition closure)
         {
-            var frame = Scope.Frame([], closure.Body.OrEmpty().Cast<BirGraphValue>(), scope.Owner, closure.Ret.OrDefault());
+            var frame = Scope.Frame([], closure.Body.OrEmpty().Cast<BirGraphValue>(), scope.Owner, closure.Ret.OrDefault(), scope.OwnerFrame, scope.MethodFrame);
             foreach (var parameter in closure.Params.OrEmpty())
                 if (parameter.Name.HasValue && parameter.Type.HasValue)
                     frame.Locals[parameter.Name.Value] = SignatureValueTypes.Of(parameter.Type.Value);

@@ -6,6 +6,22 @@ private class NominalFunctionHost : CallbackHost() {
 }
 
 class NominalFunctionDelegateTests {
+    private fun <T> callTyped(value: T) = Callbacks.ApplyTyped<T>(Callbacks.BoxedInput(), value)
+
+    @NUnit.Framework.TestAttribute
+    fun nativeDelegateVarianceAcrossBoxedInputs() {
+        check(Callbacks.Apply(Callbacks.BoxedInput(), 2) == 3)
+        check(Callbacks.ApplyFactory(Callbacks.Factory()) == 42)
+        check(Callbacks.ApplyConsumer(Callbacks.Consumer()) == 9)
+        check(callTyped(41) == 42)
+        check(Callbacks.ApplySink(Callbacks.NativeSink()) == 6)
+        check(Callbacks.WritesOriginal(Callbacks.Writer()))
+        check(Callbacks.WriteThroughResult(Callbacks.AddressOf()) == 42)
+        check(Callbacks.ReadSteps(Callbacks.Steps()) == 42)
+        check(Callbacks.ReadChain(Callbacks.ChainSource()) == 42)
+        check(Callbacks.SameReference(Callbacks.BoxedInput()))
+    }
+
     @NUnit.Framework.TestAttribute
     fun nativeSlotsKeepExactSignaturesAndAdaptFunctionValues() {
         check(Callbacks.Apply({ it + 1 }, 5) == 6)
