@@ -46,7 +46,25 @@ static partial class ClrMemberResolution
     }
 
     sealed record InterfaceCandidate(MethodInfo Method, MemberRefNode Reference,
-        TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return);
+        TypeNode[] DeclaringArguments, TypeNode[] Parameters, TypeNode Return, Type Edge);
+
+    static List<InterfaceCandidate> MetadataWinners(List<InterfaceCandidate> candidates)
+    {
+        var mostDerived = ClrDeclarationMatching.MostDerived(candidates.Select(candidate => candidate.Method)
+            .DistinctBy(method => (method.Module, method.MetadataToken)).ToList());
+        if (mostDerived.Count == 1)
+        {
+            var winner = mostDerived[0];
+            candidates = candidates.Where(candidate => candidate.Method.Module == winner.Module
+                && candidate.Method.MetadataToken == winner.MetadataToken).ToList();
+        }
+        return candidates.DistinctBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken, candidate.Reference.DeclaringType)).ToList();
+    }
+
+    static List<InterfaceCandidate> OrdinaryInterfaceWinners(List<InterfaceCandidate> candidates) =>
+        candidates.Where(candidate => !candidates.Any(other => other.Edge != candidate.Edge
+                && other.Edge.GetInterfaces().Contains(candidate.Edge)))
+            .DistinctBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken, candidate.Reference.DeclaringType)).ToList();
 
     // A local declaration at another arity can hide the reference spelling,
     // but not the runtime interface that owns a resolved MethodImpl.
@@ -80,10 +98,10 @@ static partial class ClrMemberResolution
             var open = ExternalSlotOwner(iface, refs)
                 ?? throw new InvalidOperationException($"bir2cir: interface MethodImpl owner '{iface.Name}' does not resolve in the reference set");
             var arguments = iface.Args ?? Array.Empty<TypeNode>();
-            var declarationOwners = metadataBuild ? refs.MetadataInterfaceOwners(open, arguments).ToArray()
+            var declarationOwners = metadataBuild ? refs.MetadataInterfaceOwners(open, arguments)
+                    .Select(edge => (edge.Definition, edge.Owner, Edge: (Type)null)).ToArray()
                 : new[] { open }.Concat(open.GetInterfaces())
-                    .Select(owner => owner.IsConstructedGenericType ? owner.GetGenericTypeDefinition() : owner)
-                    .Distinct().Select(owner => (Definition: owner, Owner: (TypeNode.Fqn)null)).ToArray();
+                    .Select(edge => (Definition: ClrDeclarationMatching.SafeDef(edge), Owner: (TypeNode.Fqn)null, Edge: edge)).ToArray();
             foreach (var entry in group)
             {
                 var descriptor = entry.Descriptor;
@@ -94,11 +112,11 @@ static partial class ClrMemberResolution
                         && method.GetParameters().Length == parameters.Length)
                     .Select(method => {
                         var reference = metadataBuild ? ClrMemberReferences.MetadataDeclaration(refs, method, edge.Owner)
-                            : MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, arguments);
+                            : ClrMemberReferences.MemberRefOf(refs, bindingLocalTypes, method, MemberRefNode.Kinds.Method, open, arguments, selectedEdge: edge.Edge);
                         var declaringArguments = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
                         return new InterfaceCandidate(method, reference, declaringArguments,
                             reference.ParameterTypes.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArguments)).ToArray(),
-                            SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArguments));
+                            SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArguments), edge.Edge);
                     })).ToList();
                 var candidates = named.Where(candidate => candidate.Parameters.SequenceEqual(parameters, InterfaceSlotTypeComparer.Instance)
                     && SameInterfaceSlotType(candidate.Return, result)).ToList();
@@ -111,17 +129,7 @@ static partial class ClrMemberResolution
                         return KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declared, candidate.DeclaringArguments) == shape;
                     }).ToList();
                 }
-                var mostDerived = ClrDeclarationMatching.MostDerived(candidates.Select(candidate => candidate.Method)
-                    .GroupBy(method => (method.Module, method.MetadataToken)).Select(methods => methods.First()).ToList());
-                if (mostDerived.Count == 1)
-                {
-                    var winner = mostDerived[0];
-                    candidates = candidates.Where(candidate => candidate.Method.Module == winner.Module
-                        && candidate.Method.MetadataToken == winner.MetadataToken).ToList();
-                }
-                var declarations = candidates.GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken,
-                        candidate.Reference.DeclaringType))
-                    .Select(methods => methods.First()).ToList();
+                var declarations = metadataBuild ? MetadataWinners(candidates) : OrdinaryInterfaceWinners(candidates);
                 if (declarations.Count != 1)
                 {
                     var body = methods.FirstOrDefault(method => method.ClrInterfaceImpls.OrEmpty().Any(value => ReferenceEquals(value, descriptor)));

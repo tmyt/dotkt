@@ -143,21 +143,17 @@ static partial class ClrMemberResolution
         var open = ResolveOwnerType(physicalOwner, refs: refs) ?? refs.PhysicalTypeNamed(physicalOwner.Name);
         if (open == null || !open.IsInterface) return false;
         var ownerArgs = physicalOwner.Args ?? Array.Empty<TypeNode>();
-        var declarationOwners = new[] { open }.Concat(open.GetInterfaces())
-            .Select(owner => owner.IsGenericType && !owner.IsGenericTypeDefinition
-                ? owner.GetGenericTypeDefinition() : owner)
-            .GroupBy(owner => (owner.Module, owner.MetadataToken)).Select(group => group.First());
-        var candidates = new List<(MethodInfo Method, MemberRefNode Reference,
-            TypeNode[] Parameters, TypeNode Return, TypeNode[] DeclaringArgs)>();
-        foreach (var method in declarationOwners.SelectMany(owner => owner.GetMethods(
-                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)))
+        var candidates = new List<InterfaceCandidate>();
+        foreach (var edge in new[] { open }.Concat(open.GetInterfaces()))
+        foreach (var method in ClrDeclarationMatching.SafeDef(edge).GetMethods(
+                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
         {
             if (!IsPublicOrProtected(method) || method.Name != member
                 || method.GetGenericArguments().Length != methodArity
                 || method.GetParameters().Length != wantedParams.Length) continue;
             var reference = emittedOwnerArgs == null
-                ? MemberRefOf(bindingLocalTypes, refs, method, MemberRefNode.Kinds.Method, open, ownerArgs)
-                : ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, emittedOwnerArgs);
+                ? ClrMemberReferences.MemberRefOf(refs, bindingLocalTypes, method, MemberRefNode.Kinds.Method, open, ownerArgs, selectedEdge: edge)
+                : ClrMemberReferences.MethodOnPhysicalOwner(refs, bindingLocalTypes, method, open, emittedOwnerArgs, edge);
             var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
             var parameters = reference.ParameterTypes
                 .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
@@ -170,7 +166,7 @@ static partial class ClrMemberResolution
             var matchArgs = selectionOwnerArgs ?? (emittedOwnerArgs != null ? ownerArgs : null);
             if (matchArgs != null)
             {
-                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, bindingLocalTypes, method, open, matchArgs) as TypeNode.Fqn;
+                var selectionOwner = ClrMemberReferences.DeclaringTypeRef(refs, bindingLocalTypes, method, open, matchArgs, selectedEdge: edge) as TypeNode.Fqn;
                 selectionArgs = selectionOwner?.Args ?? Array.Empty<TypeNode>();
             }
             var selectionParameters = reference.ParameterTypes
@@ -184,19 +180,17 @@ static partial class ClrMemberResolution
                     != wantedShape)
                     continue;
             }
-            candidates.Add((method, reference, parameters, returnType, declaringArgs));
+            candidates.Add(new(method, reference, declaringArgs, parameters, returnType, edge));
         }
-        var distinct = ClrDeclarationMatching.MostDerived(candidates
-            .GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
-            .Select(group => group.First().Method).ToList());
+        // Hide a base declaration only on the constructed edge actually inherited
+        // by the more derived candidate, not on every use of its generic TypeDef.
+        var distinct = OrdinaryInterfaceWinners(candidates);
         if (distinct.Count > 1)
             throw new InvalidOperationException(
                 $"bir2cir: aliased interface slot '{physicalOwner.Name}.{member}`{methodArity}' resolves to "
                 + $"{distinct.Count} declarations with the requested parameter vector");
         if (distinct.Count == 0) return false;
-        var selectedMethod = distinct[0];
-        var selected = candidates.Single(candidate => candidate.Method.Module == selectedMethod.Module
-            && candidate.Method.MetadataToken == selectedMethod.MetadataToken);
+        var selected = distinct[0];
         declarationOwner = selected.Reference.DeclaringType as TypeNode.Fqn;
         if (declarationOwner == null) return false;
         declarationMember = selected.Reference.Name;

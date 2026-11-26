@@ -61,7 +61,7 @@ static class ClrMemberReferences
     }
 
     internal static MemberRefNode MemberRefOf(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
-        bool? ownerArgumentsAreMethodSlots = null)
+        bool? ownerArgumentsAreMethodSlots = null, Type selectedEdge = null)
     {
         member = OpenDeclarationOf(member);
         // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
@@ -75,7 +75,7 @@ static class ClrMemberReferences
         var node = new MemberRefNode(
             Kind: kind,
             Assembly: PhysicalAssemblyOf(references, member),
-            DeclaringType: DeclaringTypeRef(references, localTypes, member, openOwner, ownerArgs, ownerArgumentsAreMethodSlots),
+            DeclaringType: DeclaringTypeRef(references, localTypes, member, openOwner, ownerArgs, ownerArgumentsAreMethodSlots, selectedEdge),
             Name: ctor != null ? MemberRefNode.CtorName : shipped.Name,
             GenericArity: member.IsGenericMethod ? member.GetGenericArguments().Length : 0,
             ReturnType: ctor != null
@@ -93,10 +93,10 @@ static class ClrMemberReferences
     // The caller already has emitted owner arguments. Map the open declaration edge
     // before substitution so these arguments never re-enter runtime alias lowering.
     internal static MemberRefNode MethodOnPhysicalOwner(ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes,
-        MethodInfo method, Type openOwner, TypeNode[] arguments)
+        MethodInfo method, Type openOwner, TypeNode[] arguments, Type selectedEdge = null)
     {
         var frame = Enumerable.Range(0, arguments.Length).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
-        var reference = MemberRefOf(refs, localTypes, method, MemberRefNode.Kinds.Method, openOwner, frame);
+        var reference = MemberRefOf(refs, localTypes, method, MemberRefNode.Kinds.Method, openOwner, frame, selectedEdge: selectedEdge);
         return arguments.Length == 0 ? reference : reference with {
             DeclaringType = SupertypeGraph.SubstOwnerTvs(reference.DeclaringType, arguments),
         };
@@ -211,7 +211,7 @@ static class ClrMemberReferences
     }
 
     internal static TypeNode DeclaringTypeRef(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, MemberInfo member, Type openOwner, TypeNode[] ownerArgs,
-        bool? ownerArgumentsAreMethodSlots = null)
+        bool? ownerArgumentsAreMethodSlots = null, Type selectedEdge = null)
     {
         var declaring = DeclaringDefOf(references, member);
         var head = ClrDeclarationMatching.PhysicalTypeName(declaring);
@@ -232,7 +232,7 @@ static class ClrMemberReferences
             return new TypeNode.Fqn(head, args.Length == 0 ? null : args);
         // Otherwise recover HOW the declarer's parameters relate to the receiver's from the receiver's own
         // graph. The member alone identifies WHICH type declares it; only the graph says how it is instantiated.
-        var edge = DeclarationEdge(references, openDefinition, declaring);
+        var edge = selectedEdge ?? DeclarationEdge(references, openDefinition, declaring);
         if (edge != null && edge.IsGenericType)
         {
             var projected = edge.GetGenericArguments().Select(a => SubstOwnerParamsPhysical(references, localTypes, a, args)).ToArray();
