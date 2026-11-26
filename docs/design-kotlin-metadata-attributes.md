@@ -206,8 +206,10 @@ not this fact: function-signature modifiers have their own bridge owner and must
 Actual source constructors also carry `constructorPrimary: true|false` in this same identity payload, retaining
 `IrConstructor.isPrimary` through both reference and runtime DLLs. The false value is explicit, not absence.
 It is consumed by dll2klib when setting Kotlin metadata's secondary-constructor bit; ordinary native CLR
-constructors without Kotlin primary semantics are secondary. CLR attribute/annotation constructors retain their
-existing primary-constructor projection. Purely synthesized physical constructors do not acquire a source-kind fact.
+constructors without Kotlin primary semantics are secondary. For a native CLR attribute, annotation applications
+use the first public instance constructor in metadata order (the `UnmanagedType` overload for `MarshalAsAttribute`).
+Only that constructor exposes writable named members; without a public constructor there is no annotation primary.
+Purely synthesized physical constructors do not acquire a source-kind fact.
 
 Two boundaries of `bounds`, both measured. A METHOD's type-parameter bounds are not on it — this carrier is
 type-level and giving a member one is a channel that does not exist — so a `fun <T : Sink<Int?>> f()` still

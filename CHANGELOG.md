@@ -12,6 +12,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A top-level `main` renamed with `@ClrName` remains the executable entry point, including when it is a suspend function (#1933).
 - Storing the result of an `is` check against a star-projected Kotlin class from another DLL now preserves the Boolean result (#1983).
 - Direct CLR constructor calls now adapt stored Kotlin functions to the selected delegate parameter (#1952).
+- CLR attribute applications now select one public constructor and can set named members even when the attribute has overloaded constructors (#1986).
 
 ## 0.9.34 (2026-11-25)
 

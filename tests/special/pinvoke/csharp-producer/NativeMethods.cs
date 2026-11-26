@@ -20,9 +20,16 @@ public sealed class ProjectionProbeAttribute : Attribute
 }
 
 [AttributeUsage(AttributeTargets.Class)]
-public sealed class OverloadProbeAttribute : Attribute
+public class OverloadProbeAttribute : Attribute
 {
+    protected OverloadProbeAttribute() { }
     public OverloadProbeAttribute(int Value) { }
-    public OverloadProbeAttribute() { }
+    public OverloadProbeAttribute(string text) { }
     public int Value;
+    public string? Name { get; set; }
+}
+
+public class ProtectedOnlyAttribute : Attribute
+{
+    protected ProtectedOnlyAttribute(int value) { }
 }

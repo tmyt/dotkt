@@ -2325,10 +2325,6 @@ internal sealed partial class AssemblyScanner : IDisposable
         var attributeNamedArguments = isAnnotation
             ? ProjectAttributeNamedArguments(handle, def, names, signatures, typeContext)
             : Array.Empty<AttributeNamedArgument>();
-        var publicAttributeConstructorCount = def.GetMethods()
-            .Select(methodHandle => _md.GetMethodDefinition(methodHandle))
-            .Where(method => _md.GetString(method.Name) == ".ctor" && IsPublicOrProtected(method.Attributes))
-            .Count();
         var validatedRichEnum = richEnumCarrier is null ? null : ValidateRichEnumCarrier(
             handle, def, richEnumCarrier, result.FqName, names, signatures, typeContext);
         foreach (var (gpHandle, parameter) in retainedTypeParameters)
@@ -2474,6 +2470,7 @@ internal sealed partial class AssemblyScanner : IDisposable
 
         var projectedFunctions = new List<ProjectedFunction>();
         var projectedConstructors = new List<ProjectedConstructor>();
+        var hasAnnotationPrimary = false;
         List<ProjectedFunction>? comparisons = null;
         foreach (var methodHandle in def.GetMethods())
         {
@@ -2502,11 +2499,13 @@ internal sealed partial class AssemblyScanner : IDisposable
                 if (isKotlinRichEnum) continue;
                 var parameters = Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context)
                     .Skip(isKotlinInner ? 1 : 0).ToList();
-                // Kotlin metadata has one annotation primary-constructor model, while CLR attributes may overload
-                // constructors. Extending every overload with the same optional named members can silently rebind a
-                // positional fixed argument to a field/property on another overload. Only the unambiguous one-ctor
-                // shape can carry CLR named members without changing constructor selection.
-                var namedArgumentsForConstructor = publicAttributeConstructorCount == 1
+                // MethodDefs are visited in metadata order. K2 applies annotations through their primary only.
+                var primary = declarationIdentity?.ConstructorPrimary ?? (isAnnotation && !hasAnnotationPrimary &&
+                    (method.Attributes & (MethodAttributes.MemberAccessMask | MethodAttributes.Static)) == MethodAttributes.Public &&
+                    (!isSystemMarshalAs || parameters is [var value] && value.Type.HasClassName &&
+                        names.ClassName(value.Type.ClassName) == "System.Runtime.InteropServices.UnmanagedType"));
+                if (isAnnotation && primary) hasAnnotationPrimary = true;
+                var namedArgumentsForConstructor = isAnnotation && primary
                     ? attributeNamedArguments : Array.Empty<AttributeNamedArgument>();
                 if (namedArgumentsForConstructor.Length != 0)
                     RenameFixedAttributeParameters(
@@ -2517,11 +2516,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                         names);
                 var constructor = new Constructor
                 {
-                    Flags = CallableVisibility(methodHandle, Flags.Constructor(method.Attributes,
-                        primary: isAnnotation && (!isSystemMarshalAs ||
-                            parameters is [var value] && value.Type.HasClassName &&
-                            names.ClassName(value.Type.ClassName) == "System.Runtime.InteropServices.UnmanagedType") ||
-                            declarationIdentity?.ConstructorPrimary == true)),
+                    Flags = CallableVisibility(methodHandle, Flags.Constructor(method.Attributes, primary)),
                     ValueParameter = { parameters },
                 };
                 if (declarationIdentity is { } constructorIdentity)

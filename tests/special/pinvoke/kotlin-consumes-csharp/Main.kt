@@ -9,6 +9,9 @@ class AttributeCarrier
 @OverloadProbeAttribute(7)
 class OverloadCarrier
 
+@OverloadProbeAttribute(7, Name = "x")
+class NamedOverloadCarrier
+
 fun main() {
     check(NativeMethods.Add(20, 22) == 42)
     var value = 9
