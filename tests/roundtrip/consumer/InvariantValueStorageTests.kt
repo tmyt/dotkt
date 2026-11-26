@@ -10,6 +10,10 @@ import roundtrip.genericvalueinterop.Box
 import roundtrip.invariantstorage.*
 
 private fun forwardedNativeBox(): Box<String> = Box("forwarded")
+private fun isImportedBox(value: Any): Boolean {
+    val matches = value is Box<*>
+    return matches
+}
 private fun <T> exposeViaOpenParameter(value: T): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(System.Collections.Generic.List<System.IO.Stream>(), value)
 private fun mutateBeforeNativeBoundary(cross: Boolean, change: (Array<Box<String>>) -> Unit): Any {
@@ -89,6 +93,11 @@ class InvariantValueStorageTests {
         row[0] = original
         check(NativeBoxApi.EchoBoxes(row) === row && NativeBoxApi.ReadArrayRows(nativeRows) === original)
         check(NativeBoxApi.ReadFactoryRow(nativeSupplier) === original)
+    }
+
+    @TestAttribute
+    fun storedStarProjectionTestIsBooleanAcrossDlls() {
+        check(isImportedBox(Box("value")) && !isImportedBox("not a box"))
     }
 
     @TestAttribute
