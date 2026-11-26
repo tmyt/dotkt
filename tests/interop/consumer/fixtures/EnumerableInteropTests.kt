@@ -39,6 +39,9 @@ private class InheritedExplicitRaw : Kfc.ExplicitRaw()
 private class InheritedDual : Kfc.DualEnumerable()
 private class InheritedRelisted : Kfc.Relisted()
 private class InheritedPattern : Kfc.PatternAndRaw()
+private class OverridesRaw : Kfc.ExplicitRaw() {
+    override fun iterator(): Iterator<Any?> = listOf<Any?>("replacement").iterator()
+}
 
 private fun firstRawElement(source: System.Collections.IEnumerable): Any? {
     for (element in source) return element
@@ -62,6 +65,9 @@ class EnumerableInteropTests {
         check(raw.iterator().next() == "raw")
         check(firstRawElement(raw) == "raw")
         check(InheritedExplicitRaw().iterator(5) == 5)
+        val replacement = OverridesRaw()
+        check(replacement.iterator().next() == "replacement")
+        check(Kfc.ExplicitRaw.First(replacement) == "replacement")
         val fromBase: String = InheritedRelisted().iterator().next()
         check(fromBase == "base")
         val pattern = InheritedPattern()

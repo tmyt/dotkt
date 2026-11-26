@@ -54,6 +54,11 @@ namespace Kfc {
     public class ExplicitRaw : IEnumerable {
         public int iterator(int n) => n;
         IEnumerator IEnumerable.GetEnumerator() => new object[] { "explicit" }.GetEnumerator();
+        public static object First(IEnumerable source) {
+            var cursor = source.GetEnumerator();
+            try { return cursor.MoveNext() ? cursor.Current : null; }
+            finally { (cursor as IDisposable)?.Dispose(); }
+        }
     }
 
     public class Relisted : System.Collections.ObjectModel.Collection<string>, IEnumerable {
