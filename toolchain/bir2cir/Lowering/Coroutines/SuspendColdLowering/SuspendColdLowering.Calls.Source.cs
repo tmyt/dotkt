@@ -121,7 +121,15 @@ static partial class SuspendColdLowering
                             instance.MemberMethodTypeParams = call.MemberMethodTypeParams.Value.Select(parameter =>
                                 (BirTypeParameter)_module.Transitions.CloneIndependent(parameter)).ToArray();
                     }
-                    if (call._exactExistentialBridgeOwnerCall.OrDefault()) instance._exactExistentialBridgeOwnerCall = true;
+                    if (call._exactExistentialBridgeOwnerCall.OrDefault())
+                    {
+                        instance._exactExistentialBridgeOwnerCall = true;
+                        // The state machine can share its captured receiver through a carrier.
+                        // A forwarding call on lexical this still targets this exact construction.
+                        if (call.Recv.OrDefault() is BirThis && call.OwnerType.OrDefault() is { } exactOwner)
+                            instance.Recv = new BirCast { Type = BirGraphValue.CopyType(exactOwner),
+                                E = SourceOperandField(receiver), _exactBridgeCast = true };
+                    }
                     if (identity != null) instance.DeclarationId = identity;
                     var instanceSignature = AppendCompletion(SelectedColdSignature(call.CalleeParams, call.Sig, call.ArgTypes, call.ShapeTypes));
                     instance.Sig = instanceSignature;

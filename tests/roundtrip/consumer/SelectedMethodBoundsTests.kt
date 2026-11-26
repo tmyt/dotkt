@@ -47,7 +47,36 @@ private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     }
 }
 
+interface SuspendEcho<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun echo(value: K): K
+}
+
+class StoredEcho<K>(val stored: K, val gate: IntGate) : SuspendEcho<K>
+    where K : Base, K : ILeft, K : IRight {
+    override suspend fun echo(value: K): K {
+        gate.await()
+        check(value === stored)
+        return value
+    }
+}
+
 class SelectedMethodBoundsTests {
+    @TestAttribute
+    fun covariantSuspendBridgeRetainsItsReceiverAcrossSuspension() {
+        val item = Item()
+        val gate = IntGate()
+        val view: SuspendEcho<Item> = StoredEcho(item, gate)
+        var result: Item? = null
+        val invoke: suspend () -> Item = { view.echo(item) }
+        invoke.startCoroutine(object : Continuation<Item> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(value: Result<Item>) { result = value.getOrThrow() }
+        })
+        check(result == null)
+        gate.resume(1)
+        check(result === item)
+    }
+
     private class Both : GenericValueInterop.IJoinedPicker {
         override suspend fun <A : Item> pick(value: Item): Any = "first"
         override suspend fun <A : OtherItem> pick(value: OtherItem): Any = "second"
