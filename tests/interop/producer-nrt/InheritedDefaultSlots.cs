@@ -6,6 +6,17 @@ using System.Reflection.PortableExecutable;
 namespace InheritedDefaultSlots;
 
 public interface IValue { int Read() => 1; }
+public interface IOverloadedReader<T> {
+    int Read(T value) => 1;
+    int Read(string? value) => 2;
+}
+public class IntReader : IOverloadedReader<int> { }
+public class MappedReader : IOverloadedReader<int> {
+    public virtual int Read(string? value) => 3;
+}
+public class HiddenReader : MappedReader {
+    public new virtual int Read(string? value) => 4;
+}
 public interface IDefaultChannel<T> {
     object Read(T key) => "default";
     int Tick() => 11;
@@ -28,6 +39,11 @@ public class IntroducesVirtualBody : DefaultBase { public virtual int Read() => 
 public class VirtualBase : IValue { public virtual int Read() => 2; }
 public interface IWithProperty { int Read() => 1; int Value => 1; }
 public class WithProperty : IWithProperty { public int Value => 2; }
+public interface IPropertySlot<T> { int Value => 1; }
+public class ExplicitPropertyBase : IPropertySlot<string> {
+    public virtual int Value => 5;
+    int IPropertySlot<string>.Value => 4;
+}
 
 public interface IChannel<T> { int Count { get; } int Read(T key); }
 public interface ITextChannel : IChannel<string> {}
@@ -45,6 +61,8 @@ public class ExplicitChannel : IChannel<string> {
 
 public static class Driver
 {
+    public static int ReadNumber(IOverloadedReader<int> reader) => reader.Read(1);
+    public static int ReadTextValue(IOverloadedReader<int> reader) => reader.Read("x");
     public static object ReadDefaultChannel(IDefaultChannel<string> channel) => channel.Read("x");
     public static object ReadDefaultBase(ExplicitDefaultBase<string> instance) => instance.Read("x");
     public static object ReadBoxBase(ExplicitDefaultBase<KeyBox<string>> instance) => instance.Read(new());
@@ -53,6 +71,7 @@ public static class Driver
     public static int ReadChannel(IChannel<string> channel) => channel.Read("x");
     public static int ReadText(ITextChannel channel) => channel.Read("x");
     public static int ReadProperty(IWithProperty instance) => instance.Value;
+    public static int ReadExplicitProperty(IPropertySlot<string> instance) => instance.Value;
     public static int ReadInterface(IValue instance) => instance.Read();
     public static bool CheckChannel(ITextChannel inherited, ITextChannel hidden)
     {

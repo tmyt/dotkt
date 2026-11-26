@@ -414,12 +414,15 @@ def outputs(root, definitions):
                       "    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }"]
         if name == "BirParameter":
             model += ["    internal TypeNode? DelegateRestorationType { get; set; }"]
+        if name == "BirIsInstance":
+            model += ["    internal bool ExactDispatchOwner { get; set; }"]
         if name == "BirNew":
             model += ["    internal string? ReferencedProjectedFactoryId { get; set; }"]
         if name == "BirCallStatic":
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
             model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
+                      "    internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }",
                       "    internal ExistentialCallableRole ExistentialCallable { get; set; }",
                       "    internal string? ImplicitExistentialImplementationId { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",

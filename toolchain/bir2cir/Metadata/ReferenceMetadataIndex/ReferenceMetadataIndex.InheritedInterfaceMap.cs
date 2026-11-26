@@ -65,6 +65,35 @@ sealed partial class ReferenceMetadataIndex
         throw new InvalidOperationException($"super.iterator() on '{owner.Name}' has no accessible concrete base implementation of IEnumerable.GetEnumerator()");
     }
 
+    // Match in the interface-implementing class's declaration frame: closing a
+    // generic class first can make M(T) collide with an unrelated M(string).
+    internal bool MapsPublicInterfaceMethod(TypeNode.Fqn owner, TypeNode.Fqn face, MethodInfo slot)
+    {
+        if (ClrMemberResolution.ResolveOwnerType(owner, this) is not { IsInterface: false } type) return false;
+        TypeNode Key(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, this);
+        TypeNode[] Args(Type t) => t.GetGenericArguments().Select(NativeDeclarationType).ToArray();
+        IEnumerable<TypeNode> Signature(MethodInfo m, TypeNode[] args)
+        {
+            var signature = MetadataMethodSignature(m);
+            return signature.Parameters.Append(signature.Return).Select(t => Key(SupertypeGraph.SubstOwnerTvs(t, args)));
+        }
+        foreach (var (declaration, edge) in MetadataInterfaceOwners(type, Args(type)))
+        {
+            if (declaration != slot.DeclaringType || Key(SupertypeGraph.SubstOwnerTvs(edge, owner.Args ?? [])) != Key(face)) continue;
+            var wanted = Signature(slot, edge.Args ?? []).ToArray();
+            for (var parent = type; parent != null; parent = parent.BaseType)
+            {
+                var definition = parent.IsConstructedGenericType ? parent.GetGenericTypeDefinition() : parent;
+                foreach (var m in definition.GetMember(slot.Name, MemberTypes.Method,
+                        BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).OfType<MethodInfo>())
+                    if (m.IsVirtual && m.CallingConvention == slot.CallingConvention
+                        && m.GetGenericArguments().Length == slot.GetGenericArguments().Length
+                        && Signature(m, Args(parent)).SequenceEqual(wanted)) return true;
+            }
+        }
+        return false;
+    }
+
     internal bool DeclaresExplicitInterfaceSlot(TypeNode.Fqn owner, TypeNode.Fqn face, string member,
         int arity, TypeNode[] parameters, TypeNode result)
     {
