@@ -561,6 +561,7 @@ class CapturedVarRefCellTests {
     @TestAttribute
     fun localFunBoundary() {
         assertEquals(2, capturedVarRefCellLocalFunInFunction())              // 2
+        assertEquals(3, capturedVarRefCellInSiblingFile())
         assertEquals(6, CapturedVarRefCellLocalFunInit().total)              // 3 + 3
         assertEquals(2, CapturedVarRefCellLocalFunGeneric(1, 2).pick())      // `other`, not `t`
         assertEquals("b", CapturedVarRefCellLocalFunGeneric("a", "b").pick())

@@ -378,10 +378,6 @@ internal fun BirEmitter.containsTv(t: TypeNode): Boolean = when (t) {
 	is TypeNode.ByRef -> containsTv(t.of)
 }
 
-/** A collision-free identifier fragment derived from a structured type's canonical JSON (interim; the §2.4
- *  registry replaces this). Non-alnum chars collapse to `_`, so distinct `Type`s stay distinct (via toJson). */
-internal fun BirEmitter.mangle(t: TypeNode): String = t.toJson().replace(Regex("[^A-Za-z0-9]"), "_")
-
 // The erased / star-projection / Any? fallback type identity. kotc emits the pure Kotlin FQN `kotlin.Any`;
 // bir2cir/ilemit resolve it to System.Object. (Replaces the old bare-string `object` shorthand.)
 internal val BirEmitter.OBJ: TypeNode get() = TypeNode.Fqn("kotlin.Any")
