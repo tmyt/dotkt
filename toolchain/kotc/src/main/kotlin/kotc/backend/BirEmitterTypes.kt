@@ -573,11 +573,13 @@ private fun BirEmitter.clrExternalArguments(
 	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
 ): List<org.jetbrains.kotlin.ir.expressions.IrExpression>? = clrExternalAnnotation(decl)?.let { regularArgs(it) }
 
-internal fun BirEmitter.nativeConstructorKey(ctor: IrFunction): String? {
-	val annotation = clrExternalAnnotation(ctor) ?: return null
-	val index = annotation.symbol.owner.parameters.indexOfFirst { isValueParameter(it) && it.name.asString() == "constructorKey" }
+internal fun BirEmitter.nativeDeclarationKey(declaration: IrFunction, field: String): String? {
+	val annotation = clrExternalAnnotation(declaration) ?: return null
+	val index = annotation.symbol.owner.parameters.indexOfFirst { isValueParameter(it) && it.name.asString() == field }
 	return ((annotation.arguments.getOrNull(index) as? IrConst)?.value as? String)?.takeIf { it.isNotEmpty() }
 }
+
+internal fun BirEmitter.nativeConstructorKey(ctor: IrFunction) = nativeDeclarationKey(ctor, "constructorKey")
 
 /** Exact projected declaration facts. No CLR lookup or frame substitution belongs in kotc. */
 internal fun BirEmitter.clrExternalMember(

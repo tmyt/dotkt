@@ -20,14 +20,14 @@ static partial class ClrMemberResolution
     // same-name/arity MethodDef without that exact descriptor is never a selected declaration.
     static MethodInfo SelectedGenericProofDeclaration(IReadOnlySet<string> bindingLocalTypes, TypeNode.Fqn owner, string name, int arity,
         bool instance, IReadOnlyList<TypeNode> parameters, ReferenceMetadataIndex refs,
-        TypeNode[] parameterOwnerArguments = null)
+        TypeNode[] parameterOwnerArguments = null, string nativeMethodKey = null)
     {
         var declaration = ResolveOwnerType(owner, refs: refs)
             ?? throw new InvalidOperationException("Native generic proof demand lacks its selected declaration owner");
         // This caller runs before the full BIR vocabulary walk. Lower the selected formal parameters in their
         // declaration role, not the call's value arguments, before sharing the physical descriptor matcher.
         var signature = parameters.Select(type => ClrDeclarationMatching.CanonicalNativeFormalType(refs, type)).ToList();
-        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(refs, bindingLocalTypes, declaration, name, arity, instance, signature, parameterOwnerArguments)
+        var selected = ClrDeclarationMatching.SelectedGenericDeclaration(refs, bindingLocalTypes, declaration, name, arity, instance, signature, parameterOwnerArguments, nativeMethodKey)
             ?? throw new InvalidOperationException($"Native generic proof demand '{owner.Name}.{name}' "
                 + $"has no exact selected MethodDef for descriptor {string.Join(", ", parameters)}; candidates: "
                 + string.Join("; ", declaration.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
@@ -58,12 +58,17 @@ static partial class ClrMemberResolution
     // can materialize a sibling's value irreversibly after owner substitution makes their parameters coincide.
     internal static bool TryResolveExternalMethodForDefaults(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn,
         string name, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out MethodInfo declaration, string propertyKind = null)
+        out MethodInfo declaration, string propertyKind = null, string nativeKey = null)
     {
         declaration = null;
         if (refs == null || ownerFqn == null || name == null || callSignature == null) return false;
         var open = ResolveOwnerType(ownerFqn, refs: refs);
         if (open == null) return false;
+        if (nativeKey != null)
+        {
+            declaration = ClrDeclarationMatching.MethodForNativeKey(refs, open, name, methodArity, !isStatic, nativeKey);
+            return true;
+        }
         // Defaults belong to the same accessor MethodDef used by later interop
         // binding, not to the Kotlin operator spelling of an indexed property.
         if (propertyKind is "index-get" or "index-set")

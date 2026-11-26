@@ -15,6 +15,14 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
+private class DerivedCallbackScope : GenericValueInterop.NativeCallbackScope() {
+    fun visitStored(f: WideCallback<Unit>) = Visit<String>(f)
+}
+private class UnitRecorder : WideCallback<Unit> {
+    var sum = 0
+    override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
+                        j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int) { sum += a + q }
+}
 private class FirstPlusLast : WideIntCallback {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): Int = a + q
@@ -40,6 +48,13 @@ private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 1
 class WideFunctionTypeTests {
     @TestAttribute
     fun wideFunctionValuesCrossTheModuleBoundary() {
+        val recorder = UnitRecorder()
+        check(GenericValueInterop.NativeWideCallbacks.VisitUnit(recorder))
+        assertEquals(18, recorder.sum)
+        GenericValueInterop.NativeWideCallbacks.VisitVoid(recorder)
+        assertEquals(36, recorder.sum)
+        assertEquals(71, DerivedCallbackScope().visitStored(recorder))
+        assertEquals(54, recorder.sum)
         assertEquals(17, NativeCallbackDerived(LastArgument()).Read())
         val native = NativeIntCallbackDerived(FirstPlusLast())
         assertEquals(18, native.Read())

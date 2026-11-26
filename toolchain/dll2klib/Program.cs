@@ -2610,8 +2610,16 @@ internal sealed partial class AssemblyScanner : IDisposable
                         ProjectStaticOwnerParameters(handle, methodHandle, function, names, signatures, context);
                     ApplyPInvokeProjection(method, function, names);
                 }
-                // Ordinary members already carry their physical declaring class.
-                // Exact-target convenience views add their ClrExternal facts separately.
+                // Function projection can erase the distinction between a delegate
+                // returning a Unit value and one returning void. Keep the declaration
+                // identity independent of the Kotlin signature used for adaptation.
+                if (!_attrs.IsDotKtAssembly && function.ValueParameter.Any(p => ContainsFunction(p.Type, names)))
+                {
+                    var binding = function.FunctionAnnotation.FirstOrDefault(a => names.ClassName(a.Id) == "kotlin.clr.ClrExternal");
+                    if (binding == null) function.FunctionAnnotation.Add(binding = ClrExternalAnnotation(names, handle));
+                    AddStringAnnotationArgument(binding, names, "methodKey", RawSignatureTypeProvider.MethodKey(_md, methodHandle));
+                    function.Flags |= 1;
+                }
                 if (declarationIdentity is { } identity)
                 {
                     function.FunctionAnnotation.Add(
@@ -6681,6 +6689,12 @@ internal sealed partial class AssemblyScanner : IDisposable
         else if (value == disabled) AddBooleanAnnotationArgument(annotation, names, name, false);
         else throw new InvalidDataException($"P/Invoke MethodDef '{methodName}' has an invalid {name} flag pair");
     }
+
+    private static bool ContainsFunction(KType type, NameTable names) =>
+        type.HasClassName && names.ClassName(type.ClassName) is string name &&
+        name.StartsWith("kotlin.Function", StringComparison.Ordinal) &&
+        int.TryParse(name.AsSpan("kotlin.Function".Length), out _) ||
+        type.Argument.Any(a => a.Type != null && ContainsFunction(a.Type, names));
 
     private static void AddStringAnnotationArgument(
         Annotation annotation, NameTable names, string name, string value) =>

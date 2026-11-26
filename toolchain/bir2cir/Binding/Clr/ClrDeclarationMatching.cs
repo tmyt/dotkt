@@ -78,14 +78,30 @@ static class ClrDeclarationMatching
             && arguments.Select((arg, i) => DeclaredSlotMatches(references, arg, parameters[i])).All(match => match);
     }
 
+    internal static MethodInfo MethodForNativeKey(ReferenceMetadataIndex refs, Type owner, string name, int arity,
+        bool instance, string key)
+    {
+        var flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic |
+            (instance ? BindingFlags.Instance : BindingFlags.Static);
+        MethodInfo Find(Type scope) => scope.GetMethods(flags).SingleOrDefault(m => m.Name == name &&
+            ClrMemberResolution.IsPublicOrProtected(m) && m.GetGenericArguments().Length == arity &&
+            refs.MatchesNativeMethod(m, key));
+        for (var scope = owner; scope != null; scope = scope.BaseType)
+            if (Find(scope) is { } member) return member;
+        return (instance ? SafeInterfaces(owner).Select(Find).Where(m => m != null).Distinct().SingleOrDefault() : null)
+            ?? throw new InvalidOperationException($"bir2cir: selected native method '{owner.FullName}.{name}' is missing");
+    }
+
     internal static MethodInfo SelectedGenericDeclaration(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes, Type owner, string name, int arity, bool instance,
-        List<TypeNode> signature, TypeNode[] parameterOwnerArguments = null)
+        List<TypeNode> signature, TypeNode[] parameterOwnerArguments = null, string nativeMethodKey = null)
     {
         var flags = BindingFlags.Public | BindingFlags.NonPublic | (instance ? BindingFlags.Instance : BindingFlags.Static);
         List<MethodInfo> Candidates(Type declaration) => declaration.GetMethods(flags)
             .Where(method => ClrMemberResolution.IsPublicOrProtected(method) && method.Name == name && method.IsGenericMethodDefinition
                 && method.GetGenericArguments().Length == arity
                 && method.GetParameters().Length == signature.Count).ToList();
+        if (nativeMethodKey != null)
+            return MethodForNativeKey(references, owner, name, arity, instance, nativeMethodKey);
         return TryPickDeclared(references, localTypes, Candidates(owner), signature, owner, parameterOwnerArguments)
             ?? (!instance ? null : TryPickDeclared(references, localTypes, SafeInterfaces(owner).SelectMany(Candidates)
                 .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList(),

@@ -32,6 +32,8 @@ public annotation class ClrExternal(
     val readonlyOperands: Int = 0,
     // Exact open native constructor declaration, independent of its Kotlin parameter projection.
     val constructorKey: String = "",
+    // Exact open native method when its Kotlin function parameter hides the CLR delegate declaration.
+    val methodKey: String = "",
 )
 
 // A projected event declaration, as distinct from an ordinary property storing a ClrEvent value. dll2klib owns

@@ -105,8 +105,20 @@ public sealed class NativeCallbackOwner<T>(DotKt.Runtime.CompilerServices.KFunc<
     public T Read(T first) => callback(first, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
 public delegate WideIntCallback WideFactory();
+public class NativeCallbackScope
+{
+    protected int Visit<T>(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int, kotlin.Unit> callback, int tag = 71) =>
+        NativeWideCallbacks.VisitUnit(callback) ? tag : -1;
+}
 public static class NativeWideCallbacks
 {
+    public static bool VisitUnit(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int, kotlin.Unit> callback) =>
+        callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) is not null;
+    public static void VisitVoid(DotKt.Runtime.CompilerServices.KAction<int, int, int, int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int> callback) =>
+        callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
     public static int ReadFactory(WideFactory factory) => Read(factory());
     public static int ReadNested(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
         int, int, int, int, int, int, int, int, WideIntCallback> factory) => new NestedCallbackBase(factory).Read();
