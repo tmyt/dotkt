@@ -21,7 +21,7 @@ private class FirstPlusLast : WideIntCallback {
 }
 private class NativeIntCallbackDerived(op: FirstPlusLast) : GenericValueInterop.NativeIntCallbackBase(op)
 private class NativeFunctionDerived(op: WideIntCallback) : GenericValueInterop.NativeIntCallbackBase(op)
-private fun constructWithStoredFunction(op: WideIntCallback) = GenericValueInterop.NativeIntCallbackBase(op).Read()
+private fun constructWithStoredFunction(op: WideIntCallback) = GenericValueInterop.NativeCallbackOwner<Int>(op).Read(1)
 private class CallbackFactory : WideCallback<WideIntCallback> {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): WideIntCallback =
