@@ -260,7 +260,7 @@ sealed partial class ProjectedCallableEntries
                 // This slot mirrors our declaration, so it cannot supply an
                 // independent inherited contract when choosing our plan.
                 if (local.Method.ImplicitExistentialImplementationId is string implementationId
-                    && originalSlots[implementationId].Method == method) continue;
+                    && ReferenceEquals(originalSlots[implementationId].Method, method)) continue;
                 plan = DeclarationPlan(local.Owner, local.Method, MethodFrame(local.Method));
                 if (plan == null) continue;
                 declaringOwner = local.Owner.Name.Value;
@@ -316,7 +316,7 @@ sealed partial class ProjectedCallableEntries
                 bodyEntry == null && !carrierSlot && id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||
                 m.TypeParams.OrEmpty() is not { Length: > 0 } parameters) continue;
             var contractSource = m.ImplicitExistentialImplementationId is string origin ? originalSlots[origin].Method : m;
-            if (contractSource != m)
+            if (!ReferenceEquals(contractSource, m))
                 m.TypeParams = parameters = contractSource.TypeParams.Value.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
             var ownFrame = MethodFrame(m);
             var plan = DeclarationPlan(owner, m, ownFrame);
@@ -342,8 +342,11 @@ sealed partial class ProjectedCallableEntries
                     row.Constraints = row.Constraints.OrEmpty().Concat(facet.Evidence).Distinct().ToArray();
                 }
             }
-            var methodFrame = contractSource == m ? bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault()
+            var methodFrame = ReferenceEquals(contractSource, m) ? bodyEntry?.Frame ?? identity?.NullableRepresentationFrame.OrDefault()
                 : contractSource.LocalBodyEntry?.Frame ?? contractSource.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault();
+            // The downstream entry must consult the same ordinary/nullable/storage
+            // frame as local calls. A mirrored slot has no semantic frame of its own.
+            plan = plan with { RepresentationDeclaration = m.ImplicitExistentialImplementationId };
             var entry = new Entry(name, plan, parameters, methodFrame, AddressSignature(plan, m));
             if (contractSource.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
                 foreach (var sourceIndex in representations.StorageIndices)
@@ -587,7 +590,7 @@ sealed partial class ProjectedCallableEntries
         if (!references.TryDeclarationIdentity(EntryId(id), out var name, out _, out _, out _) ||
             references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true) is not { } parameters ||
             references.ProjectedMethod(EntryId(id)) is not { } plan) return null;
-        return entries[id] = new(name, plan, parameters, references.NullableMethodFrame(id),
+        return entries[id] = new(name, plan, parameters, references.NullableMethodFrame(plan.RepresentationDeclaration ?? id),
             plan.AddressOperands.Length == 0 && plan.NativeIndices.Length == 0 ? [] : references.SelectedPhysicalMethod(id).GetParameters()
                 .Select(references.DeclarationSignatureSlot).ToArray());
     }

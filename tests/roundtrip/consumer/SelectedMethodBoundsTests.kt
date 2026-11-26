@@ -2,6 +2,7 @@ package roundtrip.consumer.selectedbounds
 
 import NUnit.Framework.TestAttribute
 import RoundtripDependentNative.JoinedSlot
+import System.Collections.Generic.Queue
 import roundtrip.selectedbounds.*
 
 class ImportedFactory : JointFactory<Concrete>, NominalFactory<Concrete> {
@@ -12,6 +13,8 @@ class ImportedFactory : JointFactory<Concrete>, NominalFactory<Concrete> {
 class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFactory<Concrete> {
     override fun <A : Concrete> make(): Any = Product<A>()
 }
+
+private fun <A : Concrete> takeNullable(parent: GenericParent<*>, queue: Queue<A?>): Any = parent.take<A>(queue)
 
 class SelectedMethodBoundsTests {
     @TestAttribute
@@ -32,7 +35,11 @@ class SelectedMethodBoundsTests {
         checkViews(imported, imported)
         val parent: GenericParent<*> = GenericParent<String>()
         val joint: JointFactory<Concrete> = parent
-        check(joint.make<Item>() == "generic" && parent.make<Item>() == "generic")
+        check(JoinedSlot.IsValue<Item>(joint.make<Item>()) && JoinedSlot.IsValue<Item>(parent.make<Item>()))
+        val item = Item()
+        check(joint.select(item) === item && parent.select(item) === item)
+        val queue = Queue<Item?>()
+        check(takeNullable<Item>(parent, queue) === queue)
         val factory = FacetFactory()
         val left: LeftFactory<Concrete> = factory
         val right: RightFactory<Concrete> = factory

@@ -4,6 +4,7 @@ import RoundtripDependentNative.Base
 import RoundtripDependentNative.IJoinedValue
 import RoundtripDependentNative.ILeft
 import RoundtripDependentNative.IRight
+import System.Collections.Generic.Queue
 
 interface NominalFactory<K : Base> {
     fun <A : K> make(): Any
@@ -23,9 +24,13 @@ interface LocalDefault : NominalFactory<Concrete>, JointFactory<Concrete> {
 }
 class LocalFactory : LocalDefault
 
-open class GenericParent<C> : JointFactory<Concrete> {
-    override fun <A : Concrete> make(): Any = "generic"
+interface NullableFactory<K> where K : Base, K : ILeft, K : IRight {
+    fun <A : K> take(queue: Queue<A?>): Any
+}
+open class GenericParent<C> : JointFactory<Concrete>, NullableFactory<Concrete> {
+    override fun <A : Concrete> make(): Any = Product<A>()
     override fun <A : Concrete> select(value: A): A = value
+    override fun <A : Concrete> take(queue: Queue<A?>): Any = queue
 }
 
 interface LeftFactory<K> where K : Base, K : ILeft { fun <A : K> make(): Any }
