@@ -584,6 +584,10 @@ static partial class KotlinOverrideSlotBridge
                     WithModifiers(signature, slotParams[index])).ToArray();
                 var slotHasDefault = descriptorIsInterface && refs.IsPublicConcreteInstanceMethod(
                     descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
+                // The semantic and native hierarchy walks may reach the same TypeDef through different
+                // spellings. A physical MethodImpl must not bind again by the unqualified arity-free name.
+                if (descriptorIsInterface && phase == Phase.PhysicalBridges)
+                    descriptorOwner = refs.PhysicalInterfaceSlotOwner(descriptorOwner);
                 fill(new SelectedSlot(selectedSpec, descriptorOwner, descriptorIsInterface, true, slotHasDefault,
                     accessorKind != null ? member : sourceIdentity, descriptorMember, accessorKind, slotParams, slotRet,
                     impl, selectedSlotTypeParams, slotReturnsValue && IsUnitValueSlot(slotRet), slotSignature,

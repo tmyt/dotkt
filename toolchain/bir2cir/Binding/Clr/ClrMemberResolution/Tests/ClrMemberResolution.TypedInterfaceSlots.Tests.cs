@@ -90,6 +90,11 @@ static partial class ClrMemberResolution
         var owner = new TypeNode.Fqn(typeof(IMetadataPair).FullName);
         var text = new TypeNode.Fqn("System.String");
         using var refs = ReferenceMetadataIndex.Build([typeof(object).Assembly.Location, typeof(IMetadataPair).Assembly.Location]);
+        var raw = new TypeNode.Fqn(typeof(IComparable).FullName);
+        var constructed = raw with { Args = [text] };
+        if (refs.PhysicalInterfaceSlotOwner(raw) != raw || refs.PhysicalInterfaceSlotOwner(constructed)
+                != new TypeNode.Fqn(typeof(IComparable<>).FullName, [text]))
+            throw new InvalidOperationException("Physical interface slots lost the selected declaring arity");
         bool ResolveOrdinary(string name, TypeNode[] parameters, out TypeNode.Fqn declaring) =>
             TryResolveAliasedInterfaceSlotByShape(null, refs, owner, name, 0, parameters, null,
                 out declaring, out _, out _, out _);
