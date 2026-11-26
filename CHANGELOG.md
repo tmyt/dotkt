@@ -6,7 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Generic classes implementing an interface method with an owner-dependent bound now load and dispatch through both the interface and a star-projected receiver (#1969).
-
+- Trimmed executables retain the stack depth required after an early return in a value-producing branch (#1981).
 - Files sharing a Kotlin CLR facade can now both capture mutable locals of the same type without generating duplicate storage fields (#1957).
 - A top-level `main` renamed with `@ClrName` remains the executable entry point, including when it is a suspend function (#1933).
 - Storing the result of an `is` check against a star-projected Kotlin class from another DLL now preserves the Boolean result (#1983).

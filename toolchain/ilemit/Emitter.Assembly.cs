@@ -598,7 +598,7 @@ sealed partial class Emitter
             _curTypeParams = EffectiveTps(ti);
             _curMethodParams = null;
             _sourceMethod = initializer;
-            _il = il;
+            _il = new MethodBodyIL(il);
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = Bcl("System.Void");
             // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
             // must be pre-defined just like a method body — otherwise MarkLabel/Br throws "key not in _cfgLabels".

@@ -45,6 +45,7 @@ done
 assert_suites stdlib-snapshot-test tests/stdlib-common-upstream/upstream-v2.4.21.sha256 stdlib_upstream
 assert_suites source-owned-array-test tests/stdlib-source-array/SourceArrayProbe.kt stdlib_source_array
 assert_suites ilverify-harness tests/ilverify/test_harness.py compiler_tests
+assert_suites trimmed-flow-driver tests/ilverify/trimmed-control-flow/Program.cs targetuniverse
 for path in tests/support/nunit/cohort.sh tests/support/nunit/record-ir.targets tests/run-nunit-tests.sh; do
 	assert_suites nunit-cohort "$path" 'compiler_tests schema sanity'
 done

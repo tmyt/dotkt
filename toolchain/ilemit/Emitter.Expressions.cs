@@ -122,7 +122,7 @@ sealed partial class Emitter
                     lateinitType = FieldTypeOf(fld);
                 }
                 _il.Emit(OpCodes.Dup);
-                var ok = _il.DefineLabel();
+                var ok = _il.DefineForwardLabel();
                 _il.Emit(OpCodes.Brtrue, ok);
                 _il.Emit(OpCodes.Pop);
                 // bir2cir has resolved Kotlin's failure semantics to an ordinary, exactly-bound constructor expression.
@@ -397,7 +397,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Newarr, elem);
                 var arr = _il.DeclareLocal(elem.MakeArrayType()); _il.Emit(OpCodes.Stloc, arr);
                 var i = _il.DeclareLocal(Bcl("System.Int32")); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, i);
-                var top = _il.DefineLabel(); var done = _il.DefineLabel();
+                var top = _il.DefineLabel(); var done = _il.DefineForwardLabel();
                 _il.MarkLabel(top);
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldloc, size); _il.Emit(OpCodes.Bge, done);
                 _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, i);                       // arr, i (for stelem)
@@ -494,7 +494,7 @@ sealed partial class Emitter
                 // the reference just emitted, so the local can never disagree with the member that filled it.
                 var en = _il.DeclareLocal(ReturnTypeOf(enumerableGet)); _il.Emit(OpCodes.Stloc, en);
                 var lv = _il.DeclareLocal(elem); _locals[e.Var] = lv;
-                var start = _il.DefineLabel(); var end = _il.DefineLabel();
+                var start = _il.DefineLabel(); var end = _il.DefineForwardLabel();
                 _loops.Add((e.LoopId, start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, en);
@@ -530,7 +530,7 @@ sealed partial class Emitter
                 // isinst, keeping the operand's single evaluation: dup the reference, and on null pop it and push 1.
                 if (e.NullMatches.OrDefault())
                 {
-                    var notNull = _il.DefineLabel(); var done = _il.DefineLabel();
+                    var notNull = _il.DefineForwardLabel(); var done = _il.DefineForwardLabel();
                     _il.Emit(OpCodes.Dup);
                     _il.Emit(OpCodes.Brtrue, notNull);
                     _il.Emit(OpCodes.Pop);
@@ -545,7 +545,7 @@ sealed partial class Emitter
                 }
                 if (e.NullWitness.IsPresent)
                 {
-                    var notNull = _il.DefineLabel(); var done = _il.DefineLabel();
+                    var notNull = _il.DefineForwardLabel(); var done = _il.DefineForwardLabel();
                     _il.Emit(OpCodes.Dup);
                     _il.Emit(OpCodes.Brtrue, notNull);
                     _il.Emit(OpCodes.Pop);
@@ -631,7 +631,7 @@ sealed partial class Emitter
                 var lv = _il.DeclareLocal(Bcl("System.Int32")); _locals[e.Var] = lv;
                 _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Stloc, lv);
                 var cnt = _il.DeclareLocal(Bcl("System.Int32")); EmitExpr(e.Count); _il.Emit(OpCodes.Stloc, cnt);
-                var start = _il.DefineLabel(); var end = _il.DefineLabel();
+                var start = _il.DefineLabel(); var end = _il.DefineForwardLabel();
                 _loops.Add((e.LoopId, start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, lv); _il.Emit(OpCodes.Ldloc, cnt); _il.Emit(OpCodes.Bge, end);

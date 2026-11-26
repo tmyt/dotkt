@@ -149,10 +149,10 @@ classify() { # <path>
 		tests/support/nunit/*|tests/run-nunit-tests.sh)
 			want compiler_tests; want schema; want sanity
 			reason "$p -> NUnit cohort lifecycle and recorded IR consumers" ;;
+		tests/target-universe/*|tests/ilverify/trimmed-control-flow/*)
+			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
 		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/ilverify/*)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
-		tests/target-universe/*)
-			want targetuniverse; reason "$p -> host/target metadata-universe calibration" ;;
 		eng/KotlinClr.targets)
 			want msbuild; want targetuniverse
 			reason "$p -> in-repo MSBuild + target-universe consumers" ;;

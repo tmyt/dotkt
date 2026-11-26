@@ -17,8 +17,8 @@ sealed partial class Emitter
         var elem = NativeType(e.Elem);
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         var res = _il.DeclareLocal(nt);
-        var has = _il.DefineLabel();
-        var done = _il.DefineLabel();
+        var has = _il.DefineForwardLabel();
+        var done = _il.DefineForwardLabel();
         EmitExpr(e.E);
         _il.Emit(OpCodes.Isinst, elem);
         _il.Emit(OpCodes.Dup);
@@ -138,10 +138,10 @@ sealed partial class Emitter
             var local = _il.DeclareLocal(et);
             EmitExpr(e.E);
             _il.Emit(OpCodes.Stloc, local);
-            var done = _il.DefineLabel();
+            var done = _il.DefineForwardLabel();
             foreach (var value in e.Values.Value)
             {
-                var next = _il.DefineLabel();
+                var next = _il.DefineForwardLabel();
                 _il.Emit(OpCodes.Ldloc, local);
                 EmitEnumConstantBits(
                     value.Underlying, value.PhysicalValue);
@@ -560,7 +560,7 @@ sealed partial class Emitter
     void EmitClrEventRaise(FieldInfo field, Type d, bool isStatic, MethodInfo invoke)
     {
         var handler = _il.DeclareLocal(d);
-        var done = _il.DefineLabel();
+        var done = _il.DefineForwardLabel();
         if (!isStatic) _il.Emit(OpCodes.Ldarg_0);
         EmitField(_il, isStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, handler);
         _il.Emit(OpCodes.Ldloc, handler); _il.Emit(OpCodes.Brfalse, done);
