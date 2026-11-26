@@ -80,7 +80,7 @@ static partial class KotlinOverrideSlotBridge
         internal Def DeclaredFaces(Def owner) => new() { Interfaces =
             carriers != null && carriers.TryGetValue(owner.Name, out var carrier)
                 ? owner.Interfaces.Where(face => face.Name != carrier).ToArray() : owner.Interfaces };
-        internal Def FacesForInheritedBody(Def owner, SelectedSlot slot)
+        internal Def FacesForNativeSlot(Def owner, SelectedSlot slot)
         {
             // The class's own existential view exposes its base class's interfaces, too.
             // Exposing an inherited slot is not a new declaration that reimplements it.
@@ -218,8 +218,8 @@ static partial class KotlinOverrideSlotBridge
                 || SupertypeGraph.Reaches(provider, slot.SemanticSpec, defs, refs)
                 || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [provider] },
                     slot.DescriptorSpec, defs, refs, isValue, context.LocalNames))) return;
-            var faces = selectedBody is { IsDefault: false } && slot.IsInterface && slot.Referenced
-                ? context.FacesForInheritedBody(definition, slot) : definition;
+            var faces = slot.IsInterface && slot.Referenced
+                ? context.FacesForNativeSlot(definition, slot) : definition;
             var reimplements = slot.IsInterface && definition.Kind == "class"
                 && (ReachesFromDeclaredInterface(faces, slot.SemanticSpec, defs, refs)
                     || slot.Referenced && ReachesFromDeclaredPhysicalInterface(faces, slot.DescriptorSpec,

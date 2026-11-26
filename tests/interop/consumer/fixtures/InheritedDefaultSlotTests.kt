@@ -31,6 +31,9 @@ private class InheritIntroducedBody : IntroducesVirtualBody()
 private class ReplaceInterfaceBody : DefaultBase() {
     override fun Read(): Int = 3
 }
+private class GenericReplacement<T> : DefaultBase() {
+    override fun Read(): Int = 9
+}
 private open class ReplaceBesideGetter : WithProperty() {
     override fun Read(): Int = 3
     open fun get_Value(): Int = 4
@@ -40,6 +43,8 @@ class InheritedDefaultSlotTests {
     @TestAttribute
     fun inheritedAndReimplementedInterfaceMaps() {
         check(Driver.Check(InheritVirtualBody(), ReplaceInterfaceBody()))
+        val generic = GenericReplacement<String>()
+        check(generic.Read() == 9 && Driver.ReadInterface(generic) == 9)
         val explicit = PreserveExplicitDefault()
         check(Driver.ReadDefaultBase(explicit) == "exact" && Driver.ReadDefaultChannel(explicit) == "explicit")
         val covariant = CovariantNamesake()
