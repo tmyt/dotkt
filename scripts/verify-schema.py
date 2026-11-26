@@ -263,6 +263,7 @@ STR_OK = {
                                                  # explicit get/set role, and file-local Property/accessor association.
                                                  # bir2cir consumes these after every semantic property pass has run.
     "defaultDeclarationId",                    # selected Kotlin default-argument declaration; consumed by DefaultArgSplice.
+    "nativeMethodKey", "defaultNativeMethodKey",  # opaque imported method and default-provider identities
     "constructorDeclarationId", "constructorNativeKey", "delegationDeclarationId", "delegationNativeKey",  # BIR selected constructor identities, not type slots.
     "declarationId", "declarationSourceName",    # #395: frontend declaration fingerprint + original Kotlin callable name;
                                                  # consumed by physical member allocation / round-trip metadata.
@@ -1202,6 +1203,7 @@ class V:
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
                 for declaration_key in ("declarationId", "defaultDeclarationId", "declarationSourceName", "explicitClrName",
+                                        "nativeMethodKey", "defaultNativeMethodKey",
                                         "constructorDeclarationId", "constructorNativeKey", "delegationDeclarationId", "delegationNativeKey", "signatureOverrideDeclarations",
                                         "declarationSignatureAllocation"):
                     if declaration_key in o:
