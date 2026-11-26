@@ -1570,7 +1570,7 @@ static class ReferenceMetadataReader
             return new ProjectedClassStorageFrame.WitnessSlot((int)row[0], bound, (bool)row[2]) {
                 Evidence = physical[primary + i].Constraints.OrEmpty() };
         }).ToArray();
-        return new(physical, facets, addresses) { NativeIndices = native };
+        return new(physical, facets, addresses) { NativeIndices = native, RepresentationDeclaration = (string)payload["representationDeclaration"] };
     }
 
     internal static ProjectedConstructorPlan ReadConstructorPlan(MethodBase declaration, MethodBase factory,

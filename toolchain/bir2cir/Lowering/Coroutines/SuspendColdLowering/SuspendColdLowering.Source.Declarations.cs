@@ -132,6 +132,11 @@ static partial class SuspendColdLowering
 
         void CarryPhysicalSlotFacts(BirFunctionDeclaration method, bool coldEntry)
         {
+            if (_m.ImplicitExistentialImplementationId is string implementation)
+            {
+                method.ExistentialCallable = _m.ExistentialCallable;
+                method.ImplicitExistentialImplementationId = coldEntry ? implementation + "|cold" : implementation;
+            }
             if (!_physicalSlotBridge) return;
             method.PhysicalSlotBridge = true;
             if (_clrInterfaceSlotBridge) method.ClrInterfaceSlotBridge = true;

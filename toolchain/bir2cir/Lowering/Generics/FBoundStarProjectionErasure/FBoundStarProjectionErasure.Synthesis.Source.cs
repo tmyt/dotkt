@@ -73,7 +73,14 @@ static partial class FBoundStarProjectionErasure
                     DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
                     context.AttachMethod(definition, bridge, method);
                 }
-                else DeclarationSignatureIdentity.RecordSelectedImplementationSlot(method, slot);
+                else
+                {
+                    DeclarationSignatureIdentity.RecordSelectedImplementationSlot(method, slot);
+                    // No forwarder separates these declarations. If the implementation
+                    // inherits its physical bounds, its carrier must use the same ABI.
+                    if (method._ownerConstraintOverrideBounds.HasValue)
+                        slot.ImplicitExistentialImplementationId = method.DeclarationId.OrDefault();
+                }
             }
             foreach (var (declaringName, method) in InheritedConcreteBaseMethodsSource(owner, context.Demand))
             {
