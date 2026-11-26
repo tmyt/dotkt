@@ -687,6 +687,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			val selectedOwner = kotc.frontend.ClrStaticOwners.at(sourcePathOf(node), node.endOffset, fn.name.asString(), "call")
 			val ownerType = selectedOwner?.let(::birType) ?: TypeNode.Fqn(clrOwner)
 			val callE = BirCallStatic(ownerType = ownerType, method = fn.name.asString(), sig = overloadSignature(fn),
+				nativeMethodKey = nativeDeclarationKey(physicalIdentityDeclaration, "methodKey"),
 				typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() }, argTypes = argTypes, ret = liftedFuncType.ret,
 				args = arguments, anySlot = anySlot, declarationId = memberDeclarationIdentity)
 			val body = if (fn.returnType.isUnit()) BirExpressionStatement(callE) else BirReturn(callE)
@@ -899,6 +900,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 				?: TypeNode.Fqn(physicalName)
 			val selectedOwner = if (externalDeclaration) callOwner else physicalOwner
 			BirCallInstance(ownerType = selectedOwner, virtual = virtual, recv = recv, method = fn.name.asString(),
+				nativeMethodKey = nativeDeclarationKey(declaration, "methodKey"),
 				sig = signature, typeArgs = referenceTypeArgs.takeIf { it.isNotEmpty() }, argTypes = argTypes,
 				ret = resultType, sty = resultType, args = arguments, overrides = overrideFacts,
 				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation, externalMember = externalMember)
@@ -983,6 +985,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): BirExpression {
 			val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 				?: error("validated .NET method reference lost its type arguments in its lifted method frame")
 			val call = BirCallInstance(ownerType = selectedOwner, method = fn.name.asString(), sig = overloadSignature(target),
+				nativeMethodKey = nativeDeclarationKey(target, "methodKey"),
 				typeArgs = liftedReferenceTypeArgs.takeIf { it.isNotEmpty() }, argTypes = regs.map { birType(it.type) },
 				ret = liftedFuncType.ret, recv = BirLocal("__self"), args = arguments,
 				anySlot = true.takeIf { isAnySlotMethod(fn) }, clrFlagsOperation = flagsOperation, externalMember = externalMember,
@@ -1207,6 +1210,7 @@ internal fun BirEmitter.extensionReferenceCall(
 		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn))
 			.map { birType(it.type) }
 		return BirCallStatic(ownerType = TypeNode.Fqn(externalFileClass), method = fn.name.asString(), typeArgs = refTa,
+			nativeMethodKey = nativeDeclarationKey(fn, "methodKey"),
 			shapeTypes = declShapeTypes.takeIf { hasRefTa }, argTypes = declShapeTypes.takeUnless { hasRefTa },
 			ret = ret.takeUnless { hasRefTa }, args = callArgs, suspendCall = suspendCall,
 			declarationId = declarationIdentity, externalMember = clrExternalMember(fn))

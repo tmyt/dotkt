@@ -977,9 +977,23 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         if (!_nativeConstructors.TryGetValue(open, out var declarations))
             _nativeConstructors.Add(open, declarations = ReferenceMetadataReader.NativeConstructorDeclarations(open, _universe.ModuleMetadata(open.Module)));
         if (declarations.TryGetValue(key, out var declaration)) return declaration;
-        return declarations.Where(pair => RawSignatureTypeProvider<object>.SameConstructor(pair.Key, key, _universe.SameDefinition))
+        return declarations.Where(pair => RawSignatureTypeProvider<object>.SameDeclaration(pair.Key, key, _universe.SameDefinition))
             .Select(pair => pair.Value).SingleOrDefault()
             ?? throw new InvalidOperationException($"bir2cir: selected native constructor is missing from '{open.FullName}'");
+    }
+
+    readonly Dictionary<MethodInfo, string> _nativeMethodKeys = new();
+
+    internal bool MatchesNativeMethod(MethodInfo method, string key)
+    {
+        if (!_nativeMethodKeys.TryGetValue(method, out var actual))
+        {
+            var reader = _universe.ModuleMetadata(method.Module);
+            actual = RawSignatureTypeProvider<object>.MethodKey(reader,
+                (System.Reflection.Metadata.MethodDefinitionHandle)System.Reflection.Metadata.Ecma335.MetadataTokens.Handle(method.MetadataToken));
+            _nativeMethodKeys.Add(method, actual);
+        }
+        return RawSignatureTypeProvider<object>.SameDeclaration(actual, key, _universe.SameDefinition);
     }
 
     internal Dictionary<int, IBirExpression> DefaultValuesForNativeConstructor(TypeNode.Fqn owner, string key) =>
@@ -993,12 +1007,12 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // when it has no representable defaults, so callers must not fall through to a different declaration search.
     public bool TryKotlinDefaultValuesForSelectedMethod(
         TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out Dictionary<int, IBirExpression> defaults, out string[] parameterNames, string propertyKind = null)
+        out Dictionary<int, IBirExpression> defaults, out string[] parameterNames, string propertyKind = null, string nativeKey = null)
     {
         defaults = null;
         parameterNames = null;
         if (!ClrMemberResolution.TryResolveExternalMethodForDefaults(
-                null, this, owner, method, methodArity, isStatic, callSignature, out var declaration, propertyKind))
+                null, this, owner, method, methodArity, isStatic, callSignature, out var declaration, propertyKind, nativeKey))
             return false;
         parameterNames = declaration.GetParameters()
             .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)

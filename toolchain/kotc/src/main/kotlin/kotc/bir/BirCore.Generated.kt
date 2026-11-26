@@ -557,7 +557,9 @@ data class BirCallStatic(
     val memberMethodTypeParams: List<TypeParameterDeclaration>? = null,
     val memberSignature: List<TypeNode>? = null,
     val memberReturnType: TypeNode? = null,
-    val externalMember: BirExternalMemberBinding? = null
+    val externalMember: BirExternalMemberBinding? = null,
+    val nativeMethodKey: String? = null,
+    val defaultNativeMethodKey: String? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"callStatic\"")
@@ -720,6 +722,14 @@ data class BirCallStatic(
             output.append(",\"externalMember\":")
             value.writeJson(output)
         }
+        nativeMethodKey?.let { value ->
+            output.append(",\"nativeMethodKey\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        defaultNativeMethodKey?.let { value ->
+            output.append(",\"defaultNativeMethodKey\":")
+            TypeNodeJson.writeString(value, output)
+        }
         output.append('}')
     }
 }
@@ -756,7 +766,9 @@ data class BirCallInstance(
     val memberOwnerTypeParams: List<TypeParameterDeclaration>? = null,
     val memberMethodTypeParams: List<TypeParameterDeclaration>? = null,
     val memberSignature: List<TypeNode>? = null,
-    val memberReturnType: TypeNode? = null
+    val memberReturnType: TypeNode? = null,
+    val nativeMethodKey: String? = null,
+    val defaultNativeMethodKey: String? = null
 ) : BirExpression() {
     override fun writeJson(output: StringBuilder) {
         output.append("{\"k\":\"callInstance\"")
@@ -926,6 +938,14 @@ data class BirCallInstance(
         memberReturnType?.let { value ->
             output.append(",\"memberReturnType\":")
             value.writeJson(output)
+        }
+        nativeMethodKey?.let { value ->
+            output.append(",\"nativeMethodKey\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        defaultNativeMethodKey?.let { value ->
+            output.append(",\"defaultNativeMethodKey\":")
+            TypeNodeJson.writeString(value, output)
         }
         output.append('}')
     }

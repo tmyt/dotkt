@@ -1,4 +1,5 @@
 import NUnit.Framework.TestAttribute
+import GenericValueInterop.VisitExtension
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.wide.acceptWidened
 import roundtrip.wide.narrowSource
@@ -15,6 +16,17 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
+private class DerivedCallbackScope : GenericValueInterop.NativeCallbackScope() {
+    fun visitStored(f: WideCallback<Unit>) = Visit<String>(f)
+}
+private class ValueVisitor(val f: WideCallback<Unit>) : GenericValueInterop.NativeVisitor() {
+    override fun <T : GenericValueInterop.IVisitWide> Accept(value: T): Boolean = value.Apply(f)
+}
+private class UnitRecorder : WideCallback<Unit> {
+    var sum = 0
+    override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
+                        j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int) { sum += a + q }
+}
 private class FirstPlusLast : WideIntCallback {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): Int = a + q
@@ -38,6 +50,24 @@ private fun stagedCallback(source: GenericValueInterop.NativeIntCallbackBase, ta
 private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 
 class WideFunctionTypeTests {
+    @TestAttribute
+    fun nativeValueAndVoidCallbacksInvokeTheOriginalRecorder() {
+        val recorder = UnitRecorder()
+        check(GenericValueInterop.NativeWideCallbacks.VisitUnit(recorder))
+        assertEquals(18, recorder.sum)
+        GenericValueInterop.NativeWideCallbacks.VisitVoid(recorder)
+        assertEquals(36, recorder.sum)
+        assertEquals(71, DerivedCallbackScope().visitStored(recorder))
+        assertEquals(54, recorder.sum)
+        val target = GenericValueInterop.NativeCallbackOverride()
+        assertEquals(19, target.Choose(recorder))
+        check(target.VisitExtension(recorder))
+        val visit: (WideCallback<Unit>) -> Boolean = GenericValueInterop.NativeWideCallbacks::VisitUnit
+        check(visit(recorder))
+        check(ValueVisitor(recorder).Run())
+        assertEquals(126, recorder.sum)
+    }
+
     @TestAttribute
     fun wideFunctionValuesCrossTheModuleBoundary() {
         assertEquals(17, NativeCallbackDerived(LastArgument()).Read())

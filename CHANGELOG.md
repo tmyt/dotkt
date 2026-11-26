@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Kotlin callbacks returning `Unit` can be passed to wide CLR delegates that require a `kotlin.Unit` return value, as well as delegates returning `void` (#1946).
 - CLR interface slots inherited at different generic arguments can now be selected by their constructed signatures (#1960).
 - Kotlin functions can return wide callbacks read from CLR properties without losing their callable signature (#1951).
 - Generic classes implementing an interface method with an owner-dependent bound now load and dispatch through both the interface and a star-projected receiver (#1969).

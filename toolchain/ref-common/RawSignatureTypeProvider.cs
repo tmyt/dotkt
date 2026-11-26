@@ -18,7 +18,13 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
 
     // Owned by an open CLR declaration. The signature shape never contains metadata row
     // numbers; its ordered nominal leaves retain their scopes across inline publication.
-    public static string ConstructorKey(MetadataReader reader, MethodDefinitionHandle handle)
+    public static string ConstructorKey(MetadataReader reader, MethodDefinitionHandle handle) =>
+        DeclarationKey(reader, handle, includeMethod: false);
+
+    public static string MethodKey(MetadataReader reader, MethodDefinitionHandle handle) =>
+        DeclarationKey(reader, handle, includeMethod: true);
+
+    static string DeclarationKey(MetadataReader reader, MethodDefinitionHandle handle, bool includeMethod)
     {
         var leaves = new List<string>();
         var provider = new RawSignatureTypeProvider<TContext>((md, type) =>
@@ -27,9 +33,17 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
             leaves.Add(scope); leaves.Add(name);
             return "_";
         });
-        var signature = reader.GetMethodDefinition(handle).DecodeSignature(provider, default(TContext)!);
+        var method = reader.GetMethodDefinition(handle);
+        if (includeMethod)
+        {
+            var owner = NominalLeaf(reader, method.GetDeclaringType());
+            leaves.Add(owner.Scope); leaves.Add(owner.Name);
+        }
+        var signature = method.DecodeSignature(provider, default(TContext)!);
         var shape = FormattableString.Invariant($"{signature.Header.RawValue}:{signature.RequiredParameterCount}:")
             + string.Concat(signature.ParameterTypes.Select(slot => FormattableString.Invariant($"{slot.Length}:{slot}")));
+        if (includeMethod)
+            shape = FormattableString.Invariant($"{signature.GenericParameterCount}:{signature.ReturnType.Length}:{signature.ReturnType}:") + shape;
         return leaves.Count == 0 ? shape : shape + "|" + JsonSerializer.Serialize(leaves);
     }
 
@@ -65,7 +79,7 @@ internal sealed class RawSignatureTypeProvider<TContext> : ISignatureTypeProvide
 
     // Exact keys are the fast path. Distinct scopes only denote the same type if the
     // consumer's reference universe can prove it (e.g. an actual CLR type forwarder).
-    public static bool SameConstructor(string left, string right, Func<string, string, string, bool> sameDefinition)
+    public static bool SameDeclaration(string left, string right, Func<string, string, string, bool> sameDefinition)
     {
         if (left == right) return true;
         var split = left.IndexOf('|');

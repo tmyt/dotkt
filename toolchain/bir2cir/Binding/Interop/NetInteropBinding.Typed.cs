@@ -60,7 +60,7 @@ static partial class NetInteropBinding
     {
         internal BirGraphNode Node;
         internal OptionalField<TypeNode> Owner, Ret, Sty;
-        internal OptionalField<string> Method, Property;
+        internal OptionalField<string> Method, Property, NativeMethodKey;
         internal string Visibility;
         internal bool Static, Companion;
         internal OptionalField<TypeNode[]> Signature, Shapes, ArgumentTypes, TypeArguments;
@@ -73,6 +73,7 @@ static partial class NetInteropBinding
 
         internal SourceCall(BirCallStatic call)
         {
+            NativeMethodKey = call.NativeMethodKey;
             Node = call; Static = true; Owner = call.OwnerType; Ret = call.Ret; Sty = call.Sty;
             Method = call.Method; Property = call.Prop; Visibility = call.MemberVisibility.OrDefault(); Companion = call.CompanionCall.OrDefault();
             Signature = call.Sig; Shapes = call.ShapeTypes; ArgumentTypes = call.ArgTypes; TypeArguments = call.TypeArgs;
@@ -81,6 +82,7 @@ static partial class NetInteropBinding
         }
         internal SourceCall(BirCallInstance call)
         {
+            NativeMethodKey = call.NativeMethodKey;
             Node = call; Owner = call.OwnerType; Ret = call.Ret; Sty = call.Sty;
             Method = call.Method; Property = call.Prop; Visibility = call.MemberVisibility.OrDefault(); Companion = call.CompanionCall.OrDefault();
             Signature = call.Sig; Shapes = call.ShapeTypes; ArgumentTypes = call.ArgTypes; TypeArguments = call.TypeArgs;
@@ -150,10 +152,12 @@ static partial class NetInteropBinding
         {
             var signature = NormalizeSignature(signatures.Generic, plan.NativeType);
             return plan.Static ? new BirGenericStatic {
+                NativeMethodKey = call.NativeMethodKey,
                 Type = plan.Owner, Method = plan.Method, TypeArgs = call.TypeArguments, ResolvedMemberParams = signature,
                 Ret = ValueOnly(call.Ret), Args = args, Sty = sty, SuspendCall = suspend,
                 _capturedGenericArgument = captured, _capturedGenericResult = capturedResult,
             } : new BirGenericInstance {
+                NativeMethodKey = call.NativeMethodKey,
                 Type = plan.Owner, Method = plan.Method, TypeArgs = call.TypeArguments, ResolvedMemberParams = signature,
                 Ret = ValueOnly(call.Ret), Recv = receiver, Args = args, Sty = sty, SuspendCall = suspend, Super = super,
                 _capturedGenericArgument = captured, _capturedGenericResult = capturedResult, _foreignDeclarationSignature = foreign,
@@ -177,10 +181,12 @@ static partial class NetInteropBinding
         var argumentTypes = signatures.Declared;
         OptionalField<TypeNode[]> resolved = call.Signature.HasValue ? NormalizeSignature(call.Signature.Value, plan.NativeType) : default;
         return plan.Static ? new BirNativeStatic {
+            NativeMethodKey = call.NativeMethodKey,
             Type = plan.Owner, Method = plan.Method, ArgTypes = argumentTypes, ResolvedMemberParams = resolved,
             Ret = call.Ret, Args = args, Sty = sty, SuspendCall = suspend,
             _capturedGenericArgument = captured, _capturedGenericResult = capturedResult,
         } : new BirNativeInstance {
+            NativeMethodKey = call.NativeMethodKey,
             Type = plan.Owner, Method = plan.Method, ArgTypes = argumentTypes, ResolvedMemberParams = resolved,
             Ret = call.Ret, Recv = receiver, Args = args, Sty = sty, SuspendCall = suspend, Super = super,
             _capturedGenericArgument = captured, _capturedGenericResult = capturedResult, _foreignDeclarationSignature = foreign,
