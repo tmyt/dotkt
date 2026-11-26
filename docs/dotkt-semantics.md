@@ -2420,6 +2420,11 @@ function to that slot leaves the original Kotlin value unchanged. If the delegat
 the CLR receives the same reference (including null); otherwise it receives a delegate that converts the
 arguments and result. Separate conversions need not give C# reference-identical delegates.
 
+In the other direction, a Kotlin function can return a wide callback read from a CLR property. The getter runs once.
+If the native delegate's value-type slots differ from ordinary Kotlin storage, the callable view converts the
+arguments on invocation and converts the result back to Kotlin. A nullable read preserves null; public non-null
+return checks still apply (§9c).
+
 A Kotlin class may implement a function type directly or through an interface. At a function-typed
 boundary its delegate calls the selected `invoke` implementation. Converting the same instance
 again preserves identity, including when it is viewed as `Any`. Writing `instance::invoke`

@@ -25,6 +25,7 @@ sealed class PhysicalDelegateDeclarations
                     arguments[i] = new BirCast { Type = plan.Frame.DelegateParams[i], E = OptionalField<IBirExpression>.Of(arguments[i]) };
         var call = new BirDelegateInvoke {
             FuncType = plan.Frame,
+            SourceClrBoundary = plan.PublishArguments,
             Recv = new BirFieldGet { OwnerType = self, Recv = new BirThis(), Name = "d" },
             Args = arguments,
             InvokeRef = BirMemberReference.FromPhysical(
