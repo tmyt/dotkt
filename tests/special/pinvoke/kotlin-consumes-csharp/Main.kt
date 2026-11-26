@@ -13,6 +13,8 @@ class OverloadCarrier
 class NamedOverloadCarrier
 
 fun main() {
+    val ordinary = OverloadProbeAttribute(7).apply { Name = "ordinary" }
+    check(ordinary.Name == "ordinary" && ordinary.Value == 0)
     check(NativeMethods.Add(20, 22) == 42)
     var value = 9
     NativeMethods.Increment(byref(value))

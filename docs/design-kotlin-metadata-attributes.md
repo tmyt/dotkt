@@ -209,6 +209,9 @@ It is consumed by dll2klib when setting Kotlin metadata's secondary-constructor 
 constructors without Kotlin primary semantics are secondary. For a native CLR attribute, annotation applications
 use the first public instance constructor in metadata order (the `UnmanagedType` overload for `MarshalAsAttribute`).
 Only that constructor exposes writable named members; without a public constructor there is no annotation primary.
+Those members describe assignments in an annotation application, not optional CLR constructor parameters.
+Constructing an attribute as an ordinary Kotlin value passes only its real constructor arguments; use
+`.apply { ... }` for subsequent field or property assignments.
 Purely synthesized physical constructors do not acquire a source-kind fact.
 
 Two boundaries of `bounds`, both measured. A METHOD's type-parameter bounds are not on it — this carrier is

@@ -1674,6 +1674,9 @@ internal fun BirEmitter.sourceAnnotationDefinition(klass: IrClass): BirClassDefi
 		isAbstract = false, properties = properties, attrs = sourceAttributes(klass.annotations))
 }
 
+internal fun IrConstructorCall.isClrAttributeNamedArgument(): Boolean =
+	type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
+
 /** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a
  *  structured `{t:fqn}` identity node (#48). A Kotlin-authored annotation is named by its plain Kotlin FQN (#46) —
  *  bir2cir derives its `: System.Attribute` base from the `"annotation":true` flag on the class def. An imported .NET
@@ -1699,9 +1702,7 @@ internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<Bi
 		val clr = clrName(ac)
 		val attrClr = true.takeIf { clr != null }
 		fun namedRole(parameter: IrValueParameter): Pair<String, String>? {
-			val markers = parameter.annotations.filter {
-				it.type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
-			}
+			val markers = parameter.annotations.filter { it.isClrAttributeNamedArgument() }
 			if (markers.isEmpty()) return null
 			if (markers.size != 1) {
 				invariantBroken(parameter,
