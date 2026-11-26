@@ -5288,11 +5288,15 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         if (!allocatedIdentity.SignatureAllocated || unallocatedIdentity.SignatureAllocated)
             throw new InvalidOperationException("Declaration signature allocation lost its explicit owning role");
         {
-            var index = Build(Array.Empty<string>());
-            index._ownerKindByPhysicalOwner["ReferencedSlot"] = "interface";
+            // Model DotKt allocation metadata on a real reference MethodDef,
+            // so the constructed owner and slot token can actually be resolved.
+            var index = nativeDescriptors;
+            var slot = typeof(System.Collections.IList).GetMethod("Remove");
+            var slotOwner = slot.DeclaringType.FullName;
+            index._ownerKindByPhysicalOwner[slotOwner] = "interface";
             var signature = new TypeNode.Mod(false, new TypeNode.Fqn("ExistingFunctionIdentity"),
                 new TypeNode.Fqn("System.Object"));
-            var binding = new MemberBinding("ReferencedSlot", "accept", 1, null, true, false) {
+            var binding = new MemberBinding(slotOwner, slot.Name, 1, null, true, false, MetadataToken: slot.MetadataToken) {
                 SignatureParameters = new TypeNode[] { signature }, SignatureReturn = new TypeNode.Fqn("void"),
             };
             index._declarationById["referenced-slot"] = binding;
@@ -5301,7 +5305,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 Params = new[] { new BirParameter { Name = "value", Type = new TypeNode.Fqn("System.Object") } },
                 Ret = new TypeNode.Fqn("void"), Body = Array.Empty<IBirStatement>() };
             var owner = new BirClassDefinition { Name = "Implementation", Kind = "class",
-                Interfaces = new TypeNode[] { new TypeNode.Fqn("ReferencedSlot") }, Methods = new[] { implementation } };
+                Interfaces = new TypeNode[] { new TypeNode.Fqn(slotOwner) }, Methods = new[] { implementation } };
             var root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { owner } };
             var plan = new DeclarationSignatureIdentity.SignatureAllocationPlan(new Dictionary<string, TypeNode[]>());
             DeclarationSignatureIdentity.BindSelectedOverridesSource(new[] { root }, plan, index, _ => false,

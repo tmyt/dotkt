@@ -169,22 +169,8 @@ sealed partial class ProjectedCallableEntries
 
     TypeNode.Fqn[] SelectedConstructions(IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy,
         IBirTypeDeclaration owner, BirFunctionDeclaration method, string id, string declaringOwner, string referencedId)
-    {
-        var supers = SupertypeGraph.Reachable(hierarchy[owner.Name.Value], hierarchy, references).Select(e => e.spec);
-        // Inherited reference edges use Kotlin classifier names as well as CLR
-        // spellings. The selected MethodDef owns the TypeDef; the edge owns its arguments.
-        var definition = referencedId == null ? null : references.SelectedPhysicalMethod(referencedId)?.DeclaringType
-            ?? throw new InvalidOperationException("Selected projected slot has no declaring CLR type");
-        bool Declares(TypeNode.Fqn s) => definition == null ? s.Name == declaringOwner :
-            !hierarchy.ContainsKey(s.Name) && ClrMemberResolution.ResolveOwnerType(s, references) == definition;
-        var candidates = supers.Where(Declares).Select(s => s with { Name = declaringOwner }).Distinct().ToArray();
-        if (candidates.Length == 1) return candidates;
-        var selected = (method.ConstructedOverrideOwners ?? []).Where(e => e.Id == id && Declares(e.Owner))
-            .Select(e => e.Owner with { Name = declaringOwner }).Distinct().ToArray();
-        if (selected.Length == 0 || selected.Any(s => !candidates.Contains(s)))
-            throw new InvalidOperationException($"Selected override of '{declaringOwner}' has no matching constructed supertype on '{owner.Name.Value}'");
-        return selected;
-    }
+        => SupertypeGraph.SelectedOverrideOwners(hierarchy[owner.Name.Value], hierarchy, references,
+            method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
     void AddInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
         ProjectedMethodPlan contract, TypeNode[] arguments)

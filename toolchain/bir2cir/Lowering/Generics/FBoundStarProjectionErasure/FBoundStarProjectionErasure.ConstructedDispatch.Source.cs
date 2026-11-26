@@ -24,10 +24,11 @@ static partial class FBoundStarProjectionErasure
             var id = source.DeclarationId.Value;
             slot.DeclarationId = ConstructionSlotId(id);
             methods.Add(slot);
+            context.NativeProofs.TransferIndependentMethodProofs(source, slot);
             var bridge = row.InterfaceForwarder;
             var selected = (BirMethodImpl)bridge.ClrInterfaceImpls.Value.Single().DeepClone();
             selected.Owner = open;
-            context.Declarations.ConstructedDispatch.Add(id, (name, selected.Member.Value));
+            context.Declarations.ConstructedDispatch.Add(id, (name, selected.Member.Value, source.Params.OrEmpty().Select(p => p.Type.Value).ToArray()));
             bridge.ClrInterfaceImpls = bridge.ClrInterfaceImpls.Value.Append(selected).ToArray();
             DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
             context.Bindings.GetSource(selected);
@@ -56,13 +57,15 @@ static partial class FBoundStarProjectionErasure
         if (!state.Declarations.ConstructedDispatch.TryGetValue(id, out var selectedSlot))
         {
             if (!state.References.TryDeclarationSignatureSlot(ConstructionSlotId(id), out var imported)) return null;
-            selectedSlot = (imported.Owner, imported.Name);
+            selectedSlot = (imported.Owner, imported.Name, imported.Parameters);
         }
         var target = new TypeNode.Fqn(selectedSlot.Owner, owner.Args);
         var result = call.Sty.OrDefault() ?? call.Ret.OrDefault();
         var args = call.Args.OrEmpty();
-        var types = args.Select(a => SourceCarrierExpressionType((BirGraphValue)a)).ToArray();
-        if (result == null || types.Any(t => t == null || SignatureValueTypes.Of(t) is TypeNode.ByRef)) return null;
+        var formals = call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault() ?? call.ResolvedMemberParams.OrDefault() ?? selectedSlot.Parameters;
+        if (formals.Length != args.Length) throw new InvalidOperationException("Constructed dispatch has no matching invocation parameter frame");
+        var types = formals.Select(p => SignatureValueTypes.Of(SubstituteDeclarationTypeArguments(p, owner.Args, call.TypeArgs.OrEmpty()))).ToArray();
+        if (result == null) return null;
         var receiver = call.Recv.Value;
         return (fallback, names) => {
             if (names == null || call.OwnerType.OrDefault() is not TypeNode.Fqn erased || erased.Name != carrier) return fallback;
@@ -74,7 +77,10 @@ static partial class FBoundStarProjectionErasure
                 return new BirLocal { Name = name, Sty = type };
             }
             var recv = Save(receiver, erased);
-            var locals = args.Select((arg, i) => Save(arg, types[i])).ToArray();
+            // Capture a managed location, not its current value. Other operands
+            // convert into their selected parameter type just as at the call site.
+            var locals = args.Select((arg, i) => Save(types[i] is TypeNode.ByRef && arg is not BirByRefOf
+                ? new BirByRefOf { Inner = OptionalField<IBirExpression>.Of(arg) } : arg, types[i])).ToArray();
             // Both views expose the same erased value ABI. Preserve the call's
             // existing result conversion around the choice, not inside one arm.
             var exact = (BirCallInstance)(call with { Recv = default, Args = default }).DeepClone();

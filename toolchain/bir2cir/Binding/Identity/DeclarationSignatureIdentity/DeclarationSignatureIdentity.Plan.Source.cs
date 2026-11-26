@@ -16,7 +16,8 @@ static partial class DeclarationSignatureIdentity
 
     sealed record SignatureParameter(TypeNode Type, TypeNode[] Bounds, TypeNode Nominal);
     sealed record SignatureDeclaration(string Owner, string Name, string Identity, bool Generated,
-        int Arity, TypeNode Return, SignatureParameter[] Parameters, string[] Overrides);
+        int Arity, TypeNode Return, SignatureParameter[] Parameters, string[] Overrides,
+        IReadOnlyList<(string Id, TypeNode.Fqn Owner)> Constructions = null);
 
     internal static SignatureAllocationPlan Plan(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs = null)
@@ -28,7 +29,8 @@ static partial class DeclarationSignatureIdentity
             foreach (var method in methods)
                 rows.Add(new(owner, method.ExplicitClrName.OrDefault() ?? method.Name.OrDefault(),
                     method.DeclarationId.OrDefault(), method.Generated.OrDefault(), method.TypeParams.OrEmpty().Length,
-                    method.Ret.OrDefault(), ReadParameters(method.Params.OrEmpty()), method.SignatureOverrideDeclarations.OrEmpty()));
+                    method.Ret.OrDefault(), ReadParameters(method.Params.OrEmpty()), method.SignatureOverrideDeclarations.OrEmpty(),
+                    method.ConstructedOverrideOwners));
             foreach (var constructor in constructors)
                 rows.Add(new(owner, ".ctor", constructor.DeclarationId.OrDefault(), false, 0, null,
                     ReadParameters(constructor.Params.OrEmpty()), Array.Empty<string>()));
@@ -88,9 +90,13 @@ static partial class DeclarationSignatureIdentity
                     selectedOwnerName = referenced.Owner;
                 }
                 else continue;
-                var selectedOwner = SelectedLocalOwner(definitions[method.Owner], selectedOwnerName, definitions, refs);
-                var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
-                result[id] = signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray();
+                var owners = SupertypeGraph.SelectedOverrideOwners(definitions[method.Owner], definitions, refs, method.Constructions,
+                    target, selectedOwnerName, sourceMethods.ContainsKey(target) ? null : target);
+                var closed = owners.Select(owner => signature.Select(type => SupertypeGraph.SubstOwnerTvs(type, owner.Args ?? [])).ToArray())
+                    .DistinctBy(PhysicalParameters).ToArray();
+                // If a single authored body covers distinct signatures, the MethodImpl bridges
+                // below retain each one; neither construction supplies the shared body signature.
+                if (closed.Length == 1) result[id] = closed[0];
                 break;
             }
         }
