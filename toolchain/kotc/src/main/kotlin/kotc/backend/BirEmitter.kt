@@ -817,6 +817,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	)
 	/** identity key -> ref-cell representation facts. One entry per DISTINCT cell shape in the file. */
 	internal val refTypes = LinkedHashMap<String, RefTypeFact>()
+	private lateinit var refCellSource: String
 	private var nextRefCellId = 0
 	private val refTypeByVariable = java.util.IdentityHashMap<IrValueDeclaration, RefTypeFact>()
 	private val refTypeParameterIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Int>()
@@ -846,7 +847,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			refTypeByVariable[d] = it
 			return it.name
 		}
-		val name = "dotkt\$${synthScope}\$Ref\$${nextRefCellId++}"
+		// Inline publication can bring cells from another compilation into this file.
+		// An ordinal alone could bind a producer's cell to an unrelated local element type.
+		val shapeId = MessageDigest.getInstance("SHA-256").digest((refCellSource + '\u0000' + key).toByteArray()).toHexString()
+		val name = "dotkt\$${synthScope}\$Ref\$$shapeId\$${nextRefCellId++}"
 		val parameters = ArrayList<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 		val seen = java.util.Collections.newSetFromMap(
 			java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrTypeParameter, Boolean>())
@@ -1060,6 +1064,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 			return null
 		val className = fileClassName(file)
 		fileClass = className
+		refCellSource = file.packageFqName.asString() + '\u0000' + File(file.fileEntry.name).name
 		// Entry point: top-level `fun main()` or `fun main(args: Array<String>)`.
 		val hasMain = functions.any {
 			it.name.asString() == "main" && run {

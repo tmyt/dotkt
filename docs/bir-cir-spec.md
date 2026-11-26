@@ -1081,8 +1081,9 @@ values are:
 **Deferred mutable captures.** An `inlineLambda.captures` descriptor for a mutable local not already represented by
 shared storage carries `sharedCellType`, a structured type referencing its `refTypes` declaration in the current
 generic frame. A local function's leading capture parameter carries the same fact when it forwards that location.
-kotc reuses a cell declaration for the same capture shape within one file. Its name is allocated across the
-module, not derived from the element type or assumed to be unique to a file facade.
+kotc reuses a cell declaration for the same capture shape within one file. A module-wide ordinal distinguishes
+local allocations, while a fingerprint of the originating file's package, basename and capture shape
+keeps a published inline body's cells distinct from unrelated consumer cells. The facade is not a file identity.
 An inline capture also carries `sharedCellTypeParams`, the cell's complete generic declarations in the cell's own
 frame. Those bounds are instantiated against `sharedCellType.args` when declaring a materialized carrier's frame;
 ordinary inline substitution must not reinterpret the independent cell-declaration frame.
