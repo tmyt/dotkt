@@ -1076,7 +1076,7 @@ static class ReferenceMetadataReader
                     (MethodDefinitionHandle)MetadataTokens.Handle(constructor.MetadataToken)), StringComparer.Ordinal);
     }
 
-    static bool TryMethodImplMember(MetadataReader reader, EntityHandle declaration,
+    internal static bool TryMethodImplMember(MetadataReader reader, EntityHandle declaration,
         out EntityHandle parent, out string member)
     {
         parent = default;
@@ -2994,6 +2994,9 @@ static class ReferenceMetadataReader
 
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
         DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
+
+    internal static TypeNode NativeDeclarationType(Type type) =>
+        DeclarationTypeNode(type, nominalDelegates: true, preserveNestedIdentity: true, nativeNames: true);
 
     static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false)
     {
