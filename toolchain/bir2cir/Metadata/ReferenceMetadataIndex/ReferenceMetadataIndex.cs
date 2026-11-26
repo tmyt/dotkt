@@ -3427,7 +3427,14 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return true;
     }
 
-    readonly Dictionary<Type, NativeDefaultDeclaration[]> nativeDefaultSlots = new();
+    readonly Dictionary<Type, NativeImplementationDeclaration[]> nativeImplementations = new();
+
+    NativeImplementationDeclaration[] DeclaredMethodImpls(Type type)
+    {
+        if (!nativeImplementations.TryGetValue(type, out var slots))
+            nativeImplementations.Add(type, slots = NativeImplementations(_universe.ModuleMetadata(type.Module), type));
+        return slots;
+    }
 
     // The source fact identifies the provider. Its MethodImpl identifies a
     // callable declaration, not a body to call from a different assembly.
@@ -3438,11 +3445,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         declaration = null;
         if (HasDotKtOwner(provider.Name) || ResolveNetType(provider.Name, provider.Args?.Length ?? 0) is not { IsInterface: true } type)
             return false;
-        if (!nativeDefaultSlots.TryGetValue(type, out var slots))
-            nativeDefaultSlots.Add(type, slots = NativeInterfaceDefaults(type));
-        foreach (var slot in slots)
+        foreach (var slot in DeclaredMethodImpls(type))
         {
-            var owner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(slot.Owner, provider.Args ?? []);
+            if (!slot.ConcreteDefaultBody || slot.Owner is not { } openOwner) continue;
+            var owner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(openOwner, provider.Args ?? []);
             if (slot.Signature.GenericParameterCount != 0 || ResolveNetType(owner.Name, owner.Args?.Length ?? 0)
                 is not { IsInterface: true } declaring) continue;
             var tokens = declaring.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)

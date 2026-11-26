@@ -37,8 +37,9 @@ static partial class CovariantInterfaceReturnBridge
             foreach (var declaration in file.Types.OrEmpty())
                 if (declaration.Name.HasValue) definitions[declaration.Name.Value] = new(file, declaration);
         var bridged = new HashSet<SourceBridgedSlot>(new SourceSlotComparer());
+        var hierarchy = new Lazy<Dictionary<string, SupertypeGraph.Def>>(() => SupertypeGraph.CollectSource(roots));
         foreach (var owner in definitions.Values.Where(value => value.Kind is "class" or "interface"))
-            ApplySourceOwner(owner, definitions, refs, isValue, representations, sourceParameters, bridged, onMaterialized, metadataBuild);
+            ApplySourceOwner(owner, definitions, refs, isValue, representations, sourceParameters, bridged, onMaterialized, metadataBuild, hierarchy);
         return bridged;
     }
 
@@ -49,7 +50,8 @@ static partial class CovariantInterfaceReturnBridge
     static void ApplySourceOwner(SourceDefinition owner, IReadOnlyDictionary<string, SourceDefinition> definitions,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters, ISet<SourceBridgedSlot> bridged,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild,
+        Lazy<Dictionary<string, SupertypeGraph.Def>> hierarchy)
     {
         if (!owner.Declaration.Methods.HasValue) return;
         var bridges = new Dictionary<SourceBridgedSlot, BirFunctionDeclaration>(new SourceSlotComparer());
@@ -108,7 +110,7 @@ static partial class CovariantInterfaceReturnBridge
             }
         }
         ApplySourceReferenced(owner, definitions, refs, isValue, representations, sourceParameters,
-            bridges, bridged, ref ordinal, onMaterialized, metadataBuild);
+            bridges, bridged, ref ordinal, onMaterialized, metadataBuild, hierarchy);
     }
 
     static void PublishSourceBridge(SourceDefinition owner, BirFunctionDeclaration bridge,
@@ -131,7 +133,8 @@ static partial class CovariantInterfaceReturnBridge
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
         Dictionary<SourceBridgedSlot, BirFunctionDeclaration> bridges, ISet<SourceBridgedSlot> bridged, ref int ordinal,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild,
+        Lazy<Dictionary<string, SupertypeGraph.Def>> hierarchy)
     {
         if (refs == null) return;
         var ownArguments = owner.OwnArguments;
@@ -213,6 +216,13 @@ static partial class CovariantInterfaceReturnBridge
                         refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
                         nullableFrames: refs.NullableTypeFrames, leftReturnsValue: !suspend && declaration.ReturnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
+                TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
+                    refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);
+                if (owner.Kind == "class" && hierarchy.Value.TryGetValue(owner.Name, out var cls)
+                    && KotlinOverrideSlotBridge.HasExplicitNativeBaseMapping(cls, hierarchy.Value, refs, Physical,
+                        descriptorOwner, descriptorMember, arity, slotParameters, slotReturn)
+                    && !KotlinOverrideSlotBridge.ReachesFromDeclaredPhysicalInterface(cls, descriptorOwner,
+                        hierarchy.Value, refs, isValue, null)) continue;
                 var key = SourceBridgeKey(implementation, arity,
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declarationParameters, physicalArguments),
                     slotParameters, slotReturn, valueReturn, refs, isValue);

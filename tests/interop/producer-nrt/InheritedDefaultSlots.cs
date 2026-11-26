@@ -6,6 +6,14 @@ using System.Reflection.PortableExecutable;
 namespace InheritedDefaultSlots;
 
 public interface IValue { int Read() => 1; }
+public interface IDefaultChannel<T> { object Read(T key) => "default"; }
+public class ExplicitDefaultBase<T> : IDefaultChannel<T> {
+    object IDefaultChannel<T>.Read(T key) => "explicit";
+    public virtual object Read(T key) => "base";
+}
+public class NewDefaultNamesake : ExplicitDefaultBase<string> {
+    public new virtual object Read(string key) => "new";
+}
 public class DefaultBase : IValue { }
 public class IntroducesVirtualBody : DefaultBase { public virtual int Read() => 70; }
 public class VirtualBase : IValue { public virtual int Read() => 2; }
@@ -28,6 +36,8 @@ public class ExplicitChannel : IChannel<string> {
 
 public static class Driver
 {
+    public static object ReadDefaultChannel(IDefaultChannel<string> channel) => channel.Read("x");
+    public static object ReadDefaultBase(ExplicitDefaultBase<string> instance) => instance.Read("x");
     public static int ReadChannel(IChannel<string> channel) => channel.Read("x");
     public static int ReadText(ITextChannel channel) => channel.Read("x");
     public static int ReadProperty(IWithProperty instance) => instance.Value;
