@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Files sharing a Kotlin CLR facade can now both capture mutable locals of the same type without generating duplicate storage fields (#1957).
+
 ## 0.9.34 (2026-11-25)
 
 - Fixed a race in `dll2klib` when importing virtual methods from multiple namespaces in parallel (#1978).
