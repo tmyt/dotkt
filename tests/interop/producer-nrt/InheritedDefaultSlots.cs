@@ -12,10 +12,29 @@ public class VirtualBase : IValue { public virtual int Read() => 2; }
 public interface IWithProperty { int Read() => 1; int Value => 1; }
 public class WithProperty : IWithProperty { public int Value => 2; }
 
+public interface IChannel<T> { int Count { get; } int Read(T key); }
+public interface ITextChannel : IChannel<string> {}
+public class Channel<T> : IChannel<T> {
+    public virtual int Count => 10;
+    public virtual int Read(T key) => 11;
+}
+public class TextChannel : Channel<string> {}
+public class HiddenChannel : TextChannel { public new virtual int Read(string key) => 12; }
+
 public static class Driver
 {
     public static int ReadProperty(IWithProperty instance) => instance.Value;
     public static int ReadInterface(IValue instance) => instance.Read();
+    public static bool CheckChannel(ITextChannel inherited, ITextChannel hidden)
+    {
+        var type = inherited.GetType();
+        using var stream = System.IO.File.OpenRead(type.Assembly.Location);
+        using var pe = new PEReader(stream);
+        var def = pe.GetMetadataReader().GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.EntityHandle(type.MetadataToken));
+        return def.GetMethodImplementations().Count == 0
+            && type.GetInterfaceMap(typeof(IChannel<string>)).TargetMethods.All(m => m.DeclaringType == typeof(Channel<string>))
+            && inherited.Count == 10 && inherited.Read("x") == 11 && hidden.Count == 10 && hidden.Read("x") == 12;
+    }
     public static bool Check(IValue inherited, IValue replaced)
     {
         if (inherited.Read() != 2 || replaced.Read() != 3) return false;

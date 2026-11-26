@@ -242,6 +242,18 @@ static partial class KotlinOverrideSlotBridge
             ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                 Phase.PhysicalBridges, isValue, context.Annotation);
             var needsSignature = fit.Parameters.Contains(Fit.Bridge) || fit.Return == Fit.Bridge;
+            if (!needsSignature && selectedBody is { IsDefault: false, MetadataToken: not 0 } && reimplements
+                && slot.Referenced && definition.Base is {} parent && !defs.ContainsKey(parent.Name)
+                && !owner.Methods.Any(m => {
+                    m.Property(out var property, out var accessor);
+                    return !m.Static && m.Arity == implementation.Arity && m.Parameters.Length == slot.Parameters.Length
+                        && ((m.ExplicitClrName ?? m.Name) == slot.DescriptorMember || property != null && accessor != null
+                            && KotlinPropertyAccessors.PhysicalName(property, accessor) == slot.DescriptorMember);
+                })
+                && context.Physical(parent) is TypeNode.Fqn nativeBase && context.Physical(selectedBody.Owner) is TypeNode.Fqn bodyOwner
+                && context.Physical(slot.DescriptorSpec) is TypeNode.Fqn face
+                && refs.InheritsNativeInterfaceBody(nativeBase, bodyOwner, selectedBody.MetadataToken, face, slot.DescriptorMember, implementation.Arity,
+                    (slot.Signature ?? slot.Parameters).Select(context.Physical).ToArray(), context.Physical(slot.Return))) return;
             var needsProperty = slot.IsInterface && slot.PropertyAccessor != null && slot.DescriptorMember != implementation.Name
                 && (definition.Kind != "class" || reimplements || inheritedDefault);
             var needsInterface = slot.IsInterface && (selectedBody != null
