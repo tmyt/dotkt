@@ -406,16 +406,17 @@ static partial class KotlinOverrideSlotBridge
     static TypeNode[] ClassOwnArgs(Def def) =>
         Enumerable.Range(0, def.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
 
-    internal static bool HasExplicitNativeBaseMapping(Def owner, IReadOnlyDictionary<string, Def> defs,
+    internal static bool HasNativeBaseMapping(Def owner, IReadOnlyDictionary<string, Def> defs,
         ReferenceMetadataIndex refs, Func<TypeNode, TypeNode> physical, TypeNode.Fqn slot, string member,
-        int arity, TypeNode[] parameters, TypeNode result)
+        int arity, TypeNode[] parameters, TypeNode result, System.Reflection.MethodInfo selected = null)
     {
         if (owner.Base == null || physical(slot) is not TypeNode.Fqn face) return false;
         var signature = parameters.Select(physical).ToArray();
         var ret = physical(result);
         return SupertypeGraph.ReachableFromClass(owner.Base, defs, refs).Any(edge => !edge.isInterface
             && !defs.ContainsKey(edge.spec.Name) && physical(edge.spec) is TypeNode.Fqn nativeBase
-            && refs.DeclaresExplicitInterfaceSlot(nativeBase, face, member, arity, signature, ret));
+            && (refs.DeclaresExplicitInterfaceSlot(nativeBase, face, member, arity, signature, ret)
+                || selected != null && refs.MapsPublicInterfaceMethod(nativeBase, face, selected)));
     }
 
     static string SafeName(string name) => new(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());

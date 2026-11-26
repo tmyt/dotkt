@@ -8,7 +8,8 @@ static partial class KotlinOverrideSlotBridge
         bool Referenced, bool HasDefault, string IdentityName, string DescriptorMember, string PropertyAccessor,
         TypeNode[] Parameters, TypeNode Return, OverrideMethod Implementation, BirTypeParameter[] TypeParameters,
         bool UnitValueReturn = false, TypeNode[] Signature = null, string ReferenceMember = null,
-        TypeNode SemanticReturn = null, OverrideMethod SelectedLocal = null, string SelectedReferencedDeclarationId = null);
+        TypeNode SemanticReturn = null, OverrideMethod SelectedLocal = null, string SelectedReferencedDeclarationId = null,
+        System.Reflection.MethodInfo NativeInterfaceMethod = null);
 
     static string SelectedSlotKey(SelectedSlot slot)
     {
@@ -596,7 +597,8 @@ static partial class KotlinOverrideSlotBridge
                     !descriptorIsInterface && refs.HasDotKtOwner(selectedSpec.Name) ? selectedPhysicalMember : null,
                     nativeOwner != null && !descriptorIsInterface && slotRet0 != null
                         ? SupertypeGraph.SubstOwnerTvs(slotRet0, selectedArgs) : null,
-                    SelectedReferencedDeclarationId: selectedClassDeclaration?.DeclarationId ?? o.DeclarationId));
+                    SelectedReferencedDeclarationId: selectedClassDeclaration?.DeclarationId ?? o.DeclarationId,
+                    NativeInterfaceMethod: selectedInterfaceMethod));
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
                 // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
                 // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their

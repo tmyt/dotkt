@@ -227,9 +227,9 @@ static partial class KotlinOverrideSlotBridge
             var inheritedDefault = slot.IsInterface && definition.Kind == "class" && !reimplements
                 && slot.HasDefault && (selectedBody?.IsDefault != false || slot.Referenced
                     && refs.IntroducesBodyOutsideInterfaceMap(selectedBody.Owner, selectedBody.MetadataToken, slot.DescriptorSpec));
-            if (inheritedDefault && slot.Referenced && HasExplicitNativeBaseMapping(definition, defs, refs,
+            if (inheritedDefault && slot.Referenced && HasNativeBaseMapping(definition, defs, refs,
                     context.Physical, slot.DescriptorSpec, slot.DescriptorMember, implementation.Arity,
-                    slot.Signature ?? slot.Parameters, slot.Return))
+                    slot.Signature ?? slot.Parameters, slot.Return, slot.NativeInterfaceMethod))
                 inheritedDefault = false;
             if (slot.IsInterface && definition.Kind == "class" && !reimplements && !inheritedDefault) return;
             var typeParameters = SubstituteParameters(slot.TypeParameters, slot.SemanticSpec.Args ?? []);

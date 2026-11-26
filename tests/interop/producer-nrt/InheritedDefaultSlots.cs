@@ -11,6 +11,12 @@ public interface IOverloadedReader<T> {
     int Read(string? value) => 2;
 }
 public class IntReader : IOverloadedReader<int> { }
+public class MappedReader : IOverloadedReader<int> {
+    public virtual int Read(string? value) => 3;
+}
+public class HiddenReader : MappedReader {
+    public new virtual int Read(string? value) => 4;
+}
 public interface IDefaultChannel<T> {
     object Read(T key) => "default";
     int Tick() => 11;

@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Overriding one inherited CLR default interface member in Kotlin preserves the native base's explicit implementation of its other members (#2013).
+- Kotlin overrides of an overloaded CLR interface default now dispatch through the constructed interface without redirecting its other overloads (#2021).
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).
 - Implementing a derived CLR interface no longer adds private forwarding methods for inherited slots already implemented by the selected native base method (#1984).
 - Kotlin callbacks returning `Unit` can be passed to wide CLR delegates that require a `kotlin.Unit` return value, as well as delegates returning `void` (#1946).
