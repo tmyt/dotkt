@@ -1,4 +1,6 @@
 import InheritedDefaultSlots.DefaultBase
+import InheritedDefaultSlots.IntReader
+import InheritedDefaultSlots.HiddenReader
 import InheritedDefaultSlots.Driver
 import InheritedDefaultSlots.IntroducesVirtualBody
 import InheritedDefaultSlots.VirtualBase
@@ -15,6 +17,8 @@ import InheritedDefaultSlots.SlotFamily
 import NUnit.Framework.TestAttribute
 
 private class InheritVirtualBody : VirtualBase()
+private class ReadTextOverride : IntReader() { override fun Read(value: String?): Int = 9 }
+private class ReadNumberOverride : HiddenReader() { override fun Read(value: Int): Int = 8 }
 private class PreserveExplicitDefault : ExplicitDefaultBase<String>() {
     override fun Read(key: String): Any = "exact"
 }
@@ -60,6 +64,10 @@ class InheritedDefaultSlotTests {
     @TestAttribute
     fun inheritedAndReimplementedInterfaceMaps() {
         check(Driver.Check(InheritVirtualBody(), ReplaceInterfaceBody()))
+        val reader = ReadTextOverride()
+        check(reader.Read("x") == 9 && Driver.ReadTextValue(reader) == 9 && Driver.ReadNumber(reader) == 1)
+        val hiddenReader = ReadNumberOverride()
+        check(hiddenReader.Read("x") == 4 && Driver.ReadTextValue(hiddenReader) == 3 && Driver.ReadNumber(hiddenReader) == 8)
         val generic = GenericReplacement<String>()
         check(generic.Read() == 9 && Driver.ReadInterface(generic) == 9)
         val result = GenericCovariant<String>()

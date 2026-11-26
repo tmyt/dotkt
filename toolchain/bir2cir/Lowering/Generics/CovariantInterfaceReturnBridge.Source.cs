@@ -222,7 +222,7 @@ static partial class CovariantInterfaceReturnBridge
                 TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
                     refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);
                 if (owner.Kind == "class" && hierarchy.Value.TryGetValue(owner.Name, out var cls)
-                    && KotlinOverrideSlotBridge.HasExplicitNativeBaseMapping(cls, hierarchy.Value, refs, Physical,
+                    && KotlinOverrideSlotBridge.HasNativeBaseMapping(cls, hierarchy.Value, refs, Physical,
                         descriptorOwner, descriptorMember, arity, slotParameters, slotReturn)
                     && !KotlinOverrideSlotBridge.ReachesFromDeclaredPhysicalInterface(KotlinOverrideSlotBridge.DeclaredFaces(cls, owner.Carrier), descriptorOwner,
                         hierarchy.Value, refs, isValue, null)) continue;
