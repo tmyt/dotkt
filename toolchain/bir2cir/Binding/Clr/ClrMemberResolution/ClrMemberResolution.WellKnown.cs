@@ -134,6 +134,15 @@ static partial class ClrMemberResolution
         out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn,
         TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null, TypeNode[] emittedOwnerArgs = null)
+        => ResolveAliasedInterfaceMethodByShape(bindingLocalTypes, refs, physicalOwner, member, methodArity, wantedParams,
+            wantedShape, out declarationOwner, out declarationMember, out declarationParams, out declarationReturn,
+            selectionOwnerArgs, wantedReturn, emittedOwnerArgs) != null;
+
+    internal static MethodInfo ResolveAliasedInterfaceMethodByShape(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex refs,
+        TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams, string wantedShape,
+        out TypeNode.Fqn declarationOwner, out string declarationMember,
+        out TypeNode[] declarationParams, out TypeNode declarationReturn,
+        TypeNode[] selectionOwnerArgs = null, TypeNode wantedReturn = null, TypeNode[] emittedOwnerArgs = null)
     {
         declarationOwner = null;
         declarationMember = null;
@@ -141,7 +150,7 @@ static partial class ClrMemberResolution
         declarationReturn = null;
         refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var open = ResolveOwnerType(physicalOwner, refs: refs) ?? refs.PhysicalTypeNamed(physicalOwner.Name);
-        if (open == null || !open.IsInterface) return false;
+        if (open == null || !open.IsInterface) return null;
         var ownerArgs = physicalOwner.Args ?? Array.Empty<TypeNode>();
         var slotComparer = new InterfaceSlotTypeComparer(refs);
         var candidates = new List<InterfaceCandidate>();
@@ -190,14 +199,14 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException(
                 $"bir2cir: aliased interface slot '{physicalOwner.Name}.{member}`{methodArity}' resolves to "
                 + $"{distinct.Count} declarations with the requested parameter vector");
-        if (distinct.Count == 0) return false;
+        if (distinct.Count == 0) return null;
         var selected = distinct[0];
         declarationOwner = selected.Reference.DeclaringType as TypeNode.Fqn;
-        if (declarationOwner == null) return false;
+        if (declarationOwner == null) return null;
         declarationMember = selected.Reference.Name;
         declarationParams = selected.Parameters;
         declarationReturn = selected.Return;
-        return true;
+        return selected.Method;
     }
 
 

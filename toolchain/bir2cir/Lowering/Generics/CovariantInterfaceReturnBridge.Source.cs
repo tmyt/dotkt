@@ -13,9 +13,10 @@ static partial class CovariantInterfaceReturnBridge
             System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Implementation), value.Descriptor);
     }
 
-    sealed class SourceDefinition(BirFileDeclaration file, IBirTypeDeclaration declaration)
+    sealed class SourceDefinition(BirFileDeclaration file, IBirTypeDeclaration declaration, string carrier)
     {
         internal BirFileDeclaration File => file;
+        internal string Carrier => carrier;
         internal IBirTypeDeclaration Declaration => declaration;
         internal string Name => declaration.Name.OrDefault();
         internal string Kind => declaration.Kind.OrDefault();
@@ -28,14 +29,16 @@ static partial class CovariantInterfaceReturnBridge
     internal static IReadOnlySet<SourceBridgedSlot> ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized = null, bool metadataBuild = false)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized = null, bool metadataBuild = false,
+        IReadOnlyDictionary<string, string> localCarriers = null)
     {
         // The late hierarchy is last-declaration-wins, with the actual flat
         // file inventory. Appended adapters do not enter this captured view.
         var definitions = new Dictionary<string, SourceDefinition>(StringComparer.Ordinal);
         foreach (var file in roots)
             foreach (var declaration in file.Types.OrEmpty())
-                if (declaration.Name.HasValue) definitions[declaration.Name.Value] = new(file, declaration);
+                if (declaration.Name.HasValue) definitions[declaration.Name.Value] = new(file, declaration,
+                    localCarriers?.GetValueOrDefault(declaration.Name.Value));
         var bridged = new HashSet<SourceBridgedSlot>(new SourceSlotComparer());
         var hierarchy = new Lazy<Dictionary<string, SupertypeGraph.Def>>(() => SupertypeGraph.CollectSource(roots));
         foreach (var owner in definitions.Values.Where(value => value.Kind is "class" or "interface"))
@@ -219,9 +222,9 @@ static partial class CovariantInterfaceReturnBridge
                 TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
                     refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);
                 if (owner.Kind == "class" && hierarchy.Value.TryGetValue(owner.Name, out var cls)
-                    && KotlinOverrideSlotBridge.HasExplicitNativeBaseMapping(cls, hierarchy.Value, refs, Physical,
+                    && KotlinOverrideSlotBridge.HasNativeBaseMapping(cls, hierarchy.Value, refs, Physical,
                         descriptorOwner, descriptorMember, arity, slotParameters, slotReturn)
-                    && !KotlinOverrideSlotBridge.ReachesFromDeclaredPhysicalInterface(cls, descriptorOwner,
+                    && !KotlinOverrideSlotBridge.ReachesFromDeclaredPhysicalInterface(KotlinOverrideSlotBridge.DeclaredFaces(cls, owner.Carrier), descriptorOwner,
                         hierarchy.Value, refs, isValue, null)) continue;
                 var key = SourceBridgeKey(implementation, arity,
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declarationParameters, physicalArguments),
