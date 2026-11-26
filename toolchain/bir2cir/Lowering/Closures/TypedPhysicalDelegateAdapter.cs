@@ -38,9 +38,20 @@ sealed class TypedPhysicalDelegateAdapter
     internal IBirExpression AdaptFunctionView(BirFileDeclaration document, IBirExpression view, TypeNode.Fn selected,
         TypeNode.Fqn slot, TypeNode.Fn knownView = null, bool nativeSource = false)
     {
-        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural, nativeSource);
+        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural, out var compatible, nativeSource);
         if (plan == null) return new BirCast { Type = slot, E = OptionalField<IBirExpression>.Of(view) };
-        return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural);
+        return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural, compatible);
+    }
+
+    internal IBirExpression ImportNestedFunction(BirFileDeclaration document, IBirExpression operand,
+        TypeNode.Fn selected, TypeNode physical, TypeNode.Fqn destination = null)
+    {
+        if (ClrMemberResolution.ReturnedFunctionType(selected) is not { Suspend: false }
+            || physical is not TypeNode.Fqn source
+            || ClrMemberResolution.PhysicalFunctionShape(references, source) is not {} native) return null;
+        var ordinary = ClrMemberResolution.OrdinarySlot(native, localTypes, references);
+        if (destination != null && !ClrMemberResolution.SameInterfaceSlotType(destination, ordinary)) return null;
+        return AdaptFunctionView(document, operand, selected, ordinary, native, nativeSource: true);
     }
 
     internal IBirExpression AdaptNominalValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
@@ -54,7 +65,7 @@ sealed class TypedPhysicalDelegateAdapter
     }
 
     IBirExpression AdaptValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
-        TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view)
+        TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view, TypeNode.Fqn compatible = null)
     {
         var temporary = declarations.FreshValueTemporary();
         BirLocal Read() => new BirLocal { Name = temporary };
@@ -82,8 +93,8 @@ sealed class TypedPhysicalDelegateAdapter
                 },
                 // CLR covariance can make the outer delegate assignable while
                 // its Invoke still returns a native rather than a Kotlin callable.
-                Then = Null(), Else = (view == null && plan.NominalSource == null) || plan.ResultFunction?.NativeSource == true ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
-                    Type = target, Cond = new BirIsInstance { Type = slot, E = Read() },
+                Then = Null(), Else = view == null && plan.NominalSource == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
+                    Type = target, Cond = new BirIsInstance { Type = compatible ?? slot, E = Read() },
                     Then = new BirCast { Type = slot, E = Read() }, Else = adapted }),
             },
         };

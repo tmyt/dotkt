@@ -18,19 +18,26 @@ static partial class ClrMemberResolution
         => test(ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location }));
 
     internal static DelegateAdapterPlan FunctionViewPlan(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes,
-        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural, bool nativeSource = false)
+        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural, out TypeNode.Fqn compatible, bool nativeSource = false)
     {
         var view = knownView ?? FunctionValueRepresentation.OrdinaryView(selected, references.IsByRefLikeFqn);
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
+        compatible = slot;
         if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
         var target = PhysicalFunctionShape(references, slot, includeNominal: true);
         var result = ReturnedFunctionType(selected);
         TypeNode.Fqn ordinaryResult = null;
-        if (nativeSource && result is { Suspend: false } && PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret)) != null)
+        if (nativeSource && result is { Suspend: false } && PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret)) is {} nested)
         {
-            var ordinary = FunctionValueRepresentation.OrdinaryView(result, references.IsByRefLikeFqn);
-            ordinaryResult = BirTypeLowering.DelegateFqnOf((TypeNode.Fn)BirTypeLowering.LowerFnDelegate(
-                ordinary, DelegatePhysicalContext(localTypes, references), false));
+            ordinaryResult = OrdinarySlot(nested, localTypes, references);
+            TypeNode.Fqn CompatibleResult(TypeNode.Fn shape, TypeNode.Fn exact, TypeNode.Fqn plain)
+            {
+                // Test the closed chain, rather than just its erased outer result (object).
+                // CLR variance can then retain the original value whenever every Invoke fits.
+                return ReturnedFunctionType(shape) is {} next && PhysicalFunctionShape(references, DelegateSlotCore(exact.Ret)) is {} nextExact
+                    ? WithResult(plain, CompatibleResult(next, nextExact, OrdinarySlot(nextExact, localTypes, references))) : plain;
+            }
+            compatible = WithResult(slot, CompatibleResult(result, nested, ordinaryResult));
         }
         var plan = ReturnedFunctionPlan(references, result, natural, target, ordinaryResult);
         if (plan != null && !nativeSource) return plan;
@@ -39,6 +46,13 @@ static partial class ClrMemberResolution
                 && TypedPhysicalValueCoercion.MayHoldArray(natural.Ret, references),
             PublishArguments = nativeSource && natural.DelegateParams.Any(t => TypedPhysicalValueCoercion.MayHoldArray(t, references)) };
     }
+
+    static TypeNode.Fqn WithResult(TypeNode.Fqn slot, TypeNode result) =>
+        slot with { Args = [.. slot.Args[..^1], result] };
+
+    internal static TypeNode.Fqn OrdinarySlot(TypeNode.Fn physical, IReadOnlySet<string> locals, ReferenceMetadataIndex refs) =>
+        BirTypeLowering.DelegateFqnOf((TypeNode.Fn)BirTypeLowering.LowerFnDelegate(
+            FunctionValueRepresentation.OrdinaryView(physical, refs.IsByRefLikeFqn), DelegatePhysicalContext(locals, refs), false));
 
     internal static TypeNode.Fn FunctionTypeOf(TypeNode type) => DelegateSlotCore(type) as TypeNode.Fn;
     internal static TypeNode.Fn ReturnedFunctionType(TypeNode.Fn function) => FunctionTypeOf(function?.Ret);
@@ -60,7 +74,8 @@ static partial class ClrMemberResolution
                 if (type is TypeNode.Nullable n) return n with { Of = Bind(n.Of) };
                 if (type is TypeNode.Oblivious o) return o with { Of = Bind(o.Of) };
                 if (type is TypeNode.ByRef b) return b with { Of = Bind(b.Of) };
-                if (type is TypeNode.Fqn { Args: not null } f && references.IsClrDelegate(f))
+                if (type is TypeNode.Fqn { Args: not null } f && (f == resultSlot ||
+                    references.IsClrDelegate(f) && PhysicalFunctionShape(references, f) != null))
                     return f with { Args = f.Args.Select(Bind).ToArray() };
                 var open = false;
                 BirGraphNameFields.VisitTypeNodes(type, part => open |= part is TypeNode.Tv);
@@ -74,7 +89,7 @@ static partial class ClrMemberResolution
             var ret = (TypeNode.Fqn)Bind(resultSlot);
             var source = PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret));
             var nested = new ReturnedFunction((TypeNode.Fn)Bind(result), ret, (TypeNode.Fn)Bind(source), ordinaryResult != null);
-            return new(frame, parameters.Length, Bind(target.Ret), parameters, captures.Count, captures.ToArray(), ResultFunction: nested);
+            return new(frame, parameters.Length, ordinaryResult == null ? ret : Bind(target.Ret), parameters, captures.Count, captures.ToArray(), ResultFunction: nested);
         }
         return null;
     }

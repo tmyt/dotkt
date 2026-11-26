@@ -365,8 +365,10 @@ static class TypedPhysicalValueCoercion
             && Underlying(target) is TypeNode.Fqn slot && !index.ReferenceBuild)
         {
             var operand = Graph(value);
-            var physical = PhysicalResult(operand, scope, index);
+            var physical = PhysicalResult(operand, scope, index) ?? ExprType(operand, scope, index);
             if (physical is TypeNode.Fqn exact && ClrMemberResolution.SameInterfaceSlotType(exact, slot)) return value;
+            if (index.DelegateAdapters?.ImportNestedFunction(index.Document, value, SelectedFunctionResult(operand), physical, slot) is {} imported)
+                return imported;
             var source = physical is TypeNode.Fqn && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native
                 ? native : ExprType(operand, scope, index);
             if (Underlying(source) is TypeNode.Fn { Suspend: false } function
@@ -473,6 +475,10 @@ static class TypedPhysicalValueCoercion
     {
         if (index.References == null || index.ReferenceBuild || value == null || source == null) return null;
         var from = Underlying(source); var to = Underlying(target);
+        if ((to is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } or TypeNode.Tv)
+            && value is IBirExpression produced && index.DelegateAdapters?.ImportNestedFunction(index.Document,
+                produced, SelectedFunctionResult(value), from) is {} imported)
+            return to is TypeNode.Tv ? FunctionViewOperand(Graph(imported), Object, target, index) : Graph(imported);
         // A native member projected as a Kotlin function still returns its exact
         // CLR delegate. Use the same callable view for storage and for type tests;
         // a nominal CLR delegate is not implicitly a Kotlin function of like arity.
