@@ -23,6 +23,11 @@ interface LocalDefault : NominalFactory<Concrete>, JointFactory<Concrete> {
 }
 class LocalFactory : LocalDefault
 
+open class GenericParent<C> : JointFactory<Concrete> {
+    override fun <A : Concrete> make(): Any = "generic"
+    override fun <A : Concrete> select(value: A): A = value
+}
+
 interface LeftFactory<K> where K : Base, K : ILeft { fun <A : K> make(): Any }
 interface RightFactory<K> where K : Base, K : IRight { fun <A : K> make(): Any }
 interface DefaultFactory<K : ILeft> { fun <A : K> make(): Any = "default" }

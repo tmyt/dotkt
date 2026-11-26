@@ -30,6 +30,9 @@ class SelectedMethodBoundsTests {
         val imported = ImportedFactory()
         checkViews(local, local)
         checkViews(imported, imported)
+        val parent: GenericParent<*> = GenericParent<String>()
+        val joint: JointFactory<Concrete> = parent
+        check(joint.make<Item>() == "generic" && parent.make<Item>() == "generic")
         val factory = FacetFactory()
         val left: LeftFactory<Concrete> = factory
         val right: RightFactory<Concrete> = factory
