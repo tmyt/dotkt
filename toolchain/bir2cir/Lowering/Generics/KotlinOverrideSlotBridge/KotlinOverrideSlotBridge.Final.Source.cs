@@ -277,8 +277,7 @@ static partial class KotlinOverrideSlotBridge
                 // Implicit name matching need not replace an existing explicit base map,
                 // even when the new interface inherits the exact selected slot.
                 || definition.Kind == "class" && reimplements && (slot.DescriptorMember != implementation.Name
-                    || slot.Referenced && IsNativeSlotOwner(slot.DescriptorSpec.Name, defs, refs.HasDotKtOwner)
-                        && ReintroducesBaseFace(slot.DescriptorSpec))
+                    || slot.Referenced && ReintroducesBaseFace(slot.DescriptorSpec))
                 || definition.Kind == "class" && inheritedDefault);
             var needsBase = !slot.IsInterface && !slot.Referenced && slot.DescriptorMember != implementation.Name;
             if (!needsSignature && definition.Kind == "class" && selectedBody == null
