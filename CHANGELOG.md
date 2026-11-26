@@ -19,6 +19,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Direct CLR constructor calls now adapt stored Kotlin functions to the selected delegate parameter (#1952).
 - Kotlin subclasses can iterate CLR base classes that implement non-generic `IEnumerable` without declaring their own `iterator()` (#1985).
 - A Kotlin override now receives calls through a reimplemented CLR interface even when a base class explicitly implemented its inherited slot (#2007).
+- Overriding a CLR class method in Kotlin no longer replaces the base class's explicit interface implementation just because the interface also declares a default body (#2011).
 
 ## 0.9.34 (2026-11-25)
 

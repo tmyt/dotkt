@@ -1046,15 +1046,13 @@ static class ReferenceMetadataReader
         }
     }
 
-    internal sealed record NativeDefaultDeclaration(TypeNode.Fqn Owner, string Member, MethodSignature<TypeNode> Signature);
+    internal sealed record NativeImplementationDeclaration(string Scope, string TypeName, TypeNode.Fqn Owner,
+        string Member, MethodSignature<TypeNode> Signature);
 
-    internal static NativeDefaultDeclaration[] NativeInterfaceDefaults(Type provider)
+    internal static NativeImplementationDeclaration[] NativeImplementations(MetadataReader reader, Type provider)
     {
-        using var stream = File.OpenRead(provider.Module.FullyQualifiedName);
-        using var pe = new PEReader(stream);
-        var reader = pe.GetMetadataReader();
         var definition = reader.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(provider.MetadataToken));
-        var result = new List<NativeDefaultDeclaration>();
+        var result = new List<NativeImplementationDeclaration>();
         foreach (var handle in definition.GetMethodImplementations())
         {
             var impl = reader.GetMethodImplementation(handle);
@@ -1063,7 +1061,10 @@ static class ReferenceMetadataReader
             if ((body.Attributes & (MethodAttributes.Abstract | MethodAttributes.Static)) != 0) continue;
             if (TryMethodImplMember(reader, impl.MethodDeclaration, out var parent, out var member)
                 && NativeSignatureReader.Type(reader, parent) is TypeNode.Fqn owner)
-                result.Add(new(owner, member, NativeSignatureReader.Declaration(reader, impl.MethodDeclaration)));
+            {
+                var (scope, name) = NominalMetadataOwner(reader, parent);
+                result.Add(new(scope, name, owner, member, NativeSignatureReader.Declaration(reader, impl.MethodDeclaration)));
+            }
         }
         return result.ToArray();
     }
@@ -2978,18 +2979,22 @@ static class ReferenceMetadataReader
         foreach (var handle in row.GetInterfaceImplementations())
         {
             var edge = reader.GetInterfaceImplementation(handle).Interface;
-            var head = edge;
-            if (head.Kind == HandleKind.TypeSpecification)
-            {
-                var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)head).Signature);
-                var code = blob.ReadSignatureTypeCode();
-                if (code == SignatureTypeCode.GenericTypeInstance) code = blob.ReadSignatureTypeCode();
-                if (code != SignatureTypeCode.TypeHandle) throw new InvalidDataException("InterfaceImpl has no nominal declaration");
-                head = blob.ReadTypeHandle();
-            }
-            var (scope, name) = DotKt.Toolchain.RawSignatureTypeProvider<object>.NominalLeaf(reader, head);
+            var (scope, name) = NominalMetadataOwner(reader, edge);
             yield return (scope, name, (TypeNode.Fqn)NativeSignatureReader.Type(reader, edge));
         }
+    }
+
+    static (string Scope, string Name) NominalMetadataOwner(MetadataReader reader, EntityHandle head)
+    {
+        if (head.Kind == HandleKind.TypeSpecification)
+        {
+            var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)head).Signature);
+            var code = blob.ReadSignatureTypeCode();
+            if (code == SignatureTypeCode.GenericTypeInstance) code = blob.ReadSignatureTypeCode();
+            if (code != SignatureTypeCode.TypeHandle) throw new InvalidDataException("Expected nominal metadata owner");
+            head = blob.ReadTypeHandle();
+        }
+        return DotKt.Toolchain.RawSignatureTypeProvider<object>.NominalLeaf(reader, head);
     }
 
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>

@@ -7,9 +7,13 @@ import InheritedDefaultSlots.ITextChannel
 import InheritedDefaultSlots.TextChannel
 import InheritedDefaultSlots.HiddenChannel
 import InheritedDefaultSlots.ExplicitChannel
+import InheritedDefaultSlots.ExplicitDefaultBase
 import NUnit.Framework.TestAttribute
 
 private class InheritVirtualBody : VirtualBase()
+private class PreserveExplicitDefault : ExplicitDefaultBase() {
+    override fun Read(key: String): Int = 8
+}
 private class InheritChannel : TextChannel(), ITextChannel
 private class UseNewVirtualSlot : HiddenChannel(), ITextChannel
 private class ReimplementChannel : ExplicitChannel(), ITextChannel {
@@ -31,6 +35,8 @@ class InheritedDefaultSlotTests {
     @TestAttribute
     fun inheritedAndReimplementedInterfaceMaps() {
         check(Driver.Check(InheritVirtualBody(), ReplaceInterfaceBody()))
+        val explicit = PreserveExplicitDefault()
+        check(explicit.Read("x") == 8 && Driver.ReadDefaultChannel(explicit) == 4)
         check(Driver.CheckChannel(InheritChannel(), UseNewVirtualSlot()))
         val authored = ReimplementChannel()
         check(authored.Read("x") == 7 && Driver.ReadChannel(authored) == 7 && Driver.ReadText(authored) == 7)

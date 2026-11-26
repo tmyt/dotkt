@@ -8,6 +8,28 @@ sealed partial class ReferenceMetadataIndex
     // The interface closure is independent of the member under consideration.
     readonly Dictionary<Type, (ILookup<Type, TypeNode.Fqn> Edges, HashSet<Type> Ambiguous)> _nativeInterfaceEdges = new();
 
+    internal bool DeclaresExplicitInterfaceSlot(TypeNode.Fqn owner, TypeNode.Fqn face, string member,
+        int arity, TypeNode[] parameters, TypeNode result)
+    {
+        if (ClrMemberResolution.ResolveOwnerType(owner, this) is not { IsInterface: false } type
+            || ClrMemberResolution.ResolveOwnerType(face, this) is not { IsInterface: true } target) return false;
+        TypeNode Key(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, this);
+        var actual = owner.Args ?? [];
+        foreach (var row in ConcreteMethodImpls(type))
+        {
+            if (row.Member != member || row.Signature.GenericParameterCount != arity
+                || row.Signature.ParameterTypes.Length != parameters.Length || row.TypeName != target.FullName
+                || row.Scope != target.Assembly.FullName && !_universe.SameDefinition(row.TypeName, row.Scope, target.Assembly.FullName))
+                continue;
+            var declared = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(row.Owner, actual);
+            if (Key(declared) != Key(face)) continue;
+            TypeNode Close(TypeNode t) => Key(SupertypeGraph.SubstOwnerTvs(t, declared.Args ?? []));
+            if (Close(row.Signature.ReturnType) == Key(result)
+                && row.Signature.ParameterTypes.Select(Close).SequenceEqual(parameters.Select(Key))) return true;
+        }
+        return false;
+    }
+
     // A new derived interface does not replace the base's existing mapping of
     // its parent. Elide a forwarder only if its selected MethodDef is in the
     // same virtual slot as the native implicit implementation. On ambiguity
