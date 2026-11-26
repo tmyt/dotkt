@@ -165,8 +165,9 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         var parameters = CloneParameters();
         foreach (var p in parameters)
             if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
-        return new(parameters, Facets.Select((f, i) => f with { Bound = SupertypeGraph.SubstOwnerTvs(f.Bound, arguments),
-            Evidence = parameters[PrimaryArity + i].Constraints.OrEmpty() }).ToArray(), AddressOperands) { NativeIndices = NativeIndices };
+        return this with { Parameters = parameters, Facets = Facets.Select((f, i) => f with {
+            Bound = SupertypeGraph.SubstOwnerTvs(f.Bound, arguments),
+            Evidence = parameters[PrimaryArity + i].Constraints.OrEmpty() }).ToArray() };
     }
 
     internal sealed record Application(bool Projected, TypeNode[] Arguments);

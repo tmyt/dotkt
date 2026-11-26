@@ -42,7 +42,7 @@ sealed partial class ProjectedCallableEntries
             if (local.Owner.Kind.OrDefault() != "interface") return;
             var m = local.Method;
             rows = m.TypeParams.OrEmpty();
-            selectedFrame = m.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault();
+            selectedFrame = RepresentationsFor(m);
             slot = new(local.Owner.Name.Value, m.Name.Value, rows.Length,
                 m.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(), m.Ret.Value, true, false);
         }
@@ -50,11 +50,10 @@ sealed partial class ProjectedCallableEntries
         {
             if (!references.TryDeclarationSignatureSlot(id, out slot) || !slot.IsInterface) return;
             rows = references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
-            selectedFrame = references.NullableMethodFrame(id);
+            selectedFrame = references.NullableMethodFrame(contract?.RepresentationDeclaration ?? id);
         }
         if (rows is not { Length: > 0 } || selectedFrame == null || !selectedFrame.StorageIndices.Any()) return;
-        var selectedOwner = SupertypeGraph.Reachable(hierarchy[owner.Name.Value], hierarchy, references)
-            .Select(edge => edge.spec).Distinct().Single(s => s.Name == slot.Owner);
+        var selectedOwner = SelectedConstruction(hierarchy, owner, slot.Owner, local.Method == null ? id : null);
         var physicalOwner = selectedOwner.Args ?? [];
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, physicalOwner);
         var selected = selectedFrame;
@@ -113,15 +112,30 @@ sealed partial class ProjectedCallableEntries
         var stem = owner.Name.Value + "$" + target.Name.Value + "$operation";
         var opName = stem;
         for (int n = 0; kinds.ContainsKey(opName) || !operationTypes.Add(opName); ++n) opName = stem + n;
-        var context = TypeParameterFrame.Declarations(owner).Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
-        foreach (var p in context) p.Variance = default;
-        TypeNode[] inContext = Enumerable.Range(0, context.Length).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+        // This operation lives outside the owner and may also be used from its
+        // split implementation. Capture the free owner variables of Apply, not
+        // an unrelated exact class constraint its callers cannot prove.
+        var ownerRows = TypeParameterFrame.Declarations(owner).ToArray();
+        var free = new SortedSet<int>();
+        void Capture(TypeNode type) => BirGraphNameFields.VisitTypeNodes(type, t => {
+            if (t is TypeNode.Tv { Scope: "type" } v && free.Add(v.I))
+                foreach (var bound in ownerRows[v.I].Constraints.OrEmpty()) Capture(bound);
+        });
+        Capture(ret);
+        foreach (var p in formals) Capture(p.Type.Value);
+        foreach (var p in weakRows) foreach (var bound in p.Constraints.OrEmpty()) Capture(bound);
+        var indices = free.ToArray();
+        TypeNode Rebind(TypeNode t) => TypedExecutableFrames.RewriteType(t, v =>
+            v.Scope == "type" ? new TypeNode.Tv("type", Array.BinarySearch(indices, v.I)) : v);
+        BirTypeParameter RebindRow(BirTypeParameter p) => p with { Constraints = p.Constraints.OrEmpty().Select(Rebind).ToArray() };
+        var context = indices.Select(i => RebindRow(ownerRows[i]) with { Variance = default }).ToArray();
+        TypeNode[] inContext = indices.Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
         var operationRows = context.Concat(anchors.Select((_, i) => new BirTypeParameter { Name = "$bound" + i, Variance = "in" })).ToArray();
         var implemented = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => a.Bound)).ToArray());
         var viewed = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => (TypeNode)new TypeNode.Tv("method", a.Position))).ToArray());
-        BirTypeParameter[] Strengthen(TypeNode[] arguments)
+        BirTypeParameter[] Strengthen(TypeNode[] arguments, bool inOperation = false)
         {
-            var result = weakRows.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+            var result = weakRows.Select(p => inOperation ? RebindRow(p) : (BirTypeParameter)p.DeepClone()).ToArray();
             for (int i = 0; i < anchors.Length; i++)
             {
                 var p = result[anchors[i].Position];
@@ -129,8 +143,8 @@ sealed partial class ProjectedCallableEntries
             }
             return result;
         }
-        var invoke = new BirFunctionDeclaration { Name = "Apply", TypeParams = Strengthen(anchors.Select((_, i) => (TypeNode)new TypeNode.Tv("type", context.Length + i)).ToArray()),
-            Params = formals, Ret = ret, Abstract = true, Virtual = true, Static = false, Vis = "public", Generated = true };
+        var invoke = new BirFunctionDeclaration { Name = "Apply", TypeParams = Strengthen(anchors.Select((_, i) => (TypeNode)new TypeNode.Tv("type", context.Length + i)).ToArray(), true),
+            Params = formals.Select(p => p with { Type = Rebind(p.Type.Value) }).ToArray(), Ret = Rebind(ret), Abstract = true, Virtual = true, Static = false, Vis = "public", Generated = true };
         var op = new BirInterfaceDefinition { Kind = "interface", Name = opName, Vis = "internal", Generated = true,
             TypeParams = operationRows, Methods = new[] { invoke }, Interfaces = Array.Empty<TypeNode>() };
         file.Types = file.Types.Value.Append(op).ToArray();
@@ -154,6 +168,6 @@ sealed partial class ProjectedCallableEntries
         if (referenceBuild) { exact.Body = RefBodySquash.SourceThrowStubBody(references); weak.Body = RefBodySquash.SourceThrowStubBody(references); return; }
         exact.Body = ForwardBody(owner, exact, target, args);
         weak.Body = ForwardBody(viewed, new BirCast { Type = viewed, E = new BirThis(), Sty = viewed },
-            weak, invoke, Enumerable.Range(0, weakRows.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray());
+            weak, invoke with { Params = formals, Ret = ret }, Enumerable.Range(0, weakRows.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray());
     }
 }
