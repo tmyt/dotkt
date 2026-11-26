@@ -1,6 +1,5 @@
 {
   "fileClass": "IterableSafeCastResultTypeKt",
-  "hasMain": false,
   "fields": [], "types": [], "refTypes": [],
   "methods": [{
     "name": "safeIterable", "static": true, "vis": "public",

@@ -3,7 +3,6 @@ package kotc.bir
 
 data class BirFileDeclaration(
     val fileClass: String,
-    val hasMain: Boolean,
     val fields: List<BirFieldDeclaration>,
     val methods: List<BirFunctionDeclaration>,
     val properties: List<BirPropertyDeclaration>,
@@ -18,8 +17,6 @@ data class BirFileDeclaration(
         var hasField = false
         if (hasField) output.append(','); hasField = true; output.append("\"fileClass\":")
         TypeNodeJson.writeString(fileClass, output)
-        if (hasField) output.append(','); hasField = true; output.append("\"hasMain\":")
-        output.append(hasMain)
         if (hasField) output.append(','); hasField = true; output.append("\"fields\":")
         output.append('[')
         fields.forEachIndexed { index0, item0 ->
@@ -1668,6 +1665,7 @@ data class BirFunctionDeclaration(
     val propertyName: String? = null,
     val propertyAccessor: String? = null,
     val propertyAssociation: String? = null,
+    val entryPoint: Boolean? = null,
     val eventProperty: Boolean? = null,
     val fakeOverride: Boolean? = null,
     val inheritedImplementation: BirInheritedImplementation? = null,
@@ -1810,6 +1808,10 @@ data class BirFunctionDeclaration(
         propertyAssociation?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"propertyAssociation\":")
             TypeNodeJson.writeString(value, output)
+        }
+        entryPoint?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"entryPoint\":")
+            output.append(value)
         }
         eventProperty?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"eventProperty\":")

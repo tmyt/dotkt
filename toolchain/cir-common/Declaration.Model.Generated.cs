@@ -95,8 +95,6 @@ public sealed partial record CirFileDeclaration : ICirContainer
 {
     [JsonPropertyName("fileClass"), JsonRequired]
     public required string FileClass { get; init; }
-    [JsonPropertyName("hasMain"), JsonRequired]
-    public required bool HasMain { get; init; }
     [JsonPropertyName("methods"), JsonRequired]
     public required CirMethod[] Methods { get; init; }
     [JsonPropertyName("fields"), JsonRequired]
@@ -288,6 +286,8 @@ public sealed partial record CirMethod : ICirCallable
     public OptionalField<TypeNode> SuspendRet { get; init; }
     [JsonPropertyName("retCtxFnType"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<int> RetCtxFnType { get; init; }
+    [JsonPropertyName("entryPoint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
+    public OptionalField<bool> EntryPoint { get; init; }
     [JsonPropertyName("entryPointAttrs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<AttributeApplication[]> EntryPointAttrs { get; init; }
 }
@@ -459,11 +459,11 @@ internal static class DeclarationWireContract
     [
         ("CirPInvoke", ["module", "entryPoint", "callingConvention", "callingConventionType", "charSet", "charSetType", "exactSpelling", "setLastError", "preserveSig", "bestFitMapping", "throwOnUnmappableChar", "pseudoFields", "attributeCtorRef"]),
         ("CirModifiers", ["inline", "infix", "operator", "tailrec", "external", "ext", "extensionReceiver", "override", "abstract", "open", "suspend", "data", "sealed", "inner", "enum", "fun", "annotation", "value", "object", "const", "lateinit", "vararg", "noinline", "crossinline", "inlineOnly", "context"]),
-        ("CirFileDeclaration", ["fileClass", "hasMain", "methods", "fields", "types", "properties", "assemblyAttrs", "attrs", "wellKnownRefs", "pos"]),
+        ("CirFileDeclaration", ["fileClass", "methods", "fields", "types", "properties", "assemblyAttrs", "attrs", "wellKnownRefs", "pos"]),
         ("CirTypeDeclaration", ["name", "kind", "vis", "generated", "abstract", "final", "specialName", "beforeFieldInit", "nestedIn", "base", "interfaces", "typeParams", "capturedTypeParams", "fields", "ctors", "methods", "properties", "attrs", "mods", "pos", "interfaceSlotRefs", "clrEvents", "underlying", "entries", "params", "ret", "retAttrs"]),
         ("CirTypeParameter", ["name", "variance", "constraints", "specialConstraints"]),
         ("CirParameter", ["name", "type", "mods", "default", "attrs", "nullableFlags", "suspendFnType", "ctxFnType"]),
-        ("CirMethod", ["name", "static", "override", "virtual", "abstract", "vis", "params", "ret", "body", "typeParams", "attrs", "retAttrs", "mods", "pos", "generated", "objectOverride", "clrFinal", "specialName", "suspendBridge", "clrInterfaceSlotBridge", "requiresClrOverride", "clrOverrideRef", "clrInterfaceImpls", "clrBaseImpls", "extern", "pinvoke", "bodyTerminates", "independentAliasSlot", "physicalSlotBridge", "inlineBir", "retNothing", "retNullableFlags", "retSuspendFnType", "suspendRet", "retCtxFnType", "entryPointAttrs"]),
+        ("CirMethod", ["name", "static", "override", "virtual", "abstract", "vis", "params", "ret", "body", "typeParams", "attrs", "retAttrs", "mods", "pos", "generated", "objectOverride", "clrFinal", "specialName", "suspendBridge", "clrInterfaceSlotBridge", "requiresClrOverride", "clrOverrideRef", "clrInterfaceImpls", "clrBaseImpls", "extern", "pinvoke", "bodyTerminates", "independentAliasSlot", "physicalSlotBridge", "inlineBir", "retNothing", "retNullableFlags", "retSuspendFnType", "suspendRet", "retCtxFnType", "entryPoint", "entryPointAttrs"]),
         ("CirConstructor", ["vis", "params", "baseArgs", "thisArgs", "delegationSig", "body", "baseCtorRef", "localCtorIndex", "attrs", "preStmts", "pos"]),
         ("CirField", ["name", "type", "static", "readOnly", "initOnly", "vis", "init", "constant", "volatile", "const", "lateinit", "attrs", "nullableFlags", "suspendFnType", "pos"]),
         ("CirProperty", ["name", "type", "get", "getSig", "getRet", "getMethodArity", "set", "setSig", "setRet", "setMethodArity", "attrs", "nullableFlags", "suspendFnType", "mods", "vis", "recv", "pos"]),

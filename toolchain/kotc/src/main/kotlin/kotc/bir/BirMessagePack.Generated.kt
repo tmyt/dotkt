@@ -154,11 +154,9 @@ internal object BirMessagePack {
 
     private fun writeBirFileDeclaration(value: BirFileDeclaration, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(8 + (if (value.sourceCallables == null) 0 else 1) + (if (value.dslScopes == null) 0 else 1))
+        packer.packMapHeader(7 + (if (value.sourceCallables == null) 0 else 1) + (if (value.dslScopes == null) 0 else 1))
         packer.packString("fileClass")
         MessagePackText.write(packer, value.fileClass)
-        packer.packString("hasMain")
-        packer.packBoolean(value.hasMain)
         packer.packString("fields")
         checkDepth(depth + 1)
         packer.packArrayHeader(value.fields.size)
@@ -1416,7 +1414,7 @@ internal object BirMessagePack {
 
     private fun writeBirFunctionDeclaration(value: BirFunctionDeclaration, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.name == null) 0 else 1) + (if (value.sourceName == null) 0 else 1) + (if (value.isStatic == null) 0 else 1) + (if (value.isOverride == null) 0 else 1) + (if (value.isVirtual == null) 0 else 1) + (if (value.generated == null) 0 else 1) + (if (value.typeParams == null) 0 else 1) + (if (value.semanticOwner == null) 0 else 1) + (if (value.declarationId == null) 0 else 1) + (if (value.mods == null) 0 else 1) + (if (value.suspendRet == null) 0 else 1) + (if (value.overrides == null) 0 else 1) + (if (value.explicitClrName == null) 0 else 1) + (if (value.kotlinStatic == null) 0 else 1) + (if (value.isAbstract == null) 0 else 1) + (if (value.objectOverride == null) 0 else 1) + (if (value.vis == null) 0 else 1) + (if (value.companionReceiver == null) 0 else 1) + (if (value.companionMemberKind == null) 0 else 1) + (if (value.companionSourceName == null) 0 else 1) + (if (value.retCtxFnType == null) 0 else 1) + (if (value.attrs == null) 0 else 1) + (if (value.pos == null) 0 else 1) + (if (value.propertyName == null) 0 else 1) + (if (value.propertyAccessor == null) 0 else 1) + (if (value.propertyAssociation == null) 0 else 1) + (if (value.eventProperty == null) 0 else 1) + (if (value.fakeOverride == null) 0 else 1) + (if (value.inheritedImplementation == null) 0 else 1) + (if (value.syntheticTypeArgs == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.name == null) 0 else 1) + (if (value.sourceName == null) 0 else 1) + (if (value.isStatic == null) 0 else 1) + (if (value.isOverride == null) 0 else 1) + (if (value.isVirtual == null) 0 else 1) + (if (value.generated == null) 0 else 1) + (if (value.typeParams == null) 0 else 1) + (if (value.semanticOwner == null) 0 else 1) + (if (value.declarationId == null) 0 else 1) + (if (value.mods == null) 0 else 1) + (if (value.suspendRet == null) 0 else 1) + (if (value.overrides == null) 0 else 1) + (if (value.explicitClrName == null) 0 else 1) + (if (value.kotlinStatic == null) 0 else 1) + (if (value.isAbstract == null) 0 else 1) + (if (value.objectOverride == null) 0 else 1) + (if (value.vis == null) 0 else 1) + (if (value.companionReceiver == null) 0 else 1) + (if (value.companionMemberKind == null) 0 else 1) + (if (value.companionSourceName == null) 0 else 1) + (if (value.retCtxFnType == null) 0 else 1) + (if (value.attrs == null) 0 else 1) + (if (value.pos == null) 0 else 1) + (if (value.propertyName == null) 0 else 1) + (if (value.propertyAccessor == null) 0 else 1) + (if (value.propertyAssociation == null) 0 else 1) + (if (value.entryPoint == null) 0 else 1) + (if (value.eventProperty == null) 0 else 1) + (if (value.fakeOverride == null) 0 else 1) + (if (value.inheritedImplementation == null) 0 else 1) + (if (value.syntheticTypeArgs == null) 0 else 1))
         value.name?.let { child ->
             packer.packString("name")
             MessagePackText.write(packer, child)
@@ -1546,6 +1544,10 @@ internal object BirMessagePack {
         value.propertyAssociation?.let { child ->
             packer.packString("propertyAssociation")
             MessagePackText.write(packer, child)
+        }
+        value.entryPoint?.let { child ->
+            packer.packString("entryPoint")
+            packer.packBoolean(child)
         }
         value.eventProperty?.let { child ->
             packer.packString("eventProperty")

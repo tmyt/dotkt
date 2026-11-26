@@ -108,7 +108,7 @@ public static class ExecutableSelfTest
 
     private static void CheckBinary(ICirStatement body)
     {
-        var file = new CirFileDeclaration { FileClass = "CodecProbe", HasMain = false, Fields = [], Types = [],
+        var file = new CirFileDeclaration { FileClass = "CodecProbe", Fields = [], Types = [],
             Methods = [new CirMethod { Name = "Probe", Static = true, Override = false, Virtual = false,
                 Params = [], Ret = new TypeNode.Fqn("System.Void"),
                 Body = new ICirStatement[] { body } }] };

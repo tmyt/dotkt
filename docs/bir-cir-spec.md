@@ -64,6 +64,11 @@ argument parser handles this option in both direct invocations and `@argfiles`.
 SDK projects use `DotKtBirFormat` (`json` by default). Changing this frontend
 output choice recompiles Kotlin and replaces the preceding BIR file cohort.
 
+The selected top-level Kotlin `main` declaration carries `entryPoint: true`,
+independently of its CLR name. For a suspend entry point, bir2cir places the
+CIR marker on the synchronous startup method. The PE entry wrapper calls the
+marked method; it does not look up a method named `main`.
+
 Binary files start with the exact ASCII bytes `DOTKT\0BIR\0MSGPACK\0`, followed
 by one MessagePack map. The suffix selects the reader; a binary framing or decode
 failure does not retry JSON. Trailing values are invalid. Both writers use the

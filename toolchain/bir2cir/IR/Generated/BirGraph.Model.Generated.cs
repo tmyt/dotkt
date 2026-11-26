@@ -1104,7 +1104,6 @@ internal sealed record BirAttributeLiteral : BirGraphValue, IBirAttributeValue
 internal sealed record BirFileDeclaration : BirGraphValue
 {
     public OptionalField<string> FileClass { get; set; }
-    public OptionalField<bool> HasMain { get; set; }
     public OptionalField<BirFieldDeclaration[]> Fields { get; set; }
     public OptionalField<BirFunctionDeclaration[]> Methods { get; set; }
     public OptionalField<BirPropertyDeclaration[]> Properties { get; set; }
@@ -1311,7 +1310,6 @@ internal sealed record BirFileDeclaration : BirGraphValue
     public override bool StructurallyEquals(BirGraphValue other)
         => other is BirFileDeclaration value
             && EqualField(FileClass, value.FileClass, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
-            && EqualField(HasMain, value.HasMain, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(Fields, value.Fields, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Methods, value.Methods, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Properties, value.Properties, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
@@ -1329,7 +1327,6 @@ internal sealed record BirFileDeclaration : BirGraphValue
     {
         writer.WriteStartObject();
         WriteOptional(writer, "fileClass", FileClass, (writer, value) => { writer.WriteStringValue(value); });
-        WriteOptional(writer, "hasMain", HasMain, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "fields", Fields, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "methods", Methods, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "properties", Properties, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
@@ -1349,7 +1346,6 @@ internal sealed record BirFileDeclaration : BirGraphValue
     {
         var result = new JsonObject();
         if (FileClass.IsPresent) result["fileClass"] = FileClass.IsNull ? null : JsonValue.Create(FileClass.Value);
-        if (HasMain.IsPresent) result["hasMain"] = HasMain.IsNull ? null : JsonValue.Create(HasMain.Value);
         if (Fields.IsPresent) result["fields"] = Fields.IsNull ? null : new JsonArray(Fields.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (Methods.IsPresent) result["methods"] = Methods.IsNull ? null : new JsonArray(Methods.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (Properties.IsPresent) result["properties"] = Properties.IsNull ? null : new JsonArray(Properties.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
@@ -11217,6 +11213,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     public OptionalField<string> PropertyName { get; set; }
     public OptionalField<string> PropertyAccessor { get; set; }
     public OptionalField<string> PropertyAssociation { get; set; }
+    public OptionalField<bool> EntryPoint { get; set; }
     public OptionalField<bool> EventProperty { get; set; }
     public OptionalField<bool> FakeOverride { get; set; }
     public OptionalField<BirInheritedImplementation> InheritedImplementation { get; set; }
@@ -11874,6 +11871,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
             && EqualField(PropertyName, value.PropertyName, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(PropertyAccessor, value.PropertyAccessor, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(PropertyAssociation, value.PropertyAssociation, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(EntryPoint, value.EntryPoint, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(EventProperty, value.EventProperty, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(FakeOverride, value.FakeOverride, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(InheritedImplementation, value.InheritedImplementation, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
@@ -11970,6 +11968,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         WriteOptional(writer, "propertyName", PropertyName, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "propertyAccessor", PropertyAccessor, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "propertyAssociation", PropertyAssociation, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "entryPoint", EntryPoint, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "eventProperty", EventProperty, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "fakeOverride", FakeOverride, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "inheritedImplementation", InheritedImplementation, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -12068,6 +12067,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
         if (PropertyName.IsPresent) result["propertyName"] = PropertyName.IsNull ? null : JsonValue.Create(PropertyName.Value);
         if (PropertyAccessor.IsPresent) result["propertyAccessor"] = PropertyAccessor.IsNull ? null : JsonValue.Create(PropertyAccessor.Value);
         if (PropertyAssociation.IsPresent) result["propertyAssociation"] = PropertyAssociation.IsNull ? null : JsonValue.Create(PropertyAssociation.Value);
+        if (EntryPoint.IsPresent) result["entryPoint"] = EntryPoint.IsNull ? null : JsonValue.Create(EntryPoint.Value);
         if (EventProperty.IsPresent) result["eventProperty"] = EventProperty.IsNull ? null : JsonValue.Create(EventProperty.Value);
         if (FakeOverride.IsPresent) result["fakeOverride"] = FakeOverride.IsNull ? null : JsonValue.Create(FakeOverride.Value);
         if (InheritedImplementation.IsPresent) result["inheritedImplementation"] = InheritedImplementation.IsNull ? null : ((BirGraphValue)InheritedImplementation.Value).ToDom(projected);

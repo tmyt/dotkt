@@ -34,7 +34,7 @@ static class CirFinalizationTests
         foreach (var literal in new[] { "0.5", "-1.25", "-0.0", "1e-30" })
         {
             var source = System.Text.Json.Nodes.JsonNode.Parse($$$"""
-                {"fileClass":"FractionalReference","hasMain":false,"types":[],"methods":[],
+                {"fileClass":"FractionalReference","types":[],"methods":[],
                  "fields":[{"name":"fraction","type":{"t":"fqn","name":"{{{sourceType}}}"},
                   "init":{"k":"const","type":{"t":"fqn","name":"{{{sourceType}}}"},"value":{{{literal}}}}}]}
                 """)!;
@@ -65,7 +65,7 @@ static class CirFinalizationTests
             Body = new ICirStatement[] { new CirReturn { Value = Literal() } }, InlineBir = bytes,
             Attrs = new[] { attribute }, TypeParams = new[] { new CirTypeParameter { Name = "T", Constraints = new[] { facade } }, new CirTypeParameter { Name = "N" } } };
         var field = new CirField { Name = "slot", Type = facade, Init = Literal(), Constant = new AttributeArgument.Int32Value(19) };
-        var file = new CirFileDeclaration { FileClass = "PhysicalTail", HasMain = false, Fields = [field], Methods = [method],
+        var file = new CirFileDeclaration { FileClass = "PhysicalTail", Fields = [field], Methods = [method],
             Types = [new CirTypeDeclaration { Name = "Nested", Kind = CirTypeKind.Class,
                 Fields = new[] { field }, Ctors = new[] { constructor,
                     constructor with { BaseArgs = OptionalField<ICirExpression[]>.Null, ThisArgs = new ICirExpression[] { Literal() } } },

@@ -36,7 +36,7 @@ public static class AttributeSelfTest
             [new NamedAttributeArgument("field", "Payload", new TypeNode.Array(new TypeNode.Fqn("System.Byte")),
                 new A.BytesValue([42]))]);
         var first = JsonSerializer.Serialize(application, AttributeJson.Options);
-        var file = new CirFileDeclaration { FileClass = "Attributes", HasMain = false, Methods = [], Fields = [], Types = [],
+        var file = new CirFileDeclaration { FileClass = "Attributes", Methods = [], Fields = [], Types = [],
             AssemblyAttrs = new[] { application } };
         var binary = CirFileCodec.Decode(CirFileCodec.Encode(file)).AssemblyAttrs.Value[0];
         if (JsonSerializer.Serialize(binary, AttributeJson.Options) != first)

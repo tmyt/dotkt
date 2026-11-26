@@ -1,6 +1,5 @@
 {
   "fileClass": "RejectOpenGenericStaticAccessKt",
-  "hasMain": false,
   "fields": [],
   "methods": [{
     "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",

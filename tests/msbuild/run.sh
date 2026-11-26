@@ -76,12 +76,15 @@ cat > "$main_fault/App.kt" <<'KOTLIN'
 import System.Threading.Tasks.Task
 
 @System.MTAThreadAttribute
-suspend fun main() {
+@kotlin.clr.ClrName("StartAsync")
+suspend fun main(args: Array<out String>) {
     val entry = System.Reflection.Assembly.GetEntryAssembly()!!.EntryPoint!!
+    check(entry.DeclaringType!!.GetMethod("StartAsync") != null)
     check(entry.GetCustomAttributes(false).any { it is System.MTAThreadAttribute })
     Task.Delay(1).await()
     throw IllegalStateException("async-main-boom")
 }
+fun main() { error("selected main() instead of suspend main(args)") }
 KOTLIN
 main_fault_rc=0
 ktproj_run "$main_fault/app.ktproj" "$main_fault/run.err" >/dev/null || main_fault_rc=$?
@@ -119,14 +122,18 @@ KTPROJ
 # STATE 1: `class Shape` lives in its own file. (Both builds capture the run status independently — issue #163 —
 # so a build/run that prints "12" then fails is not silently accepted.)
 cat > "$incr/App.kt" <<'KOTLIN'
+context(args: Array<String?>?)
 @System.STAThreadAttribute
-fun main(args: Array<out String>) {
+@kotlin.clr.ClrName("Main")
+fun main() {
     val entry = System.Reflection.Assembly.GetEntryAssembly()!!.EntryPoint!!
+    check(entry.DeclaringType!!.GetMethod("Main") != null)
     check(entry.GetCustomAttributes(false).any { it is System.STAThreadAttribute })
     if (System.OperatingSystem.IsWindows())
         check(System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA)
     println(Shape(3, 4).area())
 }
+fun main(decoy: Int) { error("wrong overload: $decoy") }
 KOTLIN
 printf 'class Shape(val w: Int, val h: Int) { fun area() = w * h }\n' > "$incr/Shape.kt"
 incr_rc1=0; incr1="$(ktproj_run "$incr/app.ktproj" "$incr/run1.err")" || incr_rc1=$?

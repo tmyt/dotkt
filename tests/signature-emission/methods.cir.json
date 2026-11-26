@@ -1,5 +1,5 @@
 {
-  "fileClass": "ModifiedMethods", "hasMain": false,
+  "fileClass": "ModifiedMethods",
   "methods": [
     {
       "name": "Select", "static": true, "override": false, "virtual": false, "vis": "public",

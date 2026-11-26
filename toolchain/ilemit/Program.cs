@@ -163,7 +163,7 @@ static class IlEmit
                 result[index] = first with {
                     Methods = [.. first.Methods, .. file.Methods], Fields = [.. first.Fields, .. file.Fields],
                     Properties = Append(first.Properties, file.Properties), Types = [.. first.Types, .. file.Types],
-                    AssemblyAttrs = Append(first.AssemblyAttrs, file.AssemblyAttrs), HasMain = first.HasMain || file.HasMain,
+                    AssemblyAttrs = Append(first.AssemblyAttrs, file.AssemblyAttrs),
                 };
             }
             else

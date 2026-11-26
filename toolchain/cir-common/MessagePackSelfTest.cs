@@ -24,7 +24,7 @@ public static class MessagePackSelfTest
             new TypeNode.ByRef(integer), new TypeNode.Ptr(integer),
             new TypeNode.FnPtr(5, 1, 1, integer, [integer, integer]), new TypeNode.Mod(true, integer, integer),
         };
-        var file = new CirFileDeclaration { FileClass = "N\ud800\0\udfff", HasMain = false, Methods = [], Types = [],
+        var file = new CirFileDeclaration { FileClass = "N\ud800\0\udfff", Methods = [], Types = [],
             Fields = types.Select((type, index) => new CirField { Name = "field" + index, Type = type }).ToArray() };
         var bytes = CirFileCodec.Encode(file);
         var copy = CirFileCodec.Decode(bytes);
@@ -48,9 +48,8 @@ public static class MessagePackSelfTest
         });
         Malformed((ref MessagePackWriter writer) => { writer.WriteMapHeader(0); });
         Malformed((ref MessagePackWriter writer) => {
-            writer.WriteMapHeader(5);
+            writer.WriteMapHeader(4);
             writer.Write("fileClass"); writer.Write("a");
-            writer.Write("hasMain"); writer.Write(false);
             writer.Write("fields"); writer.WriteArrayHeader(0);
             writer.Write("types"); writer.WriteArrayHeader(0);
             writer.Write("methods"); writer.WriteArrayHeader(1); writer.WriteNil();

@@ -25,7 +25,7 @@ static class CanonicalDelegateSynthesis
 
         return new CirFileDeclaration
         {
-            FileClass = "", HasMain = false, Methods = [], Fields = [], Types = types.ToArray(),
+            FileClass = "", Methods = [], Fields = [], Types = types.ToArray(),
         };
     }
 

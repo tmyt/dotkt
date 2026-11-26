@@ -177,7 +177,6 @@ static class ClrTypeVariance
             // Supply complete physical declarations around these signature-only
             // test facts. These are fixture defaults, not compiler inference.
             root["fileClass"] = "VarianceFixture";
-            root["hasMain"] = false;
             root["methods"] = new JsonArray();
             root["fields"] = new JsonArray();
             foreach (var owner in root["types"].AsArray().OfType<JsonObject>())

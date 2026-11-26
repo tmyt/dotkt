@@ -176,8 +176,8 @@ static class ResolverProbe
         object Read(string json) => codec.GetMethod("Read")!.Invoke(null, [System.Text.Encoding.UTF8.GetBytes(json)])!;
         JsonNode Inspect(object value) => JsonNode.Parse((string)codec.GetMethod("Write")!.Invoke(null, [value, false])!)!;
         object Root(string file, string name, bool main = false) => Read($$$"""
-            {"fileClass":"{{{file}}}","hasMain":{{{(main ? "true" : "false")}}},
-             "methods":[{"name":"{{{name}}}","static":true,"override":false,"virtual":false,"params":[],"ret":{"t":"fqn","name":"void"},"body":[]}],
+            {"fileClass":"{{{file}}}",
+             "methods":[{"name":"{{{name}}}","entryPoint":{{{(main ? "true" : "false")}}},"static":true,"override":false,"virtual":false,"params":[],"ret":{"t":"fqn","name":"void"},"body":[]}],
              "fields":[{"name":"{{{name}}}","type":{"t":"fqn","name":"System.Int32"}}],
              "properties":[{"name":"{{{name}}}","type":{"t":"fqn","name":"System.Int32"}}],
              "types":[{"name":"{{{name}}}","kind":"class"}],
@@ -201,7 +201,7 @@ static class ResolverProbe
                 throw new Exception("Distinct CIR containers were copied/reordered");
         var combined = Merge(first, synthetic, continuation, other, empty);
         var grouped = combined.Cast<object>().Select(Inspect).ToArray();
-        if (combined.Count != 4 || !grouped[0]["hasMain"]!.GetValue<bool>()
+        if (combined.Count != 4 || !grouped[0]["methods"]![1]!["entryPoint"]!.GetValue<bool>()
             || grouped[1]["types"]![0]!["name"]!.GetValue<string>() != "Synthetic"
             || grouped[2]["fileClass"]!.GetValue<string>() != "Other"
             || grouped[3]["types"]![0]!["name"]!.GetValue<string>() != "Empty")
