@@ -624,7 +624,10 @@ sealed partial class Emitter
         foreach (var ti in _types.Values)
             if (ti.EntryPointTarget is {} mainMb)
             {
-                entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
+                var wrapperName = "Main";
+                for (var suffix = 1; ti.MethodNameCounts.ContainsKey(wrapperName); suffix++)
+                    wrapperName = $"Main${suffix}";
+                entry = ti.TB.DefineMethod(wrapperName, MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
                 StampMemberAttrs(entry.SetCustomAttribute, ti.EntryPointAttrs);
                 var il = entry.GetILGenerator();
                 if (EmitReferenceStub(il)) continue;

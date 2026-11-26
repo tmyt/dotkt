@@ -1070,10 +1070,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 				(fn.parameters.isEmpty() || fn.parameters.singleOrNull()?.let { p ->
 					val array = p.type as? IrSimpleType
 					val element = array?.arguments?.singleOrNull() as? IrTypeProjection
-					(p.kind == IrParameterKind.Regular || p.kind == IrParameterKind.ExtensionReceiver) &&
-						array != null && array.isBoxedArray && !array.isMarkedNullable() &&
+					array != null && array.isBoxedArray &&
 						element != null && element.variance != org.jetbrains.kotlin.types.Variance.IN_VARIANCE &&
-						element.type.classFqName?.asString() == "kotlin.String" && !element.type.isMarkedNullable()
+						element.type.classFqName?.asString() == "kotlin.String"
 				} == true)
 		}.maxByOrNull { it.parameters.size }
 		// Top-level `val`/`var` -> static fields of the file class. Although the frontend inlines reads of a `const`,
