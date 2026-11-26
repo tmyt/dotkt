@@ -17,6 +17,13 @@ interface JointFactory<K> where K : Base, K : ILeft, K : IRight {
 interface SuspendFactory<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> make(): Any
 }
+interface SuspendPicker<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> pick(value: K): Any
+}
+// This call is compiled before the foreign interface joining two constructions exists.
+suspend fun <K> pickThrough(picker: SuspendPicker<K>, value: K): Any where K : Base, K : ILeft, K : IRight =
+    picker.pick<K>(value)
+class OtherItem : Concrete()
 interface SuspendLeft<K> where K : Base, K : ILeft { suspend fun <A : K> make(): Any }
 interface SuspendRight<K> where K : Base, K : IRight { suspend fun <A : K> make(): Any }
 open class SuspendParent : SuspendFactory<Concrete> {

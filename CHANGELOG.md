@@ -6,6 +6,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).
+- A Kotlin class can implement both constructions of the same generic suspend interface inherited through a CLR interface (#2009).
 - Implementing a derived CLR interface no longer adds private forwarding methods for inherited slots already implemented by the selected native base method (#1984).
 - Kotlin callbacks returning `Unit` can be passed to wide CLR delegates that require a `kotlin.Unit` return value, as well as delegates returning `void` (#1946).
 - Passing a CLR delegate through Kotlin now adapts variant inputs and results that require boxing, including nested delegates (#1953).

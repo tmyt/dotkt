@@ -1790,6 +1790,7 @@ internal sealed record BirCast : BirGraphNode, IBirExpression, IBirAttributeValu
 
 internal sealed record BirIsInstance : BirGraphNode, IBirExpression, IBirAttributeValue
 {
+    internal bool ExactDispatchOwner { get; set; }
     public override string Tag => "isInst";
     public OptionalField<TypeNode> Type { get; set; }
     public OptionalField<IBirExpression> E { get; set; }
@@ -11198,6 +11199,7 @@ internal sealed record BirDeclarationPosition : BirGraphValue
 internal sealed record BirFunctionDeclaration : BirGraphValue
 {
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
+    internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }
     internal ExistentialCallableRole ExistentialCallable { get; set; }
     internal string? ImplicitExistentialImplementationId { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }

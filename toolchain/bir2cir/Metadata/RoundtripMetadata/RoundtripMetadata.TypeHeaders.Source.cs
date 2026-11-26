@@ -64,6 +64,10 @@ static partial class RoundtripMetadata
     static void AppendHeader(IBirTypeDeclaration type, BirAttribute attribute)
         => type.Attrs = type.Attrs.OrEmpty().Append(attribute).ToArray();
 
+    internal static BirAttribute ConstructedDispatchMarker() => HeaderMarker(AKConstructedDispatch);
+    internal static bool IsConstructedDispatchView(IBirTypeDeclaration owner) =>
+        owner != null && owner.Attrs.OrEmpty().Any(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: AKConstructedDispatch });
+
     static BirAttribute HeaderMarker(string name, string argumentType = null, int value = 0) => new() {
         Attr = new TypeNode.Fqn(name),
         ArgTypes = argumentType == null ? Array.Empty<TypeNode>() : new TypeNode[] { new TypeNode.Fqn(argumentType) },
