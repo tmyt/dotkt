@@ -111,7 +111,7 @@ sealed partial class Emitter
                 var catchesArr = s.Catches;
                 bool hasRet = StmtsHaveReturn(bodyArr) || catchesArr.Any(c => StmtsHaveReturn(c.Body));
                 LocalBuilder result = (_methodRetType != Bcl("System.Void") && hasRet) ? _il.DeclareLocal(_methodRetType) : null;
-                Label retLabel = _il.DefineLabel();
+                Label retLabel = _il.DefineForwardLabel();
                 _il.BeginExceptionBlock();
                 _tryStack.Push((result, retLabel));
                 foreach (var b in bodyArr) EmitStmt(b);
@@ -157,7 +157,7 @@ sealed partial class Emitter
                     }
                     if (!allRet)   // a fall-through path exists -> it skips the pending return and continues
                     {
-                        Label cont = _il.DefineLabel();
+                        Label cont = _il.DefineForwardLabel();
                         _il.Emit(OpCodes.Br, cont);
                         _il.MarkLabel(retLabel);
                         EmitPendingReturn();
@@ -179,7 +179,7 @@ sealed partial class Emitter
             }
             case CirWhile s:
             {
-                var start = _il.DefineLabel(); var end = _il.DefineLabel();
+                var start = _il.DefineLabel(); var end = _il.DefineForwardLabel();
                 _loops.Add((s.LoopId, start, end));   // continue -> re-check, break -> end
                 _il.MarkLabel(start);
                 EmitExpr(s.Cond); _il.Emit(OpCodes.Brfalse, end);
@@ -190,14 +190,14 @@ sealed partial class Emitter
             }
             case CirIf s:
             {
-                var end = _il.DefineLabel();
+                var end = _il.DefineForwardLabel();
                 foreach (var br in s.Branches)
                 {
                     if (br.Else.IsPresent)
                         foreach (var b in br.Body) EmitStmt(b);
                     else
                     {
-                        var next = _il.DefineLabel();
+                        var next = _il.DefineForwardLabel();
                         EmitExpr(br.Cond.Value); _il.Emit(OpCodes.Brfalse, next);
                         foreach (var b in br.Body) EmitStmt(b);
                         _il.Emit(OpCodes.Br, end); _il.MarkLabel(next);
@@ -211,7 +211,7 @@ sealed partial class Emitter
                 var local = _il.DeclareLocal(Bcl("System.Int32"));
                 _locals[s.Var] = local;
                 EmitExpr(s.From); _il.Emit(OpCodes.Stloc, local);
-                var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
+                var start = _il.DefineLabel(); var cont = _il.DefineForwardLabel(); var end = _il.DefineForwardLabel();
                 _loops.Add((s.LoopId, cont, end));   // continue -> increment, break -> end
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, local);
@@ -242,7 +242,7 @@ sealed partial class Emitter
                 var elem = MapType(s.Elem);
                 var lv = _il.DeclareLocal(elem);
                 _locals[s.Var] = lv;
-                var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
+                var start = _il.DefineLabel(); var cont = _il.DefineForwardLabel(); var end = _il.DefineForwardLabel();
                 _loops.Add((s.LoopId, cont, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, idx); _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldlen); _il.Emit(OpCodes.Conv_I4);
@@ -271,8 +271,8 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.FirstM]); _il.Emit(OpCodes.Stloc, i);
                 _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.LastM]); _il.Emit(OpCodes.Stloc, last);
                 _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.StepM]); _il.Emit(OpCodes.Stloc, step);
-                var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
-                var neg = _il.DefineLabel(); var bodyL = _il.DefineLabel();
+                var start = _il.DefineLabel(); var cont = _il.DefineForwardLabel(); var end = _il.DefineForwardLabel();
+                var neg = _il.DefineForwardLabel(); var bodyL = _il.DefineForwardLabel();
                 _loops.Add((s.LoopId, cont, end));
                 _il.MarkLabel(start);
                 // exit test: step >= 0 ? (i > last) : (i < last)
@@ -317,7 +317,7 @@ sealed partial class Emitter
                 {
                     // CIR explicitly requests a conditional leave. CIL has no such opcode, so emit its mechanical
                     // expansion: invert the conditional branch over the unconditional leave.
-                    var skip = _il.DefineLabel();
+                    var skip = _il.DefineForwardLabel();
                     EmitExpr(s.Cond);
                     _il.Emit(on ? OpCodes.Brfalse : OpCodes.Brtrue, skip);
                     _il.Emit(OpCodes.Leave, _cfgLabels[bid]);

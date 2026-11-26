@@ -48,6 +48,11 @@ cp "$probe_dir/TargetUniverseProbe.dll" "$raw"
 actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 [[ "$actual" == "target-universe" ]] || die "raw emitted probe returned '$actual'"
 
+# Reuse the Kotlin DLL above; only the tiny C# driver needs to be compiled for publish.
+dotnet publish "$ROOT/tests/ilverify/trimmed-control-flow/TrimmedFlow.csproj" -c Release \
+    --use-current-runtime --self-contained true -p:ProbeDirectory="$probe_dir" -o "$OUT/trimmed"
+"$OUT/trimmed/TrimmedFlow"
+
 # Reuse this real Kotlin compilation: only lower once more for the alternate codec.
 # Both emitters receive the same physical graph, assembly identity and target universe.
 dotnet "$BIR2CIR_DLL" "$OUT/msgpack-cir" --cir-format=msgpack --configuration Release \
