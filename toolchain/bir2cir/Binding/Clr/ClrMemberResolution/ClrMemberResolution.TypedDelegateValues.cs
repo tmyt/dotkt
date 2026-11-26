@@ -71,7 +71,7 @@ static partial class ClrMemberResolution
     // A CLR variant generic argument may vary only through reference conversions.
     // Kotlin's boxed value conversion also applies inside covariant delegate results
     // and contravariant delegate parameters. Keep the *named* source Invoke slot.
-    internal static DelegateAdapterPlan NominalDelegateValuePlan(ReferenceMetadataIndex refs,
+    internal static DelegateAdapterPlan NominalDelegateValuePlan(ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes,
         TypeNode source, TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods,
         out TypeNode.Fqn slot)
     {
@@ -81,14 +81,14 @@ static partial class ClrMemberResolution
         bool NeedsBridge(TypeNode.Fqn a, TypeNode.Fqn b)
         {
             if (a == b || a.Args is not { Length: > 0 } aa || b.Args is not {} bb || aa.Length != bb.Length
-                || WithoutArity(a.Name) != WithoutArity(b.Name) || SameDelegate(a, b)) return false;
+                || WithoutArity(a.Name) != WithoutArity(b.Name)) return false;
             var definition = ResolveOwnerType(a, refs);
             if (definition == null || !IsDelegate(definition) || ResolveOwnerType(b, refs) != definition) return false;
             var parameters = definition.GetGenericArguments();
             var needed = false;
             for (var i = 0; i < aa.Length; i++)
             {
-                if (SameDelegate(aa[i], bb[i])) continue;
+                if (aa[i] == bb[i]) continue;
                 if ((parameters[i].GenericParameterAttributes & GenericParameterAttributes.VarianceMask) == 0) return false;
                 var l = DelegateSlotCore(aa[i]); var r = DelegateSlotCore(bb[i]);
                 needed |= l is TypeNode.Tv || r is TypeNode.Tv || l is TypeNode.Fqn x && isValue(x)
@@ -112,10 +112,29 @@ static partial class ClrMemberResolution
         var actual = owners.Select((_, i) => (TypeNode)new TypeNode.Tv("type", i))
             .Concat(methods.Select((_, i) => new TypeNode.Tv("method", i))).ToArray();
         var capture = (TypeNode.Fqn)InAdapter(from);
-        var natural = PhysicalFunctionShape(refs, capture, includeNominal: true);
-        var dest = PhysicalFunctionShape(refs, InAdapter(slot), includeNominal: true);
+        TypeNode.Fn InvokeShape(TypeNode.Fqn owner)
+        {
+            var reference = PhysicalDelegateMember(localTypes, refs, owner, constructor: false);
+            TypeNode Close(TypeNode type) => SupertypeGraph.SubstOwnerTvs(type,
+                ((TypeNode.Fqn)reference.DeclaringType).Args ?? []);
+            return new(false, Close(reference.ReturnType), reference.ParameterTypes.Select(Close).ToArray());
+        }
+        var natural = InvokeShape(capture);
+        var dest = InvokeShape((TypeNode.Fqn)InAdapter(slot));
         return new(natural, dest.DelegateParams.Length, dest.Ret, dest.DelegateParams, frame.Length, actual,
-            NominalSource: capture, LexicalFrame: frame);
+            NominalSource: capture, LexicalFrame: frame, PublishReturn: dest.Ret is TypeNode.Array);
+    }
+
+    // The selected nominal instantiation is already physical, including local
+    // value types. Bind the open member, then close only its declaring type.
+    internal static MemberRefNode PhysicalDelegateMember(IReadOnlySet<string> localTypes, ReferenceMetadataIndex refs,
+        TypeNode.Fqn owner, bool constructor)
+    {
+        var args = owner.Args ?? [];
+        var open = args.Length == 0 ? owner : owner with {
+            Args = Enumerable.Range(0, args.Length).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray() };
+        var member = constructor ? DelegateConstructorReference(localTypes, refs, open) : DelegateInvokeReference(localTypes, refs, open);
+        return args.Length == 0 ? member : member with { DeclaringType = SupertypeGraph.SubstOwnerTvs(member.DeclaringType, args) };
     }
 
     internal static DelegateAdapterPlan UnitDelegateValuePlan(ReferenceMetadataIndex references,

@@ -4,6 +4,8 @@ public delegate object SpanResult(Span<int> values);
 public delegate Span<int> SpanTransform(Span<int> values);
 public delegate Span<int> SpanFactory();
 public delegate int Sink<in T>(T value);
+public delegate T Write<out T>(ref int value);
+public delegate ref int Address<in T>(T key);
 public abstract class CallbackHost {
     public abstract int Apply(Func<int, int> callback, int value);
 }
@@ -18,6 +20,19 @@ public static class Callbacks {
     public static int ApplyTyped<T>(Func<T, int> callback, T value) => callback(value);
     public static Sink<object> NativeSink() => value => 2 * (int)value;
     public static int ApplySink(Sink<int> sink) => sink(3);
+    public static Write<int> Writer() => (ref int value) => ++value;
+    public static bool WritesOriginal(Write<object> writer) {
+        int value = 41;
+        return (int)writer(ref value) == 42 && value == 42;
+    }
+    static int cell;
+    static ref int SelectCell(object key) { cell = (int)key; return ref cell; }
+    public static Address<object> AddressOf() => SelectCell;
+    public static int WriteThroughResult(Address<int> address) {
+        ref int result = ref address(21);
+        result *= 2;
+        return cell;
+    }
     public static int Apply(Func<int, int> callback, int value) => callback(value);
     public static Func<int, int> Identity(Func<int, int> callback) => callback;
     public static int Dispatch(CallbackHost host) => host.Apply(value => value + 2, 40);

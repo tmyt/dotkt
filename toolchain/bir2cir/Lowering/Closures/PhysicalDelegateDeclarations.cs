@@ -27,7 +27,9 @@ sealed class PhysicalDelegateDeclarations
                 if (!plan.Frame.DelegateParams[i].Equals(plan.Parameters[i]))
                     arguments[i] = new BirCast { Type = plan.Frame.DelegateParams[i], E = OptionalField<IBirExpression>.Of(arguments[i]) };
         var receiver = new BirFieldGet { OwnerType = self, Recv = new BirThis(), Name = "d" };
-        var invokeRef = BirMemberReference.FromPhysical(ClrMemberResolution.DelegateInvokeReference(localTypes, references, captured));
+        var invokeRef = BirMemberReference.FromPhysical(plan.NominalSource is {} named
+            ? ClrMemberResolution.PhysicalDelegateMember(localTypes, references, named, constructor: false)
+            : ClrMemberResolution.DelegateInvokeReference(localTypes, references, captured));
         IBirExpression call = plan.NominalSource != null ? new BirNativeInstance {
             Type = plan.NominalSource, Method = "Invoke", MemberRef = invokeRef, Recv = receiver,
             Dispatch = "callvirt", ArgTypes = plan.Frame.DelegateParams, Ret = plan.Frame.Ret, Args = arguments,
@@ -38,6 +40,8 @@ sealed class PhysicalDelegateDeclarations
             Args = arguments,
             InvokeRef = invokeRef,
         };
+        if (plan.NominalSource != null && SignatureValueTypes.Of(plan.Return) is TypeNode.ByRef)
+            call = new BirByRefOf { Inner = OptionalField<IBirExpression>.Of(call) };
         IBirStatement[] body;
         if (plan.Parameters == null)
             body = new IBirStatement[] {

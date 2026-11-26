@@ -44,7 +44,7 @@ sealed class TypedPhysicalDelegateAdapter
     internal IBirExpression AdaptNominalValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
         TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods)
     {
-        var plan = ClrMemberResolution.NominalDelegateValuePlan(references, source, target, isValue, owners, methods, out var slot);
+        var plan = ClrMemberResolution.NominalDelegateValuePlan(references, localTypes, source, target, isValue, owners, methods, out var slot);
         return plan == null ? null : AdaptValue(document, expression, source, target, slot, plan, null);
     }
 
@@ -58,7 +58,8 @@ sealed class TypedPhysicalDelegateAdapter
             ClosureType = new TypeNode.Fqn(adapter), Method = "invoke",
             Captures = new IBirExpression[] { view == null ? Read() : new BirCast { Type = view, E = Read() } }, FuncType = slot,
             DelegateCtorRef = BirMemberReference.FromPhysical(
-                ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
+                plan.NominalSource != null ? ClrMemberResolution.PhysicalDelegateMember(localTypes, references, slot, constructor: true)
+                    : ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
         };
         if (plan.Parameters != null || plan.Arguments.Length != 0) adapted.TypeArgs = plan.Arguments.ToArray();
 

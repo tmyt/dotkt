@@ -15,6 +15,8 @@ class NominalFunctionDelegateTests {
         check(Callbacks.ApplyConsumer(Callbacks.Consumer()) == 9)
         check(callTyped(41) == 42)
         check(Callbacks.ApplySink(Callbacks.NativeSink()) == 6)
+        check(Callbacks.WritesOriginal(Callbacks.Writer()))
+        check(Callbacks.WriteThroughResult(Callbacks.AddressOf()) == 42)
         check(Callbacks.SameReference(Callbacks.BoxedInput()))
     }
 
