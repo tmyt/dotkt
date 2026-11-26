@@ -77,18 +77,7 @@ static partial class KotlinOverrideSlotBridge
         }
         internal bool CarrierSeam(TypeNode left, TypeNode right) =>
             CarrierConstruction(left, right) != null || CarrierConstruction(right, left) != null;
-        internal Def DeclaredFaces(Def owner) => new() { Interfaces =
-            carriers != null && carriers.TryGetValue(owner.Name, out var carrier)
-                ? owner.Interfaces.Where(face => face.Name != carrier).ToArray() : owner.Interfaces };
-        internal Def FacesForInheritedBody(Def owner, SelectedSlot slot)
-        {
-            // The class's own existential view exposes its base class's interfaces, too.
-            // Exposing an inherited slot is not a new declaration that reimplements it.
-            if (owner.Base == null || carriers == null || !carriers.TryGetValue(owner.Name, out var carrier)
-                || slot.DescriptorSpec.Name == carrier || !SupertypeGraph.Reaches(owner.Base, slot.SemanticSpec, Index.Definitions, References))
-                return owner;
-            return DeclaredFaces(owner);
-        }
+        internal string CarrierOf(Def owner) => carriers?.GetValueOrDefault(owner.Name);
         internal void Append(IBirTypeDeclaration owner, BirFunctionDeclaration method)
         {
             owner.Methods = owner.Methods.OrEmpty().Append(method).ToArray();
@@ -148,18 +137,17 @@ static partial class KotlinOverrideSlotBridge
         var signatures = inherited.ToDictionary(pair => pair.Key, pair => pair.Value.SelectionParameters);
         var bridges = new Dictionary<string, BirFunctionDeclaration>(StringComparer.Ordinal);
         var claims = new Dictionary<(OverrideMethod Body, string Shape), List<OverrideMethod>>();
-        HashSet<TypeNode> reintroducedFaces = null;
-        bool ReintroducesBaseFace(TypeNode.Fqn face)
-        {
-            if (definition.Base == null) return false;
-            TypeNode Key(TypeNode type) => ClrMemberResolution.MethodImplComparisonType(context.Physical(type), refs);
-            IEnumerable<TypeNode> Interfaces(Def roots) => SupertypeGraph.Reachable(roots, defs, refs)
-                .Where(edge => edge.isInterface).Select(edge => Key(edge.spec));
-            // A carrier exposes inherited faces but is not a source reimplementation.
-            reintroducedFaces ??= Interfaces(new Def { Base = definition.Base })
-                .Intersect(Interfaces(context.DeclaredFaces(definition))).ToHashSet();
-            return reintroducedFaces.Contains(Key(face));
-        }
+        var carrier = context.CarrierOf(definition);
+        Def declaredFaces = null;
+        Def Authored() => declaredFaces ??= DeclaredFaces(definition, carrier);
+        HashSet<TypeNode> baseFaces = null, authoredFaces = null;
+        TypeNode FaceKey(TypeNode type) => ClrMemberResolution.MethodImplComparisonType(context.Physical(type), refs);
+        HashSet<TypeNode> Interfaces(Def roots) => SupertypeGraph.Reachable(roots, defs, refs)
+            .Where(edge => edge.isInterface).Select(edge => FaceKey(edge.spec)).ToHashSet();
+        bool BaseHas(TypeNode.Fqn face) => definition.Base != null
+            && (baseFaces ??= Interfaces(new Def { Base = definition.Base })).Contains(FaceKey(face));
+        bool ReintroducesBaseFace(TypeNode.Fqn face) => BaseHas(face)
+            && (authoredFaces ??= Interfaces(Authored())).Contains(FaceKey(face));
         var ordinal = 0;
         var enumeration = context.ReferenceBuild ? null : ReverseEnumeratorBridgeSynthesis.ReserveSlots(
             definition, defs, refs, context.Index.Declarations, context.IterationSlots);
@@ -218,8 +206,10 @@ static partial class KotlinOverrideSlotBridge
                 || SupertypeGraph.Reaches(provider, slot.SemanticSpec, defs, refs)
                 || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [provider] },
                     slot.DescriptorSpec, defs, refs, isValue, context.LocalNames))) return;
-            var faces = selectedBody is { IsDefault: false } && slot.IsInterface && slot.Referenced
-                ? context.FacesForInheritedBody(definition, slot) : definition;
+            // A generated carrier exposes inherited interfaces, including properties whose
+            // Kotlin owner spelling differs from the selected constructed CLR declaring type.
+            var faces = slot.IsInterface && slot.Referenced && carrier != null
+                && slot.DescriptorSpec.Name != carrier && BaseHas(slot.DescriptorSpec) ? Authored() : definition;
             var reimplements = slot.IsInterface && definition.Kind == "class"
                 && (ReachesFromDeclaredInterface(faces, slot.SemanticSpec, defs, refs)
                     || slot.Referenced && ReachesFromDeclaredPhysicalInterface(faces, slot.DescriptorSpec,

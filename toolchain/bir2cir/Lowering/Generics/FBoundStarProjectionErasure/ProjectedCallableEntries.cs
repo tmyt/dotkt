@@ -111,69 +111,66 @@ sealed partial class ProjectedCallableEntries
                     DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id);
                     continue;
                 }
-                var constructed = SelectedConstruction(hierarchy, owner, slot.Owner, local ? null : EntryId(id));
-                TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, constructed.Args ?? []);
-                var descriptor = new BirMethodImpl { Owner = constructed, Member = slot.Name, Arity = slot.Arity,
-                    Params = slot.Parameters.Select(Close).ToArray(), Ret = Close(slot.Return) };
-                if (!local && !slot.IsInterface)
+                foreach (var constructed in SelectedConstructions(hierarchy, owner, method, id, slot.Owner, local ? null : EntryId(id)))
                 {
-                    var selected = references.SelectedPhysicalMethod(EntryId(id)) ??
-                        throw new InvalidOperationException("Selected projected base MethodDef is absent");
-                    descriptor.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references,
-                        selected, "method", selected.DeclaringType, constructed.Args));
-                }
-                if (slot.IsInterface)
-                {
-                    if (owner.Kind.OrDefault() == "interface")
+                    TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, constructed.Args ?? []);
+                    var descriptor = new BirMethodImpl { Owner = constructed, Member = slot.Name, Arity = slot.Arity,
+                        Params = slot.Parameters.Select(Close).ToArray(), Ret = Close(slot.Return) };
+                    if (!local && !slot.IsInterface)
                     {
-                        if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
-                            RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
-                                source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
-                                source.Method.Ret.Value, true, false));
-                        else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
-                            references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade);
+                        var selected = references.SelectedPhysicalMethod(EntryId(id)) ??
+                            throw new InvalidOperationException("Selected projected base MethodDef is absent");
+                        descriptor.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references,
+                            selected, "method", selected.DeclaringType, constructed.Args));
                     }
-                    var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
-                    if (entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
-                        references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound))))
+                    if (slot.IsInterface)
                     {
-                        DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract);
-                        continue;
+                        if (owner.Kind.OrDefault() == "interface")
+                        {
+                            if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
+                                RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
+                                    source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
+                                    source.Method.Ret.Value, true, false));
+                            else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
+                                references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade);
+                        }
+                        var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
+                        if (entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
+                            references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound))))
+                        {
+                            DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
+                            continue;
+                        }
+                        var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
+                        TypeNode PhysicalSlot(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, references);
+                        if (owner.Kind.OrDefault() == "interface" ||
+                            !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(p.Type.Value)))
+                            || PhysicalSlot(descriptor.Ret.Value) != PhysicalSlot(method.Ret.Value))
+                            arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+                        if (arguments != null)
+                        {
+                            AddInterfaceForwarder(owner, method, descriptor, contract, arguments);
+                            continue;
+                        }
+                        // A final Kotlin method can fill a carrier slot directly.
+                        // MethodImpl needs a virtual body, not a new override point.
+                        if (!method.Virtual.OrDefault()) { method.Virtual = true; method.ClrFinal = true; }
+                        method.ClrInterfaceImpls = method.ClrInterfaceImpls.OrEmpty().Append(descriptor).ToArray();
                     }
-                    var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
-                    if (owner.Kind.OrDefault() == "interface")
-                        arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
-                    if (arguments != null)
+                    else
                     {
-                        AddInterfaceForwarder(owner, method, descriptor, contract, arguments);
-                        continue;
+                        method.ClrBaseImpls = method.ClrBaseImpls.OrEmpty().Append(descriptor).ToArray();
+                        if (method.Name.Value == slot.Name) method.Override = true;
                     }
-                    // A final Kotlin method can fill a carrier slot directly.
-                    // MethodImpl needs a virtual body, not a new override point.
-                    if (!method.Virtual.OrDefault()) { method.Virtual = true; method.ClrFinal = true; }
-                    method.ClrInterfaceImpls = method.ClrInterfaceImpls.OrEmpty().Append(descriptor).ToArray();
-                }
-                else
-                {
-                    method.ClrBaseImpls = method.ClrBaseImpls.OrEmpty().Append(descriptor).ToArray();
-                    if (method.Name.Value == slot.Name) method.Override = true;
                 }
             }
         }
     }
 
-    TypeNode.Fqn SelectedConstruction(IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy,
-        IBirTypeDeclaration owner, string declaringOwner, string referencedId)
-    {
-        var supers = SupertypeGraph.Reachable(hierarchy[owner.Name.Value], hierarchy, references).Select(e => e.spec);
-        if (referencedId == null) return supers.Distinct().Single(s => s.Name == declaringOwner);
-        // Inherited reference edges use Kotlin classifier names as well as CLR
-        // spellings. The selected MethodDef owns the TypeDef; the edge owns its arguments.
-        var definition = references.SelectedPhysicalMethod(referencedId)?.DeclaringType
-            ?? throw new InvalidOperationException("Selected projected slot has no declaring CLR type");
-        return supers.Where(s => !hierarchy.ContainsKey(s.Name) && ClrMemberResolution.ResolveOwnerType(s, references) == definition)
-            .Select(s => s with { Name = declaringOwner }).Distinct().Single();
-    }
+    TypeNode.Fqn[] SelectedConstructions(IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy,
+        IBirTypeDeclaration owner, BirFunctionDeclaration method, string id, string declaringOwner, string referencedId)
+        => SupertypeGraph.SelectedOverrideOwners(hierarchy[owner.Name.Value], hierarchy, references,
+            method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
     void AddInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
         ProjectedMethodPlan contract, TypeNode[] arguments)
@@ -287,10 +284,12 @@ sealed partial class ProjectedCallableEntries
             }
             else continue;
             var graph = classHierarchy.Value;
-            var application = SelectedConstruction(graph, owner, declaringOwner, local.Method == null ? EntryId(id) : null);
-            var closed = plan.OnOwner(application.Args ?? []);
-            if (!IsInterface(id)) return declarationPlans[method] = closed;
-            interfaces.Add(closed);
+            foreach (var application in SelectedConstructions(graph, owner, method, id, declaringOwner, local.Method == null ? EntryId(id) : null))
+            {
+                var closed = plan.OnOwner(application.Args ?? []);
+                if (!IsInterface(id)) return declarationPlans[method] = closed;
+                interfaces.Add(closed);
+            }
         }
         if (interfaces.Count != 0)
         {
@@ -324,7 +323,7 @@ sealed partial class ProjectedCallableEntries
             var bodyEntry = m.LocalBodyEntry;
             var carrierSlot = m.ExistentialCallable == ExistentialCallableRole.Slot;
             var carrierBridge = m.ExistentialCallable == ExistentialCallableRole.Forwarder;
-            if (carrierBridge && m.SelectedGenericOverrides is { Count: > 0 } implemented)
+            if (bodyEntry == null && carrierBridge && m.SelectedGenericOverrides is { Count: > 0 } implemented)
                 bodyEntry = (DeclarationIdentityBinding.InheritedProjectionId(owner.Name.Value, implemented), null);
             if (HasFixedAbi(m, null, references) || (bodyEntry?.Id ?? identity?.DeclarationId.OrDefault()) is not string id ||
                 bodyEntry == null && !carrierSlot && id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||

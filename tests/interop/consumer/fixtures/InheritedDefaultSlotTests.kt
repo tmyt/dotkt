@@ -9,6 +9,7 @@ import InheritedDefaultSlots.ITextChannel
 import InheritedDefaultSlots.TextChannel
 import InheritedDefaultSlots.HiddenChannel
 import InheritedDefaultSlots.ExplicitChannel
+import InheritedDefaultSlots.ExplicitPropertyBase
 import InheritedDefaultSlots.ExplicitDefaultBase
 import InheritedDefaultSlots.NewDefaultNamesake
 import InheritedDefaultSlots.KeyBox
@@ -45,6 +46,15 @@ private class InheritIntroducedBody : IntroducesVirtualBody()
 private class ReplaceInterfaceBody : DefaultBase() {
     override fun Read(): Int = 3
 }
+private class GenericReplacement<T> : DefaultBase() {
+    override fun Read(): Int = 9
+}
+private class GenericCovariant<T> : ExplicitDefaultBase<String>() {
+    override fun Read(key: String): String = "subclass"
+}
+private class GenericGetter<T> : ExplicitPropertyBase() {
+    override val Value: Int get() = 8
+}
 private open class ReplaceBesideGetter : WithProperty() {
     override fun Read(): Int = 3
     open fun get_Value(): Int = 4
@@ -58,6 +68,12 @@ class InheritedDefaultSlotTests {
         check(reader.Read("x") == 9 && Driver.ReadTextValue(reader) == 9 && Driver.ReadNumber(reader) == 1)
         val hiddenReader = ReadNumberOverride()
         check(hiddenReader.Read("x") == 4 && Driver.ReadTextValue(hiddenReader) == 3 && Driver.ReadNumber(hiddenReader) == 8)
+        val generic = GenericReplacement<String>()
+        check(generic.Read() == 9 && Driver.ReadInterface(generic) == 9)
+        val result = GenericCovariant<String>()
+        check(Driver.ReadDefaultBase(result) == "subclass" && Driver.ReadDefaultChannel(result) == "explicit")
+        val getter = GenericGetter<String>()
+        check(getter.Value == 8 && Driver.ReadExplicitProperty(getter) == 4)
         val explicit = PreserveExplicitDefault()
         check(Driver.ReadDefaultBase(explicit) == "exact" && Driver.ReadDefaultChannel(explicit) == "explicit")
         val covariant = CovariantNamesake()

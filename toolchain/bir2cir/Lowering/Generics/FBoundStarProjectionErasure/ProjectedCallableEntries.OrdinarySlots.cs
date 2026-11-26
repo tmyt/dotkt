@@ -32,7 +32,7 @@ sealed partial class ProjectedCallableEntries
     // keeping the nominal and material arguments in their selected positions.
     void DeclareOrdinaryInterfaceBridge(BirFileDeclaration[] files, IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy,
         IBirTypeDeclaration owner, BirFunctionDeclaration target, Entry entry, string id,
-        ReferencedDeclarationSlot projectedSlot = null, ProjectedMethodPlan contract = null)
+        ReferencedDeclarationSlot projectedSlot = null, ProjectedMethodPlan contract = null, TypeNode.Fqn selectedOwner = null)
     {
         ReferencedDeclarationSlot slot;
         BirTypeParameter[] rows;
@@ -53,7 +53,12 @@ sealed partial class ProjectedCallableEntries
             selectedFrame = references.NullableMethodFrame(contract?.RepresentationDeclaration ?? id);
         }
         if (rows is not { Length: > 0 } || selectedFrame == null || !selectedFrame.StorageIndices.Any()) return;
-        var selectedOwner = SelectedConstruction(hierarchy, owner, slot.Owner, local.Method == null ? id : null);
+        if (selectedOwner == null)
+        {
+            foreach (var application in SelectedConstructions(hierarchy, owner, target, id, slot.Owner, local.Method == null ? id : null))
+                DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, target, entry, id, projectedSlot, contract, application);
+            return;
+        }
         var physicalOwner = selectedOwner.Args ?? [];
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, physicalOwner);
         var selected = selectedFrame;

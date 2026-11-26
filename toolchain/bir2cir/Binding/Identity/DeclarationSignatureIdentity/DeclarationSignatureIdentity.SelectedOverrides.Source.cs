@@ -26,7 +26,7 @@ static partial class DeclarationSignatureIdentity
             .ToDictionary(item => item.Method.DeclarationId.Value, StringComparer.Ordinal);
 
         void BindSlot(BirFileDeclaration file, IBirTypeDeclaration owner, BirFunctionDeclaration method,
-            BirMethodImpl descriptor, bool isInterface, string slotKey)
+            BirMethodImpl descriptor, bool isInterface, string slotKey, Func<BirTypeParameter[]> slotFrame = null)
         {
             var descriptors = isInterface ? method.ClrInterfaceImpls.OrEmpty() : method.ClrBaseImpls.OrEmpty();
             // Retarget only this selected relation, regardless of its old
@@ -45,6 +45,17 @@ static partial class DeclarationSignatureIdentity
                     Encoding.UTF8.GetBytes(method.DeclarationId.OrDefault() + "|" + slotKey)));
                 var bridge = KotlinOverrideSlotBridge.BuildSignatureBridgeSource(owner, method, targetParameters,
                     descriptor.Ret.Value, bridgeName, isValue, refs);
+                // A forwarding MethodDef implements the selected slot, including
+                // constraints on physical storage parameters not visible in Kotlin.
+                if (slotFrame?.Invoke() is { Length: > 0 } frame)
+                {
+                    var args = ((TypeNode.Fqn)descriptor.Owner.Value).Args ?? [];
+                    bridge.TypeParams = frame.Select(row => {
+                        var copy = (BirTypeParameter)row.DeepClone();
+                        copy.RewriteOwnTypeFieldsInPlace((_, _, t) => SupertypeGraph.SubstOwnerTvs(t, args));
+                        return copy;
+                    }).ToArray();
+                }
                 owner.Methods = owner.Methods.OrEmpty().Append(bridge).ToArray();
                 publishMethods(file, owner, new[] { bridge });
                 attachedTo = bridge;
@@ -87,13 +98,17 @@ static partial class DeclarationSignatureIdentity
                     var bodyAllocated = method.DeclarationId.OrDefault() is string implementationId
                         && plan.Parameters.ContainsKey(implementationId);
                     if (!bodyAllocated && !plan.Parameters.ContainsKey(id) && !referencedAllocation) continue;
-                    var selectedOwner = SelectedLocalOwner(definitions[owner.Name.Value], selectedOwnerName, definitions, refs);
-                    var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
-                    BindSlot(file, owner, method, new BirMethodImpl {
-                        Owner = BirGraphValue.CopyType(selectedOwner), Member = name, Arity = arity,
-                        Params = openParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray(),
-                        Ret = SupertypeGraph.SubstOwnerTvs(openReturn, arguments),
-                    }, selectedInterface, id);
+                    foreach (var selectedOwner in SupertypeGraph.SelectedOverrideOwners(definitions[owner.Name.Value], definitions, refs,
+                        method.ConstructedOverrideOwners, id, selectedOwnerName, declarations.ContainsKey(id) ? null : id))
+                    {
+                        var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
+                        BindSlot(file, owner, method, new BirMethodImpl {
+                            Owner = BirGraphValue.CopyType(selectedOwner), Member = name, Arity = arity,
+                            Params = openParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray(),
+                            Ret = SupertypeGraph.SubstOwnerTvs(openReturn, arguments),
+                        }, selectedInterface, id, () => selected.Method != null ? selected.Method.TypeParams.OrEmpty()
+                            : refs.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true));
+                    }
                 }
                 if (method.DeclarationId.OrDefault() is string sourceId && plan.Parameters.ContainsKey(sourceId)
                     && PhysicalSlots.TryGetValue(sourceId, out var selectedPhysicalSlots))

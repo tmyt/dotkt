@@ -128,6 +128,8 @@ private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null,
 	private val sourceFragments: Set<IrPackageFragment> = emptySet()) {
 
+	internal var constructedOverrides: kotc.frontend.FirOverrideConstructions? = null
+
 	/** Frontend-authoritative callable identity. The JVM-oriented FIR2IR pipeline does not populate IdSignature for
 	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
 	 * itself. Calls read the selected IrSymbol through this identity map; bir2cir never reconstructs it after erasure. */
