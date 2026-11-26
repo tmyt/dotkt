@@ -37,6 +37,7 @@ static partial class RoundtripMetadata
     const string AKLateinit     = Ns + "KotlinLateinitAttribute";
     const string AKLateinitState = Ns + "KotlinLateinitStateAttribute";
     const string AKFunInterface = Ns + "KotlinFunInterfaceAttribute";
+    const string AKConstructedDispatch = Ns + "KotlinConstructedDispatchAttribute";
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKData         = Ns + "KotlinDataAttribute";
@@ -236,6 +237,7 @@ static partial class RoundtripMetadata
             AttrClass(AKLateinit, Ctor()),
             AttrClass(AKLateinitState, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKFunInterface, Ctor()),
+            AttrClass(AKConstructedDispatch, Ctor()),
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
             AttrClass(AKData, Ctor()),

@@ -4,8 +4,11 @@ import NUnit.Framework.TestAttribute
 import RoundtripDependentNative.JoinedSlot
 import RoundtripDependentNative.Base
 import RoundtripDependentNative.ILeft
+import RoundtripDependentNative.IRight
 import System.Collections.Generic.Queue
 import GenericValueInterop.InheritedSuspendTaskApi
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 import kotlin.coroutines.*
 import roundtrip.inheritedsuspendcovariance.IntGate
 import roundtrip.selectedbounds.*
@@ -34,6 +37,55 @@ private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
 }
 
 class SelectedMethodBoundsTests {
+    private class Both : GenericValueInterop.IJoinedPicker {
+        override suspend fun <A : Item> pick(value: Item): Any = "first"
+        override suspend fun <A : OtherItem> pick(value: OtherItem): Any = "second"
+        override fun <A : Item> write(value: Item, condition: Boolean, target: ClrRef<Int>) {
+            if (condition) target.value += 1
+        }
+        override fun <A : OtherItem> write(value: OtherItem, condition: Boolean, target: ClrRef<Int>) {
+            if (condition) target.value += 2
+        }
+    }
+    private class Single : SuspendPicker<Concrete> {
+        override suspend fun <A : Concrete> pick(value: Concrete): Any = "single"
+        override fun <A : Concrete> write(value: Concrete, condition: Boolean, target: ClrRef<Int>) = Unit
+    }
+    private suspend fun <K> via(picker: SuspendPicker<K>, value: K): Any where K : Base, K : ILeft, K : IRight =
+        picker.pick<K>(value)
+
+    @TestAttribute
+    @Suppress("UNCHECKED_CAST")
+    fun eachConstructionOfTheSameSuspendDeclarationRetainsItsOverride() {
+        val both = Both()
+        val first: SuspendPicker<Item> = both
+        val second: SuspendPicker<OtherItem> = both
+        val operand: Any = "value"
+        var sum = 0
+        first.write<Item>(Item(), operand is String, byref(sum))
+        second.write<OtherItem>(OtherItem(), operand !is Int, byref(sum))
+        check(sum == 3)
+        var completed = false
+        val calls: suspend () -> Unit = {
+            check(both.pick<Item>(Item()) == "first" && both.pick<OtherItem>(OtherItem()) == "second")
+            check(first.pick<Item>(Item()) == "first" && second.pick<OtherItem>(OtherItem()) == "second")
+            check(via(first, Item()) == "first" && via(second, OtherItem()) == "second")
+            check(pickThrough(first, Item()) == "first" && pickThrough(second, OtherItem()) == "second")
+            check(pickThrough(Single() as SuspendPicker<OtherItem>, OtherItem()) == "single")
+            check(pickStar(Single()) == "single")
+            var order = ""
+            check(run { order += "r"; first }.pick<Item>(run { order += "a"; Item() }) == "first")
+            check(order == "ra")
+        }
+        calls.startCoroutine(object : Continuation<Unit> {
+            override val context = EmptyCoroutineContext
+            override fun resumeWith(result: Result<Unit>) { result.getOrThrow(); completed = true }
+        })
+        check(completed)
+        check(InheritedSuspendTaskApi.Pick<Item>(first, Item()) == "first")
+        check(InheritedSuspendTaskApi.Pick<OtherItem>(second, OtherItem()) == "second")
+    }
+
     @TestAttribute
     fun suspendOverrideRetainsTheColdAndTaskSlots() {
         val gate = IntGate()

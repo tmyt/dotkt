@@ -5,6 +5,7 @@ import RoundtripDependentNative.IJoinedValue
 import RoundtripDependentNative.ILeft
 import RoundtripDependentNative.IRight
 import System.Collections.Generic.Queue
+import kotlin.clr.ClrRef
 
 interface NominalFactory<K : Base> {
     fun <A : K> make(): Any
@@ -17,6 +18,16 @@ interface JointFactory<K> where K : Base, K : ILeft, K : IRight {
 interface SuspendFactory<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> make(): Any
 }
+interface SuspendPicker<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> pick(value: K): Any
+    fun <A : K> write(value: K, condition: Boolean, target: ClrRef<Int>)
+}
+// This call is compiled before the foreign interface joining two constructions exists.
+suspend fun <K> pickThrough(picker: SuspendPicker<K>, value: K): Any where K : Base, K : ILeft, K : IRight =
+    picker.pick<K>(value)
+suspend fun pickStar(picker: SuspendPicker<Concrete>): Any =
+    picker.pick<Leaf<*>>(Concrete())
+class OtherItem : Concrete()
 interface SuspendLeft<K> where K : Base, K : ILeft { suspend fun <A : K> make(): Any }
 interface SuspendRight<K> where K : Base, K : IRight { suspend fun <A : K> make(): Any }
 open class SuspendParent : SuspendFactory<Concrete> {

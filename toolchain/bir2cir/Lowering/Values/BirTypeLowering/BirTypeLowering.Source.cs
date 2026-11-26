@@ -32,6 +32,14 @@ static partial class BirTypeLowering
             // Birth the positional metadata from ORIGINAL scalar facts, before
             // physical rewriting destroys a suspend shape or a Nothing return.
             var metadata = CapturePhysicalMetadata(node);
+            // The override markers are consumed here. A declaration ID names an open method,
+            // not which of its constructed interface slots the frontend selected.
+            if (node is BirFunctionDeclaration method && method.TypeParams.OrEmpty().Length != 0 && method.Overrides.HasValue)
+                method.ConstructedOverrideOwners = method.Overrides.Value
+                    .Where(edge => edge.DeclarationId.HasValue && edge.Owner.OrDefault() is TypeNode.Fqn { Args.Length: > 0 })
+                    .Select(edge => (edge.PhysicalDeclarationId.OrDefault() ?? edge.DeclarationId.Value,
+                        (TypeNode.Fqn)ProjectType(edge.Owner.Value, BirPhysicalTypeRole.Owner, here, context)))
+                    .Distinct().ToArray();
             var unitValue = node is BirConstant constant && IsUnitHead(constant.Type.OrDefault())
                 || node is BirTry expression && IsUnitHead(expression.Type.OrDefault());
             node.RewritePhysicalFieldsInPlace(

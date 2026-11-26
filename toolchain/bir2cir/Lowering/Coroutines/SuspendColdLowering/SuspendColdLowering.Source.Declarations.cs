@@ -146,13 +146,22 @@ static partial class SuspendColdLowering
             RoundtripMetadata.CopySourceMethodIdentity(_m, method);
         }
 
+        string ForwarderEntry(bool cold) =>
+            _m.ExistentialCallable == ExistentialCallableRole.Forwarder && _typeParams.Count != 0 &&
+            _selfType is TypeNode.Fqn owner && _m.SignatureOverrideDeclarations.OrEmpty() is { Length: > 0 } slots
+                ? DeclarationIdentityBinding.InheritedProjectionId(owner.Name, slots) + (cold ? "|cold" : "") : null;
+
         void CarryPhysicalSlotFacts(BirFunctionDeclaration method, bool coldEntry)
         {
+            method.ExistentialCallable = _m.ExistentialCallable;
+            // Generated forwarding methods carry physical slot IDs rather than FIR
+            // override markers. Both entries must implement their corresponding slots.
+            if (_m.ExistentialCallable == ExistentialCallableRole.Forwarder && _m.SignatureOverrideDeclarations.HasValue)
+                method.SignatureOverrideDeclarations = _m.SignatureOverrideDeclarations.Value
+                    .Select(id => coldEntry ? id + "|cold" : id).ToArray();
+            if (ForwarderEntry(coldEntry) is { } entry) method.LocalBodyEntry = (entry, null);
             if (_m.ImplicitExistentialImplementationId is string implementation)
-            {
-                method.ExistentialCallable = _m.ExistentialCallable;
                 method.ImplicitExistentialImplementationId = coldEntry ? implementation + "|cold" : implementation;
-            }
             if (!_physicalSlotBridge) return;
             method.PhysicalSlotBridge = true;
             if (_clrInterfaceSlotBridge) method.ClrInterfaceSlotBridge = true;

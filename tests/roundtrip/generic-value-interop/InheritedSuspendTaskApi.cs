@@ -4,8 +4,15 @@ using roundtrip.inheritedsuspendcovariance;
 
 namespace GenericValueInterop;
 
+public interface IJoinedPicker : roundtrip.selectedbounds.SuspendPicker<roundtrip.selectedbounds.Item>,
+    roundtrip.selectedbounds.SuspendPicker<roundtrip.selectedbounds.OtherItem> { }
+
 public static class InheritedSuspendTaskApi
 {
+    public static object Pick<T>(roundtrip.selectedbounds.SuspendPicker<T> picker, T value)
+        where T : RoundtripDependentNative.Base, RoundtripDependentNative.ILeft, RoundtripDependentNative.IRight =>
+        picker.pick<T, T>(value).GetAwaiter().GetResult();
+
     public static Task<object> ThroughConstrainedTask(roundtrip.selectedbounds.SuspendFactory<roundtrip.selectedbounds.Concrete> factory) =>
         factory.make<roundtrip.selectedbounds.Item, roundtrip.selectedbounds.Item>();
 
