@@ -96,6 +96,7 @@ static partial class ClrMemberResolution
         var reference = BirMemberReference.FromPhysical(ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes, selected, MemberRefNode.Kinds.Ctor, open, ownerArguments));
         StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, arguments, Array.Empty<TypeNode>(), selected,
             ownerArguments ?? Array.Empty<TypeNode>());
+        MarkFunctionParameters(node, selectedSignature);
         switch (node)
         {
             case BirNew construction:

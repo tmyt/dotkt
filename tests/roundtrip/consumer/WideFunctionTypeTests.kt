@@ -21,6 +21,7 @@ private class FirstPlusLast : WideIntCallback {
 }
 private class NativeIntCallbackDerived(op: FirstPlusLast) : GenericValueInterop.NativeIntCallbackBase(op)
 private class NativeFunctionDerived(op: WideIntCallback) : GenericValueInterop.NativeIntCallbackBase(op)
+private fun constructWithStoredFunction(op: WideIntCallback) = GenericValueInterop.NativeIntCallbackBase(op).Read()
 private class CallbackFactory : WideCallback<WideIntCallback> {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): WideIntCallback =
@@ -41,6 +42,7 @@ class WideFunctionTypeTests {
         native.Callback = FirstPlusLast()
         assertEquals(18, native.Read())
         assertEquals(18, NativeFunctionDerived(FirstPlusLast()).Read())
+        assertEquals(18, constructWithStoredFunction(FirstPlusLast()))
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read(FirstPlusLast()))
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read<String>(FirstPlusLast()))
         assertEquals(18, NativeGetterDerived().Read())
