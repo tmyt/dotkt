@@ -24,6 +24,10 @@ class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFacto
 
 private fun <A : Concrete> takeNullable(parent: GenericParent<*>, queue: Queue<A?>): Any = parent.take<A>(queue)
 
+private class OrdinarySuspendFactory<K>(val value: K) : SuspendFactory<K> where K : Base, K : ILeft, K : IRight {
+    override suspend fun <A : K> make(): Any = value
+}
+
 private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     SuspendParent(), SuspendLeft<Concrete>, SuspendRight<Concrete> where C : Base, C : ILeft {
     var calls = 0
@@ -95,6 +99,12 @@ class SelectedMethodBoundsTests {
         val right: SuspendRight<Concrete> = child
         var matched = false
         val cold: suspend () -> Any = {
+            val item = Item()
+            val exact: SuspendFactory<Item> = OrdinarySuspendFactory<Item>(item)
+            check(exact.make<Item>() === item)
+            val leaf = Leaf<String>()
+            val projected: SuspendFactory<Leaf<*>> = OrdinarySuspendFactory<Leaf<*>>(leaf)
+            check(projected.make<Leaf<*>>() === leaf)
             check(JoinedSlot.IsValue<Item>(left.make<Item>()))
             right.make<Item>()
         }

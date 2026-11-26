@@ -16,6 +16,7 @@ sealed partial class ProjectedCallableEntries
     readonly Dictionary<string, (IBirTypeDeclaration Owner, BirFunctionDeclaration Method)> originalSlots = new(StringComparer.Ordinal);
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
+    readonly Dictionary<string, ReferencedDeclarationSlot> localSlots = new(StringComparer.Ordinal);
     readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
@@ -55,7 +56,6 @@ sealed partial class ProjectedCallableEntries
             foreach (var method in type.Methods.OrEmpty())
                 if (method.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() is string identity)
                     originalSlots.Add(identity, (type, method));
-        var localSlots = new Dictionary<string, ReferencedDeclarationSlot>(StringComparer.Ordinal);
         foreach (var file in files)
         {
             if (file.Methods.HasValue) file.Methods = Declare(file.Methods.Value, null, bodies, localSlots);
