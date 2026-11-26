@@ -119,8 +119,10 @@ static partial class ClrMemberResolution
             Interfaces = new TypeNode[] { direct }, Methods = new[] { new BirFunctionDeclaration { Name = "replacement",
                 ClrInterfaceImpls = new[] { new BirMethodImpl { Owner = required, Member = "Ping", Arity = 0,
                     Params = Array.Empty<TypeNode>(), Ret = MemberRefNode.Void } } } } };
-        ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { derived } }], refs, metadataBuild: true);
-        if (!derived.Interfaces.Value.SequenceEqual(new TypeNode[] { direct, required }))
+        var root = new BirFileDeclaration { Types = new IBirTypeDeclaration[] { derived } };
+        ResolveInterfaceSlots(null, [root], refs, metadataBuild: true);
+        if (root.Types.Value is not [_, BirInterfaceDefinition bridge] || !bridge.Interfaces.Value.SequenceEqual([required])
+            || !derived.Interfaces.Value.SequenceEqual(new TypeNode[] { direct, new TypeNode.Fqn(bridge.Name.Value) }))
             throw new InvalidOperationException("An unrelated nested TypeDef covered an inherited interface MethodImpl");
         BirMethodImpl Resolve(bool metadata, TypeNode.Fqn receiver, string name, params TypeNode[] parameters)
         {

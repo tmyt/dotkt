@@ -2031,6 +2031,9 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     Type ProbeNetType(string fqn, int genericArity) => _universe.ResolveType(fqn, genericArity);
 
+    internal bool ReferenceNameOccupied(string name, int arity) =>
+        _universe.FirstType(name, arity) != null || PhysicalTypeNamed(name, arity) != null;
+
     /// <summary>
     /// The SHIPPED declaration of a member resolved against the reference twin, or null when there is none or it
     /// cannot be identified unambiguously.

@@ -6,7 +6,16 @@ using System.Reflection.PortableExecutable;
 namespace InheritedDefaultSlots;
 
 public interface IValue { int Read() => 1; }
-public interface IDefaultChannel<T> { object Read(T key) => "default"; }
+public interface IDefaultChannel<T> {
+    object Read(T key) => "default";
+    int Tick() => 11;
+}
+public class KeyBox<T> {}
+public class SlotFamily {
+    protected interface IProtected { int Tick() => 11; }
+    public class Native : SlotFamily, IProtected {}
+    public static int Tick(Native instance) => ((IProtected)instance).Tick();
+}
 public class ExplicitDefaultBase<T> : IDefaultChannel<T> {
     object IDefaultChannel<T>.Read(T key) => "explicit";
     public virtual object Read(T key) => "base";
@@ -38,6 +47,9 @@ public static class Driver
 {
     public static object ReadDefaultChannel(IDefaultChannel<string> channel) => channel.Read("x");
     public static object ReadDefaultBase(ExplicitDefaultBase<string> instance) => instance.Read("x");
+    public static object ReadBoxBase(ExplicitDefaultBase<KeyBox<string>> instance) => instance.Read(new());
+    public static object ReadBoxChannel(IDefaultChannel<KeyBox<string>> channel) => channel.Read(new());
+    public static int Tick(IDefaultChannel<KeyBox<string>> channel) => channel.Tick();
     public static int ReadChannel(IChannel<string> channel) => channel.Read("x");
     public static int ReadText(ITextChannel channel) => channel.Read("x");
     public static int ReadProperty(IWithProperty instance) => instance.Value;
@@ -65,7 +77,7 @@ public static class Driver
         // Runtime dispatch alone accepts the dangling MethodImpl that ILLink rejects.
         bool DeclaresFace(System.Type owner) => md.GetTypeDefinition(
             (TypeDefinitionHandle)MetadataTokens.EntityHandle(owner.MetadataToken)).GetInterfaceImplementations()
-            .Any(row => owner.Module.ResolveType(MetadataTokens.GetToken(md.GetInterfaceImplementation(row).Interface)) == typeof(IValue));
+            .Any(row => typeof(IValue).IsAssignableFrom(owner.Module.ResolveType(MetadataTokens.GetToken(md.GetInterfaceImplementation(row).Interface))));
         return inherited.GetType().GetInterfaceMap(typeof(IValue)).TargetMethods[0].DeclaringType == typeof(VirtualBase)
             && !DeclaresFace(inherited.GetType()) && DeclaresFace(replaced.GetType());
     }
