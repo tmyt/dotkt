@@ -34,6 +34,7 @@ static partial class FBoundStarProjectionErasure
                 ? new TypeNode.Array(element, array.Rank, array.SzArray) : null;
         }
 
+        Dictionary<BirVariable, TypeNode> destinations = null;
         Dictionary<string, TypeNode> locals = null;
         Dictionary<string, TypeNode.Fqn> projectedLocals = null;
         Dictionary<string, TypeNode> projectedArrays = null;
@@ -47,8 +48,9 @@ static partial class FBoundStarProjectionErasure
             {
                 var projected = state.ProjectedType(variable.Init.OrDefault() as BirGraphValue);
                 var arrayProjection = state.ArrayProjection(variable.Init.OrDefault() as BirGraphValue);
-                if (Matches(variable.Type.Value, result) || projected != null || arrayProjection != null)
+                if (Matches(variable.Type.Value, result) || Physical(variable.Type.Value) == result)
                 {
+                    (destinations ??= new(ReferenceEqualityComparer.Instance))[variable] = result;
                     (locals ??= new(StringComparer.Ordinal))[variable.Name.Value] = result;
                     if (projected != null) (projectedLocals ??= new(StringComparer.Ordinal))[variable.Name.Value] = projected;
                     if (arrayProjection != null) (projectedArrays ??= new(StringComparer.Ordinal))[variable.Name.Value] = arrayProjection;
@@ -64,16 +66,13 @@ static partial class FBoundStarProjectionErasure
         void Normalize(BirGraphSlot slot)
         {
             var node = slot.Value;
-            var name = node switch { BirVariable variable => variable.Name.OrDefault(), BirLocal local => local.Name.OrDefault(), _ => null };
-            if (name != null && locals?.TryGetValue(name, out var carrier) == true)
+            if (node is BirVariable variable && destinations?.TryGetValue(variable, out var destination) == true)
+                variable.Type = BirGraphValue.CopyType(destination);
+            if (node is BirLocal local && local.Name.OrDefault() is string name && locals?.TryGetValue(name, out var carrier) == true)
             {
-                if (node is BirVariable variable) variable.Type = BirGraphValue.CopyType(carrier);
-                else if (node is BirLocal local)
-                {
-                    local.Sty = BirGraphValue.CopyType(carrier);
-                    if (projectedLocals?.TryGetValue(name, out var projected) == true) state.ProjectionFact(local, projected);
-                    if (projectedArrays?.TryGetValue(name, out var arrayProjection) == true) state.ArrayProjection(local, arrayProjection);
-                }
+                local.Sty = BirGraphValue.CopyType(carrier);
+                if (projectedLocals?.TryGetValue(name, out var projected) == true) state.ProjectionFact(local, projected);
+                if (projectedArrays?.TryGetValue(name, out var arrayProjection) == true) state.ArrayProjection(local, arrayProjection);
             }
             var (target, operand, exact) = node switch {
                 BirCast cast => (cast.Type.OrDefault(), cast.E.OrDefault(), cast._exactBridgeCast.OrDefault()),
@@ -97,7 +96,7 @@ static partial class FBoundStarProjectionErasure
         }
         while (true)
         {
-            var priorLocals = locals?.Count ?? 0;
+            var priorDestinations = destinations?.Count ?? 0;
             var priorProjections = projectedLocals?.Count ?? 0;
             pending.Clear();
             for (var index = 0; index < body.Value.Length; index++)
@@ -106,7 +105,7 @@ static partial class FBoundStarProjectionErasure
                 Collect(new BirGraphSlot(() => (BirGraphValue)body.Value[at], value => body.Value[at] = (IBirStatement)value));
             }
             foreach (var slot in pending) Normalize(slot);
-            if ((locals?.Count ?? 0) == priorLocals && (projectedLocals?.Count ?? 0) == priorProjections) break;
+            if ((destinations?.Count ?? 0) == priorDestinations && (projectedLocals?.Count ?? 0) == priorProjections) break;
         }
 
         bool CanNormalizeReturn(TypeNode type) => type is TypeNode.Array array

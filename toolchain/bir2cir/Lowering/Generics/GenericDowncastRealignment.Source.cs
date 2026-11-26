@@ -7,6 +7,7 @@ static partial class GenericDowncastRealignment
 {
     internal static void Apply(BirFileDeclaration root, IReadOnlyDictionary<string, Def> defs)
     {
+        var originalTargets = new Dictionary<BirCast, TypeNode.Fqn>(ReferenceEqualityComparer.Instance);
         RewriteCasts(root);
         Align(root, ImmutableDictionary.Create<string, TypeNode.Fqn>(StringComparer.Ordinal));
 
@@ -18,7 +19,10 @@ static partial class GenericDowncastRealignment
             if (node is BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn target } cast
                 && SourceExpressionType(cast.E.OrDefault() as BirGraphValue) is TypeNode.Fqn source
                 && Realign(target, source, defs) is TypeNode.Fqn aligned)
+            {
+                originalTargets.Add(cast, target);
                 cast.Type = aligned;
+            }
             node.VisitOwnChildSlots((_, role, slot) => {
                 if (!NullableRepresentationViews.Frozen(role)) RewriteCasts(slot.Value);
             });
@@ -28,7 +32,8 @@ static partial class GenericDowncastRealignment
         {
             if (node is IBirExecutablePayload) return;
             if (node is BirVariable { Init.HasValue: true,
-                    Init.Value: BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn type } } variable)
+                    Init.Value: BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn type } init } variable
+                && originalTargets.TryGetValue(init, out var original) && variable.Type.OrDefault() == original)
                 variable.Type = BirGraphValue.CopyType(type);
             if (node is BirCallInstance { Recv.HasValue: true, Recv.Value: BirLocal { Name.HasValue: true } local,
                     OwnerType.HasValue: true, OwnerType.Value: TypeNode.Fqn owner } call
@@ -47,7 +52,8 @@ static partial class GenericDowncastRealignment
                     if (statement is BirVariable { Name.HasValue: true } declared)
                     {
                         current = current.Remove(declared.Name.Value);
-                        if (declared.Init.OrDefault() is BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn selected })
+                        if (declared.Init.OrDefault() is BirCast { Type.HasValue: true, Type.Value: TypeNode.Fqn selected } initCast
+                            && originalTargets.ContainsKey(initCast) && declared.Type.OrDefault() == selected)
                             current = current.SetItem(declared.Name.Value, selected);
                     }
                 }
