@@ -94,6 +94,10 @@ static partial class SuspendColdLowering
         {
             method.SourceCallableVirtual = _m.SourceCallableVirtual;
             method.HasNativeOverrideSlot = _m.HasNativeOverrideSlot;
+            // Implementing a Kotlin interface requires a CLR slot even for a
+            // final override. Neither suspend entry is a second override point.
+            if (_m.Mods.OrDefault() is { } mods && mods.Override.OrDefault() && !mods.Open.OrDefault() && !_memberAbstract)
+                method.ClrFinal = true;
             if (_overrideMarkers.Length == 0) return;
             var markers = _overrideMarkers.Select(marker => (BirOverride)marker.DeepClone()).ToArray();
             if (coldEntry)

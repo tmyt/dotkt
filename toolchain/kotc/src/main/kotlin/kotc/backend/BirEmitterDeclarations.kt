@@ -2358,10 +2358,13 @@ private fun BirEmitter.validatePInvokeDeclaration(fn: IrSimpleFunction, static: 
  *  `inline` = the "inline body must travel" fact (isInlineWithLambda), the only inline shape ilemit splices. */
 internal fun BirEmitter.functionModifiers(fn: IrSimpleFunction, inline: Boolean = false): kotc.bir.BirModifiers? {
 	val inlineOnly = fn.annotations.any { it.type.classFqName?.asString() == "kotlin.internal.InlineOnly" }
-	if (!inline && !inlineOnly && !fn.isInfix && !fn.isOperator && !fn.isSuspend && !fn.isExternal) return null
+	val overrides = fn.overriddenSymbols.isNotEmpty()
+	val open = fn.modality == Modality.OPEN
+	if (!inline && !inlineOnly && !fn.isInfix && !fn.isOperator && !fn.isSuspend && !fn.isExternal && !overrides && !open) return null
 	return kotc.bir.BirModifiers(isInline = true.takeIf { inline }, isInlineOnly = true.takeIf { inlineOnly },
 		isInfix = true.takeIf { fn.isInfix }, isOperator = true.takeIf { fn.isOperator },
-		isSuspend = true.takeIf { fn.isSuspend }, isExternal = true.takeIf { fn.isExternal })
+		isSuspend = true.takeIf { fn.isSuspend }, isExternal = true.takeIf { fn.isExternal },
+		isOverride = true.takeIf { overrides }, isOpen = true.takeIf { open })
 }
 
 /** Structured class-modifier object (spec §2.1): `"mods":{name:true,…}` for class-nature Kotlin facts

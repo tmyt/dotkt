@@ -6,8 +6,8 @@ namespace GenericValueInterop;
 
 public static class InheritedSuspendTaskApi
 {
-    public static object ThroughConstrainedTask(roundtrip.selectedbounds.SuspendFactory<roundtrip.selectedbounds.Concrete> factory) =>
-        factory.make<roundtrip.selectedbounds.Item, roundtrip.selectedbounds.Item>().GetAwaiter().GetResult();
+    public static Task<object> ThroughConstrainedTask(roundtrip.selectedbounds.SuspendFactory<roundtrip.selectedbounds.Concrete> factory) =>
+        factory.make<roundtrip.selectedbounds.Item, roundtrip.selectedbounds.Item>();
 
     public static string ThroughInterface(Factory factory, Gate gate)
     {

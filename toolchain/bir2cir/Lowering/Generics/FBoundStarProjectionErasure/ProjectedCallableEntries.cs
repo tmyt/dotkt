@@ -369,13 +369,15 @@ sealed partial class ProjectedCallableEntries
                     // overriding source spelling (which may now name one concrete class).
                     var row = representations.Variable(new TypeNode.Tv("method", sourceIndex), NullableRepresentationFrame.Role.Storage).I;
                     parameters[row].Constraints = plan.Parameters[row].Constraints;
-                    if (m.ColdEntryMachine is { } machine && classes.TryGetValue(machine.Name, out var sm))
-                    {
-                        var captured = TypeParameterFrame.Declarations(sm).ElementAt(machine.OwnerArity + row);
-                        captured.Constraints = parameters[row].Constraints.OrEmpty().Select(t => TypedExecutableFrames.RewriteType(t,
-                            v => v.Scope == "method" ? new TypeNode.Tv("type", machine.OwnerArity + v.I) : v)).ToArray();
-                    }
                 }
+            if (contractSource.SelectedGenericOverrides is { Count: > 0 } && m.ColdEntryMachine is { } machine &&
+                classes.TryGetValue(machine.Name, out var sm))
+            {
+                var captured = TypeParameterFrame.Declarations(sm).Skip(machine.OwnerArity).ToArray();
+                for (int i = 0; i < parameters.Length; ++i)
+                    captured[i].Constraints = parameters[i].Constraints.OrEmpty().Select(t => TypedExecutableFrames.RewriteType(t,
+                        v => v.Scope == "method" ? new TypeNode.Tv("type", machine.OwnerArity + v.I) : v)).ToArray();
+            }
             entries.Add(id, entry);
             emittedEntries.Add(EntryId(id), entry);
             var copy = (BirFunctionDeclaration)m.DeepClone();
