@@ -6,7 +6,9 @@ static partial class FBoundStarProjectionErasure
 {
     internal sealed record ProjectedStorageOwner(string Exact, string Carrier, string Implementation, string Outer, string OuterCarrier,
         ProjectedClassStorageFrame.InterfaceSlot[] Slots, IReadOnlyDictionary<string, string> Constructors,
-        ProjectedConstructorPlan Entry);
+        ProjectedConstructorPlan Entry, StorageOverride[] Overrides);
+
+    internal sealed record StorageOverride(string Body, string OwnSlot, string Parent, string ParentOwner, bool Suspend);
 
     static string StorageFactoryId(string constructorId) =>
         DeclarationIdentityBinding.PhysicalOnlyId(constructorId, DeclarationIdentityBinding.ProjectedConstructorRole);
@@ -54,8 +56,18 @@ static partial class FBoundStarProjectionErasure
         }
         var outer = owner.Inner && owner.SemanticOwner != null && context.Owners.TryGetValue(owner.SemanticOwner, out var enclosing)
             && enclosing.Needed ? enclosing : null;
+        // The source declaration and its selected override edges are released
+        // before the sibling's physical entries exist. Keep their identities,
+        // not a second copy of either declaration's parameter frame.
+        var overrides = (from row in context.Declarations.Slots(owner).Values
+            where row.Declaration.DeclarationId.HasValue && row.EmittedSlot?.DeclarationId.HasValue == true
+            from edge in row.Declaration.Overrides.OrEmpty()
+            where edge.DeclarationId.HasValue && edge.Owner.OrDefault() is TypeNode.Fqn
+            select new StorageOverride(row.Declaration.DeclarationId.Value, row.EmittedSlot.DeclarationId.Value,
+                edge.DeclarationId.Value, ((TypeNode.Fqn)edge.Owner.Value).Name, row.Declaration.Mods.OrDefault()?.Suspend.OrDefault() == true))
+            .Distinct().ToArray();
         context.ProjectedStorage.Add(new(owner.Name, owner.ErasedName,
-            context.Demand.AllocateTypeName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry));
+            context.Demand.AllocateTypeName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry, overrides));
     }
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
@@ -125,6 +137,7 @@ static partial class FBoundStarProjectionErasure
                 return type;
             }
             storage.Interfaces = storage.Interfaces.OrEmpty().Select(ProjectInterface).DistinctBy(SupertypeGraph.TypeKey).ToArray();
+            callables.BindStorageOverrides(exact, storage, plan, carriers.LocalOwners);
             ProjectNativeInterfaceStorage(storage, plan, references);
             storage.Attrs = storage.Attrs.OrEmpty().Where(a =>
                 a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.RuntimeClassifierAttribute }).ToArray();
