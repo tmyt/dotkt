@@ -79,7 +79,7 @@ static partial class ReferenceExistentialAbiBinding
     static TypeNode SourceAbiExpressionType(BirGraphValue node)
     {
         if (node == null) return null;
-        // A classifier's operand names the tested/referenced type, not the value stored in the local.
+        // Only these two classifier operands differ from the stored value; a cast returns the target representation.
         if (node is BirClassReference or BirIsInstance) return BirNodeType.Of((BirGraphNode)node);
         TypeNode result = null;
         node.VisitOwnTypeFields((field, type) => { if (field == "ret") result = type; });

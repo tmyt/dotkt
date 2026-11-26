@@ -74,6 +74,8 @@ static partial class ReferenceExistentialAbiBinding
             && rows[0].ParamTypeNodes[0] == new TypeNode.Array(carrier) && rows[0].ReturnTypeNode == physicalResult,
             "source/operand ownership or authoritative reference metadata was mutated");
         var typed = new BirNativeInstance { Type = text, Ret = carrier, Sty = semantic };
+        Need(SourceAbiExpressionType(new BirInstanceOrNull { Type = carrier }) == carrier,
+            "a safe cast must retain its target representation for local storage");
         Need(SourceAbiExpressionType(typed) == carrier, "initializer ret lost priority over type and sty");
         typed.Ret = OptionalField<TypeNode>.Null;
         Need(SourceAbiExpressionType(typed) == text, "initializer type lost priority over sty after null ret");
