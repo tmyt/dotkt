@@ -1046,8 +1046,18 @@ static class ReferenceMetadataReader
         }
     }
 
-    internal sealed record NativeImplementationDeclaration(string Scope, string TypeName, TypeNode.Fqn Owner,
-        string Member, MethodSignature<TypeNode> Signature);
+    internal sealed class NativeImplementationDeclaration(MetadataReader reader, EntityHandle parent, string member,
+        EntityHandle declaration, EntityHandle body)
+    {
+        internal string Member => member;
+        internal (string Scope, string Name) NominalOwner => NominalMetadataOwner(reader, parent);
+        internal TypeNode.Fqn Owner => NativeSignatureReader.Type(reader, parent) as TypeNode.Fqn;
+        MethodSignature<TypeNode>? signature;
+        internal MethodSignature<TypeNode> Signature => signature ??= NativeSignatureReader.Declaration(reader, declaration);
+        internal bool ConcreteDefaultBody => body.Kind == HandleKind.MethodDefinition
+            && (reader.GetMethodDefinition((MethodDefinitionHandle)body).Attributes
+                & (MethodAttributes.Abstract | MethodAttributes.Static)) == 0;
+    }
 
     internal static NativeImplementationDeclaration[] NativeImplementations(MetadataReader reader, Type provider)
     {
@@ -1056,15 +1066,8 @@ static class ReferenceMetadataReader
         foreach (var handle in definition.GetMethodImplementations())
         {
             var impl = reader.GetMethodImplementation(handle);
-            if (impl.MethodBody.Kind != HandleKind.MethodDefinition) continue;
-            var body = reader.GetMethodDefinition((MethodDefinitionHandle)impl.MethodBody);
-            if ((body.Attributes & (MethodAttributes.Abstract | MethodAttributes.Static)) != 0) continue;
-            if (TryMethodImplMember(reader, impl.MethodDeclaration, out var parent, out var member)
-                && NativeSignatureReader.Type(reader, parent) is TypeNode.Fqn owner)
-            {
-                var (scope, name) = NominalMetadataOwner(reader, parent);
-                result.Add(new(scope, name, owner, member, NativeSignatureReader.Declaration(reader, impl.MethodDeclaration)));
-            }
+            if (TryMethodImplMember(reader, impl.MethodDeclaration, out var parent, out var member))
+                result.Add(new(reader, parent, member, impl.MethodDeclaration, impl.MethodBody));
         }
         return result.ToArray();
     }

@@ -15,17 +15,20 @@ sealed partial class ReferenceMetadataIndex
             || ClrMemberResolution.ResolveOwnerType(face, this) is not { IsInterface: true } target) return false;
         TypeNode Key(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, this);
         var actual = owner.Args ?? [];
-        foreach (var row in ConcreteMethodImpls(type))
+        foreach (var row in DeclaredMethodImpls(type))
         {
-            if (row.Member != member || row.Signature.GenericParameterCount != arity
-                || row.Signature.ParameterTypes.Length != parameters.Length || row.TypeName != target.FullName
-                || row.Scope != target.Assembly.FullName && !_universe.SameDefinition(row.TypeName, row.Scope, target.Assembly.FullName))
-                continue;
-            var declared = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(row.Owner, actual);
+            if (row.Member != member) continue;
+            var (scope, name) = row.NominalOwner;
+            if (name != target.FullName || scope != target.Assembly.FullName && !_universe.SameDefinition(name, scope, target.Assembly.FullName)
+                || row.Owner is not { } openOwner) continue;
+            var declared = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(openOwner, actual);
             if (Key(declared) != Key(face)) continue;
+            var signature = row.Signature;
+            if (!signature.Header.IsInstance || signature.GenericParameterCount != arity
+                || signature.ParameterTypes.Length != parameters.Length) continue;
             TypeNode Close(TypeNode t) => Key(SupertypeGraph.SubstOwnerTvs(t, declared.Args ?? []));
-            if (Close(row.Signature.ReturnType) == Key(result)
-                && row.Signature.ParameterTypes.Select(Close).SequenceEqual(parameters.Select(Key))) return true;
+            if (Close(signature.ReturnType) == Key(result)
+                && signature.ParameterTypes.Select(Close).SequenceEqual(parameters.Select(Key))) return true;
         }
         return false;
     }

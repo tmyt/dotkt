@@ -8,12 +8,17 @@ import InheritedDefaultSlots.TextChannel
 import InheritedDefaultSlots.HiddenChannel
 import InheritedDefaultSlots.ExplicitChannel
 import InheritedDefaultSlots.ExplicitDefaultBase
+import InheritedDefaultSlots.NewDefaultNamesake
 import NUnit.Framework.TestAttribute
 
 private class InheritVirtualBody : VirtualBase()
-private class PreserveExplicitDefault : ExplicitDefaultBase() {
-    override fun Read(key: String): Int = 8
+private class PreserveExplicitDefault : ExplicitDefaultBase<String>() {
+    override fun Read(key: String): Any = "exact"
 }
+private class CovariantNamesake : ExplicitDefaultBase<String>() {
+    override fun Read(key: String): String = "covariant"
+}
+private class InheritNewNamesake : NewDefaultNamesake()
 private class InheritChannel : TextChannel(), ITextChannel
 private class UseNewVirtualSlot : HiddenChannel(), ITextChannel
 private class ReimplementChannel : ExplicitChannel(), ITextChannel {
@@ -36,7 +41,11 @@ class InheritedDefaultSlotTests {
     fun inheritedAndReimplementedInterfaceMaps() {
         check(Driver.Check(InheritVirtualBody(), ReplaceInterfaceBody()))
         val explicit = PreserveExplicitDefault()
-        check(explicit.Read("x") == 8 && Driver.ReadDefaultChannel(explicit) == 4)
+        check(Driver.ReadDefaultBase(explicit) == "exact" && Driver.ReadDefaultChannel(explicit) == "explicit")
+        val covariant = CovariantNamesake()
+        check(Driver.ReadDefaultBase(covariant) == "covariant" && Driver.ReadDefaultChannel(covariant) == "explicit")
+        val inherited = InheritNewNamesake()
+        check(inherited.Read("x") == "new" && Driver.ReadDefaultChannel(inherited) == "explicit")
         check(Driver.CheckChannel(InheritChannel(), UseNewVirtualSlot()))
         val authored = ReimplementChannel()
         check(authored.Read("x") == 7 && Driver.ReadChannel(authored) == 7 && Driver.ReadText(authored) == 7)
