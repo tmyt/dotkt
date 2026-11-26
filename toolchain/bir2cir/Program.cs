@@ -871,7 +871,7 @@ sealed class Pipeline
                 }
                 aliasTransitions.AdmitMaterializedTypes(file, appended);
                 genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
-            }, metadataBuild: referenceBuild);
+            }, metadataBuild: referenceBuild, localCarriers: localExistentialOwners);
         // Keep the original slot-owner clock on the owning graph. Covariant
         // slots suppress duplicate suspend bridges using the same actual handles.
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(captured, isValueFqn, refs,

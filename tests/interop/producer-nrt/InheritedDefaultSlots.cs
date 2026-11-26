@@ -19,6 +19,11 @@ public class IntroducesVirtualBody : DefaultBase { public virtual int Read() => 
 public class VirtualBase : IValue { public virtual int Read() => 2; }
 public interface IWithProperty { int Read() => 1; int Value => 1; }
 public class WithProperty : IWithProperty { public int Value => 2; }
+public interface IPropertySlot<T> { int Value => 1; }
+public class ExplicitPropertyBase : IPropertySlot<string> {
+    public virtual int Value => 5;
+    int IPropertySlot<string>.Value => 4;
+}
 
 public interface IChannel<T> { int Count { get; } int Read(T key); }
 public interface ITextChannel : IChannel<string> {}
@@ -41,6 +46,7 @@ public static class Driver
     public static int ReadChannel(IChannel<string> channel) => channel.Read("x");
     public static int ReadText(ITextChannel channel) => channel.Read("x");
     public static int ReadProperty(IWithProperty instance) => instance.Value;
+    public static int ReadExplicitProperty(IPropertySlot<string> instance) => instance.Value;
     public static int ReadInterface(IValue instance) => instance.Read();
     public static bool CheckChannel(ITextChannel inherited, ITextChannel hidden)
     {

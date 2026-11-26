@@ -378,6 +378,10 @@ static partial class KotlinOverrideSlotBridge
         return false;
     }
 
+    internal static Def DeclaredFaces(Def owner, string carrier) => new() {
+        Interfaces = carrier == null ? owner.Interfaces : owner.Interfaces.Where(face => face.Name != carrier).ToArray()
+    };
+
     static bool ReachesFromDeclaredInterface(Def cls, TypeNode.Fqn slotOwner,
         IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
     {
