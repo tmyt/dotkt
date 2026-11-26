@@ -851,6 +851,7 @@ internal static class BirGraphDom
                 case "memberReturnType": break;
                 case "externalMember": break;
                 case "nativeMethodKey": break;
+                case "defaultNativeMethodKey": break;
                 case "projectedMethodWitnesses": break;
                 case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
@@ -913,6 +914,7 @@ internal static class BirGraphDom
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             ExternalMember = Field<BirExternalMemberBinding>(fields, "externalMember", value => ReadBirExternalMemberBinding(value!)),
             NativeMethodKey = Field<string>(fields, "nativeMethodKey", value => value!.GetValue<string>()),
+            DefaultNativeMethodKey = Field<string>(fields, "defaultNativeMethodKey", value => value!.GetValue<string>()),
             ProjectedMethodWitnesses = Field<BirMethodWitness[]>(fields, "projectedMethodWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirMethodWitness(item0!)).ToArray()),
             _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
@@ -984,6 +986,7 @@ internal static class BirGraphDom
                 case "memberSignature": break;
                 case "memberReturnType": break;
                 case "nativeMethodKey": break;
+                case "defaultNativeMethodKey": break;
                 case "projectedMethodWitnesses": break;
                 case "_erasedValueVariable": break;
                 case "retSuspendFnTypePre": break;
@@ -1049,6 +1052,7 @@ internal static class BirGraphDom
             MemberSignature = Field<TypeNode[]>(fields, "memberSignature", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             MemberReturnType = Field<TypeNode>(fields, "memberReturnType", value => TypeNode.Read(value) ?? throw new FormatException()),
             NativeMethodKey = Field<string>(fields, "nativeMethodKey", value => value!.GetValue<string>()),
+            DefaultNativeMethodKey = Field<string>(fields, "defaultNativeMethodKey", value => value!.GetValue<string>()),
             ProjectedMethodWitnesses = Field<BirMethodWitness[]>(fields, "projectedMethodWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirMethodWitness(item0!)).ToArray()),
             _erasedValueVariable = Field<TypeNode>(fields, "_erasedValueVariable", value => TypeNode.Read(value) ?? throw new FormatException()),
             RetSuspendFnTypePre = Field<TypeNode>(fields, "retSuspendFnTypePre", value => TypeNode.Parse(value!.GetValue<string>())),
@@ -4581,6 +4585,7 @@ internal static class BirGraphDom
                 case "virtual": break;
                 case "argTypes": break;
                 case "projectedMethodWitnesses": break;
+                case "nativeMethodKey": break;
                 case "super": break;
                 case "memberVisibility": break;
                 case "memberOwnerTypeParams": break;
@@ -4626,6 +4631,7 @@ internal static class BirGraphDom
             Virtual = Field<bool>(fields, "virtual", value => value!.GetValue<bool>()),
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             ProjectedMethodWitnesses = Field<BirMethodWitness[]>(fields, "projectedMethodWitnesses", value => ((JsonArray)value!).Select(item0 => ReadBirMethodWitness(item0!)).ToArray()),
+            NativeMethodKey = Field<string>(fields, "nativeMethodKey", value => value!.GetValue<string>()),
             Super = Field<bool>(fields, "super", value => value!.GetValue<bool>()),
             MemberVisibility = Field<string>(fields, "memberVisibility", value => value!.GetValue<string>()),
             MemberOwnerTypeParams = Field<BirTypeParameter[]>(fields, "memberOwnerTypeParams", value => ((JsonArray)value!).Select(item0 => ReadBirTypeParameter(item0!)).ToArray()),

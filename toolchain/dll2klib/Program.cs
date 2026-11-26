@@ -2613,13 +2613,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 // Function projection can erase the distinction between a delegate
                 // returning a Unit value and one returning void. Keep the declaration
                 // identity independent of the Kotlin signature used for adaptation.
-                if (!_attrs.IsDotKtAssembly && function.ValueParameter.Any(p => ContainsFunction(p.Type, names)))
-                {
-                    var binding = function.FunctionAnnotation.FirstOrDefault(a => names.ClassName(a.Id) == "kotlin.clr.ClrExternal");
-                    if (binding == null) function.FunctionAnnotation.Add(binding = ClrExternalAnnotation(names, handle));
-                    AddStringAnnotationArgument(binding, names, "methodKey", RawSignatureTypeProvider.MethodKey(_md, methodHandle));
-                    function.Flags |= 1;
-                }
+                AttachCallbackMethodKey(function, names, handle, methodHandle);
                 if (declarationIdentity is { } identity)
                 {
                     function.FunctionAnnotation.Add(
@@ -5125,8 +5119,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 }
                 function.TypeParameter.Add(tp);
             }
-            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
-            function.Flags |= 1;
+            ExternalMethodBinding(function, names, owner);
+            AttachCallbackMethodKey(function, names, owner, methodHandle);
             package.Function.Add(function);
             projectedFunctions.Add(new ProjectedFunction(
                 methodHandle,
@@ -5226,7 +5220,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
                 ApplySourceFunctionPriority(function, kotlinFlags, names);
             }
-            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
+            ExternalMethodBinding(function, names, owner);
+            AttachCallbackMethodKey(function, names, owner, entry.KotlinImplementation);
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
                     KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
@@ -5396,7 +5391,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 lifted.UpperBound.Add(Lift(signatures.DecodeEntity(constraint.Type, context, platform: false)));
             function.TypeParameter.Add(lifted);
         }
-        var binding = ClrExternalAnnotation(names, owner);
+        var binding = ExternalMethodBinding(function, names, owner);
         var target = new TypeNode.Fqn(ExactMetadataTypeName(owner), parameters.Count == 0 ? null : Enumerable.Range(methodArity, parameters.Count)
             .Select(index => (TypeNode)new TypeNode.Tv("method", index)).ToArray());
         foreach (var (field, value) in new[] { ("memberOwner", TypeNode.ToJson(target)),
@@ -5404,8 +5399,6 @@ internal sealed partial class AssemblyScanner : IDisposable
             binding.Argument.Add(new Annotation.Types.Argument { NameId = names.String(field),
                 Value = new Annotation.Types.Argument.Types.Value { Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
                     StringValue = names.String(value) } });
-        function.FunctionAnnotation.Add(binding);
-        function.Flags |= 1;
     }
 
     private void AddCSharp14MethodTypeParameters(
@@ -6688,6 +6681,24 @@ internal sealed partial class AssemblyScanner : IDisposable
         if (value == enabled) AddBooleanAnnotationArgument(annotation, names, name, true);
         else if (value == disabled) AddBooleanAnnotationArgument(annotation, names, name, false);
         else throw new InvalidDataException($"P/Invoke MethodDef '{methodName}' has an invalid {name} flag pair");
+    }
+
+    private Annotation ExternalMethodBinding(Function function, NameTable names, TypeDefinitionHandle owner)
+    {
+        var existing = function.FunctionAnnotation.SingleOrDefault(a => a.Id == names.Class("kotlin.clr.ClrExternal"));
+        if (existing != null) return existing;
+        var binding = ClrExternalAnnotation(names, owner);
+        function.FunctionAnnotation.Add(binding);
+        function.Flags |= 1;
+        return binding;
+    }
+
+    private void AttachCallbackMethodKey(Function function, NameTable names, TypeDefinitionHandle owner, MethodDefinitionHandle method)
+    {
+        if (!_attrs.IsDotKtAssembly && (function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
+            || function.ValueParameter.Any(p => ContainsFunction(p.Type, names))))
+            AddStringAnnotationArgument(ExternalMethodBinding(function, names, owner), names,
+                "methodKey", RawSignatureTypeProvider.MethodKey(_md, method));
     }
 
     private static bool ContainsFunction(KType type, NameTable names) =>

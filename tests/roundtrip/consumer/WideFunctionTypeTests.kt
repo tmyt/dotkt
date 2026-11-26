@@ -1,4 +1,5 @@
 import NUnit.Framework.TestAttribute
+import GenericValueInterop.VisitExtension
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.wide.acceptWidened
 import roundtrip.wide.narrowSource
@@ -17,6 +18,9 @@ private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int
 private typealias WideIntCallback = WideCallback<Int>
 private class DerivedCallbackScope : GenericValueInterop.NativeCallbackScope() {
     fun visitStored(f: WideCallback<Unit>) = Visit<String>(f)
+}
+private class ValueVisitor(val f: WideCallback<Unit>) : GenericValueInterop.NativeVisitor() {
+    override fun <T : GenericValueInterop.IVisitWide> Accept(value: T): Boolean = value.Apply(f)
 }
 private class UnitRecorder : WideCallback<Unit> {
     var sum = 0
@@ -47,7 +51,7 @@ private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 1
 
 class WideFunctionTypeTests {
     @TestAttribute
-    fun wideFunctionValuesCrossTheModuleBoundary() {
+    fun nativeValueAndVoidCallbacksInvokeTheOriginalRecorder() {
         val recorder = UnitRecorder()
         check(GenericValueInterop.NativeWideCallbacks.VisitUnit(recorder))
         assertEquals(18, recorder.sum)
@@ -55,6 +59,17 @@ class WideFunctionTypeTests {
         assertEquals(36, recorder.sum)
         assertEquals(71, DerivedCallbackScope().visitStored(recorder))
         assertEquals(54, recorder.sum)
+        val target = GenericValueInterop.NativeCallbackOverride()
+        assertEquals(19, target.Choose(recorder))
+        check(target.VisitExtension(recorder))
+        val visit: (WideCallback<Unit>) -> Boolean = GenericValueInterop.NativeWideCallbacks::VisitUnit
+        check(visit(recorder))
+        check(ValueVisitor(recorder).Run())
+        assertEquals(126, recorder.sum)
+    }
+
+    @TestAttribute
+    fun wideFunctionValuesCrossTheModuleBoundary() {
         assertEquals(17, NativeCallbackDerived(LastArgument()).Read())
         val native = NativeIntCallbackDerived(FirstPlusLast())
         assertEquals(18, native.Read())

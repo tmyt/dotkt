@@ -8,15 +8,15 @@ using DotKt.Cir;
 static partial class DefaultArgSplice
 {
     readonly record struct DefaultCallFacts(TypeNode Owner, TypeNode DefaultOwner, string Method, int Arity,
-        bool Static, string Property, string Identity, string DefaultIdentity, TypeNode[] Signature, string NativeKey);
+        bool Static, string Property, string Identity, string DefaultIdentity, TypeNode[] Signature, string NativeKey, string DefaultNativeKey);
 
     static DefaultCallFacts CallFacts(BirGraphValue node) => node switch {
         BirCallStatic call => new(call.OwnerType.OrDefault() ?? call.CalleeOwner.OrDefault() ?? call.Owner.OrDefault(),
             call.DefaultOwnerType.OrDefault(), call.Method.OrDefault(), call.TypeArgs.OrEmpty().Length, true, call.Prop.OrDefault(),
-            call.DeclarationId.OrDefault(), call.DefaultDeclarationId.OrDefault(), call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault(), call.NativeMethodKey.OrDefault()),
+            call.DeclarationId.OrDefault(), call.DefaultDeclarationId.OrDefault(), call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault(), call.NativeMethodKey.OrDefault(), call.DefaultNativeMethodKey.OrDefault()),
         BirCallInstance call => new(call.OwnerType.OrDefault(), call.DefaultOwnerType.OrDefault(), call.Method.OrDefault(),
             call.TypeArgs.OrEmpty().Length, false, call.Prop.OrDefault(), call.DeclarationId.OrDefault(), call.DefaultDeclarationId.OrDefault(),
-            call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault(), call.NativeMethodKey.OrDefault()), _ => default,
+            call.Sig.OrDefault() ?? call.ShapeTypes.OrDefault(), call.NativeMethodKey.OrDefault(), call.DefaultNativeMethodKey.OrDefault()), _ => default,
     };
 
     static Dictionary<int, IBirExpression> DefaultValuesForCall(DefaultCallFacts call, ReferenceMetadataIndex refs, out string[] names)
@@ -30,7 +30,7 @@ static partial class DefaultArgSplice
         if (call.DefaultOwner is TypeNode.Fqn inherited)
         {
             if (refs.TryKotlinDefaultValuesForSelectedMethod(inherited, call.Method, call.Arity, call.Static,
-                call.Signature, out var selected, out names, call.Property)) return selected;
+                call.Signature, out var selected, out names, call.Property, call.DefaultNativeKey)) return selected;
             return refs.KotlinDefaultValuesFor(inherited.Name, call.Method, call.Signature.Length, key, relaxed)
                 ?? refs.KotlinDefaultValuesForImplementedInterface(inherited.Name, inherited.Args?.Length ?? 0,
                     call.Method, call.Signature.Length, key, relaxed);

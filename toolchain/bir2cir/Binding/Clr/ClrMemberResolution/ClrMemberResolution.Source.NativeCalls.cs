@@ -222,7 +222,7 @@ static partial class ClrMemberResolution
         ClearNativeGenericDescriptor(node);
     }
 
-    static void MarkFunctionParameters(BirGraphValue node, TypeNode[] signature)
+    internal static void MarkFunctionParameters(BirGraphValue node, TypeNode[] signature)
     {
         if (signature?.Any(type => DelegateSlotCore(type) is TypeNode.Fn) == true)
             node.NativeFunctionParameters = signature.Select(type => DelegateSlotCore(type) as TypeNode.Fn).ToArray();
@@ -258,7 +258,7 @@ static partial class ClrMemberResolution
     {
         call.Super = default;
         // ContainsKey in the original input includes explicit null.
-        if (call.MemberRef.IsPresent) return;
+        if (call.MemberRef.IsPresent) { call.NativeMethodKey = default; return; }
         if (call.Iface.OrDefault() is not TypeNode.Fqn owner || !call.Method.HasValue) return;
         var name = call.Method.Value;
         if (!call.Args.HasValue) throw new InvalidOperationException(
@@ -269,7 +269,9 @@ static partial class ClrMemberResolution
         var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(method => method.Name == name && method.GetParameters().Length == call.Args.Value.Length
                 && (method.IsGenericMethodDefinition ? method.GetGenericArguments().Length == arity : arity == 0)).ToList();
-        var selected = call.ResolvedMemberParams.HasValue
+        var selected = call.NativeMethodKey.HasValue
+            ? ClrDeclarationMatching.MethodForNativeKey(bindingReferences, open, name, arity, true, call.NativeMethodKey.Value)
+            : call.ResolvedMemberParams.HasValue
             ? ClrDeclarationMatching.TryPickDeclared(bindingReferences, bindingLocalTypes, candidates, call.ResolvedMemberParams.Value.ToList(), open)
             : !call.Sig.HasValue ? (candidates.Count == 1 ? candidates[0] : null)
                 : ClrDeclarationMatching.TryPickUnique(bindingReferences, candidates, call.Sig.Value.ToList(), owner.Args ?? Array.Empty<TypeNode>());
@@ -277,6 +279,8 @@ static partial class ClrMemberResolution
             $"bir2cir: constrained call '{owner.Name}.{name}' does not resolve to one declared signature");
         WriteNativeMethodSelection(call, NativeMethodSelection(bindingLocalTypes, bindingReferences, selected, open, owner.Args ?? Array.Empty<TypeNode>(), null));
         StampNativeDelegateArgumentTargets(bindingLocalTypes, bindingReferences, call.Args.Value, call.TypeArgs.OrEmpty(), selected, owner.Args ?? Array.Empty<TypeNode>());
+        if (call.NativeMethodKey.HasValue) MarkFunctionParameters(call, call.ResolvedMemberParams.OrDefault() ?? call.Sig.OrDefault());
+        call.NativeMethodKey = default;
         call.ResolvedMemberParams = default;
     }
 

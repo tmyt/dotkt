@@ -37,6 +37,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
         {
             var result = node switch {
                 BirCallInstance call => new BirConstrainedCall {
+                    NativeMethodKey = call.NativeMethodKey,
                     Method = call.Method, Recv = call.Recv, Args = call.Args, Sig = call.Sig,
                     ProjectedMethodWitnesses = call.ProjectedMethodWitnesses, SelectedGenericCallable = call.SelectedGenericCallable,
                     ProjectedAddressOperands = call.ProjectedAddressOperands,
@@ -59,6 +60,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     _foreignDeclarationSignature = call._foreignDeclarationSignature,
                 },
                 BirNativeInstance call => new BirConstrainedCall {
+                    NativeMethodKey = call.NativeMethodKey,
                     Method = call.Method, Recv = call.Recv, Args = call.Args, Sig = call.Sig,
                     TypeArgs = call.TypeArgs, ArgTypes = call.ArgTypes, MemberRef = call.MemberRef,
                     Ret = call.Ret, Sty = call.Sty, CalleeParams = call.CalleeParams, SuspendCall = call.SuspendCall,
@@ -69,6 +71,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     _resolvedMethodTypeParams = call._resolvedMethodTypeParams,
                 },
                 BirGenericInstance call => new BirConstrainedCall {
+                    NativeMethodKey = call.NativeMethodKey,
                     Method = call.Method, Recv = call.Recv, Args = call.Args, TypeArgs = call.TypeArgs,
                     MemberRef = call.MemberRef, Ret = call.Ret, Sty = call.Sty, SuspendCall = call.SuspendCall,
                     Super = call.Super,
@@ -90,6 +93,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
             var result = node switch {
                 BirNativeInstance call => call,
                 BirCallInstance call => new BirNativeInstance {
+                    NativeMethodKey = call.NativeMethodKey,
                     Method = call.Method, Recv = call.Recv, Args = call.Args, TypeArgs = call.TypeArgs,
                     Sig = call.Sig, CalleeParams = call.CalleeParams, MemberRef = call.MemberRef, Prop = call.Prop,
                     Ret = call.Ret, Sty = call.Sty, ArgTypes = call.ArgTypes, Super = call.Super,
@@ -100,6 +104,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
                     _foreignDeclarationSignature = call._foreignDeclarationSignature,
                 },
                 BirGenericInstance call => new BirNativeInstance {
+                    NativeMethodKey = call.NativeMethodKey,
                     Method = call.Method, Recv = call.Recv, Args = call.Args, TypeArgs = call.TypeArgs,
                     MemberRef = call.MemberRef, Ret = call.Ret, Sty = call.Sty, Super = call.Super,
                     Dispatch = call.Dispatch, SuspendCall = call.SuspendCall,
@@ -137,6 +142,7 @@ static partial class ConstrainedTypeParameterReceiverBinding
             _foreignDeclarationSignature = call._foreignDeclarationSignature,
         };
         return new BirNativeInstance {
+            NativeMethodKey = call.NativeMethodKey,
             Type = BirGraphValue.CopyType(owner), Method = call.Method, Recv = call.Recv, Args = call.Args,
             Sig = call.Sig, TypeArgs = call.TypeArgs, MemberRef = call.MemberRef, Ret = call.Ret,
             Sty = call.Sty, ArgTypes = call.ArgTypes, CalleeParams = call.CalleeParams, SuspendCall = call.SuspendCall,

@@ -390,7 +390,7 @@
         "memberOwnerTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberMethodTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Method", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "memberSignature": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "memberReturnType": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "$ref": "#/$defs/type" },
         "externalMember": { "$ref": "#/$defs/birExternalMemberBinding", "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-frame-role": "ReferencedDeclaration" },
-        "nativeMethodKey": { "type": "string" }
+        "nativeMethodKey": { "type": "string" }, "defaultNativeMethodKey": { "type": "string" }
       },
       "required": ["k", "method", "args"], "additionalProperties": false
     },
@@ -425,7 +425,7 @@
         "sty": { "x-dotkt-representation-role": "ResultStamp", "$ref": "#/$defs/type" }, "memberVisibility": { "type": "string" },
         "memberOwnerTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberMethodTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Method", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },
         "memberSignature": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "memberReturnType": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "Declaration", "x-dotkt-frame-role": "ReferencedDeclaration", "$ref": "#/$defs/type" },
-        "nativeMethodKey": { "type": "string" }
+        "nativeMethodKey": { "type": "string" }, "defaultNativeMethodKey": { "type": "string" }
       },
       "required": ["k", "recv", "method", "args"], "additionalProperties": false
     },
@@ -2229,6 +2229,7 @@
     },
     "cirConstrainedCallNode": {
       "type": "object", "x-dotkt-model": { "name": "CirConstrainedCall", "domain": "cirExecutable", "roles": ["expression"], "sourceConsumed": ["virtual", "argTypes"], "loweringProperties": { "projectedMethodWitnesses": { "type": "array", "items": { "$ref": "#/$defs/birMethodWitness" } },
+        "nativeMethodKey": { "type": "string" },
         "super": { "type": "boolean" },
         "memberVisibility": { "type": "string" },
         "memberOwnerTypeParams": { "x-dotkt-ownership-role": "MemberDescriptor", "x-dotkt-representation-role": "TypeParameterDeclarations", "x-dotkt-representation-parameters": "Owner", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/typeParam" } },

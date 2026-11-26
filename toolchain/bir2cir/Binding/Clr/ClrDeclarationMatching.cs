@@ -81,6 +81,7 @@ static class ClrDeclarationMatching
     internal static MethodInfo MethodForNativeKey(ReferenceMetadataIndex refs, Type owner, string name, int arity,
         bool instance, string key)
     {
+        if (owner == null) throw new InvalidOperationException($"bir2cir: selected native method '{name}' has no resolved declaring owner");
         var flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic |
             (instance ? BindingFlags.Instance : BindingFlags.Static);
         MethodInfo Find(Type scope) => scope.GetMethods(flags).SingleOrDefault(m => m.Name == name &&
