@@ -289,6 +289,7 @@ private class CollisionHostImpl : CollisionHost<String> {
 }
 
 fun collisionHost(): CollisionHost<*> = CollisionHostImpl()
+fun nullableCollisionHost(present: Boolean): CollisionHost<*>? = if (present) collisionHost() else null
 
 // A derived star receiver cannot be cast to one arbitrary invariant ReferencedInnerBase<ReferencedOuter<object>>
 // merely to satisfy an inner constructor's hidden outer slot. The producer publishes the existential factory ABI;

@@ -47,7 +47,7 @@ static partial class FBoundStarProjectionErasure
             {
                 var projected = state.ProjectedType(variable.Init.OrDefault() as BirGraphValue);
                 var arrayProjection = state.ArrayProjection(variable.Init.OrDefault() as BirGraphValue);
-                if (Matches(variable.Type.Value, result) || projected != null || arrayProjection != null)
+                if (Matches(variable.Type.Value, result) || Physical(variable.Type.Value) == result)
                 {
                     (locals ??= new(StringComparer.Ordinal))[variable.Name.Value] = result;
                     if (projected != null) (projectedLocals ??= new(StringComparer.Ordinal))[variable.Name.Value] = projected;

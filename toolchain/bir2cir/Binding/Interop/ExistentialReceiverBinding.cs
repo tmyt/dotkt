@@ -4,8 +4,7 @@ using System.Linq;
 using DotKt.Bir;
 
 // FBoundStarProjectionErasure gives Kotlin's G<*> / erased G<T> cast a physical non-generic
-// compiler-generated existential interface. GenericDowncastRealignment subsequently aligns a local declaration
-// with such a cast. Calls through that local must then target the exact existential interface
+// compiler-generated existential interface. Calls through a local stored in that representation must target its exact interface
 // slot, including its deterministic owner-T-dependent bridge name. Leaving the original G<T>
 // MemberRef on that existential receiver is invalid CLR IL.
 //
