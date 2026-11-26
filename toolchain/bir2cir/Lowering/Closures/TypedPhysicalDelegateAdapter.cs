@@ -12,6 +12,7 @@ sealed class TypedPhysicalDelegateAdapter
     readonly Func<IBirExpression> unitValue;
     readonly PhysicalDelegateDeclarations declarations;
     readonly Dictionary<string, string> adapters = new(StringComparer.Ordinal);
+    readonly RecursiveDelegateMaps recursiveMaps;
     BirFileDeclaration document;
     string scope;
 
@@ -22,6 +23,7 @@ sealed class TypedPhysicalDelegateAdapter
         this.localTypes = localTypes;
         this.unitValue = unitValue;
         this.declarations = declarations;
+        recursiveMaps = new(localTypes, references, scope => declarations.FreshAdapterName(scope, "DelegateMap"));
     }
 
     internal IBirExpression AdaptUnitDelegateValue(IReadOnlyDictionary<string, string> localCarriers,
@@ -41,6 +43,16 @@ sealed class TypedPhysicalDelegateAdapter
         return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural);
     }
 
+    internal IBirExpression AdaptNominalValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
+        TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods)
+    {
+        var plan = ClrMemberResolution.NominalDelegateValuePlan(references, localTypes, source, target, isValue, owners, methods, out var slot);
+        if (plan != null && recursiveMaps.TryMap(document,
+                (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(plan.NominalSource, plan.Arguments), slot, expression) is {} recursive)
+            return recursive;
+        return plan == null ? null : AdaptValue(document, expression, source, target, slot, plan, null);
+    }
+
     IBirExpression AdaptValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
         TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view)
     {
@@ -51,7 +63,8 @@ sealed class TypedPhysicalDelegateAdapter
             ClosureType = new TypeNode.Fqn(adapter), Method = "invoke",
             Captures = new IBirExpression[] { view == null ? Read() : new BirCast { Type = view, E = Read() } }, FuncType = slot,
             DelegateCtorRef = BirMemberReference.FromPhysical(
-                ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
+                plan.NominalSource != null ? ClrMemberResolution.PhysicalDelegateMember(localTypes, references, slot, constructor: true)
+                    : ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
         };
         if (plan.Parameters != null || plan.Arguments.Length != 0) adapted.TypeArgs = plan.Arguments.ToArray();
 
@@ -67,7 +80,7 @@ sealed class TypedPhysicalDelegateAdapter
                 Cond = new BirBinaryOperation {
                     Op = "==", Lhs = Read(), Rhs = Null(),
                 },
-                Then = Null(), Else = view == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
+                Then = Null(), Else = view == null && plan.NominalSource == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
                     Type = target, Cond = new BirIsInstance { Type = slot, E = Read() },
                     Then = new BirCast { Type = slot, E = Read() }, Else = adapted }),
             },

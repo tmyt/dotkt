@@ -2397,6 +2397,12 @@ cross the SAM boundary; this conversion does not make the two source types ident
 overloads explicitly with their SAM constructor. The compiler-owned stdlib `KAction`/`KFunc` families retain their
 internal function-family role for arities 17..22.
 
+Kotlin variance can cross a value-type boundary that native CLR delegate variance cannot.
+For example, a native `Func<object, int>` can fill a Kotlin call's `Func2<Int, Int>` parameter:
+the adapter boxes the input before invoking the original delegate. The same rule applies to
+callbacks received as arguments or returned from another callback. A null delegate remains null;
+an already CLR-compatible delegate needs no adapter.
+
 ## 8e-bis. Ordinary Kotlin function values use identity-preserving delegate carriers
 
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
