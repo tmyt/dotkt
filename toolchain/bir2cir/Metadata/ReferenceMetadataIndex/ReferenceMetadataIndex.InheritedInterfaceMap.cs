@@ -30,7 +30,8 @@ sealed partial class ReferenceMetadataIndex
         // the actual signature leaves resolve to the same TypeDefs before using it.
         bool Scoped(Type t) => t.IsGenericParameter || (!t.IsFunctionPointer && (t.HasElementType
             ? (!t.IsArray || t.IsSZArray) && Scoped(t.GetElementType())
-            : ResolveRefType(Def(t).FullName) == Def(t) && (!t.IsConstructedGenericType || t.GetGenericArguments().All(Scoped))));
+            : !IsLocalEmittedType(Def(t).FullName) && _universe.ResolveType(Def(t).FullName, 0, throwOnAmbiguity: false) == Def(t)
+                && (!t.IsConstructedGenericType || t.GetGenericArguments().All(Scoped))));
         bool Plain(TypeNode t) => t switch {
             TypeNode.Fqn f => f.Args == null || f.Args.All(Plain), TypeNode.Tv => true,
             TypeNode.Array a => Plain(a.Elem), TypeNode.ByRef r => Plain(r.Of), _ => false,
