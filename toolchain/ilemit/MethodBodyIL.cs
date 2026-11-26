@@ -21,8 +21,8 @@ sealed class MethodBodyIL(ILGenerator target) : ILGenerator
     public override int ILOffset => target.ILOffset;
     public override LocalBuilder DeclareLocal(Type type, bool pinned) => target.DeclareLocal(type, pinned);
     public override Label DefineLabel() => target.DefineLabel();
-    // For a structured conditional we own all predecessors by the time its join is marked.
-    // Arbitrary CIR labels, in contrast, may receive a later back edge.
+    // An emitter-owned forward target has all its incoming edges by the time it is marked.
+    // Loop headers and general CIR labels may receive later back edges: use DefineLabel for those.
     internal Label DefineForwardLabel()
     {
         var label = DefineLabel();

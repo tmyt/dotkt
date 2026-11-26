@@ -21,6 +21,14 @@ fun trimmedBranchDepth(text: String?, early: Boolean): Int {
     return six(kept, kept, kept, kept, kept, kept)
 }
 
+private fun sumSix(a: Int?, b: Int?, c: Int?, d: Int?, e: Int?, f: Int?): Int =
+    (a ?: 0) + (b ?: 0) + (c ?: 0) + (d ?: 0) + (e ?: 0) + (f ?: 0)
+
+fun trimmedSafeCastDepth(early: Boolean, fallback: Int?): Int {
+    val kept: Int? = if (early) ((return 11) as? Int) else fallback
+    return sumSix(kept, kept, kept, kept, kept, kept)
+}
+
 fun nullableShape(values: List<String?>): String? = values[0]
 
 fun carry(

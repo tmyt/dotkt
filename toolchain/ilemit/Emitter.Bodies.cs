@@ -574,7 +574,7 @@ sealed partial class Emitter
         // Throw IndexOutOfRangeException unless 0 <= index < len (unsigned compare catches negatives too).
         _il.Emit(OpCodes.Ldloc, idx);
         EmitExpr(len);
-        var ok = _il.DefineLabel();
+        var ok = _il.DefineForwardLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
         _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
         EmitConstructor(_il, OpCodes.Newobj, WellKnown<ConstructorInfo>("IndexOutOfRangeException.ctor"));

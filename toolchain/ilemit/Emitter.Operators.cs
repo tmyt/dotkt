@@ -109,8 +109,8 @@ sealed partial class Emitter
     {
         var divisor = _il.DeclareLocal(t);
         _il.Emit(OpCodes.Stloc, divisor);       // stack: [dividend]
-        var normal = _il.DefineLabel();
-        var done = _il.DefineLabel();
+        var normal = _il.DefineForwardLabel();
+        var done = _il.DefineForwardLabel();
         _il.Emit(OpCodes.Ldloc, divisor);
         _il.Emit(OpCodes.Ldc_I4_M1);
         if (t == Bcl("System.Int64")) _il.Emit(OpCodes.Conv_I8);
@@ -314,8 +314,8 @@ sealed partial class Emitter
 
     Type EmitObjEq(CirObjectEqual e)
     {
-        var nonNull = _il.DefineLabel();
-        var done = _il.DefineLabel();
+        var nonNull = _il.DefineForwardLabel();
+        var done = _il.DefineForwardLabel();
         var lt = EmitExpr(e.Lhs);
         if (NeedsBoxToRef(lt)) _il.Emit(OpCodes.Box, lt);
         _il.Emit(OpCodes.Dup);
