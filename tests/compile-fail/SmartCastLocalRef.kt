@@ -8,3 +8,11 @@ fun test(input: Any): Any {
     if (local is String) replace(byref(local))
     return local
 }
+
+@Suppress("UNCHECKED_CAST")
+fun arrayView(input: Array<out Any>) {
+    fun replace(slot: ClrRef<Array<String>>) { slot.value = arrayOf("after") }
+    var elements = input
+    elements as Array<String>
+    replace(byref(elements))
+}
