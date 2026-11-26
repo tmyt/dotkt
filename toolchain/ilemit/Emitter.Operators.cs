@@ -278,7 +278,7 @@ sealed partial class Emitter
         // A stack join of two implementations need not retain their common interface. Materialize the
         // result type already stated by CIR, rather than claiming that the merged stack has that type.
         var result = want != null && want != Bcl("System.Void") ? _il.DeclareLocal(want) : null;
-        var elseL = _il.DefineLabel(); var end = _il.DefineLabel();
+        var elseL = _il.DefineForwardLabel(); var end = _il.DefineForwardLabel();
         EmitExpr(e.Cond); _il.Emit(OpCodes.Brfalse, elseL);
         var t = EmitBranchCoerced(e.Then, want);
         if (result != null) _il.Emit(OpCodes.Stloc, result);

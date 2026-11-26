@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Trimmed executables retain the stack depth required after an early return in a value-producing branch (#1981).
 - Files sharing a Kotlin CLR facade can now both capture mutable locals of the same type without generating duplicate storage fields (#1957).
 - A top-level `main` renamed with `@ClrName` remains the executable entry point, including when it is a suspend function (#1933).
 

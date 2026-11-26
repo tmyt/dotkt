@@ -194,7 +194,7 @@ sealed partial class Emitter
     void BeginMethod(MethodBase method, ILGenerator il, ICirCallable m, bool isStatic)
     {
         _sourceMethod = method;
-        _il = il; _args.Clear(); _argTypes.Clear(); _locals.Clear();
+        _il = new MethodBodyIL(il); _args.Clear(); _argTypes.Clear(); _locals.Clear();
         int i = isStatic ? 0 : 1; // arg0 = this for instance methods
         foreach (var p in m.Params)
         {

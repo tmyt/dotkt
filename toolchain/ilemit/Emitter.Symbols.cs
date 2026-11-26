@@ -26,7 +26,7 @@ sealed partial class Emitter
 
     void RecordSourcePoint(CirSourcePoint node)
     {
-        if (_portablePdbPath == null) return;
+        if (_portablePdbPath == null || !_il.CanEmit) return;
         var point = node.Span.IsPresent
             ? new SourcePoint(_il.ILOffset, node.Span.Value.F,
                 node.Span.Value.L, node.Span.Value.C, node.Span.Value.El, node.Span.Value.Ec)

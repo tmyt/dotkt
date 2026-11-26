@@ -236,7 +236,7 @@ sealed partial class Emitter
             + (position.L.HasValue && position.L.Value >= 0 ? ":" + position.L.Value : "");
 
     // per-method context
-    ILGenerator _il;
+    MethodBodyIL _il;
     readonly Dictionary<string, int> _args = new();
     readonly Dictionary<string, Type> _argTypes = new();
     readonly Dictionary<string, LocalBuilder> _locals = new();

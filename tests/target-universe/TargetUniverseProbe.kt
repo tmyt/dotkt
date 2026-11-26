@@ -13,6 +13,14 @@ class TargetDerived(number: Int) : TargetBase(number)
 
 fun primitive(value: Int): Int = value
 
+private fun six(a: String, b: String, c: String, d: String, e: String, f: String): Int =
+    a.length + b.length + c.length + d.length + e.length + f.length
+
+fun trimmedBranchDepth(text: String?, early: Boolean): Int {
+    val kept = text ?: if (early) return 11 else return 13
+    return six(kept, kept, kept, kept, kept, kept)
+}
+
 fun nullableShape(values: List<String?>): String? = values[0]
 
 fun carry(
