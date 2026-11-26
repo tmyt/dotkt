@@ -2827,8 +2827,12 @@ internal sealed partial class AssemblyScanner : IDisposable
         // their declarations; the actual private body remains a bir2cir
         // binding concern.
         var explicitImplementations = new List<InheritedDefaultImplementation>();
+        ResolvedTypeDefinition? rawEnumerable = null;
         var interfaceKeys = ProjectedPublicInterfaces(
-                def, names, signatures, typeContext, includePublicAncestors: true)
+                def, names, signatures, typeContext, includePublicAncestors: true,
+                publicDefinition: (type, resolved) => {
+                    if (IsNamed(type, "System.Collections.IEnumerable", names)) rawEnumerable = resolved;
+                })
             .Select(TypeKey)
             .ToHashSet(StringComparer.Ordinal);
         foreach (var implementationHandle in def.GetMethodImplementations())
@@ -3276,7 +3280,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 pair.Getter, pair.Setter, names, signatures, typeParameterIds,
                 isStatic: (_md.GetMethodDefinition(representative).Attributes & MethodAttributes.Static) != 0));
         }
-        AddEnumerableIterator(handle, def, result, names, signatures, typeContext);
+        AddEnumerableIterator(handle, def, result, names, signatures, rawEnumerable);
         AddNativeComparableViews(handle, def, result, names, signatures, typeContext);
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
@@ -3365,7 +3369,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         NameTable names,
         SignatureDecoder signatures,
         GenericContext context,
-        bool includePublicAncestors = false, Dictionary<string, string>? aliasTargets = null)
+        bool includePublicAncestors = false, Dictionary<string, string>? aliasTargets = null,
+        Action<KType, ResolvedTypeDefinition>? publicDefinition = null)
     {
         var projected = new Dictionary<string, KType>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
@@ -3415,6 +3420,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 MetadataTokens.GetRowNumber(resolved.Handle) + ":" + typeKey;
             if (!visited.Add(visitKey)) return;
 
+            if (surface.IsPublic) publicDefinition?.Invoke(type, resolved);
             var inheritedDefinition = resolved.Reader.GetTypeDefinition(resolved.Handle);
             var typeParameters = inheritedDefinition.GetGenericParameters()
                 .ToDictionary(handle => handle, handle => resolved.Reader.GetGenericParameter(handle).Index);
@@ -4576,9 +4582,10 @@ internal sealed partial class AssemblyScanner : IDisposable
         Class result,
         NameTable names,
         SignatureDecoder signatures,
-        GenericContext context)
+        ResolvedTypeDefinition? rawEnumerable)
     {
-        if (result.Function.Any(f => names.StringValue(f.Name) == "iterator"))
+        if (result.Function.Any(f => names.StringValue(f.Name) == "iterator" &&
+                f.ValueParameter.Count == 0 && f.TypeParameter.Count == 0 && f.ReceiverType == null))
             return;
         var self = new KType { ClassName = ClassName(handle, names) };
         foreach (var parameter in def.GetGenericParameters())
@@ -4595,8 +4602,20 @@ internal sealed partial class AssemblyScanner : IDisposable
                 names,
                 signatures,
                 new HashSet<string>(StringComparer.Ordinal),
-                out var element))
+                out var element) &&
+            (rawEnumerable == null || !IsInOwnerCoreLibrary(handle, rawEnumerable) ||
+             !(TryInheritedEnumerableElement() || TryEnumerableElement(signatures.NamedType("System.Collections.IEnumerable"),
+                names, signatures, new HashSet<string>(StringComparer.Ordinal), out element, rawEnumerable))))
             return;
+
+        bool TryInheritedEnumerableElement()
+        {
+            if (def.BaseType.IsNil || !_publicTypeCatalog.TryResolveDefinition(_md, def.BaseType, out var parent, _definitionPath))
+                return false;
+            var context = new GenericContext(handle, default, def.GetGenericParameters().ToDictionary(h => h, h => _md.GetGenericParameter(h).Index));
+            var baseType = signatures.DecodeEntity(def.BaseType, context, platform: false);
+            return TryEnumerableElement(baseType, names, signatures, new HashSet<string>(StringComparer.Ordinal), out element, parent);
+        }
 
         var iterator = signatures.NamedType("kotlin.collections.Iterator");
         iterator.Argument.Add(new KType.Types.Argument
@@ -4625,7 +4644,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         NameTable names,
         SignatureDecoder signatures,
         HashSet<string> visited,
-        out KType elementType)
+        out KType elementType,
+        ResolvedTypeDefinition? protocol = null)
     {
         elementType = null!;
         if (!enumerableType.HasClassName ||
@@ -4641,18 +4661,20 @@ internal sealed partial class AssemblyScanner : IDisposable
             elementType = protocolElement.Clone();
             return true;
         }
-        if (LocalDefinition(enumerableType, names) is not TypeDefinitionHandle handle ||
+        var reader = protocol?.Reader ?? _md;
+        if ((protocol?.Handle ?? LocalDefinition(enumerableType, names)) is not TypeDefinitionHandle handle ||
             !visited.Add(identity))
             return false;
-        var definition = _md.GetTypeDefinition(handle);
+        if (protocol != null) signatures = DecoderFor(reader, names, signatures, protocol.DefinitionPath);
+        var definition = reader.GetTypeDefinition(handle);
         var ids = definition.GetGenericParameters()
-            .ToDictionary(h => h, h => _md.GetGenericParameter(h).Index);
+            .ToDictionary(h => h, h => reader.GetGenericParameter(h).Index);
         var context = new GenericContext(handle, default, ids);
 
         foreach (var methodHandle in definition.GetMethods())
         {
-            var method = _md.GetMethodDefinition(methodHandle);
-            if (_md.GetString(method.Name) != "GetEnumerator" ||
+            var method = reader.GetMethodDefinition(methodHandle);
+            if (reader.GetString(method.Name) != "GetEnumerator" ||
                 !IsPublicOrProtected(method.Attributes) ||
                 (method.Attributes & MethodAttributes.Static) != 0 ||
                 method.GetGenericParameters().Count != 0)
@@ -4662,20 +4684,25 @@ internal sealed partial class AssemblyScanner : IDisposable
             if (signature.ParameterTypes.Length != 0) continue;
             var concreteEnumerator = SubstituteTypeParameters(
                 signature.ReturnType, enumerableType.Argument);
+            ResolvedTypeDefinition? external = null;
+            if (protocol != null && !_publicTypeCatalog.TryResolveMethodReturnDefinition(
+                    reader, methodHandle, out external, protocol.DefinitionPath)) continue;
             if (TryEnumeratorElement(
-                    concreteEnumerator, names, signatures, out elementType))
+                    concreteEnumerator, names, signatures, out elementType, external))
                 return true;
         }
 
         IEnumerable<EntityHandle> supers = definition.GetInterfaceImplementations()
-            .Select(h => _md.GetInterfaceImplementation(h).Interface);
+            .Select(h => reader.GetInterfaceImplementation(h).Interface);
         if (!definition.BaseType.IsNil)
-            supers = supers.Append(definition.BaseType);
+            supers = protocol == null ? supers.Append(definition.BaseType) : supers.Prepend(definition.BaseType);
         foreach (var superHandle in supers)
         {
             var super = signatures.DecodeEntity(superHandle, context, platform: false);
             super = SubstituteTypeParameters(super, enumerableType.Argument);
-            if (TryEnumerableElement(super, names, signatures, visited, out elementType))
+            ResolvedTypeDefinition? resolved = null;
+            if (protocol != null && !_publicTypeCatalog.TryResolveDefinition(reader, superHandle, out resolved, protocol.DefinitionPath)) continue;
+            if (TryEnumerableElement(super, names, signatures, visited, out elementType, resolved))
                 return true;
         }
         return false;
@@ -4685,7 +4712,8 @@ internal sealed partial class AssemblyScanner : IDisposable
         KType enumeratorType,
         NameTable names,
         SignatureDecoder signatures,
-        out KType elementType)
+        out KType elementType,
+        ResolvedTypeDefinition? protocol)
     {
         elementType = null!;
         if (enumeratorType.HasClassName &&
@@ -4696,16 +4724,18 @@ internal sealed partial class AssemblyScanner : IDisposable
             elementType = protocolElement.Clone();
             return true;
         }
-        if (LocalDefinition(enumeratorType, names) is not TypeDefinitionHandle handle)
+        var reader = protocol?.Reader ?? _md;
+        if ((protocol?.Handle ?? LocalDefinition(enumeratorType, names)) is not TypeDefinitionHandle handle)
             return false;
-        var definition = _md.GetTypeDefinition(handle);
+        if (protocol != null) signatures = DecoderFor(reader, names, signatures, protocol.DefinitionPath);
+        var definition = reader.GetTypeDefinition(handle);
         var ids = definition.GetGenericParameters()
-            .ToDictionary(h => h, h => _md.GetGenericParameter(h).Index);
+            .ToDictionary(h => h, h => reader.GetGenericParameter(h).Index);
         var context = new GenericContext(handle, default, ids);
         var moves = definition.GetMethods().Any(methodHandle =>
         {
-            var method = _md.GetMethodDefinition(methodHandle);
-            if (_md.GetString(method.Name) != "MoveNext" ||
+            var method = reader.GetMethodDefinition(methodHandle);
+            if (reader.GetString(method.Name) != "MoveNext" ||
                 !IsPublicOrProtected(method.Attributes) ||
                 (method.Attributes & MethodAttributes.Static) != 0)
                 return false;
@@ -4718,11 +4748,11 @@ internal sealed partial class AssemblyScanner : IDisposable
 
         foreach (var propertyHandle in definition.GetProperties())
         {
-            var property = _md.GetPropertyDefinition(propertyHandle);
-            if (_md.GetString(property.Name) != "Current") continue;
+            var property = reader.GetPropertyDefinition(propertyHandle);
+            if (reader.GetString(property.Name) != "Current") continue;
             var getterHandle = property.GetAccessors().Getter;
             if (getterHandle.IsNil) continue;
-            var getter = _md.GetMethodDefinition(getterHandle);
+            var getter = reader.GetMethodDefinition(getterHandle);
             if (!IsPublicOrProtected(getter.Attributes) ||
                 (getter.Attributes & MethodAttributes.Static) != 0)
                 continue;
@@ -4735,7 +4765,8 @@ internal sealed partial class AssemblyScanner : IDisposable
                 signature.ReturnType,
                 names,
                 signatures,
-                getterContext);
+                getterContext,
+                reader);
             elementType = SubstituteTypeParameters(
                 projected, enumeratorType.Argument);
             return true;

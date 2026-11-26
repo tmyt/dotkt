@@ -120,21 +120,33 @@ static partial class MemberCallSubstitution
         => name == "iterator" && !KotlinPropertyAccessors.HasIdentity(property, accessor)
             && !isStatic && arity == 0 && parameters == 0;
 
-    internal static bool HasDeclaredIterator(TypeNode.Fqn owner, IReadOnlySet<string> declaredTypes,
+    internal enum IteratorProtocol { Declared, Generic, NonGeneric }
+
+    internal static IteratorProtocol ResolveIteratorProtocol(TypeNode.Fqn owner, IReadOnlySet<string> declaredTypes,
         IReadOnlyDictionary<string, SupertypeGraph.Def> definitions, ReferenceMetadataIndex references,
-        IReadOnlyDictionary<string, string> aliases, bool sourceFrames = false)
+        IReadOnlyDictionary<string, string> aliases, out TypeNode.Fqn patternOwner, bool sourceFrames = false)
     {
+        bool raw = false, generic = false;
+        patternOwner = null;
         foreach (var (candidate, _) in SupertypeGraph.Reachable(
             new SupertypeGraph.Def { Base = owner }, definitions, references, sourceFrames))
         {
             // An alias's source declaration is implemented through its native face, not a Kotlin MethodDef.
-            if (aliases?.ContainsKey(candidate.Name) == true) continue;
+            var alias = aliases != null && aliases.TryGetValue(candidate.Name, out var target) ? target : null;
+            if (references != null)
+            {
+                var faces = references.EnumerableFaces(candidate);
+                raw |= faces.Raw;
+                generic |= faces.Generic;
+                if (faces.TypedPattern) patternOwner ??= candidate;
+            }
+            if (alias != null) continue;
             if (declaredTypes.Contains(candidate.Name)
                 || references?.DeclaresExactInstanceMember(candidate.Name, "iterator", 0,
                     Array.Empty<TypeNode>(), candidate.Args, sourceNames: true) == true)
-                return true;
+                return IteratorProtocol.Declared;
         }
-        return false;
+        return raw && !generic ? IteratorProtocol.NonGeneric : IteratorProtocol.Generic;
     }
 
     static TypeNode CanonicalArrayElem(TypeNode elem)
@@ -471,6 +483,8 @@ static partial class MemberCallSubstitution
         var ps = (owner, method) switch
         {
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
+            ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerator") => new[] { Gen("kotlin.collections.ClrEnumerator") },
+            ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverRawEnumerable") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
             (_, "clrProjectedCollAdd") => new TypeNode[] { new TypeNode.Fqn("kotlin.Any"), tv },
             (_, "clrProjectedListAdd") => new TypeNode[]

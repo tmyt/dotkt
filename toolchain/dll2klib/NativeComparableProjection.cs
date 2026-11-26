@@ -110,19 +110,24 @@ internal sealed partial class AssemblyScanner
             var type = target.Reader.GetTypeDefinition(target.Handle);
             if (target.Reader.GetString(type.Namespace) != "System" || target.Reader.GetString(type.Name) != "IComparable`1" ||
                 (type.Attributes & TypeAttributes.Interface) == 0) return false;
-            // Resolve this assembly's Object root through the actual reference
-            // universe; a same-named user interface is not the core contract.
-            var root = new ResolvedTypeDefinition(_md, owner, _definitionPath);
-            var seen = new HashSet<(MetadataReader, TypeDefinitionHandle)>();
-            while (seen.Add((root.Reader, root.Handle)))
-            {
-                var row = root.Reader.GetTypeDefinition(root.Handle);
-                if (row.BaseType.IsNil)
-                    return root.Reader.GetString(row.Namespace) == "System" && root.Reader.GetString(row.Name) == "Object" &&
-                        StringComparer.Ordinal.Equals(root.DefinitionPath, target.DefinitionPath);
-                if (!_publicTypeCatalog.TryResolveDefinition(root.Reader, row.BaseType, out root, root.DefinitionPath)) return false;
-            }
-            return false;
+            return IsInOwnerCoreLibrary(owner, target);
         }
+    }
+
+    private bool IsInOwnerCoreLibrary(TypeDefinitionHandle owner, ResolvedTypeDefinition target)
+    {
+        // Resolve this assembly's Object root through the actual reference
+        // universe; a same-named user interface is not the core contract.
+        var root = new ResolvedTypeDefinition(_md, owner, _definitionPath);
+        var seen = new HashSet<(MetadataReader, TypeDefinitionHandle)>();
+        while (seen.Add((root.Reader, root.Handle)))
+        {
+            var row = root.Reader.GetTypeDefinition(root.Handle);
+            if (row.BaseType.IsNil)
+                return root.Reader.GetString(row.Namespace) == "System" && root.Reader.GetString(row.Name) == "Object" &&
+                    StringComparer.Ordinal.Equals(root.DefinitionPath, target.DefinitionPath);
+            if (!_publicTypeCatalog.TryResolveDefinition(root.Reader, row.BaseType, out root, root.DefinitionPath)) return false;
+        }
+        return false;
     }
 }
