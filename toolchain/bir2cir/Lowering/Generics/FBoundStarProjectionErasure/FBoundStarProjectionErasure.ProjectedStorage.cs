@@ -231,30 +231,42 @@ static partial class FBoundStarProjectionErasure
                         OwnPrefix(f.Args) && names.TryGetValue(f.Name, out var name)
                             ? new TypeNode.Fqn(name, Extend(f.Args)) : f);
                 });
+                if (node is BirFunctionDeclaration method && method.ColdEntryMachine is { } machine
+                    && Place(machine.Name) is { } projectedMachine)
+                {
+                    foreach (var statement in method.Body.OrEmpty())
+                        ((BirGraphValue)statement).Visit(n => n.RewriteOwnTypeFieldsInPlace((_, role, t) =>
+                            role == BirGenericFrameRole.Lexical ? SourceDeclarationSignature.RewriteType(t, f =>
+                                f.Name == machine.Name && OwnPrefix(f.Args) ? new TypeNode.Fqn(projectedMachine, Extend(f.Args)) : f) : t));
+                    method.ColdEntryMachine = (projectedMachine, machine.OwnerArity + width);
+                }
                 var target = node switch { BirNewClosure c => c.ClosureType.OrDefault() as TypeNode.Fqn,
                     BirNewSam s => s.SamType.OrDefault() as TypeNode.Fqn, _ => null };
                 if (target == null || node is not BirGraphNode creation ||
                     creation.ApplicationTypeArguments.OrDefault() is not { } args || !OwnPrefix(args) ||
-                    definition(target.Name) is not { } original || original.NestedIn.OrDefault() is not { } parent ||
-                    !names.TryGetValue(parent, out var projectedParent)) return;
-                if (!names.TryGetValue(target.Name, out var projected))
-                {
-                    projected = allocate("closure");
-                    names.Add(target.Name, projected);
-                    var closure = (BirClassDefinition)original.DeepClone();
-                    closure.Name = projected;
-                    closure.NestedIn = projectedParent;
-                    closure.RoundtripTypeHeaderPending = default;
-                    closure.RoundtripSupertypesPre = default;
-                    Scan(closure, true);
-                    closure.CapturedTypeParams = frame.Select(p => (BirTypeParameter)p.DeepClone())
-                        .Concat(closure.CapturedTypeParams.OrEmpty().Skip(prefix)).ToArray();
-                    generated.Add(closure);
-                }
+                    Place(target.Name) is not { } projected) return;
                 creation.ApplicationTypeArguments = Extend(args);
                 if (creation is BirNewClosure lambda) lambda.ClosureType = new TypeNode.Fqn(projected);
                 else ((BirNewSam)creation).SamType = new TypeNode.Fqn(projected);
             });
+        }
+        string Place(string name)
+        {
+            if (definition(name) is not { } original || original.NestedIn.OrDefault() is not { } parent ||
+                !names.TryGetValue(parent, out var projectedParent)) return null;
+            if (names.TryGetValue(name, out var projected)) return projected;
+            projected = allocate("closure");
+            names.Add(name, projected);
+            var closure = (BirClassDefinition)original.DeepClone();
+            closure.Name = projected;
+            closure.NestedIn = projectedParent;
+            closure.RoundtripTypeHeaderPending = default;
+            closure.RoundtripSupertypesPre = default;
+            Scan(closure, true);
+            closure.CapturedTypeParams = frame.Select(p => (BirTypeParameter)p.DeepClone())
+                .Concat(closure.CapturedTypeParams.OrEmpty().Skip(prefix)).ToArray();
+            generated.Add(closure);
+            return projected;
         }
         Scan(storage, false);
     }

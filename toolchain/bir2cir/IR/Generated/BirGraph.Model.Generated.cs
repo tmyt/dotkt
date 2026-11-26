@@ -11202,6 +11202,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     internal string? ImplicitExistentialImplementationId { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }
     internal bool SourceCallableVirtual { get; set; }
+    internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }
+    internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }
     internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }
     internal int FacadeModalityFlags { get; set; }
