@@ -919,6 +919,15 @@ reaches CIR. Its owner is the frontend-selected declaring type with the receiver
 supertype arguments, not merely the receiver's static class. Public event accesses do not require
 this extra binding path.
 
+For calls to imported CLR methods whose parameters project to Kotlin function types, the Kotlin
+signature alone need not distinguish the native declarations: a delegate returning a Unit value
+and one returning void may project to the same function type. dll2klib records the open CLR
+method declaration key, and kotc passes it through as `nativeMethodKey` without changing the
+Kotlin function signature. If an omitted argument belongs to a different native declaration,
+`defaultNativeMethodKey` identifies that provider, not the override to invoke. bir2cir reads
+defaults from the provider, binds the selected call target, and adapts the argument to its
+actual delegate parameter. Neither key reaches CIR.
+
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
 compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. Kotlin-authored
 constructors additionally carry `declarationId`; their selected construction and delegation edges carry

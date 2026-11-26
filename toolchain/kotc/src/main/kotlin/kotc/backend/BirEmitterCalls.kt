@@ -854,6 +854,15 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 	val identityTarget = if (selectedTarget.isFakeOverride && selectedId == null)
 		selectedTarget.resolveFakeOverride() else selectedTarget
 	val externalMember = clrExternalMember(selectedTarget) ?: identityTarget?.let { clrExternalMember(it) }
+	val keyDeclaration = kotc.frontend.SelectedCallDeclarations.forCall(call, sourcePathOf(call))
+	val methodKey = if (keyDeclaration != null) nativeDeclarationKey(keyDeclaration, "methodKey")
+		else nativeDeclarationKey(selectedTarget, "methodKey")
+			?: identityTarget?.takeUnless { it === selectedTarget }?.let { nativeDeclarationKey(it, "methodKey") }
+	if (methodKey != null) rendered = when (val node = rendered) {
+		is BirCallStatic -> if (node.method == selectedTarget.name.asString()) node.copy(nativeMethodKey = methodKey) else node
+		is BirCallInstance -> if (node.method == selectedTarget.name.asString()) node.copy(nativeMethodKey = methodKey) else node
+		else -> node
+	}
 	// A super call invokes the selected implementation, not the inherited fake declaration
 	// visible on its qualifier. Preserve that Kotlin owner alongside the declaration identity.
 	if (externalMember == null && rendered is BirCallInstance && rendered.superCall == true &&
@@ -892,10 +901,11 @@ internal fun BirEmitter.call(call: IrCall): BirExpression {
 			}
 			val defaultIdentity = defaultOwner?.let { declarationIdForPhysicalAllocation(it) }
 			val defaultFrame = defaultOwner?.let { defaultOwnerType(call, it) }
+			val defaultKey = defaultOwner?.let { nativeDeclarationKey(it, "methodKey") }
 			if (defaultIdentity != null || defaultFrame != null)
 				rendered = when (val node = rendered) {
-					is BirCallStatic -> node.copy(defaultDeclarationId = defaultIdentity, defaultOwnerType = defaultFrame)
-					is BirCallInstance -> node.copy(defaultDeclarationId = defaultIdentity, defaultOwnerType = defaultFrame)
+					is BirCallStatic -> node.copy(defaultDeclarationId = defaultIdentity, defaultOwnerType = defaultFrame, defaultNativeMethodKey = defaultKey)
+					is BirCallInstance -> node.copy(defaultDeclarationId = defaultIdentity, defaultOwnerType = defaultFrame, defaultNativeMethodKey = defaultKey)
 					else -> node
 				}
 		}

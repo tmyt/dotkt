@@ -94,6 +94,19 @@ static partial class UnsafeAccessorLowering
         id = target?.DeclarationId.OrDefault() ?? id;
         var referenced = SourceReferencedMethod(target, id, owner, targetName, arity, edge.Static,
             signature, edge.MemberReturn, edge.MethodParameters, propertyKind != null, context.References);
+        var nativeKey = node switch { BirCallStatic s => s.NativeMethodKey.OrDefault(),
+            BirCallInstance i => i.NativeMethodKey.OrDefault(), _ => null };
+        BirMemberReference keyedReference = null;
+        if (nativeKey != null && targetHost == null)
+        {
+            var refs = context.References;
+            var open = ClrMemberResolution.ResolveOwnerType(owner, refs);
+            var method = ClrDeclarationMatching.MethodForNativeKey(refs, open, targetName, arity, !edge.Static, nativeKey);
+            var physical = ClrMemberResolution.MemberRefOf(null, refs, method, "method", open, owner.Args);
+            keyedReference = BirMemberReference.FromPhysical(physical);
+            referenced = new(method.Name, physical.ParameterTypes, physical.ReturnType,
+                ClrMemberResolution.NativeResolvedMethodTypeParameters(method, arity).OrDefault(), null, method.IsPublic);
+        }
         if (referenced?.IsPublic == true) return node;
         if (referenced != null) targetName = referenced.PhysicalMember;
         var declaredReturn = referenced?.Return ?? target?.Ret.OrDefault() ?? edge.MemberReturn
@@ -116,12 +129,14 @@ static partial class UnsafeAccessorLowering
         arguments[0] = edge.Static ? new BirDefaultValue { Type = CopySourceType(owner) } : edge.Receiver;
         Array.Copy(edge.Arguments, 0, arguments, 1, edge.Arguments.Length);
         var replacement = SourceAccessorCall(caller, definition, owner, arguments, result);
+        if (keyedReference != null)
+            ClrMemberResolution.MarkFunctionParameters(replacement, new TypeNode[] { owner }.Concat(edge.Signature).ToArray());
         // The accessor changes how we reach the method, not which MethodDef
         // supplies its generic constraints at a projected call site.
-        var native = node switch {
+        var native = keyedReference ?? (node switch {
             BirCallInstance i => i.MemberRef.OrDefault(), BirCallStatic s => s.MemberRef.OrDefault(),
             BirConstrainedCall c => c.MemberRef.OrDefault(), _ => null,
-        };
+        });
         if (arity != 0 && targetHost == null && id == null)
         {
             if (native == null && context.References != null && edge.MemberSignature is { } selectedSignature &&

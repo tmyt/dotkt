@@ -5558,6 +5558,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
     public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
+    public OptionalField<string> DefaultNativeMethodKey { get; set; }
     public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
     public OptionalField<TypeNode> _erasedValueVariable { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
@@ -5752,6 +5754,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberSignature.HasValue) { foreach (var item0 in MemberSignature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (MemberReturnType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberReturnType.Value, visit); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
+        if (DefaultNativeMethodKey.HasValue) { visit((string)DefaultNativeMethodKey.Value); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
         if (PropertyName.HasValue) { visit((string)PropertyName.Value); }
         if (PropertyAccessor.HasValue) { visit((string)PropertyAccessor.Value); }
@@ -6193,6 +6197,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
             && EqualField(MemberSignature, value.MemberSignature, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(MemberReturnType, value.MemberReturnType, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(ExternalMember, value.ExternalMember, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(DefaultNativeMethodKey, value.DefaultNativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -6254,6 +6260,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "externalMember", ExternalMember, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "defaultNativeMethodKey", DefaultNativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
@@ -6317,6 +6325,8 @@ internal sealed record BirCallStatic : BirGraphNode, IBirExpression, IBirAttribu
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
         if (ExternalMember.IsPresent) result["externalMember"] = ExternalMember.IsNull ? null : ((BirGraphValue)ExternalMember.Value).ToDom(projected);
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
+        if (DefaultNativeMethodKey.IsPresent) result["defaultNativeMethodKey"] = DefaultNativeMethodKey.IsNull ? null : JsonValue.Create(DefaultNativeMethodKey.Value);
         if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
@@ -6387,6 +6397,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<BirTypeParameter[]> MemberMethodTypeParams { get; set; }
     public OptionalField<TypeNode[]> MemberSignature { get; set; }
     public OptionalField<TypeNode> MemberReturnType { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
+    public OptionalField<string> DefaultNativeMethodKey { get; set; }
     public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
     public OptionalField<TypeNode> _erasedValueVariable { get; set; }
     public OptionalField<TypeNode> RetSuspendFnTypePre { get; set; }
@@ -6576,6 +6588,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberSignature.HasValue) { foreach (var item0 in MemberSignature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (MemberReturnType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberReturnType.Value, visit); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
+        if (DefaultNativeMethodKey.HasValue) { visit((string)DefaultNativeMethodKey.Value); }
         if (_erasedValueVariable.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_erasedValueVariable.Value, visit); }
         if (PropertyName.HasValue) { visit((string)PropertyName.Value); }
         if (PropertyAccessor.HasValue) { visit((string)PropertyAccessor.Value); }
@@ -7021,6 +7035,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
             && EqualField(MemberMethodTypeParams, value.MemberMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(MemberSignature, value.MemberSignature, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(MemberReturnType, value.MemberReturnType, (left, right) => TypeNodeDataEquality.Equal(left, right))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(DefaultNativeMethodKey, value.DefaultNativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(_erasedValueVariable, value._erasedValueVariable, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(RetSuspendFnTypePre, value.RetSuspendFnTypePre, (left, right) => TypeNodeDataEquality.Equal(left, right))
@@ -7085,6 +7101,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "memberMethodTypeParams", MemberMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberSignature", MemberSignature, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "memberReturnType", MemberReturnType, (writer, value) => { TypeNode.WriteJson(writer, value); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "defaultNativeMethodKey", DefaultNativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "_erasedValueVariable", _erasedValueVariable, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "retSuspendFnTypePre", RetSuspendFnTypePre, (writer, value) => { writer.WriteStringValue(TypeNode.ToJson(value)); });
@@ -7151,6 +7169,8 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
         if (MemberMethodTypeParams.IsPresent) result["memberMethodTypeParams"] = MemberMethodTypeParams.IsNull ? null : new JsonArray(MemberMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (MemberSignature.IsPresent) result["memberSignature"] = MemberSignature.IsNull ? null : new JsonArray(MemberSignature.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (MemberReturnType.IsPresent) result["memberReturnType"] = MemberReturnType.IsNull ? null : TypeNode.Write(MemberReturnType.Value);
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
+        if (DefaultNativeMethodKey.IsPresent) result["defaultNativeMethodKey"] = DefaultNativeMethodKey.IsNull ? null : JsonValue.Create(DefaultNativeMethodKey.Value);
         if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (_erasedValueVariable.IsPresent) result["_erasedValueVariable"] = _erasedValueVariable.IsNull ? null : TypeNode.Write(_erasedValueVariable.Value);
         if (RetSuspendFnTypePre.IsPresent) result["retSuspendFnTypePre"] = RetSuspendFnTypePre.IsNull ? null : JsonValue.Create(TypeNode.ToJson(RetSuspendFnTypePre.Value));
@@ -29944,6 +29964,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<bool> Virtual { get; set; }
     public OptionalField<TypeNode[]> ArgTypes { get; set; }
     public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public OptionalField<bool> Super { get; set; }
     public OptionalField<string> MemberVisibility { get; set; }
     public OptionalField<BirTypeParameter[]> MemberOwnerTypeParams { get; set; }
@@ -30104,6 +30125,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         if (Ret.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Ret.Value, visit); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
         if (MemberVisibility.HasValue) { visit((string)MemberVisibility.Value); }
         if (MemberSignature.HasValue) { foreach (var item0 in MemberSignature.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (MemberReturnType.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)MemberReturnType.Value, visit); }
@@ -30470,6 +30492,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
             && EqualField(Virtual, value.Virtual, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(ArgTypes, value.ArgTypes, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Super, value.Super, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(MemberVisibility, value.MemberVisibility, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(MemberOwnerTypeParams, value.MemberOwnerTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
@@ -30515,6 +30538,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         WriteOptional(writer, "virtual", Virtual, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "super", Super, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "memberVisibility", MemberVisibility, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberOwnerTypeParams", MemberOwnerTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
@@ -30562,6 +30586,7 @@ internal sealed record BirConstrainedCall : BirGraphNode, IBirExpression, IBirAt
         if (Virtual.IsPresent) result["virtual"] = Virtual.IsNull ? null : JsonValue.Create(Virtual.Value);
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         if (Super.IsPresent) result["super"] = Super.IsNull ? null : JsonValue.Create(Super.Value);
         if (MemberVisibility.IsPresent) result["memberVisibility"] = MemberVisibility.IsNull ? null : JsonValue.Create(MemberVisibility.Value);
         if (MemberOwnerTypeParams.IsPresent) result["memberOwnerTypeParams"] = MemberOwnerTypeParams.IsNull ? null : new JsonArray(MemberOwnerTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
@@ -30610,6 +30635,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
     public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
@@ -30687,6 +30713,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (_capturedGenericResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_capturedGenericResult.Value, visit); }
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -30886,7 +30913,8 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
             && EqualField(ResolvedMemberParams, value.ResolvedMemberParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
-            && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -30905,6 +30933,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -30925,6 +30954,7 @@ internal sealed record BirGenericStatic : BirGraphNode, IBirExpression, IBirAttr
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         projected?.Invoke(this, result);
         return result;
     }
@@ -30953,6 +30983,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
     public OptionalField<BirMethodWitness[]> ProjectedMethodWitnesses { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
@@ -31034,6 +31065,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (_capturedGenericResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_capturedGenericResult.Value, visit); }
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -31250,7 +31282,8 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
             && EqualField(_foreignDeclarationSignature, value._foreignDeclarationSignature, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
-            && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(ProjectedMethodWitnesses, value.ProjectedMethodWitnesses, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -31275,6 +31308,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "projectedMethodWitnesses", ProjectedMethodWitnesses, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -31301,6 +31335,7 @@ internal sealed record BirGenericInstance : BirGraphNode, IBirExpression, IBirAt
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (ProjectedMethodWitnesses.IsPresent) result["projectedMethodWitnesses"] = ProjectedMethodWitnesses.IsNull ? null : new JsonArray(ProjectedMethodWitnesses.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         projected?.Invoke(this, result);
         return result;
     }
@@ -32308,6 +32343,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
     public OptionalField<SourceTypeVector> _foreignDeclarationSignature { get; set; }
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
@@ -32406,6 +32442,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         if (_capturedGenericResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_capturedGenericResult.Value, visit); }
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -32657,7 +32694,8 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
             && EqualField(ResolvedMemberParams, value.ResolvedMemberParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(_foreignDeclarationSignature, value._foreignDeclarationSignature, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
-            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -32688,6 +32726,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         WriteOptional(writer, "_foreignDeclarationSignature", _foreignDeclarationSignature, (writer, value) => { SourceTypeVector.Write(writer, value); });
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -32720,6 +32759,7 @@ internal sealed record BirNativeInstance : BirGraphNode, IBirExpression, IBirAtt
         if (_foreignDeclarationSignature.IsPresent) result["_foreignDeclarationSignature"] = _foreignDeclarationSignature.IsNull ? null : SourceTypeVector.ToDom(_foreignDeclarationSignature.Value);
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         projected?.Invoke(this, result);
         return result;
     }
@@ -32749,6 +32789,7 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
     public OptionalField<TypeNode> ResolvedMemberReturn { get; set; }
     public OptionalField<SourceTypeVector> _foreignDeclarationSignature { get; set; }
     public OptionalField<BirTypeParameter[]> _resolvedMethodTypeParams { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public override TypeNode? ResultTypeStamp => Sty.OrDefault() ?? Ret.OrDefault();
     public override TypeNode? FunctionTypeStamp => Sty.OrDefault();
     public override TypeNode? CallBindingTypeHint => Sty.OrDefault() ?? Type.OrDefault();
@@ -32846,6 +32887,7 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         if (_capturedGenericResult.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)_capturedGenericResult.Value, visit); }
         if (ResolvedMemberParams.HasValue) { foreach (var item0 in ResolvedMemberParams.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (ResolvedMemberReturn.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)ResolvedMemberReturn.Value, visit); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -33092,7 +33134,8 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
             && EqualField(ResolvedMemberParams, value.ResolvedMemberParams, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(ResolvedMemberReturn, value.ResolvedMemberReturn, (left, right) => TypeNodeDataEquality.Equal(left, right))
             && EqualField(_foreignDeclarationSignature, value._foreignDeclarationSignature, (left, right) => left.FrozenText == right.FrozenText)
-            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)));
+            && EqualField(_resolvedMethodTypeParams, value._resolvedMethodTypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
@@ -33118,6 +33161,7 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         WriteOptional(writer, "resolvedMemberReturn", ResolvedMemberReturn, (writer, value) => { TypeNode.WriteJson(writer, value); });
         WriteOptional(writer, "_foreignDeclarationSignature", _foreignDeclarationSignature, (writer, value) => { SourceTypeVector.Write(writer, value); });
         WriteOptional(writer, "_resolvedMethodTypeParams", _resolvedMethodTypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -33145,6 +33189,7 @@ internal sealed record BirNativeStatic : BirGraphNode, IBirExpression, IBirAttri
         if (ResolvedMemberReturn.IsPresent) result["resolvedMemberReturn"] = ResolvedMemberReturn.IsNull ? null : TypeNode.Write(ResolvedMemberReturn.Value);
         if (_foreignDeclarationSignature.IsPresent) result["_foreignDeclarationSignature"] = _foreignDeclarationSignature.IsNull ? null : SourceTypeVector.ToDom(_foreignDeclarationSignature.Value);
         if (_resolvedMethodTypeParams.IsPresent) result["_resolvedMethodTypeParams"] = _resolvedMethodTypeParams.IsNull ? null : new JsonArray(_resolvedMethodTypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         projected?.Invoke(this, result);
         return result;
     }
@@ -36808,6 +36853,8 @@ internal static class BirCallConversion
             MemberMethodTypeParams = source.MemberMethodTypeParams,
             MemberSignature = source.MemberSignature,
             MemberReturnType = source.MemberReturnType,
+            NativeMethodKey = source.NativeMethodKey,
+            DefaultNativeMethodKey = source.DefaultNativeMethodKey,
             ProjectedMethodWitnesses = source.ProjectedMethodWitnesses,
             _erasedValueVariable = source._erasedValueVariable,
             RetSuspendFnTypePre = source.RetSuspendFnTypePre,

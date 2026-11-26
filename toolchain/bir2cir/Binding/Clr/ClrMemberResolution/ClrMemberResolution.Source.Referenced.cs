@@ -44,10 +44,10 @@ static partial class ClrMemberResolution
         BirCallStatic call => new(call.Tag, call.Owner.OrDefault() ?? call.CalleeOwner.OrDefault() ?? call.OwnerType.OrDefault(),
             call.Method.OrDefault(), call.Sig.OrDefault(), call.TypeArgs.OrEmpty().Length, call.DeclarationId.OrDefault(),
             call.MemberRef.HasValue && call.DotktDeclarationIdentityBound.OrDefault(), readSourceSignature(call),
-            call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Prop.OrDefault(), false),
+            call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Prop.OrDefault(), false, call.NativeMethodKey.OrDefault()),
         BirCallInstance call => new(call.Tag, call.OwnerType.OrDefault(), call.Method.OrDefault(), call.Sig.OrDefault(),
             call.TypeArgs.OrEmpty().Length, call.DeclarationId.OrDefault(), call.MemberRef.HasValue && call.DotktDeclarationIdentityBound.OrDefault(),
-            null, call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Prop.OrDefault(), call.Super.OrDefault()),
+            null, call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Prop.OrDefault(), call.Super.OrDefault(), call.NativeMethodKey.OrDefault()),
         BirConstrainedCall call when call.DeclarationId.HasValue => new(call.Tag, call.Iface.OrDefault(), call.Method.OrDefault(), call.Sig.OrDefault(),
             call.TypeArgs.OrEmpty().Length, call.DeclarationId.Value, call.MemberRef.HasValue && call.DotktDeclarationIdentityBound.OrDefault(),
             null, call.PropertyName.OrDefault(), call.PropertyAccessor.OrDefault(), call.Prop.OrDefault(), call.Super.OrDefault()),
@@ -102,12 +102,14 @@ static partial class ClrMemberResolution
         switch (node)
         {
             case BirCallStatic call:
+                if (call.NativeMethodKey.HasValue) { MarkFunctionParameters(call, call.Sig.OrDefault()); call.NativeMethodKey = default; }
                 call.Sig = signature; call.MemberRef = reference; call._resolvedMethodTypeParams = parameters;
                 call.ArgTypes = default;
                 if (plan.IdentityBound) call.DotktDeclarationIdentityBound = true;
                 StampSourceReferencedDelegateTargets(bindingLocalTypes, bindingReferences, call.Args.OrDefault(), call.TypeArgs.OrEmpty(), plan);
                 break;
             case BirCallInstance call:
+                if (call.NativeMethodKey.HasValue) { MarkFunctionParameters(call, call.Sig.OrDefault()); call.NativeMethodKey = default; }
                 call.Sig = signature; call.MemberRef = reference; call._resolvedMethodTypeParams = parameters;
                 call.ArgTypes = default;
                 if (plan.IdentityBound) call.DotktDeclarationIdentityBound = true;
