@@ -79,8 +79,10 @@ static partial class ClrMemberResolution
 
     interface IMetadataSlot<T> { void Put(T value); void Ping(); }
     interface IMetadataPair : IMetadataSlot<int>, IMetadataSlot<string> { }
+    interface IMixed<T> : IMetadataSlot<int>, IMetadataSlot<T[]> { }
     class MetadataOuter<T> { internal interface IFace<U> { } }
     class MetadataOuter { internal interface IFace<T, U> { void Ping(); } }
+    interface INestedPair : IMetadataSlot<MetadataOuter<string>.IFace<int>>, IMetadataSlot<MetadataOuter.IFace<string,int>> { }
     class MetadataBase : MetadataOuter.IFace<string, int> { public void Ping() { } }
 
     static void MetadataConstructedSlotsSelfTest()
@@ -88,6 +90,23 @@ static partial class ClrMemberResolution
         var owner = new TypeNode.Fqn(typeof(IMetadataPair).FullName);
         var text = new TypeNode.Fqn("System.String");
         using var refs = ReferenceMetadataIndex.Build([typeof(object).Assembly.Location, typeof(IMetadataPair).Assembly.Location]);
+        bool ResolveOrdinary(string name, TypeNode[] parameters, out TypeNode.Fqn declaring) =>
+            TryResolveAliasedInterfaceSlotByShape(null, refs, owner, name, 0, parameters, null,
+                out declaring, out _, out _, out _);
+        foreach (var argument in new[] { new TypeNode.Fqn("System.Int32"), text })
+            if (!ResolveOrdinary("Put", [argument], out var declaring)
+                || declaring.Args is not [var actual] || actual != argument)
+                throw new InvalidOperationException($"Ordinary Put did not select its constructed declaration for {argument}");
+        bool ambiguous = false;
+        try { ResolveOrdinary("Ping", [], out _); }
+        catch (InvalidOperationException error) when (error.Message.Contains("resolves to 2 declarations")) { ambiguous = true; }
+        if (!ambiguous) throw new InvalidOperationException("Ordinary Ping selected one of two indistinguishable constructed slots");
+        var number = new TypeNode.Fqn("System.Int32");
+        if (!TryResolveAliasedInterfaceSlotByShape(null, refs, new TypeNode.Fqn(typeof(IMixed<>).FullName, [text]),
+                "Put", 0, [new TypeNode.Array(text)], null, out var emitted, out _, out var formals, out _,
+                emittedOwnerArgs: [number]) || emitted.Args is not [TypeNode.Array { Elem: var element }]
+                || element != number || formals is not [TypeNode.Array { Elem: var formal }] || formal != number)
+            throw new InvalidOperationException("Ordinary selection and emission did not follow the same constructed interface edge");
         var arguments = new TypeNode[] { text, new TypeNode.Fqn("System.Int32") };
         var direct = new TypeNode.Fqn(typeof(MetadataOuter<>.IFace<>).FullName, arguments);
         var required = new TypeNode.Fqn(typeof(MetadataOuter.IFace<,>).FullName, arguments);
@@ -98,20 +117,34 @@ static partial class ClrMemberResolution
         ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { derived } }], refs, metadataBuild: true);
         if (!derived.Interfaces.Value.SequenceEqual(new TypeNode[] { direct, required }))
             throw new InvalidOperationException("An unrelated nested TypeDef covered an inherited interface MethodImpl");
-        BirMethodImpl Resolve(string name, params TypeNode[] parameters)
+        BirMethodImpl Resolve(bool metadata, TypeNode.Fqn receiver, string name, params TypeNode[] parameters)
         {
-            var descriptor = new BirMethodImpl { Owner = owner, Member = name, Arity = 0,
+            var descriptor = new BirMethodImpl { Owner = receiver, Member = name, Arity = 0,
                 Params = parameters, Ret = MemberRefNode.Void };
             var cls = new BirClassDefinition { Name = "Fixture.Pair", Methods = new[] {
                 new BirFunctionDeclaration { Name = "body", ClrInterfaceImpls = new[] { descriptor } } } };
-            ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { cls } }], refs, metadataBuild: true);
+            ResolveInterfaceSlots(null, [new BirFileDeclaration { Types = new IBirTypeDeclaration[] { cls } }], refs, metadataBuild: metadata);
             return descriptor;
         }
-        if (Resolve("Put", text).Owner.Value != new TypeNode.Fqn(typeof(IMetadataSlot<>).FullName, [text]))
-            throw new InvalidOperationException("Metadata MethodImpl did not select the constructed string declaration");
-        try { Resolve("Ping"); }
-        catch (InvalidOperationException error) when (error.Message.Contains("resolves to 2 external declaration(s)")) { return; }
-        throw new InvalidOperationException("Distinct constructed metadata slots collapsed to one MethodDef");
+        var nestedPair = new TypeNode.Fqn(typeof(INestedPair).FullName);
+        foreach (var argument in new[] { direct, required })
+            if (Resolve(false, nestedPair, "Put", argument).Owner.Value is not TypeNode.Fqn { Args: [var exact] } || exact != argument)
+                throw new InvalidOperationException("Nested generic TypeDefs with different declaring arities selected the same slot");
+        var nullable = new TypeNode.Nullable(new TypeNode.Tv("type", 0));
+        var nestedArray = new TypeNode.Array(nullable);
+        if (Resolve(false, new TypeNode.Fqn(typeof(IMixed<>).FullName, [nullable]), "Put", nestedArray).Owner.Value
+            is not TypeNode.Fqn { Args: [var array] } || array != nestedArray)
+            throw new InvalidOperationException("Final MethodImpl slot re-lowered a physical nullable owner argument");
+        foreach (var metadata in new[] { false, true })
+        {
+            var selectedOwner = Resolve(metadata, owner, "Put", text).Owner.Value;
+            if (selectedOwner is not TypeNode.Fqn { Args: [var selected] } || selected != text
+                || metadata && selectedOwner != new TypeNode.Fqn(typeof(IMetadataSlot<>).FullName, [text]))
+                throw new InvalidOperationException("MethodImpl did not select the constructed string declaration");
+            try { Resolve(metadata, owner, "Ping"); }
+            catch (InvalidOperationException error) when (error.Message.Contains("resolves to 2 external declaration(s)")) { continue; }
+            throw new InvalidOperationException("Distinct constructed slots collapsed to one MethodDef");
+        }
     }
 
     static void TypedInterfaceConstraintSelfTest()
