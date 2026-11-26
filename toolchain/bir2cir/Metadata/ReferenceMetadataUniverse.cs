@@ -43,7 +43,7 @@ sealed partial class ReferenceMetadataUniverse : IDisposable
         get { EnsureReferences(); return references; }
     }
 
-    internal Type ResolveType(string name, int arity)
+    internal Type ResolveType(string name, int arity, bool throwOnAmbiguity = true)
     {
         RequireActive();
         var key = (name, arity);
@@ -62,9 +62,12 @@ sealed partial class ReferenceMetadataUniverse : IDisposable
                     matches.TryAdd(match.Assembly.GetName().FullName ?? match.Assembly.GetName().Name!, match);
             }
             if (matches.Count > 1)
+            {
+                if (!throwOnAmbiguity) return null; // Optional proofs must not poison the exact lookup's cache.
                 throw new InvalidOperationException(
                     $"bir2cir: type '{candidate}' is defined by multiple compile references: " +
                     string.Join(", ", matches.Keys.OrderBy(value => value, StringComparer.Ordinal)));
+            }
             found = matches.Values.SingleOrDefault();
             if (found != null) break;
         }
