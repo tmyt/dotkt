@@ -35,6 +35,8 @@ private class SplitSuspendFactory<K>(val value: K) : SuspendLeft<K>, SuspendRigh
     override suspend fun <A : K> make(): Any = value
 }
 
+private class SplitLeaf<T> : Base(), ILeft, IRight
+
 private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     SuspendParent(), SuspendLeft<Concrete>, SuspendRight<Concrete> where C : Base, C : ILeft {
     var calls = 0
@@ -169,11 +171,11 @@ class SelectedMethodBoundsTests {
             var result = "before"
             reverse.replace(byref(result), "after")
             check(result == "after")
-            val leaf = Leaf<String>()
-            val split = SplitSuspendFactory<Leaf<*>>(leaf)
-            val leftOnly: SuspendLeft<Leaf<*>> = split
-            val rightOnly: SuspendRight<Leaf<*>> = split
-            check(leftOnly.make<Leaf<*>>() === leaf && rightOnly.make<Leaf<*>>() === leaf)
+            val leaf = SplitLeaf<String>()
+            val split = SplitSuspendFactory<SplitLeaf<*>>(leaf)
+            val leftOnly: SuspendLeft<SplitLeaf<*>> = split
+            val rightOnly: SuspendRight<SplitLeaf<*>> = split
+            check(leftOnly.make<SplitLeaf<*>>() === leaf && rightOnly.make<SplitLeaf<*>>() === leaf)
             check(JoinedSlot.IsValue<Item>(left.make<Item>()))
             right.make<Item>()
         }

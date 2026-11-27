@@ -149,6 +149,11 @@ static partial class SuspendColdLowering
                     break;
                 default: throw new InvalidOperationException("A named cold call has no supported source call descriptor");
             }
+            // Appending the continuation changes the operands, not the method's
+            // generic arguments or the witnesses already selected for them.
+            if (source.MethodWitnessFacts.HasValue)
+                ((BirGraphValue)result).MethodWitnessFacts = source.MethodWitnessFacts.Value
+                    .Select(witness => (BirMethodWitness)_module.Transitions.CloneIndependent(witness)).ToArray();
             return result;
         }
 
