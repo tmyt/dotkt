@@ -1050,6 +1050,7 @@ static class ReferenceMetadataReader
         EntityHandle declaration, EntityHandle body)
     {
         internal string Member => member;
+        internal int BodyMethodDef => body.Kind == HandleKind.MethodDefinition ? MetadataTokens.GetToken(body) : 0;
         internal (string Scope, string Name) NominalOwner => NominalMetadataOwner(reader, parent);
         internal TypeNode.Fqn Owner => NativeSignatureReader.Type(reader, parent) as TypeNode.Fqn;
         MethodSignature<TypeNode>? signature;

@@ -1355,6 +1355,10 @@ fun inspect(directory: DirectoryInfo) {
 Enumeration evaluates the source once, obtains one enumerator, and requests elements lazily through
 `MoveNext`/`Current`. Native exceptions propagate normally. Native source declarations retain their CLR types
 rather than being rewritten to Kotlin `Iterable` or `Sequence`; iteration adds no new runtime classifier rules.
+A Kotlin override of the projected raw `iterator()` also supplies the non-generic CLR enumeration slot,
+unless the subclass implements `GetEnumerator()` itself. A call to `super.iterator()` needs an accessible,
+concrete base implementation: a private explicit `IEnumerable.GetEnumerator()` can be called through the
+interface, but not as a base call. When no such base implementation is accessible, compilation fails.
 The protocol does not add automatic `Dispose` on completion, exception or early exit.
 For resource-owning enumeration, explicitly acquire the native enumerator and dispose it in `finally`;
 the inherited non-generic `MoveNext` surface can be accessed as `System.Collections.IEnumerator`.
