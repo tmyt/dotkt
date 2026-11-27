@@ -5,7 +5,7 @@ using DotKt.Cir;
 
 static partial class CapturedGenericInvocation
 {
-    static bool RequiresTypedSlot(System.Type type) => type.IsByRef || type.IsByRefLike
+    static bool RequiresTypedSlot(System.Type type) => type.IsByRef || type.IsByRefLike || type.IsPointer || type.IsFunctionPointer
         || type.IsGenericParameter && (type.GenericParameterAttributes & GenericParameterAttributes.AllowByRefLike) != 0;
 
     sealed record AddressTarget(string Name, int Token, string[] Keys, BirTypeParameter[] OwnerFrame,
@@ -61,33 +61,56 @@ static partial class CapturedGenericInvocation
         var witnesses = new List<IBirExpression>();
         var invariantTypes = new List<IBirExpression>();
         var statements = new List<IBirStatement>();
-        (TypeNode open, TypeNode impl) BoundarySlot(TypeNode caller, TypeNode impl, bool typed)
+        bool hasIndexedRef = false;
+        BirLocal Retain(IBirExpression value, TypeNode type)
+        {
+            var name = CallEvalLowering.FreshBindingId();
+            statements.Add(new BirVariable { Name = name, Type = type, Init = OptionalField<IBirExpression>.Of(value) });
+            return new BirLocal { Name = name, Sty = type };
+        }
+        (TypeNode open, TypeNode impl) BoundarySlot(TypeNode caller, TypeNode impl, bool typed, TypeNode formal = null)
         {
             if (!typed) return (Object, Object);
+            // A pointer is a valid signature type but not a valid generic argument. Preserve
+            // its shape and parameterize only the free variables in the generated contract.
+            if ((formal is TypeNode.ByRef br ? br.Of : formal) is TypeNode.Ptr or TypeNode.FnPtr)
+                return (Map(formal, v => BoundarySlot(CallerFrame(v), AdapterFrame(v), true).open), impl);
             var parameter = new TypeNode.Tv("type", contractArgs.Count);
             contractArgs.Add(caller is TypeNode.ByRef cr ? cr.Of : caller);
             implementationArgs.Add(impl is TypeNode.ByRef ir ? ir.Of : impl);
             return (impl is TypeNode.ByRef ? new TypeNode.ByRef(parameter) : parameter, impl);
         }
-        void Operand(IBirExpression value, TypeNode caller, TypeNode target, bool typed, bool receiver)
+        void Operand(IBirExpression value, TypeNode caller, TypeNode target, bool typed, bool receiver, TypeNode formal = null)
         {
-            var (parameter, implementation) = BoundarySlot(caller, target, typed);
+            var (parameter, implementation) = BoundarySlot(caller, target, typed, formal);
             signature.Add(parameter);
             implSignature.Add(implementation);
-            var name = CallEvalLowering.FreshBindingId();
             var address = caller is TypeNode.ByRef;
             var localType = typed ? caller : Object;
+            var indexed = address ? (value is BirByRefOf byRef ? byRef.Inner.OrDefault() : value) as BirArrayGet : null;
+            if (indexed != null)
+            {
+                // Evaluate the location in source order. Keep the frozen array/index for the
+                // actual boundary as well: an address alone cannot publish its projected slot.
+                var component = ((TypeNode.ByRef)caller).Of;
+                var vector = new TypeNode.Array(component);
+                indexed.Array = Retain(Cast(vector, indexed.Array.Value), vector);
+                indexed.Index = Retain(indexed.Index.Value, Int);
+                indexed.Elem = component;
+                hasIndexedRef = true;
+            }
             var initializer = address && value is not BirByRefOf ? (IBirExpression)new BirByRefOf {
                 Inner = OptionalField<IBirExpression>.Of(value) } : typed ? value : Cast(Object, value);
-            statements.Add(new BirVariable { Name = name, Type = localType, Init = OptionalField<IBirExpression>.Of(initializer) });
-            var local = new BirLocal { Name = name, Sty = localType };
-            operands.Add(local);
+            var local = Retain(initializer, localType);
+            operands.Add(indexed == null ? local : Copy(initializer));
             IBirExpression input = Local(signature.Count - 1);
             if (!typed) input = Cast(target, input);
             forwarded.Add(input);
             if (receiver) return;
             witnesses.Add(typed ? Null() : Copy(local));
-            invariantTypes.Add(typed ? ClassRef(caller is TypeNode.ByRef r ? r.Of : caller) : Null());
+            // Physical slots are witnesses for missing intersection facets, not arguments
+            // to the call. A capture-only adapter does not need a Type token for its operands.
+            invariantTypes.Add(typed && facets.Length != 0 ? ClassRef(caller is TypeNode.ByRef r ? r.Of : caller) : Null());
         }
         if (site.Instance)
         {
@@ -107,9 +130,10 @@ static partial class CapturedGenericInvocation
                 witnesses.Add(Null()); invariantTypes.Add(Null());
                 continue;
             }
+            var formal = SignatureValueTypes.Of(selectedSignature[i]);
             var caller = fixedAddresses?.GetValueOrDefault(i) is { } location
-                ? new TypeNode.ByRef(location) : CallerFrame(selectedSignature[i]);
-            Operand(site.Arguments.Value[i], caller, AdapterFrame(selectedSignature[i]), selected.TypedParameters[i], false);
+                ? new TypeNode.ByRef(location) : CallerFrame(formal);
+            Operand(site.Arguments.Value[i], caller, AdapterFrame(formal), selected.TypedParameters[i], false, formal);
         }
         var nativeResult = lexical?.Method.Ret.Value ?? SignatureValueTypes.Of(selected.Result);
         var result = capturedResult ?? CallerFrame(nativeResult);
@@ -129,7 +153,7 @@ static partial class CapturedGenericInvocation
         }
         var unit = IsVoid(consumed ? result : nativeResult);
         var (contractResult, implResult) = consumed ? (resultUse.InInvoke(result), resultUse.InInvoke(result))
-            : unit ? (result, result) : BoundarySlot(result, forwardResult, selected.TypedResult);
+            : unit ? (result, result) : BoundarySlot(result, forwardResult, selected.TypedResult, nativeResult);
         TypeNode.Fqn Contract(List<TypeNode> frame) => new(contractName, frame.Count == 0 ? null : frame.ToArray());
         var callerContract = Contract(contractArgs);
         BirGraphValue forward = lexical == null ? site.Forward(adapterOwner, authored.Length, selectedSignature, forwardResult, site.Member == null) :
@@ -208,6 +232,7 @@ static partial class CapturedGenericInvocation
         var closedResult = consumed ? result : SupertypeGraph.SubstOwnerTvs(contractResult, contractArgs.ToArray());
         var invoke = new BirCallInstance { OwnerType = callerContract, Method = "Invoke", Virtual = true, Recv = Cast(callerContract, create),
             Sig = signature.ToArray(), Ret = closedResult, CalleeRet = contractResult, Args = operands.ToArray() };
+        invoke.SourceClrBoundary = hasIndexedRef;
         if (consumed && resultUse.InvokeArguments is { Length: > 0 } frame) invoke.TypeArgs = frame;
         ForeignStarProjectionBinding.RequireRuntimeFallback();
         var block = new BirValueBlock { Type = result, Stmts = statements.ToArray(),

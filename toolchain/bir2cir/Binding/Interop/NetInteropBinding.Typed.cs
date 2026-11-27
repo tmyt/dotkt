@@ -113,7 +113,7 @@ static partial class NetInteropBinding
         => !isStatic && call.Signature.HasValue ? OptionalField<SourceTypeVector>.Of(SourceTypeVector.Create(call.Signature.Value)) : default;
     static BirGraphValue LowerCall(SourceCall call, ReferenceMetadataIndex refs)
     {
-        if (call.Arguments.OrDefault() is { } operands && call.Signature.OrDefault() is { } signatureBeforeBinding &&
+        if (call.Arguments.OrDefault() is { } operands && (call.Signature.OrDefault() ?? call.Shapes.OrDefault()) is { } signatureBeforeBinding &&
             operands.Length == signatureBeforeBinding.Length)
             for (int i = 0; i < operands.Length; i++)
                 if (operands[i] is BirArrayGet indexed && SignatureValueTypes.Of(signatureBeforeBinding[i]) is TypeNode.ByRef)

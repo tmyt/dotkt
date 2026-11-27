@@ -658,16 +658,23 @@ internal fun starProjectionIntersectionAdapter(
     arguments: Array<Any?>, physicalSlots: Array<StarProjectionType?>,
     captureOwners: Array<StarProjectionType>?, capturePlan: IntArray?, scalarNulls: IntArray?,
 ): Any? {
-    val selected = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
-        authored, slots, facets, arguments, physicalSlots, captureOwners, capturePlan)
-    if (scalarNulls != null) {
-        val parameters = selected.getParameters()
-        for (index in scalarNulls) {
-            requireClosedNullParameter(parameters[index].parameterType)
+    val method = if (slots.isEmpty() && scalarNulls == null) {
+        // The adapter already calls the selected MethodDef. A capture fixes its type arguments
+        // directly; only intersection proofs or a null-parameter check need the method itself.
+        val captured = starProjectionCollectCaptures(authored.size, arguments, captureOwners, capturePlan)
+        if (captured == null) authored else Array<StarProjectionType>(authored.size) { captured[it] ?: authored[it] }
+    } else {
+        val selected = starProjectionCloseIntersection(declaringType, metadataToken, memberName, parameterTypeKeys,
+            authored, slots, facets, arguments, physicalSlots, captureOwners, capturePlan)
+        if (scalarNulls != null) {
+            val parameters = selected.getParameters()
+            for (index in scalarNulls) {
+                requireClosedNullParameter(parameters[index].parameterType)
+            }
         }
+        selected.getGenericArguments()
     }
     val owner = declaringType.getGenericArguments()
-    val method = selected.getGenericArguments()
     val frame = Array<StarProjectionType>(owner.size + method.size) {
         if (it < owner.size) owner[it] else method[it - owner.size]
     }
