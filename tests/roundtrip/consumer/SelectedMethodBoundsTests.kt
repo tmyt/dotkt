@@ -42,11 +42,19 @@ private interface IdentityView<B> { fun <A : B> keep(value: A): A }
 private class StarIdentity : IdentityView<SplitLeaf<*>> {
     override fun <A : SplitLeaf<*>> keep(value: A): A = value
 }
+private interface BoundedIdentityView<B : Base> { fun <A : B> keep(value: A): A }
+private class BoundedStarIdentity : BoundedIdentityView<SplitLeaf<*>> {
+    override fun <A : SplitLeaf<*>> keep(value: A): A = value
+}
 private class ImportedStarIdentity : TaggedIdentity<TaggedLeaf<*>> {
     override fun <A : TaggedLeaf<*>> keep(value: A): A {
         check(value.tag == 42)
         return value
     }
+}
+private interface ChainedIdentity<B> { fun <A : B, C : A> keep(value: C): C }
+private class ChainedStarIdentity : ChainedIdentity<TaggedLeaf<*>> {
+    override fun <A : TaggedLeaf<*>, C : A> keep(value: C): C = value
 }
 
 private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
@@ -81,9 +89,21 @@ class SelectedMethodBoundsTests {
         val first = SplitLeaf<Int>()
         val second = SplitLeaf<String>()
         check(view.keep(first) === first && view.keep(second) === second)
+        val bounded: BoundedIdentityView<SplitLeaf<*>> = BoundedStarIdentity()
+        check(bounded.keep(first) === first && bounded.keep(second) === second)
         val imported: TaggedIdentity<TaggedLeaf<*>> = ImportedStarIdentity()
         val tagged = TaggedLeaf<Int>(42)
         check(imported.keep(tagged) === tagged)
+        val chained: ChainedIdentity<TaggedLeaf<*>> = ChainedStarIdentity()
+        check(chained.keep<TaggedLeaf<*>, TaggedLeaf<Int>>(tagged) === tagged)
+        val implementation = (imported as System.Object).GetType()
+        val declaration = implementation.GetInterfaces().single { it.GetMethod("keep") != null }
+        for (type in listOf(declaration, implementation)) {
+            val rows = type.GetMethod("keep")!!.GetGenericArguments()
+            check(rows.isNotEmpty() && rows.all {
+                it.GetGenericParameterConstraints().single().FullName == "roundtrip.selectedbounds.Tagged"
+            })
+        }
     }
 
     @TestAttribute
