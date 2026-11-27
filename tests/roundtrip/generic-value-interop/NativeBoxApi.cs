@@ -17,6 +17,23 @@ public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public interface IJointTag<T> where T : ILeftMark, IRightMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public class NativeOpenVisitor<T>
+{
+    public virtual T Visit(T item) => throw new System.NotImplementedException();
+    public T Dispatch(T item) => Visit(item);
+}
+public class NativeMiddleVisitor<TUnused,T> : NativeOpenVisitor<T>
+{
+    public virtual object Visit(object item) => "middle";
+    public object DispatchOther(object item) => Visit(item);
+}
+public class NativeBoundVisitor<T> where T : System.IO.Stream
+{
+    public virtual object Visit(T item) => "base";
+    public virtual object Visit(System.IO.Stream item) => "other";
+    public object Dispatch(T item) => Visit(item);
+    public object DispatchStream(System.IO.Stream item) => Visit(item);
+}
 public sealed class NativeStreamSlot<T> where T : System.IO.Stream
 {
     public T Value { get; set; }

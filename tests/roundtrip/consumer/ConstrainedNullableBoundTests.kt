@@ -78,6 +78,13 @@ private fun <V : System.IO.Stream> readStream(make: () -> V): Any = StreamFactor
 private fun <V : System.IO.Stream> relayStream(make: () -> V): Any = forwardStream(make)
 private fun readProjectedChunk(value: StreamChunk<*>): Any = relayStream { value }
 private class NestedLeaf<T>(val data: T) : GenericValueInterop.NestedBounds.Mid()
+
+private class OpenVisitor : GenericValueInterop.NativeMiddleVisitor<String, StreamChunk<*>>() {
+    override fun Visit(item: StreamChunk<*>): StreamChunk<*> = item
+}
+private class BoundVisitor : GenericValueInterop.NativeBoundVisitor<StreamChunk<*>>() {
+    override fun Visit(item: StreamChunk<*>): Any? = item.data
+}
 private fun <T> erase(value: T): Any? = value
 private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(make())
 private class UnconstrainedForwarder<A : System.IO.Stream>(val make: () -> A) {
@@ -630,6 +637,19 @@ class ConstrainedNullableBoundTests {
         val concreteOuter = JointOuter(text)
         check(concreteOuter.Inner<ClientItem<*>>(number).outerValue() === text)
         check(streams.keepAliased(second) === second)
+    }
+
+    @TestAttribute
+    fun nativeVirtualDispatchAcceptsTheKotlinProjectedValue() {
+        val text = StreamChunk("payload")
+        val number = StreamChunk(42L)
+        val child = OpenVisitor()
+        val open: GenericValueInterop.NativeOpenVisitor<StreamChunk<*>> = child
+        check(open.Dispatch(text) === text && open.Dispatch(number) === number)
+        check(child.DispatchOther("other type") == "middle")
+        val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = BoundVisitor()
+        check(bounded.Dispatch(text) == "payload" && bounded.Dispatch(number) == 42L)
+        check(bounded.DispatchStream(text) == "other")
     }
 
     @TestAttribute

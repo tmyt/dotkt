@@ -947,7 +947,7 @@ static partial class FBoundStarProjectionErasure
         _ => false,
     };
 
-    static bool ContainsExistentialProjection(TypeNode t) => t switch
+    internal static bool ContainsExistentialProjection(TypeNode t) => t switch
     {
         TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsExistentialProjection),

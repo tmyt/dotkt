@@ -357,7 +357,7 @@
     },
     "birOverride": {
       "type": "object", "x-dotkt-model": { "name": "BirOverride", "domain": "birCoreValues", "loweringProperties": { "physicalDeclarationId": { "type": "string" } } },
-      "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter", "event-add", "event-remove"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" } },
+      "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter", "event-add", "event-remove"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" }, "nativeMethodKey": { "type": "string" } },
       "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
     },
     "birCallStatic": {

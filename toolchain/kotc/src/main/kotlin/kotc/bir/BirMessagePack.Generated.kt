@@ -536,7 +536,7 @@ internal object BirMessagePack {
 
     private fun writeBirOverride(value: BirOverride, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(4 + (if (value.declarationId == null) 0 else 1))
+        packer.packMapHeader(4 + (if (value.declarationId == null) 0 else 1) + (if (value.nativeMethodKey == null) 0 else 1))
         packer.packString("owner")
         writeType(value.owner, packer, depth + 1)
         packer.packString("member")
@@ -547,6 +547,10 @@ internal object BirMessagePack {
         packer.packInt(value.arity)
         value.declarationId?.let { child ->
             packer.packString("declarationId")
+            MessagePackText.write(packer, child)
+        }
+        value.nativeMethodKey?.let { child ->
+            packer.packString("nativeMethodKey")
             MessagePackText.write(packer, child)
         }
     }
