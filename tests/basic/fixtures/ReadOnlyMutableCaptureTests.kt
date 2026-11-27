@@ -65,6 +65,17 @@ class ReadOnlyMutableCaptureTests {
         val read = { captured }
         if (captured != null) replace(byref(captured))
         assertEquals("after", read())
+        fun replaceDeclared(slot: ClrRef<Any>) { slot.value = 42 }
+        fun declaredBorrow(initial: Any): Any {
+            var local = initial
+            if (local is String) {
+                replace(byref(local as String))
+                assertEquals("before", local)
+                replaceDeclared(byref<Any>(local))
+            }
+            return local
+        }
+        assertEquals(42, declaredBorrow("before"))
     }
     @TestAttribute
     fun readersObserveWritesThroughManagedReferences() {
