@@ -50,6 +50,12 @@ interface TextTaskResult {
     suspend fun signal(present: Boolean): Unit?
 }
 
+interface OptionalCompletion<T> { suspend fun completed(): T? }
+interface ProjectedTextResult<K> : OptionalCompletion<Unit> where K : Base, K : ILeft, K : IRight {
+    override suspend fun completed() {}
+    suspend fun <A : K> text(value: K): CharSequence
+}
+
 interface MethodTaskResult<T> {
     suspend fun <U : T> read(value: U, pause: suspend () -> Unit): Any
 }

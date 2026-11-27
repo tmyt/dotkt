@@ -6,6 +6,16 @@ using roundtrip.selectedbounds;
 
 public class CovariantTaskResultInteropTests
 {
+    [Test]
+    public async Task ProjectedTextKeepsItsLogicalResultAcrossAssemblies()
+    {
+        ProjectedTextResult<Concrete> view = new ImportedTextResult();
+        Assert.That(await LibraryKt.importedTextLength(view), Is.EqualTo("across assemblies".Length));
+        Assert.That(await LibraryKt.importedTextIsString(view), Is.True);
+        Assert.That((await view.text<Concrete, Concrete>(new Concrete())).ToString(), Is.EqualTo("across assemblies"));
+        await view.completed();
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public async Task ProjectedInterfaceReturnsItsDeclaredTaskAcrossSuspension(bool imported)
