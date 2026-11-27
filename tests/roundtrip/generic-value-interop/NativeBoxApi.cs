@@ -21,6 +21,9 @@ public class NativeOpenVisitor<T>
 {
     public virtual T Visit(T item) => throw new System.NotImplementedException();
     public T Dispatch(T item) => Visit(item);
+    public virtual T Current { get; set; }
+    public void Store(T item) => Current = item;
+    public T Load() => Current;
 }
 public class NativeMiddleVisitor<TUnused,T> : NativeOpenVisitor<T>
 {
@@ -31,6 +34,11 @@ public class NativeBoundVisitor<T> where T : System.IO.Stream
 {
     public virtual object Visit(T item) => "base";
     public virtual object Visit(System.IO.Stream item) => "other";
+    public virtual T Current { get; set; }
+    public void Store(T item) => Current = item;
+    public T Load() => Current;
+    public virtual int Count { get; private set; } = 1;
+    public int ReadCount() => Count;
     public object Dispatch(T item) => Visit(item);
     public object DispatchStream(System.IO.Stream item) => Visit(item);
 }
@@ -216,6 +224,9 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T EchoValue<T>(T value) => value;
+    public static System.Collections.Generic.List<T> MakeList<T>() => new();
+    public static void Append<T,U>(U value, System.Collections.Generic.List<T> list) where U : T => list.Add(value);
     public static T ReplaceRecord<T>(IMarkedRecord<T> record, T item) where T : IProjectedMark
     {
         record.Write(item);

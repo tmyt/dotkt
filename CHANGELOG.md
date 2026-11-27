@@ -6,6 +6,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Implementing a generic Kotlin interface with a star-projected owner argument no longer adds an invalid CLR constraint to its overriding method (#2067).
+- A Kotlin override of a mutable CLR property on a star-projected generic base now dispatches both reads and writes to the Kotlin accessor (#2064).
+- A Kotlin type parameter bounded by a constructed Kotlin class can be used as a CLR reference-type argument without losing the original value (#2065).
+- Passing a nested native collection through a generic Kotlin helper preserves the original collection and its elements when the element type contains a star projection (#1956).
 - Generic Kotlin helpers can take a star-projected mutable list and an independently constructed list without requiring identical CLR storage types (#1963).
 - A suspend override can forward a CLR function pointer unchanged while specializing another parameter of a generic base method from a different assembly (#2035).
 - Kotlin can receive a reference from a projected CLR generic call even when another argument must stay stack-only, without losing the returned object's identity (#1942).
@@ -15,6 +18,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A suspend override implementing two generic Kotlin interfaces from another assembly can be called through either interface even when their generic constraints differ (#2056).
 - Overriding a CLR base's projected `iterator()` in Kotlin also supplies its non-generic `IEnumerable.GetEnumerator()` implementation (#2004).
 - Passing a smart-cast local such as an `Any` narrowed to `String` as a writable reference to the narrower type is now diagnosed instead of silently writing to a copy (#1965).
+- A writable reference can no longer widen a Kotlin local's declared type. Passing a non-null local to a nullable CLR `ref`, including `Array.Resize`, now requires declaring the local nullable (#2028).
 - Overriding one inherited CLR default interface member in Kotlin preserves the native base's explicit implementation of its other members (#2013).
 - Kotlin overrides of an overloaded CLR interface default now dispatch through the constructed interface without redirecting its other overloads (#2021).
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).

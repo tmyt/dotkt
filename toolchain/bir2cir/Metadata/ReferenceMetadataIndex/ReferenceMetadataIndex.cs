@@ -151,6 +151,14 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>
         (binding.SignatureParameters, binding.SignatureReturn);
 
+    internal (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(string identity) =>
+        identity != null && _declarationById.TryGetValue(identity, out var binding)
+            ? PhysicalDeclarationSignature(binding) : default;
+
+    internal (TypeNode[] Parameters, TypeNode Return) KotlinValueSignature(string identity) =>
+        identity != null && _declarationById.TryGetValue(identity, out var binding)
+            ? (binding.KotlinParameterTypes, binding.KotlinReturnType) : default;
+
     internal TypeNode DeclarationSignatureSlot(ParameterInfo parameter) =>
         ReadDeclarationSignatureSlot(parameter, _nativeSignatures);
 
@@ -4169,6 +4177,23 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         if (key == null) return null;
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
         return open.GetMethods(flags).Single(m => m.IsVirtual && !m.IsFinal && MatchesNativeMethod(m, key));
+    }
+
+    internal MethodInfo SelectNativePropertyOverride(Type open, TypeNode.Fqn owner, string member, string role,
+        TypeNode[] parameters)
+    {
+        // The value passed to a setter does not select a different property.
+        // Select the readable Kotlin property's getter by its index parameters,
+        // then take the requested MethodSemantics association of that very row.
+        var indexes = role == "set" ? parameters[..^1] : parameters;
+        if (!TrySelectedOverrideDeclarationByShape(owner.Name, member, "get", 0, indexes, owner.Args ?? [],
+            KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(null, owner.Args ?? []), false, out var selected,
+            false, null)) return null;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        var property = open.GetProperties(flags).SingleOrDefault(p => p.GetGetMethod(true)?.MetadataToken == selected.MetadataToken);
+        var method = role == "set" ? property?.GetSetMethod(true) : property?.GetGetMethod(true);
+        return method is { IsVirtual: true, IsFinal: false } && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly)
+            ? method : null;
     }
 
     internal bool TrySelectedNullableGenericSlotByShape(string ownerFqn, string name, bool isStatic, int argCount,

@@ -261,7 +261,8 @@ static partial class KotlinOverrideSlotBridge
                 || definition.Kind == "class" && reimplements && (slot.DescriptorMember != implementation.Name
                     || slot.Referenced && ReintroducesBaseFace(slot.DescriptorSpec))
                 || definition.Kind == "class" && inheritedDefault);
-            var needsBase = !slot.IsInterface && !slot.Referenced && slot.DescriptorMember != implementation.Name;
+            var needsBase = !slot.IsInterface && slot.DescriptorMember != implementation.Name
+                && (!slot.Referenced || slot.PropertyAccessor != null && slot.NativeBaseMethod != null);
             BirMethodImpl Descriptor(string local = null)
             {
                 var descriptor = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,
@@ -307,6 +308,7 @@ static partial class KotlinOverrideSlotBridge
                             descriptor.Params.Value[i] = new TypeNode.Mod(false,SupertypeGraph.SubstOwnerTvs(
                                 FunctionSignatureIdentity.DeclarationType(discriminator),ownArguments),slot.Parameters[i]);
                 context.Attach(declaration,implementation.Source,descriptor,slot.IsInterface);
+                RetirePendingBase();
                 if (slot.SelectedLocal?.Source != null)
                     DeclarationSignatureIdentity.RecordSelectedImplementationSlot(implementation.Source,slot.SelectedLocal.Source);
                 return;
@@ -365,16 +367,28 @@ static partial class KotlinOverrideSlotBridge
             var exact = Descriptor(slot.SelectedLocal?.DeclarationId);
             if (slot.ReferenceMember != null && slot.ReferenceMember != slot.DescriptorMember) exact.ReferenceMember = slot.ReferenceMember;
             context.Attach(declaration,bridge,exact,slot.IsInterface);
-            bool PendingOwner(TypeNode pending) => slot.SemanticReturn == null
-                ? ReferenceMetadataIndex.SourceDeclarationDescribesCall(pending,slot.DescriptorSpec)
-                : pending is TypeNode.Fqn pendingSpec && SupertypeGraph.Reachable(new Def { Base=pendingSpec },defs,refs)
-                    .Any(edge => !edge.isInterface && ReferenceMetadataIndex.SourceDeclarationDescribesCall(edge.spec,slot.SemanticSpec));
-            if (!slot.IsInterface && implementation.Source is {} actual
-                && actual.PendingOverrideOwner.OrDefault() is {} pendingOwner && PendingOwner(pendingOwner)
-                && (actual.PendingOverrideMember.OrDefault() ?? actual.Name.OrDefault()) == slot.DescriptorMember
-                && actual.PendingOverrideReturn.OrDefault() is {} pendingReturn
-                && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingReturn,slot.SemanticReturn ?? slot.Return))
-            { actual.PendingOverrideOwner=default; actual.PendingOverrideMember=default; actual.PendingOverrideReturn=default; }
+            RetirePendingBase();
+            void RetirePendingBase()
+            {
+                if (slot.IsInterface || implementation.Source is not {} actual
+                    || actual.PendingOverrideOwner.OrDefault() is not TypeNode.Fqn pendingOwner
+                    || (actual.PendingOverrideMember.OrDefault() ?? actual.Name.OrDefault()) != slot.DescriptorMember)
+                    return;
+                // A native property override already selected its exact accessor before
+                // projection. Its earlier pending record describes the same class slot
+                // even when its type arguments and return now use different witnesses.
+                bool selectedAccessor = slot.PropertyAccessor != null && slot.NativeBaseMethod is {} accessor
+                    && SupertypeGraph.Reachable(new Def { Base=pendingOwner },defs,refs).Any(edge => !edge.isInterface
+                        && refs.ResolveNetType(edge.spec.Name,edge.spec.Args?.Length ?? 0) == accessor.DeclaringType);
+                bool PendingOwner(TypeNode pending) => slot.SemanticReturn == null
+                    ? ReferenceMetadataIndex.SourceDeclarationDescribesCall(pending,slot.DescriptorSpec)
+                    : pending is TypeNode.Fqn pendingSpec && SupertypeGraph.Reachable(new Def { Base=pendingSpec },defs,refs)
+                        .Any(edge => !edge.isInterface && ReferenceMetadataIndex.SourceDeclarationDescribesCall(edge.spec,slot.SemanticSpec));
+                if (selectedAccessor || PendingOwner(pendingOwner)
+                    && actual.PendingOverrideReturn.OrDefault() is {} pendingReturn
+                    && ReferenceMetadataIndex.SourceDeclarationDescribesCall(pendingReturn,slot.SemanticReturn ?? slot.Return))
+                { actual.PendingOverrideOwner=default; actual.PendingOverrideMember=default; actual.PendingOverrideReturn=default; }
+            }
         }
     }
 

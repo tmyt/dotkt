@@ -81,9 +81,12 @@ private class NestedLeaf<T>(val data: T) : GenericValueInterop.NestedBounds.Mid(
 
 private class OpenVisitor : GenericValueInterop.NativeMiddleVisitor<String, StreamChunk<*>>() {
     override fun Visit(item: StreamChunk<*>): StreamChunk<*> = item
+    override var Current: StreamChunk<*> = StreamChunk(0)
 }
 private class BoundVisitor : GenericValueInterop.NativeBoundVisitor<StreamChunk<*>>() {
     override fun Visit(item: StreamChunk<*>): Any? = item.data
+    override var Current: StreamChunk<*> = StreamChunk(0)
+    override var Count: Int = 0
 }
 private fun <T> erase(value: T): Any? = value
 private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(make())
@@ -646,8 +649,19 @@ class ConstrainedNullableBoundTests {
         val child = OpenVisitor()
         val open: GenericValueInterop.NativeOpenVisitor<StreamChunk<*>> = child
         check(open.Dispatch(text) === text && open.Dispatch(number) === number)
+        open.Store(text)
+        check(child.Current === text)
+        child.Current = number
+        check(open.Load() === number)
         check(child.DispatchOther("other type") == "middle")
-        val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = BoundVisitor()
+        val boundedChild = BoundVisitor()
+        val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = boundedChild
+        bounded.Store(number)
+        check(boundedChild.Current === number)
+        boundedChild.Current = text
+        check(bounded.Load() === text)
+        boundedChild.Count = 42
+        check(bounded.ReadCount() == 42)
         check(bounded.Dispatch(text) == "payload" && bounded.Dispatch(number) == 42L)
         check(bounded.DispatchStream(text) == "other")
     }
