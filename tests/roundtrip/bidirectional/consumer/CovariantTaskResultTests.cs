@@ -42,6 +42,17 @@ public class CovariantTaskResultInteropTests
         var shared = new SharedResult();
         Assert.That(await ((NominalResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
         Assert.That(await ((ConstrainedResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
+        var nominal = (NominalResult<Concrete>)shared;
+        var constrained = (ConstrainedResult<Concrete>)shared;
+        var item = new Concrete();
+        var gate = new TaskCompletionSource<int>();
+        var pending = new[] {
+            nominal.read<Concrete, Concrete>(item, gate.Task), constrained.read<Concrete, Concrete>(item, gate.Task),
+            CovariantTaskResultsKt.sharedNominal(nominal, item, gate.Task), CovariantTaskResultsKt.sharedConstrained(constrained, item, gate.Task)
+        };
+        Assert.That(Array.TrueForAll(pending, task => !task.IsCompleted), Is.True);
+        gate.SetResult(1);
+        Assert.That(await Task.WhenAll(pending), Is.All.InstanceOf<TaskResultDerived>());
         var source = new ProducerStringTask<object>();
         var value = new object();
         Task<string> direct = source.read(value, "direct");

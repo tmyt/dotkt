@@ -679,7 +679,7 @@ sealed partial class ProjectedCallableEntries
         foreach (var owner in files.SelectMany(f => f.Types.OrEmpty()))
             if (owner.Methods.OrEmpty().Any(m => m.ProjectedTaskView != null))
                 owner.Methods = owner.Methods.Value.Where(m => m.ProjectedTaskView == null).ToArray();
-        if (exactFacades.Count == 0) return;
+        if (exactFacades.Count == 0 && replacedAdapterSlots.Count == 0) return;
         HashSet<string> machines = new(StringComparer.Ordinal);
         foreach (var owner in files.SelectMany(f => f.Types.OrEmpty())) RetireAdapterGroups(owner, machines);
         if (machines.Count == 0) return;
@@ -695,7 +695,8 @@ sealed partial class ProjectedCallableEntries
 
     void RetireAdapterGroups(IBirTypeDeclaration owner, HashSet<string> machines)
     {
-        bool Obsolete(BirMethodImpl d) => d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(exactFacades.Contains);
+        bool Obsolete(BirMethodImpl d) => replacedAdapterSlots.Contains(d)
+            || d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(exactFacades.Contains);
         HashSet<object> unused = null;
         foreach (var m in owner.Methods.OrEmpty())
         {

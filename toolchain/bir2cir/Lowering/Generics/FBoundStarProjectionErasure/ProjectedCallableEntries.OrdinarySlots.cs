@@ -5,23 +5,30 @@ using DotKt.Cir;
 sealed partial class ProjectedCallableEntries
 {
     readonly HashSet<string> operationTypes = new(StringComparer.Ordinal);
+    readonly HashSet<BirMethodImpl> replacedAdapterSlots = new(ReferenceEqualityComparer.Instance);
 
-    // Slot synthesis can already have supplied a forwarding DIM. Once the
-    // selected slot is replaced, retire exactly its descriptor. A bridge
-    // shared with a different slot still has that other job to do.
+    // Earlier slot synthesis may already have supplied a forwarder for the
+    // selected declaration. Replace only that interface assignment; a bridge
+    // shared with another interface or base slot still has work to do.
     void RetireInterfaceForwarder(IBirTypeDeclaration owner, TypeNode.Fqn application, ReferencedDeclarationSlot slot)
     {
-        if (owner.Kind.OrDefault() != "interface") return;
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, application.Args ?? []);
         bool Matches(BirMethodImpl directive) => directive.Owner.OrDefault() == application &&
             directive.Member.OrDefault() == slot.Name && directive.Arity.OrDefault() == slot.Arity &&
             directive.Params.OrEmpty().SequenceEqual(slot.Parameters.Select(Close)) && directive.Ret.OrDefault() == Close(slot.Return);
-        foreach (var bridge in owner.Methods.OrEmpty().Where(m => m.Generated.OrDefault() && m.ClrInterfaceSlotBridge.OrDefault()))
+        foreach (var bridge in owner.Methods.OrEmpty().Where(m => m.Generated.OrDefault() &&
+            (m.ClrInterfaceSlotBridge.OrDefault() || m.OverrideAdapterGroup != null)))
         {
             var old = bridge.ClrInterfaceImpls.OrEmpty();
+            if (bridge.OverrideAdapterGroup != null)
+            {
+                replacedAdapterSlots.UnionWith(old.Where(Matches));
+                continue;
+            }
             var active = old.Where(d => !Matches(d)).ToArray();
             if (old.Length == active.Length) continue;
-            if (active.Length == 0) owner.Methods = owner.Methods.Value.Where(m => !ReferenceEquals(m, bridge)).ToArray();
+            if (active.Length == 0 && bridge.ClrBaseImpls.OrEmpty().Length == 0)
+                owner.Methods = owner.Methods.Value.Where(m => !ReferenceEquals(m, bridge)).ToArray();
             else bridge.ClrInterfaceImpls = active;
         }
     }
