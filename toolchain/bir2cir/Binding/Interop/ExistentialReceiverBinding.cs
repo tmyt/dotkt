@@ -124,7 +124,7 @@ static partial class ExistentialReceiverBinding
                 refs.TryInheritedStarSlot(referencedReceiver.Name, selectedId, ga, pc, out declaringOwner, out var inherited, out _))
             {
                 slot = new Member(inherited.Name, sourceMethod, accessorKind, inherited.ParamTypeNodes,
-                    inherited.SuspendReturnType ?? inherited.ReturnTypeNode, ga, inherited.DeclarationId,
+                    inherited.ProjectedInvocationResult, ga, inherited.DeclarationId,
                     SignatureParameters: inherited.SignatureParameters);
                 return true;
             }

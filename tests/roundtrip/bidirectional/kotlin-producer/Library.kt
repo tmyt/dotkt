@@ -8,8 +8,16 @@ import kotlin.clr.ClrEnum
 import kotlin.clr.ClrRef
 import System.Threading.Tasks.Task1
 import roundtrip.covarianttaskresults.ProjectedResult
+import roundtrip.covarianttaskresults.ProjectedTextResult
 import roundtrip.covarianttaskresults.TaskResultDerived
 import roundtrip.selectedbounds.Concrete
+
+class ImportedTextResult : ProjectedTextResult<Concrete> {
+    override suspend fun <A : Concrete> text(value: Concrete): CharSequence = "across assemblies"
+}
+
+suspend fun importedTextLength(view: ProjectedTextResult<Concrete>): Int =
+    view.text<Concrete>(Concrete()).length
 
 class ImportedProjectedResult : ProjectedResult<Concrete> {
     override suspend fun <A : Concrete> nullableUnit() {}

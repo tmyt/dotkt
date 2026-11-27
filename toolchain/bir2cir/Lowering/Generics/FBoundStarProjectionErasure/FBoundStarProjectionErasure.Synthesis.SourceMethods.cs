@@ -98,6 +98,10 @@ static partial class FBoundStarProjectionErasure
         if (context.Definition(owner).Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         if (method.Mods.HasValue) bridge.Mods = (BirModifiers)method.Mods.Value.DeepClone();
         CopyResultFactsSource(method, bridge, context);
+        // Suspend lowering will wrap the selected completion slot in Task, not
+        // the type used for an ordinary return inside the forwarding body.
+        if (bridge.SuspendTaskResult.HasValue)
+            implementation.Ret = BirGraphValue.CopyType(bridge.SuspendTaskResult.Value);
         return bridge;
     }
 
@@ -157,6 +161,7 @@ static partial class FBoundStarProjectionErasure
         OptionalField<TypeNode> Project(OptionalField<TypeNode> fact) => fact.HasValue
             ? OptionalField<TypeNode>.Of(BirGraphValue.CopyType(EraseOwnerTv(fact.Value, context.Owners, context.References))) : default;
         target.SuspendRet = Project(source.SuspendRet);
+        target.SuspendTaskResult = Project(source.SuspendTaskResult);
         target.SuspendResult = Project(source.SuspendResult);
         target.NullableGenericRet = Project(source.NullableGenericRet);
         target.NullableGenericSuspendRet = Project(source.NullableGenericSuspendRet);

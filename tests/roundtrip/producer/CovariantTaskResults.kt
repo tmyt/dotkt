@@ -45,6 +45,10 @@ interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
 }
 
+interface ProjectedTextResult<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> text(value: K): CharSequence
+}
+
 interface MethodTaskResult<T> {
     suspend fun <U : T> read(value: U, pause: suspend () -> Unit): Any
 }
