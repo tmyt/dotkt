@@ -154,6 +154,9 @@ static partial class SuspendColdLowering
             if (source.MethodWitnessFacts.HasValue)
                 ((BirGraphValue)result).MethodWitnessFacts = source.MethodWitnessFacts.Value
                     .Select(witness => (BirMethodWitness)_module.Transitions.CloneIndependent(witness)).ToArray();
+            if (source.MaterialMethodArguments is { } material)
+                ((BirGraphValue)result).MaterialMethodArguments = material.ToDictionary(
+                    entry => entry.Key, entry => BirGraphValue.CopyType(entry.Value));
             return result;
         }
 

@@ -33,6 +33,7 @@ private class OrdinarySuspendFactory<K, P> : SuspendFactory<K>, ReverseStorageFa
 private class SplitSuspendFactory<K>(val value: K) : SuspendLeft<K>, SuspendRight<K>
     where K : Base, K : ILeft, K : IRight {
     override suspend fun <A : K> make(): Any = value
+    suspend fun <A : K, B : Base> keep(queue: Queue<B>): Any = queue
 }
 
 private class SplitLeaf<T> : Base(), ILeft, IRight
@@ -171,11 +172,18 @@ class SelectedMethodBoundsTests {
             var result = "before"
             reverse.replace(byref(result), "after")
             check(result == "after")
+            val commonLeaf = Leaf<String>()
+            val common = SplitSuspendFactory<Leaf<*>>(commonLeaf)
+            val commonLeft: SuspendLeft<Leaf<*>> = common
+            val commonRight: SuspendRight<Leaf<*>> = common
+            check(commonLeft.make<Leaf<*>>() === commonLeaf && commonRight.make<Leaf<*>>() === commonLeaf)
             val leaf = SplitLeaf<String>()
             val split = SplitSuspendFactory<SplitLeaf<*>>(leaf)
             val leftOnly: SuspendLeft<SplitLeaf<*>> = split
             val rightOnly: SuspendRight<SplitLeaf<*>> = split
             check(leftOnly.make<SplitLeaf<*>>() === leaf && rightOnly.make<SplitLeaf<*>>() === leaf)
+            val queue = Queue<Leaf<*>>()
+            check(split.keep<SplitLeaf<*>, Leaf<*>>(queue) === queue)
             check(JoinedSlot.IsValue<Item>(left.make<Item>()))
             right.make<Item>()
         }
