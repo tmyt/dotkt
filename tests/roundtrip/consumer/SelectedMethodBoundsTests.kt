@@ -275,5 +275,7 @@ class SelectedMethodBoundsTests {
         check(JoinedSlot.IsValue<Item>(right.make<Item>()))
         check(JoinedSlot.IsValue<Item>(fallback.make<Item>()))
         check(JoinedSlot.IsValue<Leaf<*>>(fallback.make<Leaf<*>>()))
+        check(JoinedSlot.IsValue<Leaf<*>>(roundtrip.selectedbounds.makeThrough<Concrete, Leaf<*>>(fallback)))
+        check(JoinedSlot.IsValue<Leaf<String>>(roundtrip.selectedbounds.makeThrough<Concrete, Leaf<String>>(fallback)))
     }
 }

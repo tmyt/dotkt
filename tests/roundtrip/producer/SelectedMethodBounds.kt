@@ -89,3 +89,4 @@ open class GenericParent<C> : JointFactory<Concrete>, NullableFactory<Concrete> 
 interface LeftFactory<K> where K : Base, K : ILeft { fun <A : K> make(): Any }
 interface RightFactory<K> where K : Base, K : IRight { fun <A : K> make(): Any }
 interface DefaultFactory<K : ILeft> { fun <A : K> make(): Any = "default" }
+fun <K : ILeft, A : K> makeThrough(factory: DefaultFactory<K>): Any = factory.make<A>()

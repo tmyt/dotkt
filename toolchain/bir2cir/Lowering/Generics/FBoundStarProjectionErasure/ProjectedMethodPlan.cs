@@ -7,8 +7,12 @@ using DotKt.Cir;
 sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Facets, int[] AddressOperands)
 {
     internal int[] NativeIndices { get; init; } = [];
+    internal int[] ReferenceIndices { get; init; } = [];
     internal string RepresentationDeclaration { get; init; }
-    internal int PrimaryArity => Parameters.Length - Facets.Length - NativeIndices.Length - AddressOperands.Length;
+    internal int PrimaryArity => Parameters.Length - Facets.Length - NativeIndices.Length - AddressOperands.Length - ReferenceIndices.Length;
+
+    internal int ReferencePosition(int primary) => Array.IndexOf(ReferenceIndices, primary) is var i && i >= 0
+        ? Parameters.Length - ReferenceIndices.Length + i : -1;
 
     internal TypeNode NativeArgument(TypeNode argument) =>
         argument is TypeNode.Tv { Scope: "method" } tv && Array.IndexOf(NativeIndices, tv.I) is var i && i >= 0
@@ -83,7 +87,8 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         // carrier. A native construction needs a distinct material argument;
         // its joint interface bounds are already part of the published frame.
         var materialBounds = new Dictionary<int, TypeNode[]>();
-        foreach (var ordinary in independent)
+        var independentIndices = independent.Distinct().ToArray();
+        foreach (var ordinary in independentIndices)
         {
             native.Add(ordinary);
             materialBounds[ordinary] = facets.Where(f => f.OwnerIndex == ordinary).Select(f => f.Bound).Distinct().ToArray();
@@ -145,7 +150,14 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             addresses.Add(i);
             formals.Add(new BirTypeParameter { Name = "$location$" + i });
         }
-        return new(formals.ToArray(), facets, addresses.ToArray()) { NativeIndices = indices };
+        // A weak virtual slot can be implemented by either a value or a
+        // reference-constrained receiver. Only the latter needs a separate
+        // class proof when the material row itself does not already supply it.
+        var referenceIndices = independentIndices.Where(i =>
+            !formals[firstNative + Array.IndexOf(indices, i)].SpecialConstraints.OrEmpty().Contains("class")).ToArray();
+        foreach (var i in referenceIndices)
+            formals.Add(new BirTypeParameter { Name = "$referenceMaterial$" + i, SpecialConstraints = new[] { "class" } });
+        return new(formals.ToArray(), facets, addresses.ToArray()) { NativeIndices = indices, ReferenceIndices = referenceIndices };
     }
 
     internal void ApplyAddressFormals(BirParameter[] parameters)
@@ -179,12 +191,15 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         var locations = target.AddressOperands.Select(i => Array.IndexOf(AddressOperands, i)).ToArray();
         if (locations.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks an inherited address");
         if (slots.Length == Facets.Length && slots.Select((s, i) => s == i).All(s => s)
-            && NativeIndices.SequenceEqual(target.NativeIndices) && target.AddressOperands.SequenceEqual(AddressOperands)) return null;
+            && NativeIndices.SequenceEqual(target.NativeIndices) && target.AddressOperands.SequenceEqual(AddressOperands)
+            && ReferenceIndices.SequenceEqual(target.ReferenceIndices)) return null;
         var natives = target.NativeIndices.Select(i => Array.IndexOf(NativeIndices, i)).ToArray();
         if (natives.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks an invariant CLR argument");
+        var references = target.ReferenceIndices.Select(ReferencePosition).ToArray();
+        if (references.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks a reference-material proof");
         return Enumerable.Range(0, primary).Concat(slots.Select(s => primary + s)).Concat(natives.Select(i => primary + Facets.Length + i))
             .Concat(locations.Select(i => primary + Facets.Length + NativeIndices.Length + i))
-            .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+            .Concat(references).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
     }
 
     internal ProjectedMethodPlan OnOwner(TypeNode[] arguments)
