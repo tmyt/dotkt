@@ -1299,6 +1299,14 @@ ordinary type argument is the opaque `List<String>` value representation. Alloca
 they do not copy the array or its elements. Nullable generic representations remain a separate declaration-owned
 contract. Map's invariant outer construction is handled by §5c, not by changing the type of its contained lists.
 
+An explicitly imported CLR generic type is different from a Kotlin collection alias.
+For example, if `Row` names `System.Collections.Generic.List<Crate<*>>`, passing a
+`Row` through a scalar identity function preserves the original object, including
+after an unchecked Kotlin cast. Constructing a CLR `List<Row>`, on the other hand,
+requires a concrete CLR element type. A generic call that reads or writes through
+that invariant list must use the same element type as the list; it does not copy or
+retype the list. A value incompatible with the actual CLR storage cannot be written.
+
 ## 5c-ter. Physical collection conversions must preserve source semantics
 
 CLR `IList<T>` and `IReadOnlyList<T>` do not inherit from one another. bir2cir must resolve the physical conversion

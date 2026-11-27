@@ -64,7 +64,10 @@ static partial class CapturedGenericInvocation
         {
             // Use-site projections hide the invariant owner's actual argument:
             // neither an out bound nor an in bound is the CLR construction.
-            static bool NeedsCapture(TypeNode type) => type is TypeNode.Star or TypeNode.Projection;
+            bool NeedsCapture(TypeNode type) => type is TypeNode.Star or TypeNode.Projection ||
+                CaptureOwner(type) is { Args.Length: > 0 } component && refs != null &&
+                !refs.HasDotKtOwner(component.Name) && refs.ResolveNetType(component.Name, component.Args.Length) is { } native &&
+                !native.IsValueType && FBoundStarProjectionErasure.ContainsExistentialProjection(component);
             // An NRT-oblivious T! still denotes the same CLR generic slot as T.
             // Do not look through nullable or constructed types: their storage need not be T.
             static bool IsMethodSlot(TypeNode type) => type is TypeNode.Oblivious oblivious

@@ -29,7 +29,7 @@ static partial class ForeignStarProjectionBinding
             Ret = new TypeNode.Fqn("kotlin.Unit"), Body = statements };
         var file = new BirFileDeclaration { FileClass = "probe.Foreign", Methods = new[] { method }, Types = Array.Empty<IBirTypeDeclaration>() };
         var materializedCallbacks = 0;
-        var appends = ApplyAll(new[] { file }, new Dictionary<string, string>(), refs, null, (type, _) => type,
+        var appends = ApplyAll(new[] { file }, new Dictionary<string, string>(), refs, null, (type, _) => type, type => type,
             types => { materializedCallbacks++; Require(types.Count == 0, "ordinary reflection dispatch synthesized a delegate"); });
         Require(ReferenceEquals(file.Methods.Value[0], method) && ReferenceEquals(method.Body.Value, statements)
             && materializedCallbacks == 1 && appends.Count == 1 && ReferenceEquals(appends[0].File, file)

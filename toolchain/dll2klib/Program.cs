@@ -2612,7 +2612,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 // Function projection can erase the distinction between a delegate
                 // returning a Unit value and one returning void. Keep the declaration
                 // identity independent of the Kotlin signature used for adaptation.
-                AttachCallbackMethodKey(function, names, handle, methodHandle);
+                AttachMethodKey(function, names, handle, methodHandle);
                 if (declarationIdentity is { } identity)
                 {
                     function.FunctionAnnotation.Add(
@@ -5151,7 +5151,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 function.TypeParameter.Add(tp);
             }
             ExternalMethodBinding(function, names, owner);
-            AttachCallbackMethodKey(function, names, owner, methodHandle);
+            AttachMethodKey(function, names, owner, methodHandle);
             package.Function.Add(function);
             projectedFunctions.Add(new ProjectedFunction(
                 methodHandle,
@@ -5252,7 +5252,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 ApplySourceFunctionPriority(function, kotlinFlags, names);
             }
             ExternalMethodBinding(function, names, owner);
-            AttachCallbackMethodKey(function, names, owner, entry.KotlinImplementation);
+            AttachMethodKey(function, names, owner, entry.KotlinImplementation);
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
                     KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
@@ -6724,9 +6724,14 @@ internal sealed partial class AssemblyScanner : IDisposable
         return binding;
     }
 
-    private void AttachCallbackMethodKey(Function function, NameTable names, TypeDefinitionHandle owner, MethodDefinitionHandle method)
+    private void AttachMethodKey(Function function, NameTable names, TypeDefinitionHandle owner, MethodDefinitionHandle method)
     {
-        if (!_attrs.IsDotKtAssembly && (function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
+        var definition = _md.GetTypeDefinition(owner);
+        var flags = _md.GetMethodDefinition(method).Attributes;
+        var overridableClassMethod = (definition.Attributes & TypeAttributes.Interface) == 0 &&
+            definition.GetGenericParameters().Count != 0 &&
+            (flags & (MethodAttributes.Virtual | MethodAttributes.Final)) == MethodAttributes.Virtual;
+        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
             || function.ValueParameter.Any(p => ContainsFunction(p.Type, names))))
             AddStringAnnotationArgument(ExternalMethodBinding(function, names, owner), names,
                 "methodKey", RawSignatureTypeProvider.MethodKey(_md, method));

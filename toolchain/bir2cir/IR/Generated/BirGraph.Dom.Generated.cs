@@ -802,6 +802,7 @@ internal static class BirGraphDom
                 case "kind": break;
                 case "arity": break;
                 case "declarationId": break;
+                case "nativeMethodKey": break;
                 case "physicalDeclarationId": break;
                 default: throw new FormatException($"Unprojected {field.Key} on BirOverride at {source.GetPath()}");
             }
@@ -812,6 +813,7 @@ internal static class BirGraphDom
             Kind = Field<string>(fields, "kind", value => value!.GetValue<string>()),
             Arity = Field<int>(fields, "arity", value => value!.GetValue<int>()),
             DeclarationId = Field<string>(fields, "declarationId", value => value!.GetValue<string>()),
+            NativeMethodKey = Field<string>(fields, "nativeMethodKey", value => value!.GetValue<string>()),
             PhysicalDeclarationId = Field<string>(fields, "physicalDeclarationId", value => value!.GetValue<string>()),
         };
     }
