@@ -16,6 +16,7 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
+private typealias BoxedCallback = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> Any?
 private typealias WideFactory = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> WideIntCallback
 private fun nativeFactory(): WideFactory = GenericValueInterop.NativeWideCallbacks.Factory
 private suspend fun <T : GenericValueInterop.ILeftMark> stagedFactory(tag: T, pause: suspend () -> Unit): Int {
@@ -58,6 +59,27 @@ private fun stagedCallback(source: GenericValueInterop.NativeIntCallbackBase, ta
 private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 
 class WideFunctionTypeTests {
+    @TestAttribute
+    fun onlyNativeCallbacksPublishArrayArguments() {
+        fun call(f: BoxedCallback, x: Any) =
+            f(x, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+
+        val probe = GenericValueInterop.CallbackArrayProbe()
+        val native: BoxedCallback = probe.Inspect
+        val good = arrayOf(CallbackBox("ok"))
+        check(call(native, good) === good)
+
+        val shadow = arrayOf(CallbackBox("before"))
+        @Suppress("UNCHECKED_CAST")
+        val wrong = CallbackBox(42) as CallbackBox<String>
+        shadow[0] = wrong
+        val local: BoxedCallback = { a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> (a as Array<*>)[0] }
+        check(call(local, shadow) === wrong)
+        try { call(native, shadow); error("native body received an incompatible array") }
+        catch (_: System.InvalidCastException) {}
+        assertEquals(1, probe.Calls)
+    }
+
     @TestAttribute
     fun nativeValueAndVoidCallbacksInvokeTheOriginalRecorder() {
         val recorder = UnitRecorder()

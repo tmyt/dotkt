@@ -868,6 +868,13 @@ static class TypedPhysicalValueCoercion
             }
         }
         var result = CoerceDeclaredResult(node, scope, index, resultUsed);
+        if (resultUsed && index.References != null && node.FunctionTypeStamp is {} callable &&
+            (callable is TypeNode.Fn { Suspend: false } || callable is TypeNode.Fqn f && index.References.IsClrDelegate(f)) &&
+            (node is BirNewClosure { DelegateCtorRef.HasValue: true } ||
+             node is BirNewDelegate direct && !IsForeignOwner(direct.MemberRef.OrDefault()?.DeclaringType.OrDefault() ?? direct.CalleeOwner.OrDefault(), index) ||
+             node is BirNewBoundDelegate bound && !IsForeignOwner(bound.MemberRef.OrDefault()?.DeclaringType.OrDefault() ?? bound.CalleeOwner.OrDefault(), index)))
+            return Cast(ArrayRuntimeCall(node is BirNewClosure ? "recordKotlinClosure" : "recordKotlinCallable",
+                Object, [Object], index, Expression(result)), callable);
         if (node is BirFieldGet field && TemporaryFieldKey(field) is { } fieldKey
             && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)
             && ExprType(field, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
@@ -888,11 +895,12 @@ static class TypedPhysicalValueCoercion
     // first, then expose the same vectors immediately before the native call.
     static BirGraphValue ExposeNativeArrayArguments(BirGraphValue call, BirGraphValue result, Scope scope, Index index)
     {
-        if (call is BirDelegateInvoke { SourceClrBoundary: true } invoke)
+        if (call is BirDelegateInvoke invoke)
         {
             var target = invoke.InvokeRef.Value;
             var signature = target.ParameterTypes.Value.Select(t => Close(t, OwnerArgs(target), [])).ToArray();
-            var preamble = StageNativeArrayOperands(invoke, target, invoke.Args.Value, signature, scope, index, foreign: true);
+            var preamble = StageNativeArrayOperands(invoke, target, invoke.Args.Value, signature, scope, index, foreign: true,
+                conditionalDelegate: !invoke.SourceClrBoundary);
             return preamble == null ? result : new BirValueBlock { Type = ExprType(result, scope, index) ?? Void,
                 Stmts = preamble, Result = Field(Expression(result)) };
         }
@@ -921,12 +929,13 @@ static class TypedPhysicalValueCoercion
             refs?.IsInterfaceType(f) == true);
 
     static IBirStatement[] StageNativeArrayOperands(BirGraphValue call, BirMemberReference member,
-        IBirExpression[] args, TypeNode[] signature, Scope scope, Index index, bool foreign, bool locationsOnly = false)
+        IBirExpression[] args, TypeNode[] signature, Scope scope, Index index, bool foreign, bool locationsOnly = false,
+        bool conditionalDelegate = false)
     {
         bool Publishes(TypeNode type) => !locationsOnly && (ProjectedArrayOperand(type) || foreign && MayHoldArray(type, index));
-        var receiver = Receiver(call);
+        var receiver = call is BirDelegateInvoke invocation ? invocation.Recv.Value : Receiver(call);
         var receiverType = receiver == null ? null : ExprType(Graph(receiver), scope, index);
-        var publishesReceiver = foreign && MayHoldArray(receiverType, index);
+        var publishesReceiver = call is not BirDelegateInvoke && foreign && MayHoldArray(receiverType, index);
         args ??= [];
         if (args.Length == 0) signature ??= [];
         BirArrayGet Indexed(int i) => (args[i] is BirByRefOf a ? a.Inner.OrDefault() : args[i]) as BirArrayGet;
@@ -972,7 +981,8 @@ static class TypedPhysicalValueCoercion
                 (receiverType is TypeNode.Fqn named && index.IsValue(named) || receiverType is TypeNode.Tv && call is BirConstrainedCall)
                 ? new BirByRefLoad { Local = Address(receiver, new TypeNode.ByRef(receiverType)).Name, Elem = receiverType }
                 : Retain(receiver, receiverType);
-            SetReceiver(call, saved);
+            if (call is BirDelegateInvoke callback) callback.Recv = Field(saved);
+            else SetReceiver(call, saved);
             if (publishesReceiver)
             {
                 dynamicValue |= receiverType is not TypeNode.Array;
@@ -1022,7 +1032,11 @@ static class TypedPhysicalValueCoercion
                 : exports.Count == 1 && !dynamicValue ? ArrayRuntimeCall("exposeProjectedArray", NativeVector, [NativeVector], index, exports[0])
                 : exports.Count == 1 ? ArrayRuntimeCall("exposeProjectedValue", Void, [Object], index, exports[0])
                 : ArrayRuntimeCall("exposeProjectedArrays", Void, [batch], index, new BirNewArray { Elem = Object, Elems = exports.ToArray() });
-            statements.Add(new BirExpressionStatement { Expr = publish });
+            var publication = new BirExpressionStatement { Expr = publish };
+            statements.Add(conditionalDelegate ? new BirIf { Branches = new[] {new BirBranch {
+                Cond = ArrayRuntimeCall("callablePublishesArrays", new TypeNode.Fqn("System.Boolean"), [Object], index,
+                    Expression(Graph(((BirDelegateInvoke)call).Recv.Value).DeepClone())),
+                Body = new IBirStatement[] { publication } }} } : publication);
         }
         return statements.ToArray();
     }

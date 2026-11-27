@@ -233,14 +233,14 @@ static partial class ClosureSynthesis
             Name = source.Name, Kind = "class", Generated = true, SemanticOwner = source.SemanticOwner,
             OuterTypeParamCount = source.OuterTypeParamCount, OuterTypeParamOffset = source.OuterTypeParamOffset,
             KotlinSupertypesPre = source.KotlinSupertypesPre,
-            Base = OptionalField<TypeNode>.Null, Interfaces = Array.Empty<TypeNode>(),
+            Base = new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinClosureTarget"), Interfaces = Array.Empty<TypeNode>(),
             Fields = fields.Select(field => new BirFieldDeclaration {
                 Name = field.Name, Type = field.Type, Outer = field.Outer, SuspendFnTypePre = field.SuspendFnTypePre,
                 KotlinType = field.KotlinType, NullableGeneric = field.NullableGeneric, NullableFlags = field.NullableFlags,
             }).ToArray(),
             Ctors = new[] { new BirConstructor {
                 Params = fields.Select(field => ToParameter((BirCaptureDescriptor)field.DeepClone())).ToArray(),
-                BaseArgs = OptionalField<IBirExpression[]>.Null,
+                BaseArgs = Array.Empty<IBirExpression>(), DelegationSig = Array.Empty<TypeNode>(),
                 Body = fields.Where(field => field.Name.HasValue).Select(field => (IBirStatement)new BirSetField {
                     OwnerType = self, Recv = new BirThis(), Name = field.Name,
                     Value = new BirLocal { Name = field.Name,
