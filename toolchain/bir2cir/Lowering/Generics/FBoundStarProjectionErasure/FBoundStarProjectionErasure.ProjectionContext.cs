@@ -110,6 +110,9 @@ static partial class FBoundStarProjectionErasure
             SelectLocalPhysicalClass(name) is { } local ? ClassLayout(local)
                 : References.NullableTypeFrames.GetValueOrDefault(name);
 
+        internal TypeNode MaterialNativeMethodArgument(TypeNode type) => PreservesNestedNativeWitnessHead(type, this)
+            ? Rewrite(type, preserveConstructedHead: true) : type;
+
         internal TypeNode Rewrite(TypeNode type, bool boundDeclaration = false,
             bool preserveConstructedHead = false, bool preserveArrayShape = false, bool sourceOverrideOwner = false)
         {
@@ -540,7 +543,7 @@ static partial class FBoundStarProjectionErasure
         }
 
         internal StorageWitness MethodClassWitness(WitnessSlot slot, Func<int, TypeNode> closeArgument,
-            Func<bool> keepUnboundedMaterial)
+            Func<int,bool> keepUnboundedMaterial)
         {
             var method = slot.Entry.LocalMethod;
             return SharedClassWitness(slot, closeArgument, method == null ? null
@@ -558,7 +561,7 @@ static partial class FBoundStarProjectionErasure
         StorageWitness SharedClassWitness(WitnessSlot selected,
             Func<int, TypeNode> closeArgument, Func<int, TypeNode, TypeNode> physicalBound = null,
             bool allowIntersection = false, Func<TypeNode.Fqn, bool> acceptsPrimary = null,
-            Func<bool> keepUnboundedMaterial = null)
+            Func<int,bool> keepUnboundedMaterial = null)
         {
             if (selected.Formal == null || selected.ConstructedArgument is not { Args.Length: > 0 } application) return null;
             var entry = selected.Entry;
@@ -602,7 +605,7 @@ static partial class FBoundStarProjectionErasure
             var separateMaterial = scope == "method" && linked.Any(i =>
                 entry.Slot(i).Role is { Representation: NullableRepresentationFrame.Role.Ordinary } role &&
                 frame.StorageIndices.Contains(role.SourceIndex));
-            if (bounds.Length == 0 && (!separateMaterial || keepUnboundedMaterial?.Invoke() == true)) return null;
+            if (bounds.Length == 0 && (!separateMaterial || keepUnboundedMaterial != null && linked.Any(keepUnboundedMaterial))) return null;
             TypeNode Identity(TypeNode type) => ConstraintKey(type);
             var classBound = bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class");
             if (!classBound && !separateMaterial) return null;

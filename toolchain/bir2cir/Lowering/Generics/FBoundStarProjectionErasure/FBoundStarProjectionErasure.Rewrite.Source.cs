@@ -287,7 +287,7 @@ static partial class FBoundStarProjectionErasure
         var factory = call switch { BirCallInstance value => value._innerFactoryArguments.OrDefault(),
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
         var nestedNative = witness && PreservesNestedNativeWitnessHead(argument, state.Projection)
-            && (sourceId != null || ClrMemberResolution.HasInvariantGenericUse(call, index, state.References));
+            && (sourceId != null ? NeedsMaterialPrimary(index) : ClrMemberResolution.HasInvariantGenericUse(call, index, state.References));
         var projected = state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
             preserveConstructedHead: nestedNative
                 || witness && !ContainsExistentialProjection(argument)
@@ -321,25 +321,27 @@ static partial class FBoundStarProjectionErasure
         // An unconstrained primary used in an invariant CLR signature cannot
         // be widened to a common ancestor: List<Carrier> is not List<object>.
         // The selected declaration supplies that signature, including across DLLs.
-        bool NeedsMaterialPrimary()
+        bool NeedsMaterialPrimary(int position)
         {
-            bool Uses(TypeNode t)
+            bool Uses(TypeNode t, int direction, bool nested = false)
             {
-                if (StripSourceNullability(t) is not TypeNode.Fqn { Args.Length: > 0 } head) return false;
+                var core = StripSourceNullability(t);
+                if (core is TypeNode.Tv { Scope: "method" } v) return nested && direction <= 0 && v.I == position;
+                if (core is not TypeNode.Fqn { Args.Length: > 0 } head) return false;
                 var native = IsNativeArrayOwner(head, state.References, state.LocalClrAliases);
                 for (int i = 0; i < head.Args.Length; i++)
                 {
-                    var arg = head.Args[i];
-                    if (native && arg is TypeNode.Tv { Scope: "method" } tv && tv.I == index
-                        && state.References.PhysicalOwnerTypeParameterVariance(head.Name, head.Args.Length, i) == null) return true;
-                    if (Uses(arg)) return true;
+                    var sign = native ? state.References.PhysicalOwnerTypeParameterVariance(head.Name, head.Args.Length, i) switch {
+                        "out" => direction, "in" => -direction, _ => 0
+                    } : nested ? 0 : direction;
+                    if (Uses(head.Args[i], sign, nested || native)) return true;
                 }
                 return false;
             }
             if (selected?.Source is BirFunctionDeclaration local)
-                return local.Params.OrEmpty().Any(param => Uses(param.Type.OrDefault())) || Uses(local.Ret.OrDefault());
+                return local.Params.OrEmpty().Any(param => Uses(param.Type.OrDefault(), 1)) || Uses(local.Ret.OrDefault(), -1);
             var signature = state.References.PhysicalDeclarationSignature(identity);
-            return signature.Parameters?.Any(Uses) == true || Uses(signature.Return);
+            return signature.Parameters?.Any(t => Uses(t, 1)) == true || Uses(signature.Return, -1);
         }
         // Keep the split proof alongside the Kotlin argument. Projected
         // entries consume both parts separately; fixed CLR calls must close

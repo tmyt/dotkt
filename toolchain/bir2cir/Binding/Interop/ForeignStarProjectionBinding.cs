@@ -50,6 +50,7 @@ static partial class ForeignStarProjectionBinding
     static int _nextDelegateAdapter;
     static bool _bindProjectedHelpers;
     static Func<TypeNode, bool, TypeNode> _projectValueType;
+    static Func<TypeNode, TypeNode> _materialMethodArgument;
     public static bool UsedRuntimeFallback { get; private set; }
 
     internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
@@ -57,8 +58,8 @@ static partial class ForeignStarProjectionBinding
     // Late binding shares the selected policy but no longer owns source graph
     // capabilities. Replace that reader once at the actual owning frontier;
     // do not replay initial binding or reset its usage/name state.
-    internal static void ContinueWithProjection(Func<TypeNode, bool, TypeNode> projectValueType)
-        => _projectValueType = projectValueType;
+    internal static void ContinueWithProjection(Func<TypeNode, bool, TypeNode> projectValueType, Func<TypeNode,TypeNode> materialMethodArgument)
+        => (_projectValueType, _materialMethodArgument) = (projectValueType, materialMethodArgument);
 
     static TypeNode.Fn UnwrapFunction(TypeNode type) => type switch
     {

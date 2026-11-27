@@ -289,6 +289,9 @@ private class LocalProjectedHolder<M : LocalProjectedSink<in String>>(private va
 }
 
 class GenericMetadataRoundtripTests {
+    private fun <A> sameNativeList(value: ClrList<A>): Any = value
+    private fun <A> relayNativeValue(value: A): A = GenericValueInterop.NativeBoxApi.EchoValue(value)
+    private fun <A> appendOptional(value: A, rows: ClrList<ClrList<A?>>) { rows[0].Add(value) }
     @TestAttribute
     fun genericMemberTypeVariablesRoundTrip() {
         val p = pair2(7, mutableListOf(1, 2))     // Pair2<Int, MutableList<Int>>
@@ -500,6 +503,18 @@ class GenericMetadataRoundtripTests {
         @Suppress("UNCHECKED_CAST")
         val opaque = other as ClrList<Crate<*>>
         check(GenericValueInterop.NativeBoxApi.EchoValue(opaque) === other)
+        check(roundtriptests.nativevalueframe.StoredNativeValueEcho().Echo(opaque) === other)
+        check(relayNativeValue(opaque) === other)
+        val opaqueParent: Any = ClrList<Any>()
+        @Suppress("UNCHECKED_CAST")
+        val view = opaqueParent as ClrList<ClrList<Crate<*>>>
+        check(sameNativeList(view) === opaqueParent)
+        val leaf: roundtrip.selectedbounds.Leaf<*> = roundtrip.selectedbounds.Leaf<String>()
+        val optional = ClrList<roundtrip.selectedbounds.Leaf<*>?>()
+        val parent = ClrList<ClrList<roundtrip.selectedbounds.Leaf<*>?>>()
+        parent.Add(optional)
+        appendOptional(leaf, parent)
+        check(optional[0] === leaf)
     }
 
     // #350: collection identity on a type edge has no member slot on which [KotlinCollectionIdentity] can ride.
