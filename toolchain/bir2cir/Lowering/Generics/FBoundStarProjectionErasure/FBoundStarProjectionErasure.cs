@@ -740,10 +740,14 @@ static partial class FBoundStarProjectionErasure
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
                 var exact = nativeArguments && (PreservesNativeWitnessHead(argument, context) || IsExactNativeArrayWitness(argument, context))
                     || context.NativeProofs?.ExactTypeArgument(application.Name, index) == true;
+                // A native construction consumes a CLR argument, not the opaque value
+                // slot used to hold an arbitrary imported projection. Retain a nested
+                // native head whose own arguments are specified, and close them in turn.
+                var nestedNative = nativeArguments && PreservesNestedNativeWitnessHead(argument, context);
                 // A variant Kotlin value keeps its carrier even as a nested ordinary witness.
                 return RewriteType(argument, context, boundDeclaration,
                     preserveArrayShape: nativeOwner || ordinary,
-                    preserveConstructedHead: exact && !ContainsExistentialProjection(argument)
+                    preserveConstructedHead: nestedNative || exact && !ContainsExistentialProjection(argument)
                         || ordinary && !(StripSourceNullability(argument) is TypeNode.Fqn variant
                             && context.ProjectionCanChangeConstruction(variant)),
                     sourceOverrideOwner: sourceOverrideOwner);

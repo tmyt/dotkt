@@ -286,8 +286,11 @@ static partial class FBoundStarProjectionErasure
             is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
         var factory = call switch { BirCallInstance value => value._innerFactoryArguments.OrDefault(),
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
+        var nestedNative = witness && PreservesNestedNativeWitnessHead(argument, state.Projection)
+            && (sourceId != null || ClrMemberResolution.HasInvariantGenericUse(call, index, state.References));
         var projected = state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
-            preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
+            preserveConstructedHead: nestedNative
+                || witness && !ContainsExistentialProjection(argument)
                 && (PreservesNativeWitnessHead(argument, state.Projection)
                     || preserveArray && IsExactNativeArrayWitness(argument, state.Projection) || factory
                     || state.Demand.NativeProofs.ExactMethodArgument(source, sourceId, index)
@@ -310,9 +313,34 @@ static partial class FBoundStarProjectionErasure
         };
         var methodApplication = state.Projection.SelectPhysicalMethodApplication(selected?.Source as BirFunctionDeclaration,
             identity, frame, owner, arguments, nativeParameters);
-        var proof = state.Projection.MethodClassWitness(methodApplication.Slot(index),
-            i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing));
+        var slot = methodApplication.Slot(index);
+        var proof = state.Projection.MethodClassWitness(slot,
+            i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing),
+            NeedsMaterialPrimary);
         closing.Remove(index);
+        // An unconstrained primary used in an invariant CLR signature cannot
+        // be widened to a common ancestor: List<Carrier> is not List<object>.
+        // The selected declaration supplies that signature, including across DLLs.
+        bool NeedsMaterialPrimary()
+        {
+            bool Uses(TypeNode t)
+            {
+                if (StripSourceNullability(t) is not TypeNode.Fqn { Args.Length: > 0 } head) return false;
+                var native = IsNativeArrayOwner(head, state.References, state.LocalClrAliases);
+                for (int i = 0; i < head.Args.Length; i++)
+                {
+                    var arg = head.Args[i];
+                    if (native && arg is TypeNode.Tv { Scope: "method" } tv && tv.I == index
+                        && state.References.PhysicalOwnerTypeParameterVariance(head.Name, head.Args.Length, i) == null) return true;
+                    if (Uses(arg)) return true;
+                }
+                return false;
+            }
+            if (selected?.Source is BirFunctionDeclaration local)
+                return local.Params.OrEmpty().Any(param => Uses(param.Type.OrDefault())) || Uses(local.Ret.OrDefault());
+            var signature = state.References.PhysicalDeclarationSignature(identity);
+            return signature.Parameters?.Any(Uses) == true || Uses(signature.Return);
+        }
         // Keep the split proof alongside the Kotlin argument. Projected
         // entries consume both parts separately; fixed CLR calls must close
         // their single slot at the invocation without changing the declaration.

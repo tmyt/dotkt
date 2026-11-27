@@ -4,6 +4,35 @@ using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
+    // Echo<T>(T) can carry the opaque projected object unchanged. A slot such
+    // as List<T> instead commits the invocation to the exact material T.
+    internal static bool HasInvariantGenericUse(BirGraphValue call, int index, ReferenceMetadataIndex refs)
+    {
+        var selected = call switch {
+            BirGenericStatic s when s.Type.OrDefault() is TypeNode.Fqn owner && s.ResolvedMemberParams.HasValue =>
+                SelectedGenericProofDeclaration(null, owner, s.Method.Value, s.TypeArgs.Value.Length, false,
+                    s.ResolvedMemberParams.Value, refs, nativeMethodKey: s.NativeMethodKey.OrDefault()),
+            BirGenericInstance s when s.Type.OrDefault() is TypeNode.Fqn owner && s.ResolvedMemberParams.HasValue =>
+                SelectedGenericProofDeclaration(null, owner, s.Method.Value, s.TypeArgs.Value.Length, true,
+                    s.ResolvedMemberParams.Value, refs, nativeMethodKey: s.NativeMethodKey.OrDefault()),
+            _ => null,
+        };
+        if (selected == null) return false;
+        var variable = selected.GetGenericArguments()[index];
+        bool Uses(Type type)
+        {
+            if (type.HasElementType) return Uses(type.GetElementType());
+            if (!type.IsGenericType) return false;
+            var arguments = type.GetGenericArguments();
+            var parameters = type.GetGenericTypeDefinition().GetGenericArguments();
+            for (int i = 0; i < arguments.Length; i++)
+                if ((arguments[i] == variable && (parameters[i].GenericParameterAttributes &
+                        System.Reflection.GenericParameterAttributes.VarianceMask) == 0) || Uses(arguments[i])) return true;
+            return false;
+        }
+        return Uses(selected.ReturnType) || selected.GetParameters().Any(p => Uses(p.ParameterType));
+    }
+
     // These are the selected native MethodDef's physical CLR parameter facts,
     // not a Kotlin signature or a source-frame re-projection. The existing
     // metadata builder preserves declaration-relative owner/method variables,

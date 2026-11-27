@@ -94,6 +94,10 @@ import nestedlist.ReadonlyEdge
 import nestedlist.MixedInterfaceEdges
 import nestedlist.CollectionOuter
 import nestedlist.InnerApplicationBound
+import nestedlist.Crate
+import nestedlist.appendNative
+import nestedlist.appendToRow
+import System.Collections.Generic.List as ClrList
 import kotlinx.cell.makeCell
 import demo.hello
 import demo.Plain
@@ -478,6 +482,24 @@ class GenericMetadataRoundtripTests {
         // (the direct `mb.v` generic-member read — the #33 shape — is covered by genmember's p.b/w.items; omitting
         //  it here keeps this method's emitted IL ilverify-clean, since the read-only vs invariant collection
         //  interface of the Root-V collapse would surface a formal-only IList/IReadOnlyCollection variance finding.)
+    }
+
+    @TestAttribute
+    fun nestedNativeArgumentsKeepTheirRowAcrossGenericCalls() {
+        val rows = ClrList<ClrList<Crate<*>>>()
+        val row = ClrList<Crate<*>>()
+        appendNative<ClrList<Crate<*>>>(row, rows)
+        val item = Crate(42)
+        appendToRow<Crate<*>>(item, rows)
+        check(rows[0] === row && row[0] === item)
+
+        val native = GenericValueInterop.NativeBoxApi.MakeList<ClrList<Crate<*>>>()
+        GenericValueInterop.NativeBoxApi.Append(row, native)
+        check(native[0] === row)
+        val other: Any = ClrList<Crate<String>>()
+        @Suppress("UNCHECKED_CAST")
+        val opaque = other as ClrList<Crate<*>>
+        check(GenericValueInterop.NativeBoxApi.EchoValue(opaque) === other)
     }
 
     // #350: collection identity on a type edge has no member slot on which [KotlinCollectionIdentity] can ride.

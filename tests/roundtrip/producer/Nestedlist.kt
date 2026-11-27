@@ -9,6 +9,11 @@
 // `nestedlist` to coexist with the listparam producer in this single assembly.)
 package nestedlist
 
+import System.Collections.Generic.List as ClrList
+
+fun <A> appendToRow(value: A, rows: ClrList<ClrList<A>>) { rows[0].Add(value) }
+fun <A> appendNative(value: A, list: ClrList<A>) { list.Add(value) }
+
 // `Crate`/`Store` (not `Box`/`State`) so the simple names are UNIQUE across this shared producer assembly — a
 // same-simple-name collision with another package's generic type broke dll2klib's re-import of the generic member
 // (`Crate<X>.v` went unresolved). The case tests the Root-V nested-collection collapse round-trip (#29), not the names.
