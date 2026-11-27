@@ -474,7 +474,6 @@ static partial class CapturedGenericInvocation
                     : refs.NullableTypeFrames.GetValueOrDefault(owner.Name);
                 foreach (var position in entry.OwnerPositions.Value)
                 {
-                    if (witnesses[index].StorageOnly && entry.AppliedPositions?.Contains(position) == true) continue;
                     // Other occurrences of this method variable need not be invariant.
                     // Only the projected owner position supplies the runtime witness.
                     var pos = ownerFrame?.SourcePosition(position) ?? position;
@@ -483,13 +482,18 @@ static partial class CapturedGenericInvocation
                     if (logical is not int sourceSlot) continue;
                     var nullable = frame?.NullableIndices.Contains(sourceSlot) == true
                         ? frame.NullableVariable(new TypeNode.Tv("method", sourceSlot)).I : -1;
-                    rows.Add(new(index, head, pos, variable.I, nullable, witnesses[index].StorageOnly));
+                    var kind = !witnesses[index].StorageOnly ? WitnessSource.Nominal :
+                        entry.AppliedPositions.OrDefault()?.Contains(position) == true ? WitnessSource.Construction : WitnessSource.Storage;
+                    rows.Add(new(index, head, pos, variable.I, nullable, kind));
                 }
             }
             // A declaration transported as object accepts the existing value independently
             // of its closed backing type. Its recovered construction can supply an otherwise
             // unknown slot, but cannot constrain a slot witnessed by a nominal parameter.
-            return rows.OrderBy(row => row.StorageOnly).ToArray();
+            // A generic construction is not an independent constraint on its
+            // input. When it is the *only* source, its real storage is still
+            // observable by a native use of the closed method argument.
+            return rows.OrderBy(row => row.Source).ToArray();
         }
 
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,

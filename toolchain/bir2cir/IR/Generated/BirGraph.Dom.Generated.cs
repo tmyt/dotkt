@@ -110,12 +110,14 @@ internal static class BirGraphDom
             {
                 case "argument": break;
                 case "ownerPositions": break;
+                case "appliedPositions": break;
                 default: throw new FormatException($"Unprojected {field.Key} on CapturedGenericArgument at {source.GetPath()}");
             }
         return new CapturedGenericArgument
         {
             Argument = Field<int>(fields, "argument", value => value!.GetValue<int>()),
             OwnerPositions = Field<int[]>(fields, "ownerPositions", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
+            AppliedPositions = Field<int[]>(fields, "appliedPositions", value => ((JsonArray)value!).Select(item0 => item0!.GetValue<int>()).ToArray()),
         };
     }
 
