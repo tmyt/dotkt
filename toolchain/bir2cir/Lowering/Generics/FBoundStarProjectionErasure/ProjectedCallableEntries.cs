@@ -135,24 +135,27 @@ sealed partial class ProjectedCallableEntries
                             else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
                                 references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade);
                         }
-                        var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
-                        if (entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
+                    }
+                    var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
+                    if (slot.IsInterface && entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
                             references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound))))
-                        {
-                            DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
-                            continue;
-                        }
-                        var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
-                        TypeNode PhysicalSlot(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, references);
-                        if (owner.Kind.OrDefault() == "interface" ||
-                            !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(p.Type.Value)))
-                            || PhysicalSlot(descriptor.Ret.Value) != PhysicalSlot(method.Ret.Value))
-                            arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
-                        if (arguments != null)
-                        {
-                            AddInterfaceForwarder(owner, method, descriptor, contract, arguments);
-                            continue;
-                        }
+                    {
+                        DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
+                        continue;
+                    }
+                    var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
+                    TypeNode PhysicalSlot(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, references);
+                    if (owner.Kind.OrDefault() == "interface" ||
+                        !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(FunctionSignatureIdentity.SignatureType(p))))
+                        || PhysicalSlot(descriptor.Ret.Value) != PhysicalSlot(method.Ret.Value))
+                        arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+                    if (arguments != null)
+                    {
+                        AddSlotForwarder(owner, method, descriptor, contract, arguments, slot.IsInterface);
+                        continue;
+                    }
+                    if (slot.IsInterface)
+                    {
                         // A final Kotlin method can fill a carrier slot directly.
                         // MethodImpl needs a virtual body, not a new override point.
                         if (!method.Virtual.OrDefault()) { method.Virtual = true; method.ClrFinal = true; }
@@ -173,17 +176,17 @@ sealed partial class ProjectedCallableEntries
         => SupertypeGraph.SelectedOverrideOwners(hierarchy[owner.Name.Value], hierarchy, references,
             method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
-    void AddInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
-        ProjectedMethodPlan contract, TypeNode[] arguments)
+    void AddSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
+        ProjectedMethodPlan contract, TypeNode[] arguments, bool isInterface)
     {
-        // Independently published interfaces can order the same witnesses
-        // differently. Their MethodImpls forward to the same Kotlin body.
-        var bridge = NewInterfaceForwarder(owner, target, descriptor, contract.CloneParameters());
+        // The MethodImpl keeps the selected declaration's ABI. Dispatch to the
+        // Kotlin body with its own value parameters and witness ordering.
+        var bridge = NewSlotForwarder(owner, target, descriptor, contract.CloneParameters(), isInterface);
         bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
     }
 
-    static BirFunctionDeclaration NewInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
-        BirMethodImpl descriptor, BirTypeParameter[] parameters)
+    static BirFunctionDeclaration NewSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
+        BirMethodImpl descriptor, BirTypeParameter[] parameters, bool isInterface)
     {
         var names = owner.Methods.Value.Select(m => m.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
         var name = target.Name.Value + "$forward";
@@ -193,8 +196,9 @@ sealed partial class ProjectedCallableEntries
                 Name = target.Params.Value[i].Name, Type = BirGraphValue.CopyType(type) }).ToArray(),
             Ret = descriptor.Ret, TypeParams = parameters,
             Vis = "private", Virtual = true, Abstract = false, ClrFinal = true, Static = false, Generated = true,
-            ClrInterfaceImpls = new[] { descriptor },
         };
+        if (isInterface) bridge.ClrInterfaceImpls = new[] { descriptor };
+        else bridge.ClrBaseImpls = new[] { descriptor };
         if (owner.Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
         return bridge;
