@@ -107,9 +107,15 @@ static partial class SuspendColdLowering
             // Each entry implements the corresponding entry of the selected source
             // declaration. A generated carrier forwarder is not another source override.
             if (_m.SourceCallableVirtual && _typeParams.Count != 0)
+            {
                 method.SignatureOverrideDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
                     .Select(edge => edge.PhysicalDeclarationId.OrDefault() ?? edge.DeclarationId.Value)
                     .Distinct(StringComparer.Ordinal).ToArray();
+                if (coldEntry)
+                    method.OverrideRepresentationDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
+                        .Select(edge => (Slot: edge.PhysicalDeclarationId.Value, Source: edge.DeclarationId.Value))
+                        .Distinct().ToDictionary(edge => edge.Slot, edge => edge.Source);
+            }
         }
 
         void CarrySourceDeclaration(BirFunctionDeclaration method)
@@ -157,8 +163,13 @@ static partial class SuspendColdLowering
             // Generated forwarding methods carry physical slot IDs rather than FIR
             // override markers. Both entries must implement their corresponding slots.
             if (_m.ExistentialCallable == ExistentialCallableRole.Forwarder && _m.SignatureOverrideDeclarations.HasValue)
+            {
                 method.SignatureOverrideDeclarations = _m.SignatureOverrideDeclarations.Value
                     .Select(id => coldEntry ? id + "|cold" : id).ToArray();
+                if (coldEntry)
+                    method.OverrideRepresentationDeclarations = _m.SignatureOverrideDeclarations.Value.Distinct()
+                        .ToDictionary(id => id + "|cold", id => id);
+            }
             if (ForwarderEntry(coldEntry) is { } entry) method.LocalBodyEntry = (entry, null);
             if (_m.ImplicitExistentialImplementationId is string implementation)
                 method.ImplicitExistentialImplementationId = coldEntry ? implementation + "|cold" : implementation;

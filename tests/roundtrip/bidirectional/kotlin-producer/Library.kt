@@ -8,6 +8,7 @@ import kotlin.clr.ClrEnum
 import kotlin.clr.ClrRef
 import System.Threading.Tasks.Task1
 import roundtrip.covarianttaskresults.ProjectedResult
+import roundtrip.covarianttaskresults.NominalReader
 import roundtrip.covarianttaskresults.ProjectedTextResult
 import roundtrip.covarianttaskresults.TaskResultDerived
 import roundtrip.selectedbounds.Concrete
@@ -22,7 +23,7 @@ suspend fun importedTextLength(view: ProjectedTextResult<Concrete>): Int =
 suspend fun importedTextIsString(view: ProjectedTextResult<Concrete>): Boolean =
     view.text<Concrete>(Concrete()) is String
 
-class ImportedProjectedResult : ProjectedResult<Concrete> {
+class ImportedProjectedResult : ProjectedResult<Concrete>, NominalReader<Concrete> {
     override suspend fun <A : Concrete> nullableUnit() {}
     override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
     override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
@@ -30,6 +31,10 @@ class ImportedProjectedResult : ProjectedResult<Concrete> {
         return TaskResultDerived("imported")
     }
 }
+
+suspend fun importedColdRead(target: ImportedProjectedResult, gate: Task1<Int>, nominal: Boolean) =
+    if (nominal) (target as NominalReader<Concrete>).read<Concrete>(Concrete(), gate)
+    else (target as ProjectedResult<Concrete>).read<Concrete>(Concrete(), gate)
 
 @FlagsAttribute
 @ClrEnum

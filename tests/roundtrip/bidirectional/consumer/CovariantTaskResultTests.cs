@@ -24,10 +24,16 @@ public class CovariantTaskResultInteropTests
         Task<TaskResultBase> Start(Task<int> gate) => view.read<Concrete, Concrete>(new Concrete(), gate);
         var source = new TaskCompletionSource<int>();
         var result = Start(source.Task);
+        var otherEntries = view is ImportedProjectedResult target ? new[] {
+            ((NominalReader<Concrete>)target).read<Concrete, Concrete>(new Concrete(), source.Task),
+            LibraryKt.importedColdRead(target, source.Task, true), LibraryKt.importedColdRead(target, source.Task, false)
+        } : Array.Empty<Task<TaskResultBase>>();
+        Assert.That(Array.TrueForAll(otherEntries, entry => !entry.IsCompleted), Is.True);
         Assert.That((object)result, Is.InstanceOf<Task<TaskResultBase>>());
         Assert.That(result.IsCompleted, Is.False);
         source.SetResult(17);
         Assert.That(await result, Is.InstanceOf<TaskResultDerived>());
+        foreach (var entry in otherEntries) Assert.That(await entry, Is.InstanceOf<TaskResultDerived>());
 
         var failure = new InvalidOperationException("after suspension");
         Assert.That(await Start(Task.FromResult(17)), Is.InstanceOf<TaskResultDerived>());
