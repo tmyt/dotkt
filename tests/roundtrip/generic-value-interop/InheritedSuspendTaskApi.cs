@@ -9,6 +9,12 @@ public interface IJoinedPicker : roundtrip.selectedbounds.SuspendPicker<roundtri
 
 public static class InheritedSuspendTaskApi
 {
+    public static int DirectIntResult(ProducedIntResult child) =>
+        child.next(3).GetAwaiter().GetResult();
+
+    public static int VirtualIntResults(GenericResult<int> child) =>
+        (int)child.next(4).GetAwaiter().GetResult() + (int)((WideResult<int>)child).next(5).GetAwaiter().GetResult();
+
     public static object Pick<T>(roundtrip.selectedbounds.SuspendPicker<T> picker, T value)
         where T : RoundtripDependentNative.Base, RoundtripDependentNative.ILeft, RoundtripDependentNative.IRight =>
         picker.pick<T, T>(value).GetAwaiter().GetResult();
