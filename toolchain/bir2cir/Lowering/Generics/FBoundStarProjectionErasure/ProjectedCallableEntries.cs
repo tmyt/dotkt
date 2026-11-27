@@ -150,7 +150,7 @@ sealed partial class ProjectedCallableEntries
                             arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
                         if (arguments != null)
                         {
-                            AddInterfaceForwarder(owner, method, descriptor, contract, arguments);
+                            AddInterfaceForwarder(owner, method, descriptor, contract, arguments, id);
                             continue;
                         }
                         // A final Kotlin method can fill a carrier slot directly.
@@ -174,12 +174,47 @@ sealed partial class ProjectedCallableEntries
             method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
     void AddInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
-        ProjectedMethodPlan contract, TypeNode[] arguments)
+        ProjectedMethodPlan contract, TypeNode[] arguments, string id)
     {
         // Independently published interfaces can order the same witnesses
         // differently. Their MethodImpls forward to the same Kotlin body.
         var bridge = NewInterfaceForwarder(owner, target, descriptor, contract.CloneParameters());
-        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
+        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :
+            ProjectedTaskBody(owner, bridge, target, descriptor, contract, arguments, id) ?? ForwardBody(owner, bridge, target, arguments);
+    }
+
+    IBirStatement[] ProjectedTaskBody(IBirTypeDeclaration owner, BirFunctionDeclaration bridge, BirFunctionDeclaration target,
+        BirMethodImpl descriptor, ProjectedMethodPlan contract, TypeNode[] arguments, string id)
+    {
+        if (!target.SuspendBridge.OrDefault() || bridge.Ret.Value is not TypeNode.Fqn { Args.Length: 1 } wide ||
+            target.Ret.Value is not TypeNode.Fqn narrow || ReferenceMetadataReader.StripGenericArity(wide.Name) != ReferenceMetadataReader.StripGenericArity(narrow.Name) ||
+            wide == FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(narrow, [], arguments)) return null;
+        var instance = (TypeNode.Fqn)descriptor.Owner.Value;
+        var implementation = target.LocalBodyEntry?.Id ?? target.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
+        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) && m.Ret.OrDefault() == wide);
+        var coldId = id + "|cold";
+        var local = localSlots.TryGetValue(coldId, out var cold);
+        if (!local && !references.TryDeclarationSignatureSlot(EntryId(coldId), out cold))
+            throw new InvalidOperationException("Projected suspend interface declaration lacks its cold slot");
+        var selected = local ? null : references.SelectedPhysicalMethod(EntryId(coldId));
+        var coldPlan = Find(coldId).Plan.OnOwner(instance.Args ?? []);
+        var actual = contract.ForwardTo(coldPlan, references.WitnessConstraintKey) ??
+            Enumerable.Range(0, cold.Arity).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+        var body = template.Body.Value.Select(s => (IBirStatement)((BirGraphValue)s).DeepClone()).ToArray();
+        int calls = 0;
+        foreach (var s in body) ((BirGraphValue)s).Visit(n => {
+            if (n is not BirCallInstance { TaskBridgeColdInvocation: true } c) return;
+            ++calls; c.TaskBridgeColdInvocation = false;
+            var continuation = c.Args.Value[^1];
+            c.OwnerType = instance; c.Recv = new BirThis(); c.Method = cold.Name; c.Virtual = true;
+            c.TypeArgs = actual; c.Sig = cold.Parameters.Select(t => SupertypeGraph.SubstOwnerTvs(t, instance.Args ?? [])).ToArray();
+            c.CalleeParams = cold.Parameters; c.CalleeRet = cold.Return;
+            c.MemberRef = selected == null ? default(OptionalField<BirMemberReference>) :
+                BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, instance.Args));
+            c.Args = bridge.Params.Value.Select(p => (IBirExpression)new BirLocal { Name = p.Name }).Append(continuation).ToArray();
+        });
+        if (calls != 1) throw new InvalidOperationException("A suspend completion view must invoke one selected cold entry");
+        return body;
     }
 
     static BirFunctionDeclaration NewInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
@@ -608,6 +643,9 @@ sealed partial class ProjectedCallableEntries
     // Keep it (and its body) if it still implements any surviving obligation.
     internal void RetireFacadeOverrides(BirFileDeclaration[] files, HashSet<string> emittedTypes)
     {
+        foreach (var owner in files.SelectMany(f => f.Types.OrEmpty()))
+            if (owner.Methods.OrEmpty().Any(m => m.ProjectedTaskView != null))
+                owner.Methods = owner.Methods.Value.Where(m => m.ProjectedTaskView == null).ToArray();
         if (exactFacades.Count == 0) return;
         HashSet<string> machines = new(StringComparer.Ordinal);
         foreach (var owner in files.SelectMany(f => f.Types.OrEmpty())) RetireAdapterGroups(owner, machines);

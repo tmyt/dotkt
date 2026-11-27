@@ -6,6 +6,17 @@ import BidirectionalInterop.StructConstrainedTarget
 import System.FlagsAttribute
 import kotlin.clr.ClrEnum
 import kotlin.clr.ClrRef
+import System.Threading.Tasks.Task1
+import roundtrip.covarianttaskresults.ProjectedResult
+import roundtrip.covarianttaskresults.TaskResultDerived
+import roundtrip.selectedbounds.Concrete
+
+class ImportedProjectedResult : ProjectedResult<Concrete> {
+    override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
+        gate.await()
+        return TaskResultDerived("imported")
+    }
+}
 
 @FlagsAttribute
 @ClrEnum

@@ -2,9 +2,29 @@ using System;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using roundtrip.covarianttaskresults;
+using roundtrip.selectedbounds;
 
 public class CovariantTaskResultInteropTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    public async Task ProjectedInterfaceReturnsItsDeclaredTaskAcrossSuspension(bool imported)
+    {
+        ProjectedResult<Concrete> view = imported ? new ImportedProjectedResult() : new ProjectedDerivedResult();
+        Task<TaskResultBase> Start(Task<int> gate) => view.read<Concrete, Concrete>(new Concrete(), gate);
+        var source = new TaskCompletionSource<int>();
+        var result = Start(source.Task);
+        Assert.That((object)result, Is.InstanceOf<Task<TaskResultBase>>());
+        Assert.That(result.IsCompleted, Is.False);
+        source.SetResult(17);
+        Assert.That(await result, Is.InstanceOf<TaskResultDerived>());
+
+        var failure = new InvalidOperationException("after suspension");
+        source = new TaskCompletionSource<int>();
+        result = Start(source.Task);
+        source.SetException(failure);
+        Assert.That(Assert.ThrowsAsync<InvalidOperationException>(async () => { await result; }), Is.SameAs(failure));
+    }
     [Test]
     public async Task DirectAndInterfaceTaskEntriesKeepTheirOwnResultTypes()
     {

@@ -140,7 +140,7 @@ sealed partial class ProjectedCallableEntries
                     if (contract.ForwardTo(destination, references.WitnessConstraintKey) is { } arguments)
                     {
                         target.ClrInterfaceImpls = target.ClrInterfaceImpls.OrEmpty().Where(r => !IsSlot(r, slot, f)).ToArray();
-                        AddInterfaceForwarder(storage, target, descriptor, contract, arguments);
+                        AddInterfaceForwarder(storage, target, descriptor, contract, arguments, slotId);
                         continue;
                     }
                 }
