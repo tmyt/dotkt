@@ -7,12 +7,47 @@ using WideUnitCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int
 
 namespace GenericValueInterop;
 
+using WideIntFactory = DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+    object, object, object, object, object, object, object, object, object, object, object, WideIntCallback>;
+
 public interface ILeftMark { }
+public delegate T MarkedValue<T>() where T : ILeftMark;
 public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public interface IJointTag<T> where T : ILeftMark, IRightMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public class NativeOpenVisitor<T>
+{
+    public virtual T Visit(T item) => throw new System.NotImplementedException();
+    public T Dispatch(T item) => Visit(item);
+}
+public class NativeMiddleVisitor<TUnused,T> : NativeOpenVisitor<T>
+{
+    public virtual object Visit(object item) => "middle";
+    public object DispatchOther(object item) => Visit(item);
+}
+public class NativeBoundVisitor<T> where T : System.IO.Stream
+{
+    public virtual object Visit(T item) => "base";
+    public virtual object Visit(System.IO.Stream item) => "other";
+    public object Dispatch(T item) => Visit(item);
+    public object DispatchStream(System.IO.Stream item) => Visit(item);
+}
+public sealed class NativeStreamSlot<T> where T : System.IO.Stream
+{
+    public T Value { get; set; }
+    public bool UsesExactType(T item) => typeof(T) == item.GetType();
+}
+public static class NestedBounds
+{
+    public class Root { }
+    public class Mid : Root { }
+    public interface ISink<in T> { }
+    public sealed class MidSink : ISink<Mid> { }
+    public sealed class Slot<T> where T : Root { public T Value { get; set; } }
+    public sealed class Joint<T, S> where T : Root where S : ISink<T> { public T Value { get; set; } }
+}
 public sealed class NativeResultProbe
 {
     private System.Array backing;
@@ -132,6 +167,14 @@ public abstract class NativeVisitor
 }
 public static class NativeWideCallbacks
 {
+    public static WideIntFactory Factory => (a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q) =>
+        (first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last) => (int)a - (int)q + first - last;
+    public static DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object, object,
+        object, object, object, object, object, object, object, object, object, object,
+        DotKt.Runtime.CompilerServices.KFunc<MarkedValue<T>, int, int, int, int, int, int, int, int,
+            int, int, int, int, int, int, int, int, int>> SelectFactory<T>(T tag) where T : ILeftMark =>
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+            (pick, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => ReferenceEquals(pick(), tag) ? 42 : -1;
     public static bool VisitExtension(this NativeCallbackScope scope, WideUnitCallback callback) => VisitUnit(callback);
     public static bool VisitUnit(WideUnitCallback callback) =>
         callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) is not null;
@@ -173,6 +216,9 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T EchoValue<T>(T value) => value;
+    public static System.Collections.Generic.List<T> MakeList<T>() => new();
+    public static void Append<T,U>(U value, System.Collections.Generic.List<T> list) where U : T => list.Add(value);
     public static T ReplaceRecord<T>(IMarkedRecord<T> record, T item) where T : IProjectedMark
     {
         record.Write(item);
@@ -228,6 +274,13 @@ public static class NativeBoxApi
     public static StoredVariant<int, int> CreateVariant() => new(42);
     public static int ReadVariant(StoredVariant<int, int> value) => (int)value.value;
     public static object Dispatch(NativeBoxReceiver receiver, Box<string, string> value) => receiver.Accept(value);
+
+    public static bool ReplaceCaptured<T>(CaptureBox<T> witness, ref Box<string, string> slot, Box<string, string>[] other)
+        where T : System.IDisposable, allows ref struct
+    {
+        slot = new Box<string, string>("changed");
+        return typeof(T) == typeof(System.IO.MemoryStream);
+    }
 
     public static bool ReplaceAliased(ref Box<string, string> first, ref Box<string, string> second)
     {

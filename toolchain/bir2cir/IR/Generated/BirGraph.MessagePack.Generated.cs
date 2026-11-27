@@ -449,6 +449,7 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         ulong seen = 0;
         OptionalField<int> field0 = default;
         OptionalField<int[]> field1 = default;
+        OptionalField<int[]> field2 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -461,6 +462,10 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
+                case "appliedPositions":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -469,13 +474,14 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         {
             Argument = field0,
             OwnerPositions = field1,
+            AppliedPositions = field2,
         };
     }
 
     internal static void WriteCapturedGenericArgument(ref MessagePackWriter writer, CapturedGenericArgument value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Argument.IsPresent ? 1 : 0) + (value.OwnerPositions.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Argument.IsPresent ? 1 : 0) + (value.OwnerPositions.IsPresent ? 1 : 0) + (value.AppliedPositions.IsPresent ? 1 : 0));
         if (value.Argument.IsPresent)
         {
             writer.Write("argument");
@@ -494,6 +500,20 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 CheckDepth(depth + 1);
                 writer.WriteArrayHeader(value.OwnerPositions.Value.Length);
                 foreach (var item0 in value.OwnerPositions.Value)
+                {
+                    writer.Write(item0);
+                }
+            }
+        }
+        if (value.AppliedPositions.IsPresent)
+        {
+            writer.Write("appliedPositions");
+            if (value.AppliedPositions.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.AppliedPositions.Value.Length);
+                foreach (var item0 in value.AppliedPositions.Value)
                 {
                     writer.Write(item0);
                 }
@@ -3282,6 +3302,7 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<int> field3 = default;
         OptionalField<string> field4 = default;
         OptionalField<string> field5 = default;
+        OptionalField<string> field6 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -3306,9 +3327,13 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 4);
                     field4 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "physicalDeclarationId":
+                case "nativeMethodKey":
                     Seen(ref seen, 1UL << 5);
                     field5 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "physicalDeclarationId":
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -3321,14 +3346,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             Kind = field2,
             Arity = field3,
             DeclarationId = field4,
-            PhysicalDeclarationId = field5,
+            NativeMethodKey = field5,
+            PhysicalDeclarationId = field6,
         };
     }
 
     internal static void WriteBirOverride(ref MessagePackWriter writer, BirOverride value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.PhysicalDeclarationId.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.NativeMethodKey.IsPresent ? 1 : 0) + (value.PhysicalDeclarationId.IsPresent ? 1 : 0));
         if (value.Owner.IsPresent)
         {
             writer.Write("owner");
@@ -3372,6 +3398,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             else
             {
                 IrMessagePack.WriteString(ref writer, value.DeclarationId.Value);
+            }
+        }
+        if (value.NativeMethodKey.IsPresent)
+        {
+            writer.Write("nativeMethodKey");
+            if (value.NativeMethodKey.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.NativeMethodKey.Value);
             }
         }
         if (value.PhysicalDeclarationId.IsPresent)
@@ -8113,9 +8148,10 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<TypeNode[]> field2 = default;
         OptionalField<IBirAttributeValue[]> field3 = default;
         OptionalField<BirAttributeNamedArgument[]> field4 = default;
-        OptionalField<bool> field5 = default;
-        OptionalField<string> field6 = default;
-        OptionalField<BirMemberReference> field7 = default;
+        OptionalField<string> field5 = default;
+        OptionalField<bool> field6 = default;
+        OptionalField<string> field7 = default;
+        OptionalField<BirMemberReference> field8 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -8140,17 +8176,21 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 4);
                     field4 = reader.TryReadNil() ? OptionalField<BirAttributeNamedArgument[]>.Null : OptionalField<BirAttributeNamedArgument[]>.Of(ReadArray<BirAttributeNamedArgument>(ref reader, (ref MessagePackReader reader) => ReadBirAttributeNamedArgument(ref reader)));
                     break;
-                case "attrExternal":
+                case "constructorNativeKey":
                     Seen(ref seen, 1UL << 5);
-                    field5 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
+                    field5 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "attrExternal":
+                    Seen(ref seen, 1UL << 6);
+                    field6 = reader.TryReadNil() ? OptionalField<bool>.Null : OptionalField<bool>.Of(reader.ReadBoolean());
                     break;
                 case "attrAssembly":
-                    Seen(ref seen, 1UL << 6);
-                    field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    Seen(ref seen, 1UL << 7);
+                    field7 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
                 case "memberRef":
-                    Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
+                    Seen(ref seen, 1UL << 8);
+                    field8 = reader.TryReadNil() ? OptionalField<BirMemberReference>.Null : OptionalField<BirMemberReference>.Of(ReadBirMemberReference(ref reader));
                     break;
                 default: throw new FormatException();
             }
@@ -8163,16 +8203,17 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             ArgTypes = field2,
             Args = field3,
             NamedArgs = field4,
-            AttrExternal = field5,
-            AttrAssembly = field6,
-            MemberRef = field7,
+            ConstructorNativeKey = field5,
+            AttrExternal = field6,
+            AttrAssembly = field7,
+            MemberRef = field8,
         };
     }
 
     internal static void WriteBirAttribute(ref MessagePackWriter writer, BirAttribute value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Attr.IsPresent ? 1 : 0) + (value.AttrClr.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.NamedArgs.IsPresent ? 1 : 0) + (value.AttrExternal.IsPresent ? 1 : 0) + (value.AttrAssembly.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Attr.IsPresent ? 1 : 0) + (value.AttrClr.IsPresent ? 1 : 0) + (value.ArgTypes.IsPresent ? 1 : 0) + (value.Args.IsPresent ? 1 : 0) + (value.NamedArgs.IsPresent ? 1 : 0) + (value.ConstructorNativeKey.IsPresent ? 1 : 0) + (value.AttrExternal.IsPresent ? 1 : 0) + (value.AttrAssembly.IsPresent ? 1 : 0) + (value.MemberRef.IsPresent ? 1 : 0));
         if (value.Attr.IsPresent)
         {
             writer.Write("attr");
@@ -8231,6 +8272,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 {
                     WriteBirAttributeNamedArgument(ref writer, item0, depth + 1 + 1);
                 }
+            }
+        }
+        if (value.ConstructorNativeKey.IsPresent)
+        {
+            writer.Write("constructorNativeKey");
+            if (value.ConstructorNativeKey.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.ConstructorNativeKey.Value);
             }
         }
         if (value.AttrExternal.IsPresent)

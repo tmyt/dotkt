@@ -418,7 +418,7 @@ sealed class Pipeline
         captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
         captured = ClrEventImplBinding.PreserveSourceFacts(captured);
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
-        captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs);
+        captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs, signatures);
         var sourceIndex = new SourceModuleIndex(captured, refs.Aliases);
         // New physical-only forwarders are not source declarations. Keep the
         // original declaration membership while extending the owning prefix.
@@ -970,7 +970,7 @@ sealed class Pipeline
             var lateProjection = FBoundStarProjectionErasure.CarrierProjectionContext.ForCurrentSource(
                 carrierRealization, finalCarrierTypes, aliasTransitions);
             ForeignStarProjectionBinding.ContinueWithProjection((type, shape) =>
-                lateProjection.Rewrite(type, preserveArrayShape: shape));
+                lateProjection.Rewrite(type, preserveArrayShape: shape), lateProjection.MaterialNativeMethodArgument);
             ForeignStarProjectionBinding.ApplyLate(captured, localExistentialOwners, refs,
                 (file, appended) => suspendTransitions.PublishTypes(file, appended),
                 appended => {

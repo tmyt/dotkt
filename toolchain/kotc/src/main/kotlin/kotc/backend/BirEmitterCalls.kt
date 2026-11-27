@@ -139,6 +139,7 @@ internal fun BirEmitter.fieldDeclarationOwner(callee: IrSimpleFunction, receiver
  *  SuspendColdLowering decides their storage. Nothing here decides whether a value CAN be held. */
 internal fun BirEmitter.filledArgs(
 	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	parameterCount: Int = call.symbol.owner.parameters.size,
 ): List<BirExpression> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
 	// The selected declaration owns both the call shape and any defaults it carries (including ordinary CLR optional
@@ -169,7 +170,7 @@ internal fun BirEmitter.filledArgs(
 	// [sourceParameters] emits as `params` and [overloadSignature] keys `sig` by, so the returned list is index-for-index
 	// the declaration's arg array (the caller prepends `__self` on both sides).
 	val vals = callee.parameters.mapIndexedNotNull { i, selected ->
-		if (isValueParameter(selected)) Triple(i, selected, defaultCallee.parameters[i]) else null
+		if (i < parameterCount && isValueParameter(selected)) Triple(i, selected, defaultCallee.parameters[i]) else null
 	}
 	val provided = vals.map { (i, _, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 	// The SAME-MODULE defaults this call actually fills. A CROSS-MODULE omission's value is an IrErrorExpression the

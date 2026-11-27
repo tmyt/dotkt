@@ -4,6 +4,7 @@ import NativePointers.CallbackBase
 import NativePointers.NullableApi
 import NativePointers.AnnotatedApi
 import kotlin.clr.ClrFunctionPointer
+import kotlin.clr.byref
 import kotlin.clr.signature.Managed
 import kotlin.clr.signature.Cdecl
 
@@ -52,7 +53,17 @@ fun <T> genericField(api: GenericApi<T>, p: ClrFunctionPointer<Managed, (T) -> T
     return api.Property
 }
 
+open class SuspendPointerBase<T> {
+    open suspend fun consume(value: T, pointer: ClrFunctionPointer<Managed, (Int) -> Int>): Int = -1
+}
+
+private fun applyCaptured(key: NativePointers.Capture<out System.IO.Stream>) {
+    var value = 21
+    check(Api.ApplyCaptured(key, byref(value), Api.Get()) == 42 && value == 42)
+}
+
 fun main() {
+    applyCaptured(NativePointers.Capture<System.IO.MemoryStream>())
     val pointer = managed(Api.Get())
     Api.Value = pointer
     Api.Property = Api.Value

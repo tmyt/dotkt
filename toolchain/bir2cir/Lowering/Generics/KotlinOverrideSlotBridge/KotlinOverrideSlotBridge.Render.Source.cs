@@ -92,8 +92,8 @@ static partial class KotlinOverrideSlotBridge
                 returned = nativeCursor != null && NativeCursorResult(implementation.RetKotlinType.OrDefault(),
                     implementationReturn, result, isValue, refs) is { } cursor
                     ? ReverseEnumeratorBridgeSynthesis.AdaptNativeCursor(returned, cursor, nativeCursor)
-                    : StringCharSequenceBridge.CanAdaptStringReturn(implementationReturn, result)
-                    ? StringCharSequenceBridge.AdaptStringReturn(returned, implementationReturn)
+                    : StringCharSequenceBridge.TryAdaptSlotReturn(returned, implementationReturn, result) is { } adapted
+                    ? adapted
                     : IsNullableValueSlot(result, implementationReturn, refs, isValue, returnPosition: true)
                     && implementationReturn is TypeNode.Nullable nullable
                     ? new BirNullableValue { Elem = BirGraphValue.CopyType(nullable.Of), E = OptionalField<IBirExpression>.Of(returned),
@@ -107,7 +107,7 @@ static partial class KotlinOverrideSlotBridge
         var method = new BirFunctionDeclaration {
             Name = name, Static = false, Override = false, Virtual = true, Abstract = false, ObjectOverride = false,
             Vis = "private", Params = bridgeParameters, Ret = BirGraphValue.CopyType(result), Body = new[] { statement },
-            Attrs = Array.Empty<BirAttribute>(), Generated = true, PhysicalSlotBridge = true,
+            Attrs = Array.Empty<BirAttribute>(), Generated = true, PhysicalSlotBridge = true, OverrideAdapterGroup = new object(),
             ClrInterfaceImpls = Array.Empty<BirMethodImpl>(), ClrBaseImpls = Array.Empty<BirMethodImpl>(),
         };
         // A final physical bridge implements the selected signature. Keep both the

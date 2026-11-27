@@ -20,6 +20,18 @@ static partial class SuspendColdLowering
         internal SourceDeclarationTransitions Transitions { get; }
         internal Action<BirCallStatic, BirCallStatic, TypeNode> ProjectCallSignature { get; }
         internal IReadOnlyList<SourceNamedEntry> NamedEntries { get; private set; }
+        ILookup<string, SourceNamedEntry> suspendInterfaces;
+        IReadOnlyDictionary<string,SupertypeGraph.Def> taskHierarchy;
+        internal SourceNamedEntry TaskSlot(string id) => (suspendInterfaces ??= NamedEntries.Where(e =>
+            e.Owner?.Kind.OrDefault() == "interface" && e.Method.DeclarationId.HasValue)
+            .ToLookup(e => e.Method.DeclarationId.Value, StringComparer.Ordinal))[id].SingleOrDefault();
+        internal TypeNode.Fqn[] TaskSlotOwners(string bodyOwner, string slotOwner, string id, bool local,
+            IReadOnlyList<(string Id, TypeNode.Fqn Owner)> edges)
+        {
+            taskHierarchy ??= SupertypeGraph.CollectSource(Roots);
+            return SupertypeGraph.SelectedOverrideOwners(taskHierarchy[bodyOwner], taskHierarchy, References,
+                edges, id, slotOwner, local ? null : id);
+        }
         internal IReadOnlyDictionary<string, IBirTypeDeclaration> Closures { get; private set; }
         internal IReadOnlyList<SourceHelperDeclaration> HelperDeclarations { get; private set; }
         internal IReadOnlyDictionary<string, TypeNode> CalleeReturns { get; }
@@ -161,6 +173,7 @@ static partial class SuspendColdLowering
             if (!Stage0Complete || sourceReleased) throw new InvalidOperationException("Invalid suspend source release clock");
             sourceReleased = true;
             Roots = Array.Empty<BirFileDeclaration>(); NamedEntries = Array.Empty<SourceNamedEntry>();
+            suspendInterfaces = null; taskHierarchy = null;
             Closures = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
             HelperDeclarations = Array.Empty<SourceHelperDeclaration>();
             ConsumedIntrinsicClosures.Clear(); LambdaOwnerParameters = null;

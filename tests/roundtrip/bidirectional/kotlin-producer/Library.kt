@@ -6,6 +6,59 @@ import BidirectionalInterop.StructConstrainedTarget
 import System.FlagsAttribute
 import kotlin.clr.ClrEnum
 import kotlin.clr.ClrRef
+import System.Threading.Tasks.Task1
+import roundtrip.covarianttaskresults.ProjectedResult
+import roundtrip.covarianttaskresults.NominalReader
+import roundtrip.covarianttaskresults.ProjectedTextResult
+import roundtrip.covarianttaskresults.TaskResultBase
+import roundtrip.covarianttaskresults.TaskResultDerived
+import roundtrip.covarianttaskresults.TextTaskResult
+import roundtrip.selectedbounds.Concrete
+
+class ImportedTextResult : ProjectedTextResult<Concrete> {
+    override suspend fun <A : Concrete> text(value: Concrete): CharSequence = "across assemblies"
+}
+
+suspend fun importedTextLength(view: ProjectedTextResult<Concrete>): Int =
+    view.text<Concrete>(Concrete()).length
+
+suspend fun importedTextIsString(view: ProjectedTextResult<Concrete>): Boolean =
+    view.text<Concrete>(Concrete()) is String
+
+class ImportedProjectedResult : ProjectedResult<Concrete>, NominalReader<Concrete> {
+    override suspend fun <A : Concrete> nullableUnit() {}
+    override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
+    override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
+        gate.await()
+        return TaskResultDerived("imported")
+    }
+}
+
+class ImportedExactResult : ProjectedResult<Concrete>, NominalReader<Concrete> {
+    override suspend fun <A : Concrete> nullableUnit() {}
+    override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
+    override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultBase {
+        gate.await()
+        return TaskResultDerived("exact")
+    }
+}
+
+suspend fun importedNominalRead(target: NominalReader<Concrete>, gate: Task1<Int>) =
+    target.read<Concrete>(Concrete(), gate)
+suspend fun importedConstrainedRead(target: ProjectedResult<Concrete>, gate: Task1<Int>) =
+    target.read<Concrete>(Concrete(), gate)
+
+class ImportedOrdinaryTextResult : TextTaskResult {
+    override suspend fun text(): CharSequence = "separate"
+    override suspend fun optionalText(present: Boolean): CharSequence? = if (present) "separate" else null
+    override suspend fun signal(present: Boolean): Unit? = if (present) Unit else null
+    suspend fun lengthViaInterface(): Int {
+        val source: TextTaskResult = this
+        return source.text().length
+    }
+}
+
+suspend fun forwardOptionalText(source: TextTaskResult, present: Boolean): Any? = source.optionalText(present)
 
 @FlagsAttribute
 @ClrEnum

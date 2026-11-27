@@ -17,7 +17,7 @@ static partial class SuspendColdLowering
             if (_memberAbstract)
             {
                 methods.Add(ColdEntryAbstract());
-                if (WantsBridge) methods.Add(BuildBridge());
+                if (WantsBridge) { methods.Add(BuildBridge()); methods.AddRange(TaskViews()); }
                 return Finish();
             }
             if (_stubReason is { } reason)
@@ -92,7 +92,7 @@ static partial class SuspendColdLowering
             void AddNamedWrappers()
             {
                 if (IsEntryPoint) methods.Add(DrainMain());
-                if (WantsBridge) methods.Add(BuildBridge());
+                if (WantsBridge) { methods.Add(BuildBridge()); methods.AddRange(TaskViews()); }
             }
             SourceBuildResult Finish() => new(methods, types, NeedsRootContinuation, _methodProjections);
         }
@@ -260,20 +260,25 @@ static partial class SuspendColdLowering
             if (node is BirCallStatic or BirCallInstance or BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance
                 && TrySourceSuspension(node, out _)) return (BirGraphValue)EmitSuspensionPoint(node, output, expectedType);
             if (node is BirConditional conditional && (HasOwnSuspensionSource(conditional) || EscapesExpression(conditional)))
-                return (BirGraphValue)EmitCondValue(conditional, output);
+                return (BirGraphValue)EmitCondValue(conditional, output, expectedType);
             var slots = new List<(string Field, BirGraphSlot Slot)>();
             node.VisitOwnChildSlots((field, _, slot) => slots.Add((field, slot)));
+            // A type test or reference comparison observes the Kotlin value, not
+            // an adapter that might be needed for a later interface invocation.
+            var operandType = node is BirIsInstance || node is BirBinaryOperation op && op.Op.OrDefault() is "===" or "!=="
+                ? AnyTn : null;
             foreach (var (_, slot) in slots.OrderBy(item => SuspendLiveness.OperandRank(item.Field)))
-                slot.Replace(RewriteNode(slot.Value, output));
+                slot.Replace(RewriteNode(slot.Value, output, operandType));
             return node;
         }
 
-        IBirExpression EmitCondValue(BirConditional conditional, List<IBirStatement> output)
+        IBirExpression EmitCondValue(BirConditional conditional, List<IBirStatement> output, TypeNode destination)
         {
             var type = FrameType((BirGraphValue)conditional) ?? throw new NotSupportedException(
                 $"bir2cir: suspend-lowering: a conditional expression in `{(_ownerClass ?? _fileClass)}.{_name}` carries no result type of its own "
                 + $"and neither branch yields one (`then` = {Kind((BirGraphValue)conditional.Then.OrDefault())}, `else` = {Kind((BirGraphValue)conditional.Else.OrDefault())}), "
                 + "so the temporary that carries its value through the lowering would be untyped. An earlier lowering dropped a branch's type, or a branch's node kind needs an arm in bir-common/NodeType.cs.");
+            if (StringCharSequenceBridge.CanRestoreMaterializedValue(destination, type)) type = AnyTn;
             var spans = HasOwnSuspensionSource(conditional); var name = "__cond$" + ++_condCounter;
             if (spans) FieldStorage(name, type, RoleCondResult, true, SuspendedCalleeInSource(conditional));
             else output.Add(new BirVariable { Name = name, Type = type, Init = DefaultOf(type) });

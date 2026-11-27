@@ -1520,9 +1520,9 @@ internal fun BirEmitter.overrideDeclarations(fn: IrSimpleFunction, ordinaryPrope
 			(m.isFakeOverride && m.overriddenSymbols.any { replaced(it.owner) })
 		ordered.filterNot { selected.isNotEmpty() && replaced(it) }.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
 			kotc.bir.BirOverride(overrideOwnerType(fn, owner), m.name.asString(), "method", emittedParamCount(m),
-				declarationId = declarationIdForPhysicalAllocation(m)) } } + selected.map { (m, owner) ->
+				declarationId = declarationIdForPhysicalAllocation(m), nativeMethodKey = if (m.isFakeOverride) null else nativeDeclarationKey(m, "methodKey")) } } + selected.map { (m, owner) ->
 			kotc.bir.BirOverride(birType(owner), m.name.asString(), "method", emittedParamCount(m),
-				declarationId = declarationIdForPhysicalAllocation(m)) }
+				declarationId = declarationIdForPhysicalAllocation(m), nativeMethodKey = nativeDeclarationKey(m, "methodKey")) }
 	}
 	return items.takeIf { it.isNotEmpty() }
 }
@@ -1682,6 +1682,9 @@ internal fun BirEmitter.sourceAnnotationDefinition(klass: IrClass): BirClassDefi
 		isAbstract = false, properties = properties, attrs = sourceAttributes(klass.annotations))
 }
 
+internal fun IrConstructorCall.isClrAttributeNamedArgument(): Boolean =
+	type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
+
 /** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a
  *  structured `{t:fqn}` identity node (#48). A Kotlin-authored annotation is named by its plain Kotlin FQN (#46) —
  *  bir2cir derives its `: System.Attribute` base from the `"annotation":true` flag on the class def. An imported .NET
@@ -1707,9 +1710,7 @@ internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<Bi
 		val clr = clrName(ac)
 		val attrClr = true.takeIf { clr != null }
 		fun namedRole(parameter: IrValueParameter): Pair<String, String>? {
-			val markers = parameter.annotations.filter {
-				it.type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
-			}
+			val markers = parameter.annotations.filter { it.isClrAttributeNamedArgument() }
 			if (markers.isEmpty()) return null
 			if (markers.size != 1) {
 				invariantBroken(parameter,
@@ -1745,7 +1746,8 @@ internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<Bi
 		}
 		BirAttribute(attr = TypeNode.Fqn(clr ?: typeName(ac)), attrClr = attrClr,
 			argTypes = types, args = args,
-			namedArgs = named.takeIf { it.isNotEmpty() }?.toList())
+			namedArgs = named.takeIf { it.isNotEmpty() }?.toList(),
+			constructorNativeKey = nativeConstructorKey(ann.symbol.owner))
 	}
 }
 

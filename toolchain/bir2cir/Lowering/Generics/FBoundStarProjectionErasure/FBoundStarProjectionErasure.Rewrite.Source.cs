@@ -158,7 +158,8 @@ static partial class FBoundStarProjectionErasure
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
             var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases, state.SharedOuters);
-            var bound = scope.Bound || BoundTypeSlot(facts, field) || field == "type" && node is BirIsInstance { ExactDispatchOwner: true };
+            var bound = scope.Bound || BoundTypeSlot(facts, field) || field == "type" && (node is BirIsInstance { ExactDispatchOwner: true }
+                || node is BirCast && exact && runtimeOperand is BirGraphValue operand && SourceExactOuter(operand));
             var shape = scope.ArrayShape || NativeArrayTypeSlot(facts, field);
             // An inner still captures its actual enclosing instance. Where
             // that declaration has two implementations, store the common
@@ -285,8 +286,11 @@ static partial class FBoundStarProjectionErasure
             is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
         var factory = call switch { BirCallInstance value => value._innerFactoryArguments.OrDefault(),
             BirCallStatic value => value._innerFactoryArguments.OrDefault(), _ => false };
+        var nestedNative = witness && PreservesNestedNativeWitnessHead(argument, state.Projection)
+            && (sourceId != null ? NeedsMaterialPrimary(index) : ClrMemberResolution.HasInvariantGenericUse(call, index, state.References));
         var projected = state.Projection.Rewrite(argument, bound, preserveArrayShape: preserveArray || elementWitness,
-            preserveConstructedHead: witness && !ContainsExistentialProjection(argument)
+            preserveConstructedHead: nestedNative
+                || witness && !ContainsExistentialProjection(argument)
                 && (PreservesNativeWitnessHead(argument, state.Projection)
                     || preserveArray && IsExactNativeArrayWitness(argument, state.Projection) || factory
                     || state.Demand.NativeProofs.ExactMethodArgument(source, sourceId, index)
@@ -309,9 +313,50 @@ static partial class FBoundStarProjectionErasure
         };
         var methodApplication = state.Projection.SelectPhysicalMethodApplication(selected?.Source as BirFunctionDeclaration,
             identity, frame, owner, arguments, nativeParameters);
-        var proof = state.Projection.MethodClassWitness(methodApplication.Slot(index),
-            i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing));
+        var slot = methodApplication.Slot(index);
+        var proof = state.Projection.MethodClassWitness(slot,
+            i => RewriteSourceMethodArgument(call, arguments[i], i, state, bound, preserveArray, closing),
+            NeedsMaterialPrimary);
         closing.Remove(index);
+        // An unconstrained primary used in an invariant CLR signature cannot
+        // be widened to a common ancestor: List<Carrier> is not List<object>.
+        // The selected declaration supplies that signature, including across DLLs.
+        bool NeedsMaterialPrimary(int position)
+        {
+            bool Uses(TypeNode t, int direction, bool nested = false, bool sourceFrame = false)
+            {
+                var core = StripSourceNullability(t);
+                if (core is TypeNode.Tv { Scope: "method" } v)
+                {
+                    var slot = !sourceFrame || frame == null ? v.I :
+                        t is TypeNode.Nullable && frame.NullableIndices.Contains(v.I) ? frame.NullableVariable(v).I : frame.SourcePosition(v.I);
+                    return nested && direction <= 0 && slot == position;
+                }
+                // An array has its own element representation, but does not erase
+                // the invariant CLR container inside that element.
+                if (core is TypeNode.Array array) return Uses(array.Elem, direction, nested, sourceFrame);
+                if (core is not TypeNode.Fqn { Args.Length: > 0 } head) return false;
+                var native = IsNativeArrayOwner(head, state.References, state.LocalClrAliases);
+                for (int i = 0; i < head.Args.Length; i++)
+                {
+                    var sign = native ? state.References.PhysicalOwnerTypeParameterVariance(head.Name, head.Args.Length, i) switch {
+                        "out" => direction, "in" => -direction, _ => 0
+                    } : nested ? 0 : direction;
+                    if (Uses(head.Args[i], sign, nested || native, sourceFrame)) return true;
+                }
+                return false;
+            }
+            bool Slot(TypeNode physical, TypeNode logical, int direction) =>
+                Uses(physical, direction) || StripSourceNullability(physical) is TypeNode.Fqn { Name: "System.Array" }
+                    && StripSourceNullability(logical) is TypeNode.Array a && Uses(a, direction, sourceFrame: true);
+            if (selected?.Source is BirFunctionDeclaration local)
+                return local.Params.OrEmpty().Any(p => Slot(p.Type.OrDefault(), p.KotlinType.OrDefault(), 1))
+                    || Slot(local.Ret.OrDefault(), local.RetKotlinType.OrDefault(), -1);
+            var signature = state.References.PhysicalDeclarationSignature(identity);
+            var logical = state.References.KotlinValueSignature(identity);
+            return signature.Parameters?.Where((t, i) => Slot(t, logical.Parameters?.ElementAtOrDefault(i), 1)).Any() == true
+                || Slot(signature.Return, logical.Return, -1);
+        }
         // Keep the split proof alongside the Kotlin argument. Projected
         // entries consume both parts separately; fixed CLR calls must close
         // their single slot at the invocation without changing the declaration.

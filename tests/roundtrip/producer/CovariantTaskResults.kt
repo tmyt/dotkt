@@ -1,5 +1,11 @@
 package roundtrip.covarianttaskresults
 
+import RoundtripDependentNative.Base
+import RoundtripDependentNative.ILeft
+import RoundtripDependentNative.IRight
+import System.Threading.Tasks.Task1
+import roundtrip.selectedbounds.Concrete
+
 interface AnyTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): Any
     suspend fun read(value: T, tag: String): Any
@@ -17,8 +23,58 @@ open class ProducerStringTask<T> : AnyTaskResult<T>, StringTaskResult<T> {
 
 open class TaskResultBase(val text: String)
 class TaskResultDerived(text: String) : TaskResultBase(text)
+interface NominalReader<K : Base> {
+    suspend fun <A : K> read(value: K, gate: Task1<Int>): TaskResultBase
+}
+interface ProjectedResult<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> read(value: K, gate: Task1<Int>): TaskResultBase
+    suspend fun <A : K> boxed(value: K, gate: Task1<Int>): Any
+    suspend fun <A : K> nullableUnit(): Unit?
+}
+class ProjectedDerivedResult : ProjectedResult<Concrete> {
+    override suspend fun <A : Concrete> nullableUnit() {}
+    override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
+    override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
+        gate.await()
+        return TaskResultDerived("projected")
+    }
+}
+interface NominalResult<K : Base> {
+    suspend fun <A : K> value(): TaskResultBase
+    suspend fun <A : K> read(input: K, gate: Task1<Int>): TaskResultBase
+    suspend fun <A : K> read(other: Any, gate: Task1<Int>): TaskResultBase
+}
+interface ConstrainedResult<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> value(): TaskResultBase
+    suspend fun <A : K> read(input: K, gate: Task1<Int>): TaskResultBase
+}
+class SharedResult : ConstrainedResult<Concrete>, NominalResult<Concrete> {
+    override suspend fun <A : Concrete> value(): TaskResultDerived = TaskResultDerived("shared")
+    override suspend fun <A : Concrete> read(input: Concrete, gate: Task1<Int>): TaskResultBase {
+        gate.await()
+        return TaskResultDerived("shared")
+    }
+    override suspend fun <A : Concrete> read(other: Any, gate: Task1<Int>): TaskResultBase {
+        gate.await()
+        return TaskResultBase("other")
+    }
+}
+suspend fun sharedNominal(source: NominalResult<Concrete>, x: Concrete, gate: Task1<Int>) = source.read<Concrete>(x, gate)
+suspend fun sharedOther(source: NominalResult<Concrete>, x: Any, gate: Task1<Int>) = source.read<Concrete>(x, gate)
+suspend fun sharedConstrained(source: ConstrainedResult<Concrete>, x: Concrete, gate: Task1<Int>) = source.read<Concrete>(x, gate)
 interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
+}
+interface TextTaskResult {
+    suspend fun text(): CharSequence
+    suspend fun optionalText(present: Boolean): CharSequence?
+    suspend fun signal(present: Boolean): Unit?
+}
+
+interface OptionalCompletion<T> { suspend fun completed(): T? }
+interface ProjectedTextResult<K> : OptionalCompletion<Unit> where K : Base, K : ILeft, K : IRight {
+    override suspend fun completed() {}
+    suspend fun <A : K> text(value: K): CharSequence
 }
 
 interface MethodTaskResult<T> {

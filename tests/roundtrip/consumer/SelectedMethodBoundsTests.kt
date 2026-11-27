@@ -33,7 +33,10 @@ private class OrdinarySuspendFactory<K, P> : SuspendFactory<K>, ReverseStorageFa
 private class SplitSuspendFactory<K>(val value: K) : SuspendLeft<K>, SuspendRight<K>
     where K : Base, K : ILeft, K : IRight {
     override suspend fun <A : K> make(): Any = value
+    suspend fun <A : K, B : Base> keep(queue: Queue<B>): Any = queue
 }
+
+private class SplitLeaf<T> : Base(), ILeft, IRight
 
 private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     SuspendParent(), SuspendLeft<Concrete>, SuspendRight<Concrete> where C : Base, C : ILeft {
@@ -47,7 +50,36 @@ private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     }
 }
 
+interface SuspendEcho<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun echo(value: K): K
+}
+
+class StoredEcho<K>(val stored: K, val gate: IntGate) : SuspendEcho<K>
+    where K : Base, K : ILeft, K : IRight {
+    override suspend fun echo(value: K): K {
+        gate.await()
+        check(value === stored)
+        return value
+    }
+}
+
 class SelectedMethodBoundsTests {
+    @TestAttribute
+    fun covariantSuspendBridgeRetainsItsReceiverAcrossSuspension() {
+        val item = Item()
+        val gate = IntGate()
+        val view: SuspendEcho<Item> = StoredEcho(item, gate)
+        var result: Item? = null
+        val invoke: suspend () -> Item = { view.echo(item) }
+        invoke.startCoroutine(object : Continuation<Item> {
+            override val context: CoroutineContext = EmptyCoroutineContext
+            override fun resumeWith(value: Result<Item>) { result = value.getOrThrow() }
+        })
+        check(result == null)
+        gate.resume(1)
+        check(result === item)
+    }
+
     private class Both : GenericValueInterop.IJoinedPicker {
         override suspend fun <A : Item> pick(value: Item): Any = "first"
         override suspend fun <A : OtherItem> pick(value: OtherItem): Any = "second"
@@ -58,9 +90,20 @@ class SelectedMethodBoundsTests {
             if (condition) target.value += 2
         }
     }
+    private class Overloaded : OverloadedPicker<Concrete> {
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Iterable<Int>): Any = "iterable"
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Sequence<Int>): Any = "sequence"
+    }
     private class Single : SuspendPicker<Concrete> {
         override suspend fun <A : Concrete> pick(value: Concrete): Any = "single"
         override fun <A : Concrete> write(value: Concrete, condition: Boolean, target: ClrRef<Int>) = Unit
+    }
+    private open class OverloadedChild : OverloadedPickerBase<Concrete>() {
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Iterable<Int>): Any = value
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Sequence<Int>): Any = source
+    }
+    private class OverloadedLeaf : OverloadedChild() {
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Iterable<Int>): Any = source
     }
     private suspend fun <K> via(picker: SuspendPicker<K>, value: K): Any where K : Base, K : ILeft, K : IRight =
         picker.pick<K>(value)
@@ -84,6 +127,18 @@ class SelectedMethodBoundsTests {
             check(pickThrough(first, Item()) == "first" && pickThrough(second, OtherItem()) == "second")
             check(pickThrough(Single() as SuspendPicker<OtherItem>, OtherItem()) == "single")
             check(pickStar(Single()) == "single")
+            for (overloaded in listOf<OverloadedPicker<Concrete>>(Overloaded(), LocalOverloadedPicker())) {
+                check(overloaded.pick<Concrete>(Concrete(), listOf(1)) == "iterable")
+                check(overloaded.pick<Concrete>(Concrete(), sequenceOf(1)) == "sequence")
+            }
+            val base: OverloadedPickerBase<Concrete> = OverloadedChild()
+            val item = Concrete()
+            val sequence = sequenceOf(3)
+            check(base.pick<Concrete>(item, listOf(1)) === item)
+            check(base.pick<Concrete>(item, sequence) === sequence)
+            val leaf: OverloadedPickerBase<Concrete> = OverloadedLeaf()
+            val list = listOf(1)
+            check(leaf.pick<Concrete>(item, list) === list && leaf.pick<Concrete>(item, sequence) === sequence)
             var order = ""
             check(run { order += "r"; first }.pick<Item>(run { order += "a"; Item() }) == "first")
             check(order == "ra")
@@ -117,11 +172,18 @@ class SelectedMethodBoundsTests {
             var result = "before"
             reverse.replace(byref(result), "after")
             check(result == "after")
-            val leaf = Leaf<String>()
-            val split = SplitSuspendFactory<Leaf<*>>(leaf)
-            val leftOnly: SuspendLeft<Leaf<*>> = split
-            val rightOnly: SuspendRight<Leaf<*>> = split
-            check(leftOnly.make<Leaf<*>>() === leaf && rightOnly.make<Leaf<*>>() === leaf)
+            val commonLeaf = Leaf<String>()
+            val common = SplitSuspendFactory<Leaf<*>>(commonLeaf)
+            val commonLeft: SuspendLeft<Leaf<*>> = common
+            val commonRight: SuspendRight<Leaf<*>> = common
+            check(commonLeft.make<Leaf<*>>() === commonLeaf && commonRight.make<Leaf<*>>() === commonLeaf)
+            val leaf = SplitLeaf<String>()
+            val split = SplitSuspendFactory<SplitLeaf<*>>(leaf)
+            val leftOnly: SuspendLeft<SplitLeaf<*>> = split
+            val rightOnly: SuspendRight<SplitLeaf<*>> = split
+            check(leftOnly.make<SplitLeaf<*>>() === leaf && rightOnly.make<SplitLeaf<*>>() === leaf)
+            val queue = Queue<Leaf<*>>()
+            check(split.keep<SplitLeaf<*>, Leaf<*>>(queue) === queue)
             check(JoinedSlot.IsValue<Item>(left.make<Item>()))
             right.make<Item>()
         }

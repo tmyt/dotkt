@@ -365,8 +365,10 @@ static class TypedPhysicalValueCoercion
             && Underlying(target) is TypeNode.Fqn slot && !index.ReferenceBuild)
         {
             var operand = Graph(value);
-            var physical = PhysicalResult(operand, scope, index);
+            var physical = PhysicalResult(operand, scope, index) ?? ExprType(operand, scope, index);
             if (physical is TypeNode.Fqn exact && ClrMemberResolution.SameInterfaceSlotType(exact, slot)) return value;
+            if (index.DelegateAdapters?.ImportNestedFunction(index.Document, value, SelectedFunctionResult(operand), physical, slot) is {} imported)
+                return imported;
             var source = physical is TypeNode.Fqn && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native
                 ? native : ExprType(operand, scope, index);
             if (Underlying(source) is TypeNode.Fn { Suspend: false } function
@@ -473,6 +475,10 @@ static class TypedPhysicalValueCoercion
     {
         if (index.References == null || index.ReferenceBuild || value == null || source == null) return null;
         var from = Underlying(source); var to = Underlying(target);
+        if ((to is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" } or TypeNode.Tv)
+            && value is IBirExpression produced && index.DelegateAdapters?.ImportNestedFunction(index.Document,
+                produced, SelectedFunctionResult(value), from) is {} imported)
+            return to is TypeNode.Tv ? FunctionViewOperand(Graph(imported), Object, target, index) : Graph(imported);
         // A native member projected as a Kotlin function still returns its exact
         // CLR delegate. Use the same callable view for storage and for type tests;
         // a nominal CLR delegate is not implicitly a Kotlin function of like arity.
@@ -482,7 +488,7 @@ static class TypedPhysicalValueCoercion
             && BirTypeLowering.DelegateFqnOf(destination) is { } delegateSlot
             && !ClrMemberResolution.SameInterfaceSlotType(physical, delegateSlot)
             && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native)
-            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, destination, delegateSlot, native, nativeSource: true));
+            return Graph(index.DelegateAdapters.AdaptFunctionView(index.Document, operand, selected, delegateSlot, native, nativeSource: true));
         if (to is TypeNode.Tv slot && from != to && (from is TypeNode.Tv or TypeNode.Fn { Suspend: false }
             || from is TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any" }))
         {
@@ -729,6 +735,13 @@ static class TypedPhysicalValueCoercion
             return SelectNativeArray(allocation, new TypeNode.Array(componentType), scope, index, witness);
         }
         RewriteChildren(node, scope, index, resultUsed);
+        // A function pointer has a signature, not a class on which to perform a checked cast.
+        if (node is BirCast { Type.Value: TypeNode.FnPtr targetPointer, E.Value: BirGraphValue pointerValue }
+            && ExprType(pointerValue, scope, index) is TypeNode.FnPtr sourcePointer)
+        {
+            ValidateNativePointerConversion(sourcePointer, targetPointer);
+            return pointerValue;
+        }
         if (node is BirBinaryOperation { Op.Value: "===" } identity) return LowerIdentity(identity, scope, index);
         if (node is BirSpreadConcat { LogicalSpreadOperands: true } spread)
             return PackLogicalSpread(spread, index);
@@ -1543,7 +1556,7 @@ static class TypedPhysicalValueCoercion
     }
     static TypeNode.Fn SelectedFunctionResult(BirGraphValue value) =>
         value is BirValueBlock { Result.HasValue: true } block ? SelectedFunctionResult(Graph(block.Result.Value))
-        : Underlying(DeclaredResult(value)) as TypeNode.Fn;
+        : value.ProjectedFunctionResult ?? Underlying(DeclaredResult(value)) as TypeNode.Fn;
 
     static TypeNode DeclaredResult(BirGraphValue node) => node switch {
         BirCallStatic value => value.Ret.OrDefault() ?? value.DynRet.OrDefault(),

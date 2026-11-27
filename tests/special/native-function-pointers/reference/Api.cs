@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 
 namespace NativePointers;
 
+public sealed class Capture<T> where T : allows ref struct { }
+
 public static unsafe class Api
 {
     public static delegate* managed<int, int> Value;
@@ -27,6 +29,12 @@ public static unsafe class Api
     public static delegate* managed<int, int, int, int, int, int, int, int, int, int, int, int,
         int, int, int, int, int, int, int, int, int, int, int, int> Wide;
     public static delegate* managed<int, int> Get() => &Twice;
+    public static U ApplyCaptured<T, U>(Capture<T> key, ref U value, delegate* managed<U, U> callback)
+        where T : System.IDisposable, allows ref struct
+    {
+        if (typeof(T) != typeof(System.IO.MemoryStream)) throw new System.InvalidOperationException();
+        return value = callback(value);
+    }
     public static delegate* managed<int, int> Echo(delegate* managed<int, int> p) => p;
     public static delegate* managed<int?, int?> EchoNullable(delegate* managed<int?, int?> p) => p;
     public static int Call(delegate* managed<int, int> p, int value) => p(value);

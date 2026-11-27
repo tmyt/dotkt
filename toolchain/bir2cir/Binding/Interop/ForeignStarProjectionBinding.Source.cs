@@ -25,10 +25,10 @@ static partial class ForeignStarProjectionBinding
     internal static IReadOnlyList<SourceMaterialization> ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
         IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, string> localClrAliases, Func<TypeNode, bool, TypeNode> projectValueType,
-        Action<IReadOnlyList<BirClassDefinition>> projectMaterialized)
+        Func<TypeNode,TypeNode> materialMethodArgument, Action<IReadOnlyList<BirClassDefinition>> projectMaterialized)
     {
         _localClrAliases = localClrAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
-        _projectValueType = projectValueType;
+        ContinueWithProjection(projectValueType, materialMethodArgument);
         return BindSourceRoots(roots, localExistentialOwners, refs, resetUsage: true,
             admitMaterialized: null, projectMaterialized);
     }
@@ -305,7 +305,8 @@ static partial class ForeignStarProjectionBinding
                 runtimeReceiver, SourceClassRef(new TypeNode.Fqn(selected.OpenType)),
                 (IBirExpression)((BirGraphValue)hint).DeepClone(), SourceInteger(selected.Token), SourceText(selected.RuntimeName),
                 SourceInteger(input.MethodArguments.Length), SourceArray(String, selected.RuntimeParameterKeys.Select(SourceText)),
-                SourceArray(Type, input.MethodArguments.Select(SourceClassRef)), runtimeArguments);
+                SourceArray(Type, input.MethodArguments.Select((type, i) => SourceClassRef(
+                    ClrMemberResolution.RequiresMaterialMethodArgument(selected.Method, i) ? _materialMethodArgument(type) : type))), runtimeArguments);
         var resultPlan = PlanForeignResult(selected.DeclarationReturn, input.Result, owner, refs, input.MethodArguments);
         var (adapterType, target, adapt, projected) = resultPlan;
         if (valueReceiver)

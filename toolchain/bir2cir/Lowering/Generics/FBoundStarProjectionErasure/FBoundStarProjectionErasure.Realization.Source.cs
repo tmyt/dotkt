@@ -26,6 +26,7 @@ static partial class FBoundStarProjectionErasure
         var foreign = ForeignStarProjectionBinding.ApplyAll(roots, carriers, context.References,
             context.Preparation.LocalClrAliases,
             (type, shape) => context.Projection.Rewrite(type, preserveArrayShape: shape),
+            context.Projection.MaterialNativeMethodArgument,
             types => {
                 foreach (var type in types)
                 {

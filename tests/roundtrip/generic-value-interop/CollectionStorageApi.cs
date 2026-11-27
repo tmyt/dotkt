@@ -4,7 +4,9 @@ namespace GenericValueInterop;
 
 public interface ICollectionOverloadSlot { string Pick(object value); }
 public class CollectionOverloadBase { public virtual string Pick(object value) => "base"; }
-public sealed class CaptureBox<T> where T : allows ref struct { }
+#nullable enable
+public class CaptureBox<T> where T : allows ref struct { internal virtual T? Read() => default; }
+#nullable restore
 
 public static class CollectionStorageApi
 {
@@ -27,6 +29,18 @@ public static class CollectionStorageApi
     public static int CountOblivious<T>(List<T> items) where T : System.IO.Stream => items.Count;
 
 #nullable enable
+    private sealed class StreamBox(System.IO.MemoryStream stream) : CaptureBox<System.IO.MemoryStream>
+    { internal override System.IO.MemoryStream Read() => stream; }
+    public static CaptureBox<System.IO.MemoryStream> BoxStream(System.IO.MemoryStream stream) => new StreamBox(stream);
+    public static int VisitAliased<T>(CaptureBox<T> box, ref int first, ref int second)
+        where T : System.IDisposable, allows ref struct
+    {
+        if (typeof(T) != typeof(System.IO.MemoryStream)) throw new System.InvalidOperationException();
+        ++first;
+        return ++second;
+    }
+    public static T? ReadWith<T>(CaptureBox<T> box, System.ReadOnlySpan<char> tag)
+        where T : System.IDisposable, allows ref struct => tag.Length == 5 ? box.Read() : throw new System.ArgumentException();
     public static void Append<T>(List<T> items, T? value) where T : notnull => items.Add(value!);
     public static object NullableIntList() => new List<int?>();
     public static int CountWith<T, W>(List<T> items, W witness)

@@ -59,7 +59,7 @@ public annotation class ClrAwaitBridge
 public annotation class ClrFlagsOperation(val role: String)
 
 // Compiler-internal DLL -> KLIB transport for CLR custom-attribute named arguments. dll2klib appends a CLR
-// attribute's writable public field/property to each projected annotation constructor as an optional Kotlin
+// attribute's writable public field/property to its selected annotation primary as an optional Kotlin
 // parameter and marks that parameter with its original metadata role. kotc then keeps fixed constructor arguments
 // and named field/property arguments distinct in BIR; bir2cir remains responsible for interpreting pseudo-custom
 // attributes such as DllImportAttribute. User-authored use is undefined compiler metadata.

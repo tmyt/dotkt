@@ -114,7 +114,10 @@
     },
     "capturedGenericArgument": {
       "type": "object", "x-dotkt-model": { "name": "CapturedGenericArgument", "domain": "birLoweringValues" },
-      "properties": { "argument": { "type": "integer" }, "ownerPositions": { "type": "array", "items": { "type": "integer" } } },
+      "properties": {
+        "argument": { "type": "integer" }, "ownerPositions": { "type": "array", "items": { "type": "integer" } },
+        "appliedPositions": { "type": "array", "items": { "type": "integer" }, "description": "Invariant result positions instantiated against the surrounding call's approximation, not independent storage witnesses." }
+      },
       "required": ["argument", "ownerPositions"], "additionalProperties": false
     },
     "birOpaqueBytes": {
@@ -354,7 +357,7 @@
     },
     "birOverride": {
       "type": "object", "x-dotkt-model": { "name": "BirOverride", "domain": "birCoreValues", "loweringProperties": { "physicalDeclarationId": { "type": "string" } } },
-      "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter", "event-add", "event-remove"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" } },
+      "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "type": "string", "enum": ["method", "getter", "setter", "event-add", "event-remove"] }, "arity": { "type": "integer" }, "declarationId": { "type": "string" }, "nativeMethodKey": { "type": "string" } },
       "required": ["owner", "member", "kind", "arity"], "additionalProperties": false
     },
     "birCallStatic": {
@@ -549,7 +552,8 @@
       "properties": {
         "attr": { "$ref": "#/$defs/type" }, "attrClr": { "type": "boolean" },
         "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
-        "namedArgs": { "type": "array", "items": { "$ref": "#/$defs/birAttributeNamedArgument" } }
+        "namedArgs": { "type": "array", "items": { "$ref": "#/$defs/birAttributeNamedArgument" } },
+        "constructorNativeKey": { "type": "string", "description": "Native declaration identity of the constructor selected for a projected CLR annotation application." }
       },
       "required": ["attr", "argTypes", "args"], "additionalProperties": false
     },
