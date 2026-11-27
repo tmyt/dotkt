@@ -180,7 +180,7 @@ static partial class FBoundStarProjectionErasure
                 if (arity != 0 && referenceSlot.DeclarationId != null)
                     state.SelectedMethodArgumentSlots[node] = (referenceSlot.SourceMethodDeclaration ?? id, referenceSlot.DeclarationId);
                 MarkPhysicalPropertyCallSource(node, property, sourceProperty, accessor, referenceSlot.DeclarationId);
-                return Align(referenceSlot.SuspendReturnType ?? referenceSlot.ReturnTypeNode, sourceResult, frame);
+                return Align(referenceSlot.ProjectedInvocationResult, sourceResult, frame);
             }
         }
         if (count == 0 && !call.Signature.HasValue) call.Signature = Array.Empty<TypeNode>();

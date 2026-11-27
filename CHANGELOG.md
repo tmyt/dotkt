@@ -8,6 +8,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Generic Kotlin helpers can take a star-projected mutable list and an independently constructed list without requiring identical CLR storage types (#1963).
 - A suspend override can forward a CLR function pointer unchanged while specializing another parameter of a generic base method from a different assembly (#2035).
 - Kotlin can receive a reference from a projected CLR generic call even when another argument must stay stack-only, without losing the returned object's identity (#1942).
+- A projected generic Kotlin interface can return `CharSequence` from a suspend method across DLLs. Kotlin callers retain the returned value across suspension, and CLR callers can await the interface's declared task (#2046).
 - Overriding a CLR base's projected `iterator()` in Kotlin also supplies its non-generic `IEnumerable.GetEnumerator()` implementation (#2004).
 - Passing a smart-cast local such as an `Any` narrowed to `String` as a writable reference to the narrower type is now diagnosed instead of silently writing to a copy (#1965).
 - Overriding one inherited CLR default interface member in Kotlin preserves the native base's explicit implementation of its other members (#2013).
@@ -22,6 +23,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A suspend override returning its bounded class type parameter can be called through its interface when the class also stores that parameter (#2024).
 - A suspend override returning a value type now returns a valid Task through its concrete, generic base, and interface declarations (#2031).
 - Calling a suspend override through its CLR base class now runs the derived body when it returns a narrower class (#2034).
+- Kotlin can implement a suspend interface method returning `CharSequence` when the interface comes from another DLL (#2052).
 - Implementing a derived CLR interface no longer adds private forwarding methods for inherited slots already implemented by the selected native base method (#1984).
 - Kotlin callbacks returning `Unit` can be passed to wide CLR delegates that require a `kotlin.Unit` return value, as well as delegates returning `void` (#1946).
 - Passing a CLR delegate through Kotlin now adapts variant inputs and results that require boxing, including nested delegates (#1953).

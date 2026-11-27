@@ -184,13 +184,21 @@ static partial class CovariantInterfaceReturnBridge
                         suspend, out var declaration, semanticConstraints: false, selectedDeclarationId: null)) continue;
                 var declarationParameters = declaration.TypeParams;
                 var slotParameters = declaration.PhysicalParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, physicalArguments)).ToArray();
-                var declarationMapping = new NullableRepresentationTypes(refs.NullableTypeFrames.GetValueOrDefault(semanticOwner.Name),
-                    declaration.NullableFrame, refs.NullableTypeFrames, isValue, policy: representations);
-                var slotReturn = SupertypeGraph.SubstOwnerTvs(suspend
-                    ? NullableGenericErasure.EraseNullableTv(declarationMapping.Slot(declaration.Return), isValue)
-                    : declaration.PhysicalReturn, physicalArguments);
+                var declaredReturn = declaration.PhysicalReturn;
+                var returnsValue = declaration.ReturnsValue;
+                if (suspend)
+                {
+                    // The selected hot MethodDef owns its invariant completion ABI;
+                    // KotlinSuspendResult describes the source result, not its CLR slot.
+                    if (declaredReturn is not TypeNode.Fqn task ||
+                        ReferenceMetadataReader.StripGenericArity(task.Name) != "System.Threading.Tasks.Task")
+                        throw new InvalidOperationException($"Selected suspend declaration '{semanticOwner.Name}.{sourceMember}' does not return Task");
+                    returnsValue = task.Args is { Length: 1 };
+                    declaredReturn = returnsValue ? task.Args[0] : new TypeNode.Fqn("kotlin.Unit");
+                }
+                var slotReturn = SupertypeGraph.SubstOwnerTvs(declaredReturn, physicalArguments);
                 var logicalResult = suspend ? SupertypeGraph.SubstOwnerTvs(declaration.Return, ownerArguments) : null;
-                var valueReturn = IsUnit(slotReturn) && (suspend ? !IsUnit(declaration.Return) : declaration.ReturnsValue);
+                var valueReturn = IsUnit(slotReturn) && returnsValue;
                 var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
                 if (physicalOwner == null) continue;
                 var descriptorOwner = new TypeNode.Fqn(physicalOwner, physicalArguments.Length == 0 ? null : physicalArguments);
@@ -216,10 +224,14 @@ static partial class CovariantInterfaceReturnBridge
                 }
                 if (slotParameters.Any(type => type == null) || slotReturn == null
                     || !ParametersPhysicallyEqual(SourceParameterTypes(implementation), slotParameters, ownArguments, refs, isValue)) continue;
-                var implementationReturn = SubstOwnerTvs(implementationReturnOriginal, ownArguments);
+                // Compare the two Task entries. The implementation may deliberately
+                // resume Kotlin callers with a different (unwrapped) representation.
+                var implementationReturn = SubstOwnerTvs(suspend
+                    ? implementation.SuspendTaskResult.OrDefault() ?? implementationReturnOriginal
+                    : implementationReturnOriginal, ownArguments);
                 if (implementationReturn == slotReturn || BirTypeLowering.SamePhysicalSlotType(slotReturn, implementationReturn,
                         refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
-                        nullableFrames: refs.NullableTypeFrames, leftReturnsValue: !suspend && declaration.ReturnsValue)
+                        nullableFrames: refs.NullableTypeFrames, leftReturnsValue: returnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
                 TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
                     refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);

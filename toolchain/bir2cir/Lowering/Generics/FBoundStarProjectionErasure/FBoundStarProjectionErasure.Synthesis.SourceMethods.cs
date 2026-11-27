@@ -67,7 +67,8 @@ static partial class FBoundStarProjectionErasure
                 Enumerable.Range(0, owner.Arity).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray())),
             Virtual = method.Virtual.OrDefault() || method.Abstract.OrDefault(),
             Recv = OptionalField<IBirExpression>.Of(new BirThis()), Method = method.Name,
-            Sig = signature.ToArray(), Ret = BirGraphValue.CopyType(originalRet), Args = arguments.ToArray(),
+            Sig = signature.ToArray(), Ret = BirGraphValue.CopyType(method.SuspendRet.OrDefault() ?? originalRet),
+            Args = arguments.ToArray(),
             _exactExistentialBridgeOwnerCall = true, ClrOwnerResolved = true,
         };
         if (method.DeclarationId.HasValue) call.DeclarationId = method.DeclarationId;
@@ -157,6 +158,7 @@ static partial class FBoundStarProjectionErasure
         OptionalField<TypeNode> Project(OptionalField<TypeNode> fact) => fact.HasValue
             ? OptionalField<TypeNode>.Of(BirGraphValue.CopyType(EraseOwnerTv(fact.Value, context.Owners, context.References))) : default;
         target.SuspendRet = Project(source.SuspendRet);
+        target.SuspendTaskResult = Project(source.SuspendTaskResult);
         target.SuspendResult = Project(source.SuspendResult);
         target.NullableGenericRet = Project(source.NullableGenericRet);
         target.NullableGenericSuspendRet = Project(source.NullableGenericSuspendRet);
