@@ -437,6 +437,7 @@ def outputs(root, definitions):
                       "    internal bool SourceCallableVirtual { get; set; }",
                       "    internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }",
                       "    internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }",
+                      "    internal IReadOnlyDictionary<string, string>? OverrideRepresentationDeclarations { get; set; }",
                       "    internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }",
                       "    internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }",
                       "    internal int FacadeModalityFlags { get; set; }"]
