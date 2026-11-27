@@ -85,6 +85,8 @@ private class OpenVisitor : GenericValueInterop.NativeMiddleVisitor<String, Stre
 }
 private class BoundVisitor : GenericValueInterop.NativeBoundVisitor<StreamChunk<*>>() {
     override fun Visit(item: StreamChunk<*>): Any? = item.data
+    override var Current: StreamChunk<*> = StreamChunk(0)
+    override var Count: Int = 0
 }
 private fun <T> erase(value: T): Any? = value
 private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(make())
@@ -652,7 +654,14 @@ class ConstrainedNullableBoundTests {
         child.Current = number
         check(open.Load() === number)
         check(child.DispatchOther("other type") == "middle")
-        val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = BoundVisitor()
+        val boundedChild = BoundVisitor()
+        val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = boundedChild
+        bounded.Store(number)
+        check(boundedChild.Current === number)
+        boundedChild.Current = text
+        check(bounded.Load() === text)
+        boundedChild.Count = 42
+        check(bounded.ReadCount() == 42)
         check(bounded.Dispatch(text) == "payload" && bounded.Dispatch(number) == 42L)
         check(bounded.DispatchStream(text) == "other")
     }

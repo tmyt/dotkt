@@ -274,10 +274,12 @@ static partial class KotlinOverrideSlotBridge
                 var accessorKind = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
                 // Resolve the declaration before two distinct Kotlin applications can become
                 // the same carrier. A fake override on an intermediate type is not a MethodDef.
-                if (phase == Phase.DeclarationMoves && !supIsInterface && accessorKind == null && o.Row != null && !refs.HasDotKtOwner(owner.Name)
-                    && !o.Row.ProjectedNativeBase.Selected && FBoundStarProjectionErasure.ContainsExistentialProjection(owner)
+                if (phase == Phase.DeclarationMoves && !supIsInterface && o.Row != null && !refs.HasDotKtOwner(owner.Name)
+                    && !o.Row.ProjectedNativeBase.Selected && (accessorKind != null || FBoundStarProjectionErasure.ContainsExistentialProjection(owner))
                     && refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is { IsInterface: false } open)
-                    o.Row.ProjectedNativeBase = (true, refs.SelectProjectedNativeBase(open, o.Row.NativeMethodKey.OrDefault()));
+                    o.Row.ProjectedNativeBase = (true, accessorKind == null
+                        ? refs.SelectProjectedNativeBase(open, o.Row.NativeMethodKey.OrDefault())
+                        : refs.SelectNativePropertyOverride(open, owner, member, accessorKind, ps.Select(p => p.Type).ToArray()));
                 var nativeSelection = o.Row?.ProjectedNativeBase ?? default;
                 if (nativeSelection.Selected && (supIsInterface || nativeSelection.Method == null
                     || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeSelection.Method.DeclaringType)) continue;
@@ -311,7 +313,7 @@ static partial class KotlinOverrideSlotBridge
                 // For a native class the authored override and the single reached
                 // base can close the same MethodDef at different representations.
                 // Select the overload in the former frame, emit its slot in the latter.
-                var lookupArgs = phase == Phase.PhysicalBridges && !supIsInterface && accessorKind == null
+                var lookupArgs = phase == Phase.PhysicalBridges && !supIsInterface && (accessorKind == null || nativeSelection.Method != null)
                     && !refs.HasDotKtOwner(spec.Name) && SupertypeGraph.SameDeclaration(spec, owner, refs.PhysicalTypeNames)
                     ? owner.Args ?? Array.Empty<TypeNode>() : selectedSlotArgs;
                 // A referenced interface can redeclare a Kotlin property while its flattened override facts also name
@@ -332,8 +334,6 @@ static partial class KotlinOverrideSlotBridge
                     if (phase != Phase.PhysicalBridges
                         || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeOwner) continue;
                     physicalSelectedSpec = spec;
-                    if (!nativeOwner.IsInterface && FBoundStarProjectionErasure.ContainsExistentialProjection(owner))
-                        selectedArgs = supArgs;
                 }
                 // A class has one base chain. Bind its property only at the reached
                 // declarer: the edge already carries the exact CLR storage arguments.

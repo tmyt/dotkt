@@ -34,6 +34,11 @@ public class NativeBoundVisitor<T> where T : System.IO.Stream
 {
     public virtual object Visit(T item) => "base";
     public virtual object Visit(System.IO.Stream item) => "other";
+    public virtual T Current { get; set; }
+    public void Store(T item) => Current = item;
+    public T Load() => Current;
+    public virtual int Count { get; private set; } = 1;
+    public int ReadCount() => Count;
     public object Dispatch(T item) => Visit(item);
     public object DispatchStream(System.IO.Stream item) => Visit(item);
 }
