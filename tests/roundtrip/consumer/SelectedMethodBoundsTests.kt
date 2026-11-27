@@ -24,6 +24,17 @@ class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFacto
 
 private fun <A : Concrete> takeNullable(parent: GenericParent<*>, queue: Queue<A?>): Any = parent.take<A>(queue)
 
+private class OrdinarySuspendFactory<K, P> : SuspendFactory<K>, ReverseStorageFactory<K, P>
+    where K : Base, K : IRight, K : ILeft {
+    override suspend fun <A : K> make(): Any = Product<A>()
+    override fun replace(target: ClrRef<P>, input: P) { target.value = input }
+}
+
+private class SplitSuspendFactory<K>(val value: K) : SuspendLeft<K>, SuspendRight<K>
+    where K : Base, K : ILeft, K : IRight {
+    override suspend fun <A : K> make(): Any = value
+}
+
 private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     SuspendParent(), SuspendLeft<Concrete>, SuspendRight<Concrete> where C : Base, C : ILeft {
     var calls = 0
@@ -93,8 +104,24 @@ class SelectedMethodBoundsTests {
         val factory: SuspendFactory<Concrete> = child
         val left: SuspendLeft<Concrete> = child
         val right: SuspendRight<Concrete> = child
+        val exact: SuspendFactory<Concrete> = OrdinarySuspendFactory<Concrete, String>()
+        val ordinaryTask = InheritedSuspendTaskApi.ThroughConstrainedTask(exact)
+        check(JoinedSlot.IsValue<Item>(ordinaryTask.Result) && !JoinedSlot.IsValue<Concrete>(ordinaryTask.Result))
         var matched = false
         val cold: suspend () -> Any = {
+            check(JoinedSlot.IsValue<Item>(exact.make<Item>()))
+            val projected = OrdinarySuspendFactory<Leaf<*>, String>()
+            val face: SuspendFactory<Leaf<*>> = projected
+            val reverse: ReverseStorageFactory<Leaf<*>, String> = projected
+            check(JoinedSlot.IsValue<Leaf<*>>(face.make<Leaf<*>>()) && JoinedSlot.IsValue<Leaf<*>>(reverse.make<Leaf<*>>()))
+            var result = "before"
+            reverse.replace(byref(result), "after")
+            check(result == "after")
+            val leaf = Leaf<String>()
+            val split = SplitSuspendFactory<Leaf<*>>(leaf)
+            val leftOnly: SuspendLeft<Leaf<*>> = split
+            val rightOnly: SuspendRight<Leaf<*>> = split
+            check(leftOnly.make<Leaf<*>>() === leaf && rightOnly.make<Leaf<*>>() === leaf)
             check(JoinedSlot.IsValue<Item>(left.make<Item>()))
             right.make<Item>()
         }
