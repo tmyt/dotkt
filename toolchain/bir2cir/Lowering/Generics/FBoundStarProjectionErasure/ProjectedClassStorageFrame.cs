@@ -10,6 +10,7 @@ sealed class ProjectedClassStorageFrame
     internal record WitnessSlot(int OwnerIndex, TypeNode Bound, bool NativeArgument)
     {
         internal TypeNode[] Evidence { get; init; }
+        internal bool MaterialReference { get; init; }
         internal bool Proves(TypeNode constraint, Func<TypeNode,TypeNode,bool> proves) =>
             proves(Bound, constraint) || (Evidence?.Any(b => proves(b, constraint)) ?? false);
     }
@@ -53,6 +54,16 @@ sealed class ProjectedClassStorageFrame
     internal ProjectedClassStorageFrame WithNativeArguments(Func<InterfaceSlot, bool> required) =>
         new(original, Interfaces.Select(s => s with { NativeArgument = required(s) }).ToArray());
 
+    internal ProjectedClassStorageFrame WithMaterialReferences(Func<int, bool> required)
+    {
+        var material = Interfaces.GroupBy(s => s.OwnerIndex).Where(g => required(g.Key))
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        if (material.Count == 0) return this;
+        return new(original, Interfaces.Select(s => material.TryGetValue(s.OwnerIndex, out var group) && s == group[0]
+            ? s with { MaterialReference = true, NativeArgument = true,
+                Evidence = (s.Evidence ?? []).Concat(group.Select(f => f.Bound)).Distinct().ToArray() } : s).ToArray());
+    }
+
     internal ProjectedClassStorageFrame WithForwardedPrimaryBounds(Func<InterfaceSlot, IEnumerable<TypeNode>> required)
     {
         var changed = false;
@@ -92,6 +103,7 @@ sealed class ProjectedClassStorageFrame
                 .Select(s => original[s.OwnerIndex].Constraints.Value[s.BoundIndex])).Concat(slot.Evidence ?? []).Distinct();
             parameters.Add(new BirTypeParameter { Name = "$interface$" + parameters.Count,
                 Constraints = bounds.Select(BirGraphValue.CopyType).ToArray() });
+            if (slot.MaterialReference) parameters[^1].SpecialConstraints = new[] { "class" };
         }
         foreach (var group in slots.GroupBy(slot => slot.OwnerIndex))
         {

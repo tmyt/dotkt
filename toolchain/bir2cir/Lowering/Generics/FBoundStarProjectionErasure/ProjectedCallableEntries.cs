@@ -385,7 +385,7 @@ sealed partial class ProjectedCallableEntries
         }
         return declarationPlans[method] = frame == null ? null : ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
             RepresentationsFor(method),
-            method.Ret.OrDefault(), i => Nominal(method.TypeParams.Value[i]));
+            method.Ret.OrDefault(), Nominal, values.NeedsVirtualStorageWitness);
     }
 
     BirFunctionDeclaration[] Declare(BirFunctionDeclaration[] source, IBirTypeDeclaration owner, List<Body> bodies,
@@ -804,6 +804,10 @@ sealed partial class ProjectedCallableEntries
             if (!f.NativeArgument || actual[f.Primary] is not TypeNode.Tv v)
                 return Proof(actual[f.Primary], required, owner, method) ?? actual[f.Primary];
             var scope = v.Scope == "method" ? method : owner;
+            var requiredRows = f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)).ToArray();
+            if (Scope.MaterialFact(v, owner, method) is { } material &&
+                requiredRows.All(c => material.Formal.Constraints.OrEmpty().Any(b => Proves(b, c))))
+                return material.Variable;
             var slots = scope.Slots ?? [];
             var sameValue = slots.Select((slot, i) => (slot, i))
                 .Where(row => row.slot.OwnerIndex == v.I && row.slot.NativeArgument).ToArray();
@@ -821,7 +825,6 @@ sealed partial class ProjectedCallableEntries
             }
             // All native uses of this source argument share one CLR value witness.
             // The open caller formal must prove the callee's whole conjunction.
-            var requiredRows = f.Constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, actual)).ToArray();
             foreach (var row in sameValue)
                 if (requiredRows.All(c => row.slot.Proves(c, Proves)))
                     return new TypeNode.Tv(v.Scope, scope.Parameters.Length + row.i);

@@ -52,7 +52,8 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         operands.Select(p => p.DelegateRestorationType ?? p.Type.OrDefault()).Append(result).Where(t => t != null);
 
     internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands,
-        ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result, Func<int, bool> nominal)
+        ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result, Func<BirTypeParameter, bool> nominal,
+        Func<IEnumerable<TypeNode.Fqn>, bool> needsMaterial)
     {
         var formals = frame.Declare().ToList();
         // Only the projected entry separates the nominal class witness from the
@@ -74,10 +75,24 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         foreach (var type in MaterialSignature(operands, result))
             NativeUses(type, references, (v, row, args, invariant) => {
                 if (v.Scope != "method") return null;
-                if (invariant && (facets.Any(f => f.OwnerIndex == v.I) || nominal(v.I))) native.Add(v.I);
+                if (invariant && (facets.Any(f => f.OwnerIndex == v.I) || nominal(formals[v.I]))) native.Add(v.I);
                 requirements.Add((v.I, row, args));
                 return null;
             });
+        // The storage slot may represent several concrete types by one Kotlin
+        // carrier. A native construction needs a distinct material argument;
+        // its joint interface bounds are already part of the published frame.
+        var materialBounds = new Dictionary<int, TypeNode[]>();
+        foreach (var group in facets.GroupBy(f => f.OwnerIndex))
+        {
+            var ordinary = group.Key;
+            var bounds = group.Select(f => f.Bound).Distinct().ToArray();
+            // The selected frame may join independently inherited slots. Its
+            // constraints, not the implementation's substituted spelling, define the entry.
+            if (!needsMaterial(formals[ordinary].Constraints.OrEmpty().Concat(bounds).OfType<TypeNode.Fqn>())) continue;
+            native.Add(ordinary);
+            materialBounds[ordinary] = bounds;
+        }
         // A dependent native row B : A must stay in the same frame as A.
         // The nominal B : A edge remains on the original Kotlin formals.
         bool changed;
@@ -103,9 +118,16 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             var uses = requirements.Where(r => r.Source == index).ToArray();
             var row = new BirTypeParameter { Name = "$native$" + index };
             var bounds = uses.SelectMany(r => r.Row.Constraints.OrEmpty().Select(c =>
-                SupertypeGraph.SubstOwnerTvs(c, r.Arguments.Select(InNativeFrame).ToArray()))).Where(c =>
+                SupertypeGraph.SubstOwnerTvs(c, r.Arguments.Select(InNativeFrame).ToArray()))).Concat(
+                    (materialBounds.GetValueOrDefault(index) ?? []).Select(InNativeFrame)).Where(c =>
                     c != new TypeNode.Tv("method", formals.Count)).Distinct().ToArray();
-            var special = uses.SelectMany(r => r.Row.SpecialConstraints.OrEmpty())
+            var ordinary = formals[index];
+            // Splitting a nominal class witness from the material argument
+            // does not turn a reference-only source parameter into a value type.
+            var referenceOnly = materialBounds.ContainsKey(index) && (ordinary.SpecialConstraints.OrEmpty().Contains("class")
+                || nominal(ordinary) && ordinary.Constraints.OrEmpty().OfType<TypeNode.Fqn>().All(bound =>
+                    references.PhysicalConstraintType(bound) is not TypeNode.Fqn { Name: "System.ValueType" or "System.Enum" }));
+            var special = uses.SelectMany(r => r.Row.SpecialConstraints.OrEmpty()).Concat(referenceOnly ? ["class"] : Array.Empty<string>())
                 .Where(s => s != "allowsRefStruct").Distinct().ToArray();
             if (bounds.Length != 0) row.Constraints = bounds;
             if (special.Length != 0) row.SpecialConstraints = special;

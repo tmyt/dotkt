@@ -372,6 +372,7 @@ class ConstrainedNullableBoundTests {
         override fun <A : K> make(): Any = JoinedProduct<A>()
     }
     private open class JointRoot : Base(), roundtrip.constrainedbound.JointProof
+    private class JointLeaf<T> : Base(), roundtrip.constrainedbound.JointProof
     private class FixedFactory : roundtrip.constrainedbound.DependentJoinedContract<JointRoot>() {
         override fun <A : JointRoot> make(): Any = JoinedProduct<A>()
     }
@@ -419,8 +420,17 @@ class ConstrainedNullableBoundTests {
             native.make<roundtrip.selectedbounds.Item>()))
         check(RoundtripDependentNative.JoinedSlot.IsValue<roundtrip.selectedbounds.OtherItem>(
             native.make<roundtrip.selectedbounds.OtherItem>()))
+        check(RoundtripDependentNative.JoinedSlot.HasActualArgument(
+            native.make<roundtrip.selectedbounds.Leaf<Int>>(), roundtrip.selectedbounds.Leaf<Int>()))
+        check(RoundtripDependentNative.JoinedSlot.HasActualArgument(
+            native.make<roundtrip.selectedbounds.Leaf<String>>(), roundtrip.selectedbounds.Leaf<String>()))
         val exact = roundtrip.selectedbounds.Item()
         check(native.select(exact) === exact)
+        val deferred: roundtrip.selectedbounds.DeferredNativeFactory = roundtrip.selectedbounds.NativeFactory()
+        check(RoundtripDependentNative.JoinedSlot.HasActualArgument(deferred.later<JointRoot>()(null), JointRoot()))
+        check(RoundtripDependentNative.JoinedSlot.HasActualArgument(
+            roundtrip.selectedbounds.DeferredOwner<JointLeaf<Int>>().make(deferred), JointLeaf<Int>()))
+        check(roundtrip.selectedbounds.DeferredOwner<JointLeaf<*>>().make(deferred) is RoundtripDependentNative.ReferenceProduct<*>)
         val factory: roundtrip.constrainedbound.JoinedFactoryContract = ParameterlessFactory()
         check(factory.make<JoinedChild<Int>>() is RoundtripDependentNative.IJoinedValue<*>)
         check(factory.make<JoinedChild<*>>() is RoundtripDependentNative.IJoinedValue<*>)

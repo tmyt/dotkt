@@ -99,9 +99,21 @@ sealed partial class ProjectedCallableEntries
                 return contract.PrimaryArity + i;
             return Position(targetFacet.OwnerIndex, true);
         }
-        int NativeInput(int targetIndex) =>
-            contract != null && Array.IndexOf(contract.NativeIndices, Position(targetIndex)) is var i && i >= 0
-                ? contract.PrimaryArity + contract.Facets.Length + i : Position(targetIndex, true);
+        int NativeInput(int targetIndex)
+        {
+            var primary = Position(targetIndex);
+            if (contract != null && Array.IndexOf(contract.NativeIndices, primary) is var i && i >= 0)
+                return contract.PrimaryArity + contract.Facets.Length + i;
+            var storage = Position(targetIndex, true);
+            var native = plan.Parameters[plan.PrimaryArity + plan.Facets.Length + Array.IndexOf(plan.NativeIndices, targetIndex)];
+            // An interface-only storage formal does not prove a CLR reference
+            // constraint. Use the reference-only primary in that case; the
+            // operation bridge below retains any additional interface bounds.
+            return native.SpecialConstraints.OrEmpty().Contains("class")
+                && !weakRows[storage].SpecialConstraints.OrEmpty().Contains("class")
+                && (Nominal(plan.Parameters[targetIndex]) || Nominal(weakRows[primary]) || weakRows[primary].SpecialConstraints.OrEmpty().Contains("class"))
+                ? primary : storage;
+        }
         int[] inputs = Enumerable.Range(0, plan.PrimaryArity).Select(i => Position(i))
             .Concat(plan.Facets.Select(FacetInput)).Concat(plan.NativeIndices.Select(NativeInput)).ToArray();
         var proofs = new List<(int Position, TypeNode Bound)>();

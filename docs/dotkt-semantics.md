@@ -158,6 +158,11 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   interface bound, both Kotlin and C# dispatch through **one** virtual method. Ordinary C# calls still use
   the source-named entry with both original constraints; this non-overridable entry forwards to the virtual
   implementation. A C# subclass overrides the projected implementation, not the forwarding entry.
+  When the declaration combines a class bound with multiple independent interface bounds,
+  the projected entry can carry a separate CLR type argument for native generic uses.
+  Constructing a native `Product<A>` for two closed Kotlin types does not produce the same
+  CLR type merely because they share a Kotlin storage interface. A C# override uses the
+  generic parameter list of the projected entry.
   Kotlin callers and subclasses keep the original source signature. Imported C# virtual slots are unchanged.
   When two Kotlin interfaces specialize the same source method with different CLR constraint frames,
   calls through either interface dispatch to the same override with the caller's actual method argument.

@@ -53,7 +53,15 @@ open class Concrete : Base(), ILeft, IRight
 class Item : Concrete()
 class Leaf<T> : Concrete()
 class Product<T> : IJoinedValue<T> where T : Base, T : ILeft, T : IRight
-class NativeFactory : JointFactory<Concrete> {
+interface DeferredNativeFactory {
+    fun <A> later(): (A?) -> Any where A : Base, A : roundtrip.constrainedbound.JointProof
+}
+class DeferredOwner<A> where A : Base, A : roundtrip.constrainedbound.JointProof {
+    fun make(factory: DeferredNativeFactory): Any = factory.later<A>()(null)
+}
+class NativeFactory : JointFactory<Concrete>, DeferredNativeFactory {
+    override fun <A> later(): (A?) -> Any where A : Base, A : roundtrip.constrainedbound.JointProof =
+        { RoundtripDependentNative.ReferenceProduct<A>() }
     override fun <A : Concrete> make(): Any = RoundtripDependentNative.NativeProduct<A>()
     override fun <A : Concrete> select(value: A): A {
         val deferred = { RoundtripDependentNative.NativeProduct<A>(value) }
