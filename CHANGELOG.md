@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- Calling an already-compatible CLR callback from Kotlin now checks array arguments before entering native code, without copying them (#1999).
 - Implementing a generic Kotlin interface with a star-projected owner argument no longer adds an invalid CLR constraint to its overriding method (#2067).
 - A Kotlin override of a mutable CLR property on a star-projected generic base now dispatches both reads and writes to the Kotlin accessor (#2064).
 - A Kotlin type parameter bounded by a constructed Kotlin class can be used as a CLR reference-type argument without losing the original value (#2065).
