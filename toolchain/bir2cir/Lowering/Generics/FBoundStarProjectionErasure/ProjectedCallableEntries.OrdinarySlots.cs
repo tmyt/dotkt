@@ -107,7 +107,7 @@ sealed partial class ProjectedCallableEntries
         var ret = Close(slot.Return);
         var args = inputs.Select(i => (TypeNode)new TypeNode.Tv("method", i))
             .Concat(plan.AddressOperands.Select(i => ((TypeNode.ByRef)SignatureValueTypes.Of(formals[i].Type.Value)).Of)).ToArray();
-        if (contract != null && NeedsTaskView(target, ret, args))
+        if (NeedsTaskView(target, ret, args))
         {
             var view = Bridge(selectedOwner, slot.Name, weakRows);
             view.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :

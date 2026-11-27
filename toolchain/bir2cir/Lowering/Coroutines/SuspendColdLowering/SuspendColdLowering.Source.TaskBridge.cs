@@ -61,6 +61,8 @@ static partial class SuspendColdLowering
                 method.ProjectedTaskView = (ProjectedCallableEntries.EntryId(_declarationId), viewId);
                 method.Generated = true; method.Override = false; method.Abstract = false; method.Virtual = false; method.Vis = "private";
                 method.TypeParams = _methodTypeParamDecls.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+                if (view is TypeNode.Tv)
+                    method.TypeParams = method.TypeParams.Value.Append(new BirTypeParameter { Name = "TCompletion" }).ToArray();
                 method.Name = viewName;
             }
             return method;
@@ -83,7 +85,7 @@ static partial class SuspendColdLowering
                 {
                     declaringOwner = local.Owner.Name.Value;
                     var storage = ResultStorageTypeSource(local.Method.SuspendRet.OrDefault());
-                    if (storage == null || IsUnitTn(storage) && !local.Method.DotktValueReturn.OrDefault()) continue;
+                    if (storage == null) continue;
                     result = local.Method.SuspendTaskResult.OrDefault() ?? storage;
                 }
                 else if (_refs.TryDeclarationSignatureSlot(id, out var slot) && slot.IsInterface &&
@@ -97,7 +99,10 @@ static partial class SuspendColdLowering
                 BirGraphNameFields.VisitTypeNodes(result, t => usesOwner |= t is TypeNode.Tv { Scope: "type" });
                 var views = usesOwner ? _module.TaskSlotOwners(_ownerClass, declaringOwner, id, local != null, edges)
                     .Select(s => SupertypeGraph.SubstOwnerTvs(result, s.Args ?? [])).Distinct() : new[] { result };
-                foreach (var view in views.Where(t => t != _taskResultType))
+                // Only the final interface slot owns the physical completion type.
+                // Leave the ordinary root open; text restoration is a distinct body.
+                foreach (var view in views.Select(t => StringCharSequenceBridge.CanRestoreMaterializedValue(AnyTn, t)
+                    ? t : new TypeNode.Tv("method", _methodTypeParamDecls.Length)).Distinct())
                 {
                     string name;
                     do name = _name + "$taskView" + ordinal++; while (!names.Add(name));

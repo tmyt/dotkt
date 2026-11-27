@@ -128,6 +128,8 @@ sealed partial class ProjectedCallableEntries
                         // that this interface, unlike the implementation, does not expose.
                         target = selected;
                         selectedPlan = Find(exactId).Plan.OnOwner(application.Args ?? []);
+                        if (CompletionInvocation(selected.Body.OrEmpty()) is { } call && call.OwnerType.OrDefault() is { } before && Key(before) == Key(application))
+                            WireCompletionInvocation(call, selected, f, selectedPlan, slotId);
                         break;
                     }
                 if (target == null) throw new InvalidOperationException($"No compatible implementation of projected storage slot '{slot.Owner}.{slot.Name}'");

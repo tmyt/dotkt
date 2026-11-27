@@ -198,32 +198,55 @@ sealed partial class ProjectedCallableEntries
         TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
     {
         var implementation = target.LocalBodyEntry?.Id ?? target.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
-        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) && m.Ret.OrDefault() == bridge.Ret.Value);
-        var coldId = id + "|cold";
-        var local = localSlots.TryGetValue(coldId, out var cold);
-        if (!local && !references.TryDeclarationSignatureSlot(EntryId(coldId), out cold))
-            throw new InvalidOperationException("Projected suspend interface declaration lacks its cold slot");
-        var selected = local ? null : references.SelectedPhysicalMethod(EntryId(coldId));
-        var coldPlan = Find(coldId).Plan.OnOwner(instance.Args ?? []);
-        var actual = contract.ForwardTo(coldPlan, references.WitnessConstraintKey) ??
-            Enumerable.Range(0, cold.Arity).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+        var completion = ((TypeNode.Fqn)bridge.Ret.Value).Args.Single();
+        bool text = StringCharSequenceBridge.CanRestoreMaterializedValue(new TypeNode.Fqn("kotlin.Any"), completion);
+        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) &&
+            m.Ret.OrDefault() is TypeNode.Fqn { Args: [var result] } && (text ? result == completion : result is TypeNode.Tv));
         var body = template.Body.Value.Select(s => (IBirStatement)((BirGraphValue)s).DeepClone()).ToArray();
-        // Only replace the explicitly marked invocation. Root creation, completion, exception
-        // handling and cancellation are the ordinary, already-bound suspend implementation.
-        int calls = 0;
-        foreach (var s in body) ((BirGraphValue)s).Visit(n => {
-            if (n is not BirCallInstance { TaskBridgeColdInvocation: true } c) return;
-            ++calls; c.TaskBridgeColdInvocation = false;
-            var continuation = c.Args.Value[^1];
-            c.OwnerType = instance; c.Recv = new BirThis(); c.Method = cold.Name; c.Virtual = true;
-            c.TypeArgs = actual; c.Sig = cold.Parameters.Select(t => SupertypeGraph.SubstOwnerTvs(t, instance.Args ?? [])).ToArray();
-            c.CalleeParams = cold.Parameters; c.CalleeRet = cold.Return;
-            c.MemberRef = selected == null ? default(OptionalField<BirMemberReference>) :
-                BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, instance.Args));
-            c.Args = bridge.Params.Value.Select(p => (IBirExpression)new BirLocal { Name = p.Name }).Append(continuation).ToArray();
-        });
-        if (calls != 1) throw new InvalidOperationException("A suspend completion view must invoke one selected cold entry");
+        if (((TypeNode.Fqn)template.Ret.Value).Args[0] is TypeNode.Tv variable)
+            foreach (var s in body) TypedExecutableFrames.RewriteDeclarationFrameInPlace((BirGraphValue)s,
+                t => TypedExecutableFrames.RewriteType(t, v => v == variable ? completion : v));
+        var call = CompletionInvocation(body) ?? throw new InvalidOperationException("Missing cold call in suspend completion view");
+        WireCompletionInvocation(call, bridge, instance, contract, id);
         return body;
+    }
+
+    static BirCallInstance CompletionInvocation(IBirStatement[] body)
+    {
+        BirCallInstance call = null;
+        foreach (var s in body) ((BirGraphValue)s).Visit(n => {
+            if (n is BirCallInstance { TaskBridgeColdInvocation: true } c)
+            {
+                if (call != null) throw new InvalidOperationException("Ambiguous cold call in suspend completion view");
+                call = c;
+            }
+        });
+        return call;
+    }
+
+    void WireCompletionInvocation(BirCallInstance c, BirFunctionDeclaration bridge, TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
+    {
+        var coldId = id + "|cold";
+        var projection = contract == null ? null : Find(coldId);
+        var physicalId = projection == null ? coldId : EntryId(coldId);
+        ReferencedDeclarationSlot cold = null;
+        if (projection != null) localSlots.TryGetValue(coldId, out cold);
+        else if (originalSlots.TryGetValue(coldId, out var original))
+            cold = new(original.Owner.Name.Value, original.Method.Name.Value, original.Method.TypeParams.OrEmpty().Length,
+                original.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(), original.Method.Ret.Value, true, false);
+        bool local = cold != null;
+        if (!local && !references.TryDeclarationSignatureSlot(physicalId, out cold))
+            throw new InvalidOperationException("Projected suspend interface declaration lacks its cold slot");
+        var selected = local ? null : references.SelectedPhysicalMethod(physicalId);
+        var actual = (projection == null ? null : contract.ForwardTo(projection.Plan.OnOwner(instance.Args ?? []), references.WitnessConstraintKey)) ??
+            Enumerable.Range(0, cold.Arity).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+        var continuation = c.Args.Value[^1];
+        c.OwnerType = instance; c.Recv = new BirThis(); c.Method = cold.Name; c.Virtual = true;
+        c.TypeArgs = actual; c.Sig = cold.Parameters.Select(t => SupertypeGraph.SubstOwnerTvs(t, instance.Args ?? [])).ToArray();
+        c.CalleeParams = cold.Parameters; c.CalleeRet = cold.Return;
+        c.MemberRef = selected == null ? default(OptionalField<BirMemberReference>) :
+            BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, instance.Args));
+        c.Args = bridge.Params.Value.Select(p => (IBirExpression)new BirLocal { Name = p.Name }).Append(continuation).ToArray();
     }
 
     static BirFunctionDeclaration NewSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,

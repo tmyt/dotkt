@@ -26,13 +26,20 @@ class TaskResultDerived(text: String) : TaskResultBase(text)
 interface ProjectedResult<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> read(value: K, gate: Task1<Int>): TaskResultBase
     suspend fun <A : K> boxed(value: K, gate: Task1<Int>): Any
+    suspend fun <A : K> nullableUnit(): Unit?
 }
 class ProjectedDerivedResult : ProjectedResult<Concrete> {
+    override suspend fun <A : Concrete> nullableUnit() {}
     override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
     override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
         gate.await()
         return TaskResultDerived("projected")
     }
+}
+interface NominalResult<K : Base> { suspend fun <A : K> value(): TaskResultBase }
+interface ConstrainedResult<K> where K : Base, K : ILeft, K : IRight { suspend fun <A : K> value(): TaskResultBase }
+class SharedResult : ConstrainedResult<Concrete>, NominalResult<Concrete> {
+    override suspend fun <A : Concrete> value(): TaskResultDerived = TaskResultDerived("shared")
 }
 interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase

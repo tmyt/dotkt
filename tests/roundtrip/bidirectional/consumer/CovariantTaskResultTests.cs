@@ -20,6 +20,10 @@ public class CovariantTaskResultInteropTests
         Assert.That(await result, Is.InstanceOf<TaskResultDerived>());
 
         var failure = new InvalidOperationException("after suspension");
+        Assert.That(await Start(Task.FromResult(17)), Is.InstanceOf<TaskResultDerived>());
+        var faulted = Start(Task.FromException<int>(failure));
+        Assert.That(Assert.ThrowsAsync<InvalidOperationException>(async () => { await faulted; }), Is.SameAs(failure));
+        Assert.That(await view.nullableUnit<Concrete, Concrete>(), Is.SameAs(kotlin.Unit.INSTANCE));
         source = new TaskCompletionSource<int>();
         result = Start(source.Task);
         source.SetException(failure);
@@ -35,6 +39,9 @@ public class CovariantTaskResultInteropTests
     [Test]
     public async Task DirectAndInterfaceTaskEntriesKeepTheirOwnResultTypes()
     {
+        var shared = new SharedResult();
+        Assert.That(await ((NominalResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
+        Assert.That(await ((ConstrainedResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
         var source = new ProducerStringTask<object>();
         var value = new object();
         Task<string> direct = source.read(value, "direct");
