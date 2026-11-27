@@ -6,15 +6,16 @@ using System.Reflection;
 static partial class CapturedGenericInvocation
 {
     sealed record LexicalTarget(TypeNode.Fqn Owner, BirTypeParameter[] OwnerFrame, BirFunctionDeclaration Method);
-    sealed record CaptureRow(int Argument, TypeNode Owner, int Position, int Slot, int Nullable, bool StorageOnly);
+    enum WitnessSource { Nominal, Storage, Construction }
+    sealed record CaptureRow(int Argument, TypeNode Owner, int Position, int Slot, int Nullable, WitnessSource Source);
 
     // Runtime sees only declaration-authorized coordinates. Do not infer other
     // invariant slots from the values or allocate a table for ordinary calls.
     static IBirExpression CaptureOwners(CaptureRow[] rows) => rows is { Length: > 0 }
         ? NewArray(Type, rows.Select(r => ClassRef(r.Owner))) : Null();
     static IBirExpression CaptureCoordinates(CaptureRow[] rows, int argumentOffset = 0) => rows is { Length: > 0 }
-        ? NewArray(Int, rows.SelectMany(r => new[] { r.Argument + argumentOffset, r.Position, r.Slot, r.Nullable })
-            .Prepend(rows.Count(r => !r.StorageOnly)).Select(Number)) : Null();
+        ? NewArray(Int, rows.SelectMany(r => new[] { r.Argument + argumentOffset, r.Position, r.Slot, r.Nullable, (int)r.Source })
+            .Select(Number)) : Null();
 
     static int[] LexicalCandidates(TypeNode[] actual, CallableWitnessScope owner, CallableWitnessScope method) =>
         Enumerable.Range(0, actual.Length).Where(i => CallableWitnessScope.For(actual[i], owner, method).Any()
