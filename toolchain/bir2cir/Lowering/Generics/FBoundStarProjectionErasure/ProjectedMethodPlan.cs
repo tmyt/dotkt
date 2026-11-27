@@ -53,7 +53,7 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
 
     internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands,
         ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result, Func<BirTypeParameter, bool> nominal,
-        Func<IEnumerable<TypeNode.Fqn>, bool> needsMaterial)
+        Func<IEnumerable<TypeNode.Fqn>, bool> needsMaterial, IEnumerable<int> independent)
     {
         var formals = frame.Declare().ToList();
         // Only the projected entry separates the nominal class witness from the
@@ -83,6 +83,11 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         // carrier. A native construction needs a distinct material argument;
         // its joint interface bounds are already part of the published frame.
         var materialBounds = new Dictionary<int, TypeNode[]>();
+        foreach (var ordinary in independent)
+        {
+            native.Add(ordinary);
+            materialBounds[ordinary] = facets.Where(f => f.OwnerIndex == ordinary).Select(f => f.Bound).Distinct().ToArray();
+        }
         foreach (var group in facets.GroupBy(f => f.OwnerIndex))
         {
             var ordinary = group.Key;

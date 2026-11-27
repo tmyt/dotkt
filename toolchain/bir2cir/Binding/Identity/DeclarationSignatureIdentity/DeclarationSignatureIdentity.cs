@@ -37,6 +37,22 @@ static partial class DeclarationSignatureIdentity
         Markers.Clear();
         ReferencedModifiers.Clear();
         PhysicalSlots.Clear();
+        static int[] OwnerDependentSlots(BirFunctionDeclaration method)
+        {
+            var parameters = method.TypeParams.OrEmpty();
+            var dependent = new HashSet<int>();
+            int previous;
+            do {
+                previous = dependent.Count;
+                for (int i = 0; i < parameters.Length; i++)
+                    foreach (var bound in parameters[i].Constraints.OrEmpty())
+                        BirGraphNameFields.VisitTypeNodes(bound, t => {
+                            if (t is TypeNode.Tv v && (v.Scope == "type" || v.Scope == "method" && dependent.Contains(v.I)))
+                                dependent.Add(i);
+                        });
+            } while (previous != dependent.Count);
+            return dependent.Count == 0 ? null : dependent.Order().ToArray();
+        }
         BirGraphValue Walk(BirGraphValue node, string owner)
         {
             owner = node switch
@@ -53,6 +69,7 @@ static partial class DeclarationSignatureIdentity
                     Params = CaptureParameters(method.Params, method.TypeParams),
                     HasNativeOverrideSlot = method.Overrides.OrEmpty().Any(edge => !edge.DeclarationId.HasValue),
                     SourceCallableVirtual = method.Virtual.OrDefault() || method.Override.OrDefault() || method.Abstract.OrDefault(),
+                    OwnerDependentSourceSlots = OwnerDependentSlots(method),
                     SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
                         ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
                 },

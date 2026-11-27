@@ -273,8 +273,18 @@ sealed partial class ProjectedCallableEntries
             references.IsClassType(bound) || references.PhysicalTypeForProof(bound.Name, bound.Args?.Length ?? 0)?.IsClass == true
                 ? "class" : null)), locations)?.WithDeclaredProofs(values, references.PhysicalConstraintType);
 
-    static NullableRepresentationFrame RepresentationsFor(BirFunctionDeclaration m) =>
-        m.LocalBodyEntry?.Frame ?? m.ColdRepresentation?.Frame ?? m.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault();
+    NullableRepresentationFrame RepresentationsFor(BirFunctionDeclaration m) =>
+        m.LocalBodyEntry?.Frame ?? m.ColdRepresentation?.Frame ?? m.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault()
+        ?? (m.MaterialFrameOrigin is { } id && originalSlots.TryGetValue(id, out var origin) ? RepresentationsFor(origin.Method) : null);
+
+    IEnumerable<int> IndependentVirtualArguments(BirFunctionDeclaration method)
+    {
+        if (method.MaterialFrameOrigin is { } id && originalSlots.TryGetValue(id, out var origin)) method = origin.Method;
+        if (!method.SourceCallableVirtual || RepresentationsFor(method) is not { } frame) yield break;
+        foreach (var source in method.OwnerDependentSourceSlots ?? [])
+            if (frame.StorageIndices.Contains(source) && Nominal(method.TypeParams.Value[frame.SourcePosition(source)]))
+                yield return frame.SourcePosition(source);
+    }
 
     ProjectedClassStorageFrame MethodFrame(BirFunctionDeclaration m)
     {
@@ -318,7 +328,7 @@ sealed partial class ProjectedCallableEntries
             return false;
         }
         var frame = Frame(parameters,
-            !m.Extern.OrDefault() && (representations?.NullableIndices.Any(NeedsIndependentOrdinary) == true ||
+            !m.Extern.OrDefault() && (IndependentVirtualArguments(m).Any() || representations?.NullableIndices.Any(NeedsIndependentOrdinary) == true ||
                 m.Params.OrEmpty().Any(p => ProjectedMethodPlan.HasMethodLocation(p, references)) || NativeClassArgument()));
         return frame;
     }
@@ -385,7 +395,7 @@ sealed partial class ProjectedCallableEntries
         }
         return declarationPlans[method] = frame == null ? null : ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
             RepresentationsFor(method),
-            method.Ret.OrDefault(), Nominal, values.NeedsVirtualStorageWitness);
+            method.Ret.OrDefault(), Nominal, values.NeedsVirtualStorageWitness, IndependentVirtualArguments(method));
     }
 
     BirFunctionDeclaration[] Declare(BirFunctionDeclaration[] source, IBirTypeDeclaration owner, List<Body> bodies,
@@ -434,7 +444,7 @@ sealed partial class ProjectedCallableEntries
             var methodFrame = RepresentationsFor(contractSource);
             // The downstream entry must consult the same ordinary/nullable/storage
             // frame as local calls. A mirrored slot has no semantic frame of its own.
-            plan = plan with { RepresentationDeclaration = contractSource.ColdRepresentation?.Id ?? m.ImplicitExistentialImplementationId };
+            plan = plan with { RepresentationDeclaration = contractSource.ColdRepresentation?.Id ?? m.ImplicitExistentialImplementationId ?? m.MaterialFrameOrigin };
             var entry = new Entry(name, plan, parameters, methodFrame, AddressSignature(plan, m));
             if (contractSource.SelectedGenericOverrides is { Count: > 0 } && entry.Representations is { } representations)
                 foreach (var sourceIndex in representations.StorageIndices)

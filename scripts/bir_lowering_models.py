@@ -435,6 +435,8 @@ def outputs(root, definitions):
                       "    internal string? ImplicitExistentialImplementationId { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",
                       "    internal bool SourceCallableVirtual { get; set; }",
+                      "    internal IReadOnlyList<int>? OwnerDependentSourceSlots { get; set; }",
+                      "    internal string? MaterialFrameOrigin { get; set; }",
                       "    internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }",
                       "    internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }",
                       "    internal IReadOnlyDictionary<string, string>? OverrideRepresentationDeclarations { get; set; }",
