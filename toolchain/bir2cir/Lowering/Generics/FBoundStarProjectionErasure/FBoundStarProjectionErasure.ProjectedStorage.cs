@@ -76,7 +76,7 @@ static partial class FBoundStarProjectionErasure
     {
         var storageOwners = new Dictionary<string, ProjectedStorageOwner>(StringComparer.Ordinal);
         var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners, carriers.Values);
-        callables.RetireFacadeOverrides(documents, emittedTypes);
+        callables.RetireReplacedOverrides(documents, emittedTypes);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);

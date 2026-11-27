@@ -4172,6 +4172,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // MethodDef identity. This matters when the Kotlin source name and CLR slot name differ. The identity is produced
     // by the same walk and therefore cannot drift from the slot facts; no caller re-resolves it from the physical
     // signature.
+    internal MethodInfo SelectProjectedNativeBase(Type open, string key)
+    {
+        if (key == null) return null;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        return open.GetMethods(flags).Single(m => m.IsVirtual && !m.IsFinal && MatchesNativeMethod(m, key));
+    }
+
     internal bool TrySelectedNullableGenericSlotByShape(string ownerFqn, string name, bool isStatic, int argCount,
         int methodArity, IReadOnlyList<TypeNode> resolvedSignature, TypeNode resolvedReturn,
         TypeNode[] ownerTypeArguments, string selectedShape,

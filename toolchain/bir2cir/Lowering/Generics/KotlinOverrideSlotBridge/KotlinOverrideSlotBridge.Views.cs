@@ -32,7 +32,7 @@ static partial class KotlinOverrideSlotBridge
         internal bool HasMethods => source.Methods.HasValue;
     }
 
-    sealed record OverrideEdge(TypeNode Owner, string Member, string Kind, int? Arity, string DeclarationId, string PhysicalDeclarationId);
+    sealed record OverrideEdge(TypeNode Owner, string Member, string Kind, int? Arity, string DeclarationId, string PhysicalDeclarationId, BirOverride Row = null);
 
     sealed class OverrideParameter
     {
@@ -100,7 +100,7 @@ static partial class KotlinOverrideSlotBridge
             : Source.Params.OrEmpty().Select(parameter => new OverrideParameter(parameter)).ToArray();
         internal OverrideEdge[] Overrides => (Header != null ? Header.Overrides : Source.Overrides).OrEmpty()
             .Select(edge => new OverrideEdge(edge.Owner.OrDefault(), edge.Member.OrDefault(), edge.Kind.OrDefault(),
-                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), edge.PhysicalDeclarationId.OrDefault())).ToArray();
+                edge.Arity.HasValue ? edge.Arity.Value : null, edge.DeclarationId.OrDefault(), edge.PhysicalDeclarationId.OrDefault(), edge)).ToArray();
         internal bool Property(out string name, out string kind) => Header != null ? Header.Property(out name, out kind)
             : KotlinPropertyAccessors.TryIdentity(Source, out name, out kind);
         internal void MoveReturn(TypeNode slot, ValueTypeOracle isValue, Func<TypeNode.Fqn, TypeNode[]> annotationArguments)

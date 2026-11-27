@@ -133,15 +133,44 @@ static partial class FBoundStarProjectionErasure
                 && (p.Name == carrier || ContainsExistentialProjection(application));
 
         internal TypeNode ClassConstrainedArgument(WitnessSlot slot,
-            TypeNode projected, Func<int, TypeNode> closeArgument)
+            TypeNode projected, Func<int, TypeNode> closeArgument, TypeNode[] nativeArguments = null)
         {
             var application = slot.ConstructedArgument;
             var exact = !ContainsExistentialProjection(application);
-            var proof = ClassStorageWitness(slot, closeArgument, allowIntersection: exact);
+            var proof = ClassStorageWitness(slot, closeArgument, allowIntersection: exact,
+                acceptsPrimary: nativeArguments == null ? null : candidate => SatisfiesFixedSiblings(slot, nativeArguments, candidate));
             if (proof == null) return projected;
             // With no hidden argument the authored constructed class is itself a
             // genuine witness of the conjunction, even if no ancestor is one.
             return proof.Interfaces.Length == 0 ? proof.Class : Rewrite(application, preserveConstructedHead: true);
+        }
+
+        // A native type parameter may constrain a sibling: B : ISink<A> limits the
+        // choice for A even though that constraint belongs to B's row. Only compare
+        // closed, fixed arguments here; a caller variable is not a closed CLR type.
+        bool SatisfiesFixedSiblings(WitnessSlot selected, TypeNode[] physical, TypeNode.Fqn candidate)
+        {
+            var entry = selected.Entry;
+            for (int j = 0; j < physical.Length; j++)
+            {
+                if (j == selected.Index || ContainsStarOrTypeVariable(entry.Arguments[j])) continue;
+                foreach (var bound in entry.Slot(j).Formal.Constraints.OrEmpty())
+                {
+                    bool depends = false, unresolved = false;
+                    BirGraphNameFields.VisitTypeNodes(bound, part => {
+                        if (part is not TypeNode.Tv { Scope: "type" } variable) return;
+                        if (variable.I == selected.Index) depends = true;
+                        else unresolved |= ContainsStarOrTypeVariable(entry.Arguments[variable.I]);
+                    });
+                    if (!depends || unresolved) continue;
+                    var proposed = (TypeNode[])physical.Clone();
+                    proposed[selected.Index] = candidate;
+                    var required = SupertypeGraph.SubstOwnerTvs(bound, proposed);
+                    synthesizedHierarchy ??= SupertypeGraph.CollectSource(Preparation.Bindings.SourceRoots.Select(r => (BirFileDeclaration)r.Source));
+                    if (!ProjectedConstructorPlan.Proves(physical[j], required, synthesizedHierarchy, References)) return false;
+                }
+            }
+            return true;
         }
 
         internal readonly record struct WitnessSlot(PhysicalWitnessApplication Entry, int Index)
@@ -199,14 +228,14 @@ static partial class FBoundStarProjectionErasure
             internal string Scope => Binder == WitnessBinder.Owner ? "type" : "method";
         }
 
-        internal PhysicalWitnessApplication SelectPhysicalClassApplication(TypeNode.Fqn application)
+        internal PhysicalWitnessApplication SelectPhysicalClassApplication(TypeNode.Fqn application, bool nativeNames = false)
         {
             if (SelectLocalPhysicalClass(application.Name) is { } local)
                 return new(WitnessBinder.Owner, application, null, null,
                     ClassLayout(local), TypeParameterFrame.Declarations(local).ToArray(), application.Args ?? []);
             return new(WitnessBinder.Owner, application, null, null,
                 References.NullableTypeFrames.GetValueOrDefault(application.Name),
-                ReferencedConstraintParameters(application.Name), application.Args ?? []);
+                ReferencedConstraintParameters(application.Name, nativeNames), application.Args ?? []);
         }
 
         internal PhysicalWitnessApplication SelectPhysicalMethodApplication(BirFunctionDeclaration local, string identity,
