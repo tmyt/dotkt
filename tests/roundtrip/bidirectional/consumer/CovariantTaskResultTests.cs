@@ -16,18 +16,25 @@ public class CovariantTaskResultInteropTests
         await view.completed();
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public async Task ProjectedInterfaceReturnsItsDeclaredTaskAcrossSuspension(bool imported)
+    [TestCase(typeof(ProjectedDerivedResult))]
+    [TestCase(typeof(ImportedProjectedResult))]
+    [TestCase(typeof(ImportedExactResult))]
+    public async Task ProjectedInterfaceReturnsItsDeclaredTaskAcrossSuspension(Type implementation)
     {
-        ProjectedResult<Concrete> view = imported ? new ImportedProjectedResult() : new ProjectedDerivedResult();
+        var view = (ProjectedResult<Concrete>)Activator.CreateInstance(implementation);
         Task<TaskResultBase> Start(Task<int> gate) => view.read<Concrete, Concrete>(new Concrete(), gate);
         var source = new TaskCompletionSource<int>();
         var result = Start(source.Task);
+        var otherEntries = view is NominalReader<Concrete> nominal ? new[] {
+            nominal.read<Concrete, Concrete>(new Concrete(), source.Task),
+            LibraryKt.importedNominalRead(nominal, source.Task), LibraryKt.importedConstrainedRead(view, source.Task)
+        } : Array.Empty<Task<TaskResultBase>>();
+        Assert.That(Array.TrueForAll(otherEntries, entry => !entry.IsCompleted), Is.True);
         Assert.That((object)result, Is.InstanceOf<Task<TaskResultBase>>());
         Assert.That(result.IsCompleted, Is.False);
         source.SetResult(17);
         Assert.That(await result, Is.InstanceOf<TaskResultDerived>());
+        foreach (var entry in otherEntries) Assert.That(await entry, Is.InstanceOf<TaskResultDerived>());
 
         var failure = new InvalidOperationException("after suspension");
         Assert.That(await Start(Task.FromResult(17)), Is.InstanceOf<TaskResultDerived>());
@@ -52,6 +59,22 @@ public class CovariantTaskResultInteropTests
         var shared = new SharedResult();
         Assert.That(await ((NominalResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
         Assert.That(await ((ConstrainedResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
+        var nominal = (NominalResult<Concrete>)shared;
+        var constrained = (ConstrainedResult<Concrete>)shared;
+        var item = new Concrete();
+        var gate = new TaskCompletionSource<int>();
+        var pending = new[] {
+            nominal.read<Concrete, Concrete>(input: item, gate: gate.Task), constrained.read<Concrete, Concrete>(item, gate.Task),
+            CovariantTaskResultsKt.sharedNominal(nominal, item, gate.Task), CovariantTaskResultsKt.sharedConstrained(constrained, item, gate.Task)
+        };
+        var otherHot = nominal.read<Concrete, Concrete>(other: item, gate: gate.Task);
+        var otherCold = CovariantTaskResultsKt.sharedOther(nominal, item, gate.Task);
+        Assert.That(otherHot.IsCompleted || otherCold.IsCompleted, Is.False);
+        Assert.That(Array.TrueForAll(pending, task => !task.IsCompleted), Is.True);
+        gate.SetResult(1);
+        Assert.That(await Task.WhenAll(pending), Is.All.InstanceOf<TaskResultDerived>());
+        Assert.That((await otherHot).GetType(), Is.EqualTo(typeof(TaskResultBase)));
+        Assert.That((await otherCold).GetType(), Is.EqualTo(typeof(TaskResultBase)));
         var source = new ProducerStringTask<object>();
         var value = new object();
         Task<string> direct = source.read(value, "direct");
