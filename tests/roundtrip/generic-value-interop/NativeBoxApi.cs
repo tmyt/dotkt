@@ -7,7 +7,11 @@ using WideUnitCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int
 
 namespace GenericValueInterop;
 
+using WideIntFactory = DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+    object, object, object, object, object, object, object, object, object, object, object, WideIntCallback>;
+
 public interface ILeftMark { }
+public delegate T MarkedValue<T>() where T : ILeftMark;
 public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
@@ -132,6 +136,14 @@ public abstract class NativeVisitor
 }
 public static class NativeWideCallbacks
 {
+    public static WideIntFactory Factory => (a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q) =>
+        (first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last) => (int)a - (int)q + first - last;
+    public static DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object, object,
+        object, object, object, object, object, object, object, object, object, object,
+        DotKt.Runtime.CompilerServices.KFunc<MarkedValue<T>, int, int, int, int, int, int, int, int,
+            int, int, int, int, int, int, int, int, int>> SelectFactory<T>(T tag) where T : ILeftMark =>
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+            (pick, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => ReferenceEquals(pick(), tag) ? 42 : -1;
     public static bool VisitExtension(this NativeCallbackScope scope, WideUnitCallback callback) => VisitUnit(callback);
     public static bool VisitUnit(WideUnitCallback callback) =>
         callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) is not null;

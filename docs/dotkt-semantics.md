@@ -1355,6 +1355,10 @@ fun inspect(directory: DirectoryInfo) {
 Enumeration evaluates the source once, obtains one enumerator, and requests elements lazily through
 `MoveNext`/`Current`. Native exceptions propagate normally. Native source declarations retain their CLR types
 rather than being rewritten to Kotlin `Iterable` or `Sequence`; iteration adds no new runtime classifier rules.
+A Kotlin override of the projected raw `iterator()` also supplies the non-generic CLR enumeration slot,
+unless the subclass implements `GetEnumerator()` itself. A call to `super.iterator()` needs an accessible,
+concrete base implementation: a private explicit `IEnumerable.GetEnumerator()` can be called through the
+interface, but not as a base call. When no such base implementation is accessible, compilation fails.
 The protocol does not add automatic `Dispose` on completion, exception or early exit.
 For resource-owning enumeration, explicitly acquire the native enumerator and dispose it in `finally`;
 the inherited non-generic `MoveNext` surface can be accessed as `System.Collections.IEnumerator`.
@@ -2431,6 +2435,9 @@ In the other direction, a Kotlin function can return a wide callback read from a
 If the native delegate's value-type slots differ from ordinary Kotlin storage, the callable view converts the
 arguments on invocation and converts the result back to Kotlin. A nullable read preserves null; public non-null
 return checks still apply (§9c).
+If the result is itself a Kotlin function, compatibility includes that function's invocation signature, recursively.
+An outer delegate can be CLR-assignable by covariance while its inner result still requires boxing. When the whole
+chain is compatible the original delegate is used; a nominal CLR delegate result stays nominal.
 
 A Kotlin class may implement a function type directly or through an interface. At a function-typed
 boundary its delegate calls the selected `invoke` implementation. Converting the same instance
