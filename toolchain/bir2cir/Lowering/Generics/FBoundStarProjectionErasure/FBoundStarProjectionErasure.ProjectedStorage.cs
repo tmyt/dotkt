@@ -161,14 +161,12 @@ static partial class FBoundStarProjectionErasure
                 }
                 // Capture the selected formal itself. Nested closures need its
                 // full declaration, not a reconstruction from interface proofs.
-                var material = plan.Slots.Select((slot, i) => (slot, position: exactParameters.Length + i))
-                    .Where(s => s.slot.MaterialReference).ToDictionary(s => s.slot.OwnerIndex,
-                        s => new CallableWitnessScope.MaterialWitness(new TypeNode.Tv("type", s.position), fullFrame[s.position]));
+                var bodySlots = plan.Slots.Select((slot, i) => slot.MaterialReference
+                    ? slot with { MaterialFormal = fullFrame[exactParameters.Length + i] } : slot).ToArray();
                 void CaptureBody(BirClassDefinition lexical)
                 {
                     var helpers = new List<BirFunctionDeclaration>();
-                    callables.RewriteBody(lexical, lexical, exactParameters, plan.Slots, Allocate, generated, helpers,
-                        capturedNative: material.Count == 0 ? null : material);
+                    callables.RewriteBody(lexical, lexical, exactParameters, bodySlots, Allocate, generated, helpers);
                     if (helpers.Count != 0) lexical.Methods = lexical.Methods.OrEmpty().Concat(helpers).ToArray();
                 }
                 ProjectLexicalClosures(storage, plan.Exact, plan.Slots.Length, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,

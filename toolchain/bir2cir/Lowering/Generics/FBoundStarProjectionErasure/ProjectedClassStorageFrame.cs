@@ -11,6 +11,7 @@ sealed class ProjectedClassStorageFrame
     {
         internal TypeNode[] Evidence { get; init; }
         internal bool MaterialReference { get; init; }
+        internal BirTypeParameter MaterialFormal { get; init; }
         internal bool Proves(TypeNode constraint, Func<TypeNode,TypeNode,bool> proves) =>
             proves(Bound, constraint) || (Evidence?.Any(b => proves(b, constraint)) ?? false);
     }
