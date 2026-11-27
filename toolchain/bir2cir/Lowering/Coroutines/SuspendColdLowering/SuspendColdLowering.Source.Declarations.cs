@@ -185,6 +185,12 @@ static partial class SuspendColdLowering
                         descriptor.Params = descriptor.Params.OrEmpty().Append(ContAny()).ToArray();
                         descriptor.Ret = AnyTn;
                     }
+                    else if (_m.ExistentialCallable == ExistentialCallableRole.Forwarder)
+                    {
+                        // The generated forwarder implements its paired carrier slot
+                        // with the very same completion ABI, including Task for Unit.
+                        descriptor.Ret = BirGraphValue.CopyType(method.Ret.Value);
+                    }
                     else if (descriptor.Ret.HasValue)
                     {
                         var result = descriptor.Ret.Value;

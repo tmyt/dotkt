@@ -2897,7 +2897,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             ?? declarations[0].ReturnTypeNode;
         // Selection happens while calls still have Kotlin suspend semantics. The Task MethodDef is the metadata
         // owner, not the value produced by the later cold-entry call; use its explicit logical result carrier.
-        physicalResult = candidates[0].SuspendReturnType ?? candidates[0].ReturnTypeNode;
+        physicalResult = candidates[0].ProjectedInvocationResult;
         return true;
     }
 
@@ -5830,6 +5830,10 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    // A suspend carrier stores the source classifier. When materializing a call
+    // in the current module it needs the same binding identity as a local use.
+    public TypeNode ProjectedInvocationResult => SuspendReturnType is { } source
+        ? TypedCharSequenceIdentity.RewriteType(source) : ReturnTypeNode;
     public string SourceMethodDeclaration { get; init; }
     public int[] ReflectedWitnessIndices { get; init; }
     public string ValueAdapter { get; init; }
