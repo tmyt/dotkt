@@ -167,7 +167,11 @@ static partial class CapturedGenericInvocation
         generated.Add(new BirInterfaceDefinition {
             Name = contractName, Kind = "interface", Generated = true, Vis = "internal",
             NestedIn = consumed ? resultUse.LexicalOwner : default(OptionalField<string>),
-            TypeParams = contractArgs.Select((_, i) => new BirTypeParameter { Name = "P"+i, SpecialConstraints = new[]{"allowsRefStruct"} }).ToArray(),
+            // BoundarySlot gives each operand and the result a distinct slot. Only a
+            // by-value result can widen from the recovered reference to its caller view.
+            TypeParams = contractArgs.Select((_, i) => new BirTypeParameter { Name = "P"+i, SpecialConstraints = new[]{"allowsRefStruct"},
+                Variance = !consumed && contractResult is TypeNode.Tv { Scope: "type" } slot && slot.I == i
+                    ? "out" : default(OptionalField<string>) }).ToArray(),
             Interfaces = Array.Empty<TypeNode>(), Fields = Array.Empty<BirFieldDeclaration>(), Ctors = Array.Empty<BirConstructor>(),
             Methods = new[]{ Method(signature, contractResult, true, []) }, Attrs = Array.Empty<BirAttribute>(),
         });
