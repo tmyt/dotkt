@@ -44,6 +44,9 @@ class SharedResult : ConstrainedResult<Concrete>, NominalResult<Concrete> {
 interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
 }
+interface TextTaskResult {
+    suspend fun text(): CharSequence
+}
 
 interface MethodTaskResult<T> {
     suspend fun <U : T> read(value: U, pause: suspend () -> Unit): Any

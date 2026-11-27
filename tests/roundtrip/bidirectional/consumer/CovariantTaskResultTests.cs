@@ -55,5 +55,8 @@ public class CovariantTaskResultInteropTests
             && method.GetParameters().Length == 2 && method.GetParameters()[1].ParameterType == typeof(string));
         Assert.That(index, Is.GreaterThanOrEqualTo(0));
         Assert.That(map.TargetMethods[index].ReturnType, Is.EqualTo(typeof(Task<object>)));
+        var imported = new ImportedOrdinaryTextResult();
+        Assert.That((await ((TextTaskResult)imported).text()).ToString(), Is.EqualTo("separate"));
+        Assert.That(await imported.lengthViaInterface(), Is.EqualTo(8));
     }
 }

@@ -9,6 +9,7 @@ import kotlin.clr.ClrRef
 import System.Threading.Tasks.Task1
 import roundtrip.covarianttaskresults.ProjectedResult
 import roundtrip.covarianttaskresults.TaskResultDerived
+import roundtrip.covarianttaskresults.TextTaskResult
 import roundtrip.selectedbounds.Concrete
 
 class ImportedProjectedResult : ProjectedResult<Concrete> {
@@ -17,6 +18,14 @@ class ImportedProjectedResult : ProjectedResult<Concrete> {
     override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
         gate.await()
         return TaskResultDerived("imported")
+    }
+}
+
+class ImportedOrdinaryTextResult : TextTaskResult {
+    override suspend fun text(): CharSequence = "separate"
+    suspend fun lengthViaInterface(): Int {
+        val source: TextTaskResult = this
+        return source.text().length
     }
 }
 
