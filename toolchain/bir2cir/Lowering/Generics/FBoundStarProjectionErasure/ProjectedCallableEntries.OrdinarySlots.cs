@@ -66,7 +66,10 @@ sealed partial class ProjectedCallableEntries
         {
             if (!references.TryDeclarationSignatureSlot(id, out slot) || !slot.IsInterface) return;
             rows = references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
-            selectedFrame = references.NullableMethodFrame(contract?.RepresentationDeclaration ?? id);
+            // The physical entry supplies the slot, but the source declaration
+            // owns the ordinary/nullable/storage frame shared by its entries.
+            selectedFrame = references.NullableMethodFrame(contract?.RepresentationDeclaration
+                ?? target.OverrideRepresentationDeclarations?.GetValueOrDefault(id) ?? id);
         }
         if (rows is not { Length: > 0 } || selectedFrame == null || !selectedFrame.StorageIndices.Any()) return;
         if (selectedOwner == null)
