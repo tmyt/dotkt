@@ -10,6 +10,7 @@ import System.Threading.Tasks.Task1
 import roundtrip.covarianttaskresults.ProjectedResult
 import roundtrip.covarianttaskresults.ProjectedTextResult
 import roundtrip.covarianttaskresults.TaskResultDerived
+import roundtrip.covarianttaskresults.TextTaskResult
 import roundtrip.selectedbounds.Concrete
 
 class ImportedTextResult : ProjectedTextResult<Concrete> {
@@ -30,6 +31,18 @@ class ImportedProjectedResult : ProjectedResult<Concrete> {
         return TaskResultDerived("imported")
     }
 }
+
+class ImportedOrdinaryTextResult : TextTaskResult {
+    override suspend fun text(): CharSequence = "separate"
+    override suspend fun optionalText(present: Boolean): CharSequence? = if (present) "separate" else null
+    override suspend fun signal(present: Boolean): Unit? = if (present) Unit else null
+    suspend fun lengthViaInterface(): Int {
+        val source: TextTaskResult = this
+        return source.text().length
+    }
+}
+
+suspend fun forwardOptionalText(source: TextTaskResult, present: Boolean): Any? = source.optionalText(present)
 
 @FlagsAttribute
 @ClrEnum

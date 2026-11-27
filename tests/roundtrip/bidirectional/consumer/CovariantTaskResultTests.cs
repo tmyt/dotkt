@@ -52,6 +52,22 @@ public class CovariantTaskResultInteropTests
         var shared = new SharedResult();
         Assert.That(await ((NominalResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
         Assert.That(await ((ConstrainedResult<Concrete>)shared).value<Concrete, Concrete>(), Is.InstanceOf<TaskResultDerived>());
+        var nominal = (NominalResult<Concrete>)shared;
+        var constrained = (ConstrainedResult<Concrete>)shared;
+        var item = new Concrete();
+        var gate = new TaskCompletionSource<int>();
+        var pending = new[] {
+            nominal.read<Concrete, Concrete>(input: item, gate: gate.Task), constrained.read<Concrete, Concrete>(item, gate.Task),
+            CovariantTaskResultsKt.sharedNominal(nominal, item, gate.Task), CovariantTaskResultsKt.sharedConstrained(constrained, item, gate.Task)
+        };
+        var otherHot = nominal.read<Concrete, Concrete>(other: item, gate: gate.Task);
+        var otherCold = CovariantTaskResultsKt.sharedOther(nominal, item, gate.Task);
+        Assert.That(otherHot.IsCompleted || otherCold.IsCompleted, Is.False);
+        Assert.That(Array.TrueForAll(pending, task => !task.IsCompleted), Is.True);
+        gate.SetResult(1);
+        Assert.That(await Task.WhenAll(pending), Is.All.InstanceOf<TaskResultDerived>());
+        Assert.That((await otherHot).GetType(), Is.EqualTo(typeof(TaskResultBase)));
+        Assert.That((await otherCold).GetType(), Is.EqualTo(typeof(TaskResultBase)));
         var source = new ProducerStringTask<object>();
         var value = new object();
         Task<string> direct = source.read(value, "direct");
@@ -65,5 +81,19 @@ public class CovariantTaskResultInteropTests
             && method.GetParameters().Length == 2 && method.GetParameters()[1].ParameterType == typeof(string));
         Assert.That(index, Is.GreaterThanOrEqualTo(0));
         Assert.That(map.TargetMethods[index].ReturnType, Is.EqualTo(typeof(Task<object>)));
+        var imported = new ImportedOrdinaryTextResult();
+        TextTaskResult view = imported;
+        Assert.That((await view.text()).ToString(), Is.EqualTo("separate"));
+        Assert.That(await imported.lengthViaInterface(), Is.EqualTo(8));
+        Assert.That(await view.optionalText(false), Is.Null);
+        Assert.That(await LibraryKt.forwardOptionalText(view, false), Is.Null);
+        var forwarded = await LibraryKt.forwardOptionalText(view, true);
+        Assert.That(forwarded, Is.TypeOf<string>());
+        Assert.That(forwarded, Is.EqualTo("separate"));
+        Assert.That(await view.signal(false), Is.Null);
+        Assert.That(await view.signal(true), Is.SameAs(kotlin.Unit.INSTANCE));
+        var textMap = imported.GetType().GetInterfaceMap(typeof(TextTaskResult));
+        var signal = Array.FindIndex(textMap.InterfaceMethods, method => method.Name == "signal");
+        Assert.That(textMap.TargetMethods[signal], Is.EqualTo(imported.GetType().GetMethod("signal")));
     }
 }
