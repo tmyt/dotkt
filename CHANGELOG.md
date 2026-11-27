@@ -5,6 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+- A Kotlin override of a mutable CLR property on a star-projected generic base now dispatches both reads and writes to the Kotlin accessor (#2064).
 - A Kotlin type parameter bounded by a constructed Kotlin class can be used as a CLR reference-type argument without losing the original value (#2065).
 - Passing a nested native collection through a generic Kotlin helper preserves the original collection and its elements when the element type contains a star projection (#1956).
 - Generic Kotlin helpers can take a star-projected mutable list and an independently constructed list without requiring identical CLR storage types (#1963).

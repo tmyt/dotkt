@@ -196,6 +196,7 @@ static partial class FBoundStarProjectionErasure
                 || (ArrayComponentTypeSlot(facts, field) || NativeLocationTypeSlot(facts, field)) && PreservesNativeWitnessHead(type, state.Projection)
                 || ExactLexicalTypeSlot(facts, field) && !(facts.ExactOuter && sharedOuter && field != "ownerType")
                 || facts.TypeDefinition && field is "base" or "interfaces"
+                || node is BirFunctionDeclaration && field == "pendingOverrideOwner"
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape,
                 sourceOverrideOwner: node is BirOverride);
             return node is BirTypeParameter row && field == "constraints" && !scope.RepresentationCompanion
