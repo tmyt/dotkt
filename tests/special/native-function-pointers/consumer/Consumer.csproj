@@ -8,5 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="../reference/NativePointers.csproj" />
     <Reference Include="NativePointerConsumer"><HintPath>$(ConsumerAssembly)</HintPath></Reference>
+    <Reference Include="NativePointerRoundtrip"><HintPath>$(RoundtripAssembly)</HintPath></Reference>
   </ItemGroup>
 </Project>

@@ -449,12 +449,7 @@ static partial class StringCharSequenceBridge
             return SourceRestoreErasedCharSequence(value, target);
         var conversion = SelectCharSequenceConversion(source,
             target is TypeNode.Fqn, SourceIsNotNullAssertion(value), value is BirConditional);
-        if (conversion == CharSequenceConversion.String) return SourceWrapAdapter(value);
-        if (conversion == CharSequenceConversion.StringBuilder) return SourceWrapBuilder(value);
-        if (conversion == CharSequenceConversion.NullableStringBuilder)
-            return SourceWrapAdapterNullable(value, source, SourceWrapBuilder);
-        if (conversion == CharSequenceConversion.NullableString)
-            return SourceWrapAdapterNullable(value, source);
+        if (AdaptScalarValue(conversion, value, source) is { } adapted) return adapted;
         if (conversion == CharSequenceConversion.Branches && value is BirConditional conditional)
         {
             if (conditional.Then.HasValue) conditional.Then = OptionalField<IBirExpression>.Of(SourceCoerceCharSeqArg(conditional.Then.Value, env, target));
@@ -572,14 +567,25 @@ static partial class StringCharSequenceBridge
         Type = new TypeNode.Fqn(Adapter), ArgTypes = new TypeNode[] { new TypeNode.Fqn("kotlin.String") }, Args = new[] { value },
     };
 
-    internal static bool CanAdaptStringReturn(TypeNode source, TypeNode target) =>
+    static CharSequenceConversion SlotReturnConversion(TypeNode source, TypeNode target) =>
         IsScalarCharSequence(target)
-        && IsStringTokT(source switch {
-            TypeNode.Nullable optional => optional.Of, TypeNode.Oblivious platform => platform.Of, _ => source,
-        });
+            ? SelectCharSequenceConversion(source is TypeNode.Oblivious platform ? new TypeNode.Nullable(platform.Of) : source,
+                nonNullSlot: false, notNullAssertion: false, conditional: false)
+            : CharSequenceConversion.None;
 
-    internal static IBirExpression AdaptStringReturn(IBirExpression value, TypeNode source) =>
-        source is TypeNode.Nullable or TypeNode.Oblivious ? SourceWrapAdapterNullable(value, source) : SourceWrapAdapter(value);
+    internal static bool CanAdaptSlotReturn(TypeNode source, TypeNode target) =>
+        SlotReturnConversion(source, target) != CharSequenceConversion.None;
+
+    internal static IBirExpression TryAdaptSlotReturn(IBirExpression value, TypeNode source, TypeNode target) =>
+        AdaptScalarValue(SlotReturnConversion(source, target), value, source);
+
+    static IBirExpression AdaptScalarValue(CharSequenceConversion conversion, IBirExpression value, TypeNode source) => conversion switch {
+        CharSequenceConversion.String => SourceWrapAdapter(value),
+        CharSequenceConversion.NullableString => SourceWrapAdapterNullable(value, source),
+        CharSequenceConversion.StringBuilder => SourceWrapBuilder(value),
+        CharSequenceConversion.NullableStringBuilder => SourceWrapAdapterNullable(value, source, SourceWrapBuilder),
+        _ => null,
+    };
 
     static BirNew SourceWrapBuilder(IBirExpression value) => SourceWrapAdapter(CharSeqStringLowering.Snapshot(value));
 

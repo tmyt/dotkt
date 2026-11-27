@@ -92,8 +92,8 @@ static partial class KotlinOverrideSlotBridge
                 returned = nativeCursor != null && NativeCursorResult(implementation.RetKotlinType.OrDefault(),
                     implementationReturn, result, isValue, refs) is { } cursor
                     ? ReverseEnumeratorBridgeSynthesis.AdaptNativeCursor(returned, cursor, nativeCursor)
-                    : StringCharSequenceBridge.CanAdaptStringReturn(implementationReturn, result)
-                    ? StringCharSequenceBridge.AdaptStringReturn(returned, implementationReturn)
+                    : StringCharSequenceBridge.TryAdaptSlotReturn(returned, implementationReturn, result) is { } adapted
+                    ? adapted
                     : IsNullableValueSlot(result, implementationReturn, refs, isValue, returnPosition: true)
                     && implementationReturn is TypeNode.Nullable nullable
                     ? new BirNullableValue { Elem = BirGraphValue.CopyType(nullable.Of), E = OptionalField<IBirExpression>.Of(returned),

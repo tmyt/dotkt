@@ -32,13 +32,14 @@ grep -q 'required/optional native modifier order is not supported' "$OUT/modifie
 "$KOTC" "$ROOT/tests/special/native-function-pointers/unsupported-box.kt" \
     "$ROOT/tests/special/native-function-pointers/unsupported-concat.kt" \
     "$ROOT/tests/special/native-function-pointers/unsupported-object.kt" \
+    "$ROOT/tests/special/native-function-pointers/unsupported-pointer-cast.kt" \
     "$ROOT/tests/special/native-function-pointers/unsupported-safe-cast.kt" -no-stdlib \
     -classpath "$FE_KLIB$separator$ROOT/build/tests-native-function-pointers/klib/NativePointers.klib" -d "$OUT/value-bir"
-for name in box concat object safe-cast; do
+for name in box concat object safe-cast pointer-cast; do
     if dotnet "$BIR2CIR_DLL" "$OUT/$name-cir" \
         --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$ROOT/tests/special/native-function-pointers/reference/obj/Release/net10.0/ref/NativePointers.dll")" \
         "$OUT/value-bir/unsupported-$name.bir.json" > "$OUT/$name.log" 2>&1; then
-        die "A native function pointer was admitted to object storage ($name)"
+        die "A native function pointer was admitted to an incompatible representation ($name)"
     fi
     grep -q 'native function-pointer value requires its exact signature' "$OUT/$name.log" \
         || die "Native $name failed outside its representation diagnostic boundary"
