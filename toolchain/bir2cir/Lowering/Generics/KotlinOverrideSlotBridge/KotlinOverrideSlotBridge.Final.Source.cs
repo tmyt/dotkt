@@ -234,7 +234,7 @@ static partial class KotlinOverrideSlotBridge
                 () => implementation.Source != null && context.Covariant?.Contains(new(
                     implementation.Source, CovariantInterfaceReturnBridge.DescriptorKey(slot.DescriptorSpec,
                         slot.DescriptorMember, implementation.Arity, slot.Parameters, slot.Return, refs, isValue))) == true,
-                context.HasClassifier, nativeMetadata);
+                context.HasClassifier, nativeMetadata, slot.NativeBaseParameterViews);
             if (fit == null) return;
             ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                 Phase.PhysicalBridges, isValue, context.Annotation);

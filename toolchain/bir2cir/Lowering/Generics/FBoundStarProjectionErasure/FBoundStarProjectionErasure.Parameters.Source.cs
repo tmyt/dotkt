@@ -83,7 +83,11 @@ static partial class FBoundStarProjectionErasure
             }
             projected = valueSlot;
         }
-        if (!(ordinary || context.IsCapturedInner(type.Value) || SignatureValueTypes.Of(type.Value) is TypeNode.ByRef)
+        var projectedOverride = method?.DeclarationId.HasValue == true && !method.Generated.OrDefault()
+            && method.Overrides.OrEmpty().Length != 0 && StripSourceNullability(type.Value) is TypeNode.Fqn named
+            && ContainsExistentialProjection(named) && context.TryExistentialCarrier(named.Name, out var carrier)
+            && StripSourceNullability(projected) is TypeNode.Fqn physical && physical.Name == carrier;
+        if (!(ordinary || projectedOverride || context.IsCapturedInner(type.Value) || SignatureValueTypes.Of(type.Value) is TypeNode.ByRef)
             || projected == type.Value) return;
 
         // Frozen source facts must not share mutable nested argument vectors
