@@ -22,6 +22,10 @@ interface ReverseStorageFactory<K, P> where K : Base, K : IRight, K : ILeft {
     suspend fun <A : K> make(): Any
     fun replace(target: ClrRef<P>, input: P)
 }
+interface OverloadedPicker<K> where K : Base, K : ILeft, K : IRight {
+    suspend fun <A : K> pick(value: K, source: Iterable<Int>): Any
+    suspend fun <A : K> pick(value: K, source: Sequence<Int>): Any
+}
 interface SuspendPicker<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> pick(value: K): Any
     fun <A : K> write(value: K, condition: Boolean, target: ClrRef<Int>)
