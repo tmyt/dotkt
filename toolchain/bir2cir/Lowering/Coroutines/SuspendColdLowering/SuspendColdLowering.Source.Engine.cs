@@ -17,7 +17,7 @@ static partial class SuspendColdLowering
             if (_memberAbstract)
             {
                 methods.Add(ColdEntryAbstract());
-                if (WantsBridge) methods.Add(BuildBridge());
+                if (WantsBridge) { methods.Add(BuildBridge()); methods.AddRange(TaskViews()); }
                 return Finish();
             }
             if (_stubReason is { } reason)
@@ -92,7 +92,7 @@ static partial class SuspendColdLowering
             void AddNamedWrappers()
             {
                 if (IsEntryPoint) methods.Add(DrainMain());
-                if (WantsBridge) methods.Add(BuildBridge());
+                if (WantsBridge) { methods.Add(BuildBridge()); methods.AddRange(TaskViews()); }
             }
             SourceBuildResult Finish() => new(methods, types, NeedsRootContinuation, _methodProjections);
         }

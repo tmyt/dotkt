@@ -128,6 +128,8 @@ sealed partial class ProjectedCallableEntries
                         // that this interface, unlike the implementation, does not expose.
                         target = selected;
                         selectedPlan = Find(exactId).Plan.OnOwner(application.Args ?? []);
+                        if (CompletionInvocation(selected.Body.OrEmpty()) is { } call && call.OwnerType.OrDefault() is { } before && Key(before) == Key(application))
+                            WireCompletionInvocation(call, selected, f, selectedPlan, slotId);
                         break;
                     }
                 if (target == null) throw new InvalidOperationException($"No compatible implementation of projected storage slot '{slot.Owner}.{slot.Name}'");
@@ -140,7 +142,7 @@ sealed partial class ProjectedCallableEntries
                     if (contract.ForwardTo(destination, references.WitnessConstraintKey) is { } arguments)
                     {
                         target.ClrInterfaceImpls = target.ClrInterfaceImpls.OrEmpty().Where(r => !IsSlot(r, slot, f)).ToArray();
-                        AddSlotForwarder(storage, target, descriptor, contract, arguments, isInterface: true);
+                        AddSlotForwarder(storage, target, descriptor, contract, arguments, isInterface: true, slotId);
                         continue;
                     }
                 }

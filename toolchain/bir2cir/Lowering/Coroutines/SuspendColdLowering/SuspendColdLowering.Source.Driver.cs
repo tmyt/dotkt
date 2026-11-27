@@ -58,7 +58,8 @@ static partial class SuspendColdLowering
             foreach (var generated in output.Methods) MaterializedExecutable.NormalizeSource(generated);
             foreach (var generated in output.Types) MaterializedExecutable.NormalizeSource((BirGraphValue)generated);
             if (generator.ProjectedRootResult is { } projected) textRoot ??= (entry.File, projected);
-            else if (output.NeedsRootContinuation) rootHost ??= entry.File;
+            if (generator.UsesGenericTaskRoot || output.NeedsRootContinuation && generator.ProjectedRootResult == null)
+                rootHost ??= entry.File;
             var current = entry.Owner?.Methods.OrEmpty() ?? entry.File.Methods.OrEmpty();
             if (!module.ContinuationBaseIsLocal)
             {

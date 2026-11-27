@@ -16,6 +16,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A Kotlin class can implement both constructions of the same generic suspend interface inherited through a CLR interface (#2009).
 - A separately compiled Kotlin abstract class can dispatch erased-colliding generic suspend overloads to a derived implementation (#2040).
 - Kotlin classes can implement an interface with generic suspend overloads that erase to the same CLR signature, whether the interface is imported from another assembly (#2019) or declared in the same module (#2038).
+- A projected generic suspend interface call from .NET returns the interface's declared `Task<T>` even when the Kotlin override returns a narrower value (#2044).
 - Constructing a star-projected Kotlin class preserves its suspend overrides when called through a generic interface from another DLL (#2015).
 - A suspend override returning its bounded class type parameter can be called through its interface when the class also stores that parameter (#2024).
 - A suspend override returning a value type now returns a valid Task through its concrete, generic base, and interface declarations (#2031).

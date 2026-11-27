@@ -6,14 +6,13 @@ static partial class SuspendColdLowering
 {
     internal sealed partial class SourceFunGen
     {
-        internal TypeNode ProjectedRootResult => NeedsRootContinuation
-            && StringCharSequenceBridge.CanRestoreMaterializedValue(_resultType, _taskResultType)
-                ? _taskResultType is TypeNode.Nullable nullable ? nullable.Of : _taskResultType : null;
+        internal TypeNode ProjectedRootResult { get; private set; }
+        internal bool UsesGenericTaskRoot { get; private set; }
 
-        BirFunctionDeclaration BuildBridge()
+        BirFunctionDeclaration BuildBridge(TypeNode view = null, string viewId = null, string viewName = null)
         {
-            var isUnit = IsUnitTn(_resultType) && !_resultNullable && !_m.DotktValueReturn.OrDefault();
-            var result = IsUnitTn(_resultType) ? UnitTn : _taskResultType;
+            var isUnit = view == null && IsUnitTn(_resultType) && !_resultNullable && !_m.DotktValueReturn.OrDefault();
+            var result = view ?? (IsUnitTn(_resultType) ? UnitTn : _taskResultType);
             var resultSlot = BirTypeLowering.AsReadonlyResultSlot(result);
             var taskType = new TypeNode.Fqn(_taskBcl, new[] { resultSlot });
             var taskReturn = isUnit ? new TypeNode.Fqn(_taskBcl) : taskType;
@@ -26,16 +25,19 @@ static partial class SuspendColdLowering
                 Params = CloneNamedParameters(), Ret = taskReturn, Body = Array.Empty<IBirStatement>(),
                 Attrs = Array.Empty<BirAttribute>(),
             };
-            if (!_memberAbstract)
+            if (!_memberAbstract || view != null)
             {
                 var tcs = new TypeNode.Fqn(_tcsBcl, new[] { resultSlot });
-                var root = ProjectedRootResult != null ? new TypeNode.Fqn(TextRootFqn)
+                bool text = StringCharSequenceBridge.CanRestoreMaterializedValue(view == null ? _resultType : AnyTn, result);
+                if (text) ProjectedRootResult = result is TypeNode.Nullable nullable ? nullable.Of : result;
+                else UsesGenericTaskRoot = true;
+                var root = text ? new TypeNode.Fqn(TextRootFqn)
                     : new TypeNode.Fqn(RootContinuationFqn, new[] { resultSlot });
                 var body = BridgePrelude(tcs, root);
                 body.Add(new BirVariable { Name = BridgeResultLocal, Type = AnyTn, Init = Suspended() });
                 body.Add(new BirTry {
                     Type = VoidTn,
-                    Body = new IBirStatement[] { new BirSetLocal { Name = BridgeResultLocal, Value = OptionalField<IBirExpression>.Of(BridgeColdCall()) } },
+                    Body = new IBirStatement[] { new BirSetLocal { Name = BridgeResultLocal, Value = OptionalField<IBirExpression>.Of(BridgeColdCall(view != null)) } },
                     Catches = new[] { new BirCatch { ExcType = new TypeNode.Fqn("kotlin.Throwable"), Var = BridgeExceptionLocal,
                         Body = new IBirStatement[] {
                             new BirExpressionStatement { Expr = RootResumeFailure() },
@@ -53,8 +55,60 @@ static partial class SuspendColdLowering
                 body.Add(Ret(task));
                 method.Body = body.ToArray();
             }
-            FinishBridgeDeclaration(method, taskReturn);
+            if (view == null) FinishBridgeDeclaration(method, taskReturn);
+            else
+            {
+                method.ProjectedTaskView = (ProjectedCallableEntries.EntryId(_declarationId), viewId);
+                method.Generated = true; method.Override = false; method.Abstract = false; method.Virtual = false; method.Vis = "private";
+                method.TypeParams = _methodTypeParamDecls.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+                if (view is TypeNode.Tv)
+                    method.TypeParams = method.TypeParams.Value.Append(new BirTypeParameter { Name = "TCompletion" }).ToArray();
+                method.Name = viewName;
+            }
             return method;
+        }
+
+        // Build the selected completion view while suspend lowering still owns root creation,
+        // failure binding and result materialization. Only projected slot bodies consume it.
+        IEnumerable<BirFunctionDeclaration> TaskViews()
+        {
+            if (!_isMember || _declarationId == null || _typeParams.Count == 0 || _physicalSlotBridge || _m.Overrides.OrEmpty().Length == 0) yield break;
+            var names = ((SourceFunctionInput.Named)_input).Owner.Methods.OrEmpty().Select(m => m.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
+            var edges = _m.Overrides.OrEmpty().Where(o => o.DeclarationId.HasValue && o.Owner.OrDefault() is TypeNode.Fqn)
+                .Select(o => (Id: o.DeclarationId.Value, Owner: (TypeNode.Fqn)o.Owner.Value)).Distinct().ToArray();
+            int ordinal = 0;
+            foreach (var id in edges.Select(e => e.Id).Distinct(StringComparer.Ordinal))
+            {
+                var local = _module.TaskSlot(id);
+                TypeNode result; string declaringOwner;
+                if (local != null)
+                {
+                    declaringOwner = local.Owner.Name.Value;
+                    var storage = ResultStorageTypeSource(local.Method.SuspendRet.OrDefault());
+                    if (storage == null) continue;
+                    result = local.Method.SuspendTaskResult.OrDefault() ?? storage;
+                }
+                else if (_refs.TryDeclarationSignatureSlot(id, out var slot) && slot.IsInterface &&
+                    slot.Return is TypeNode.Fqn { Args: [var element] } task &&
+                    ReferenceMetadataReader.StripGenericArity(task.Name) == TaskBclFqn)
+                {
+                    declaringOwner = slot.Owner; result = element;
+                }
+                else continue;
+                bool usesOwner = false;
+                BirGraphNameFields.VisitTypeNodes(result, t => usesOwner |= t is TypeNode.Tv { Scope: "type" });
+                var views = usesOwner ? _module.TaskSlotOwners(_ownerClass, declaringOwner, id, local != null, edges)
+                    .Select(s => SupertypeGraph.SubstOwnerTvs(result, s.Args ?? [])).Distinct() : new[] { result };
+                // Only the final interface slot owns the physical completion type.
+                // Leave the ordinary root open; text restoration is a distinct body.
+                foreach (var view in views.Select(t => StringCharSequenceBridge.CanRestoreMaterializedValue(AnyTn, t)
+                    ? t : new TypeNode.Tv("method", _methodTypeParamDecls.Length)).Distinct())
+                {
+                    string name;
+                    do name = _name + "$taskView" + ordinal++; while (!names.Add(name));
+                    yield return BuildBridge(view, id, name);
+                }
+            }
         }
 
         List<IBirStatement> BridgePrelude(TypeNode tcs, TypeNode root) => new() {
@@ -99,7 +153,7 @@ static partial class SuspendColdLowering
                     _refs.PhysicalTypeNames, _localTypeFqns, nullableFrames: _refs.NullableTypeFrames));
         }
 
-        IBirExpression BridgeColdCall()
+        IBirExpression BridgeColdCall(bool taskView = false)
         {
             var args = _params.Select(parameter => (IBirExpression)Local(parameter.Name))
                 .Append(new BirCast { Type = ContAny(), E = Local(RootContinuationLocal) }).ToArray();
@@ -109,6 +163,7 @@ static partial class SuspendColdLowering
                 : default;
             if (_isMember)
                 return new BirCallInstance {
+                    TaskBridgeColdInvocation = taskView,
                     OwnerType = _selfType, Virtual = false, ClrOwnerResolved = true, Recv = new BirThis(),
                     Method = _coldName, Sig = signature, Args = args, Ret = AnyTn, TypeArgs = typeArguments,
                     SelectedGenericCallable = ForwarderEntry(true),

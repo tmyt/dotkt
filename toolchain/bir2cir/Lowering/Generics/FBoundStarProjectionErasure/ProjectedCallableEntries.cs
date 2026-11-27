@@ -151,7 +151,7 @@ sealed partial class ProjectedCallableEntries
                         arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
                     if (arguments != null)
                     {
-                        AddSlotForwarder(owner, method, descriptor, contract, arguments, slot.IsInterface);
+                        AddSlotForwarder(owner, method, descriptor, contract, arguments, slot.IsInterface, id);
                         continue;
                     }
                     if (slot.IsInterface)
@@ -177,12 +177,76 @@ sealed partial class ProjectedCallableEntries
             method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
     void AddSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
-        ProjectedMethodPlan contract, TypeNode[] arguments, bool isInterface)
+        ProjectedMethodPlan contract, TypeNode[] arguments, bool isInterface, string id)
     {
         // The MethodImpl keeps the selected declaration's ABI. Dispatch to the
         // Kotlin body with its own value parameters and witness ordering.
         var bridge = NewSlotForwarder(owner, target, descriptor, contract.CloneParameters(), isInterface);
-        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
+        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :
+            isInterface && NeedsTaskView(target, descriptor.Ret.Value, arguments)
+                ? ProjectedTaskBody(owner, bridge, target, (TypeNode.Fqn)descriptor.Owner.Value, contract, id)
+                : ForwardBody(owner, bridge, target, arguments);
+    }
+
+    // Only an authored suspend bridge materializes a completed value; an ordinary
+    // Kotlin method returning Task<T> must retain that task and its identity.
+    static bool NeedsTaskView(BirFunctionDeclaration target, TypeNode result, TypeNode[] arguments) =>
+        target.SuspendBridge.OrDefault() && result is TypeNode.Fqn { Args.Length: 1 } &&
+        result != FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(target.Ret.Value, [], arguments);
+
+    IBirStatement[] ProjectedTaskBody(IBirTypeDeclaration owner, BirFunctionDeclaration bridge, BirFunctionDeclaration target,
+        TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
+    {
+        var implementation = target.LocalBodyEntry?.Id ?? target.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
+        var completion = ((TypeNode.Fqn)bridge.Ret.Value).Args.Single();
+        bool text = StringCharSequenceBridge.CanRestoreMaterializedValue(new TypeNode.Fqn("kotlin.Any"), completion);
+        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) &&
+            m.Ret.OrDefault() is TypeNode.Fqn { Args: [var result] } && (text ? result == completion : result is TypeNode.Tv));
+        var body = template.Body.Value.Select(s => (IBirStatement)((BirGraphValue)s).DeepClone()).ToArray();
+        if (((TypeNode.Fqn)template.Ret.Value).Args[0] is TypeNode.Tv variable)
+            foreach (var s in body) TypedExecutableFrames.RewriteDeclarationFrameInPlace((BirGraphValue)s,
+                t => TypedExecutableFrames.RewriteType(t, v => v == variable ? completion : v));
+        var call = CompletionInvocation(body) ?? throw new InvalidOperationException("Missing cold call in suspend completion view");
+        WireCompletionInvocation(call, bridge, instance, contract, id);
+        return body;
+    }
+
+    static BirCallInstance CompletionInvocation(IBirStatement[] body)
+    {
+        BirCallInstance call = null;
+        foreach (var s in body) ((BirGraphValue)s).Visit(n => {
+            if (n is BirCallInstance { TaskBridgeColdInvocation: true } c)
+            {
+                if (call != null) throw new InvalidOperationException("Ambiguous cold call in suspend completion view");
+                call = c;
+            }
+        });
+        return call;
+    }
+
+    void WireCompletionInvocation(BirCallInstance c, BirFunctionDeclaration bridge, TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
+    {
+        var coldId = id + "|cold";
+        var projection = contract == null ? null : Find(coldId);
+        var physicalId = projection == null ? coldId : EntryId(coldId);
+        ReferencedDeclarationSlot cold = null;
+        if (projection != null) localSlots.TryGetValue(coldId, out cold);
+        else if (originalSlots.TryGetValue(coldId, out var original))
+            cold = new(original.Owner.Name.Value, original.Method.Name.Value, original.Method.TypeParams.OrEmpty().Length,
+                original.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(), original.Method.Ret.Value, true, false);
+        bool local = cold != null;
+        if (!local && !references.TryDeclarationSignatureSlot(physicalId, out cold))
+            throw new InvalidOperationException("Projected suspend interface declaration lacks its cold slot");
+        var selected = local ? null : references.SelectedPhysicalMethod(physicalId);
+        var actual = (projection == null ? null : contract.ForwardTo(projection.Plan.OnOwner(instance.Args ?? []), references.WitnessConstraintKey)) ??
+            Enumerable.Range(0, cold.Arity).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+        var continuation = c.Args.Value[^1];
+        c.OwnerType = instance; c.Recv = new BirThis(); c.Method = cold.Name; c.Virtual = true;
+        c.TypeArgs = actual; c.Sig = cold.Parameters.Select(t => SupertypeGraph.SubstOwnerTvs(t, instance.Args ?? [])).ToArray();
+        c.CalleeParams = cold.Parameters; c.CalleeRet = cold.Return;
+        c.MemberRef = selected == null ? default(OptionalField<BirMemberReference>) :
+            BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, instance.Args));
+        c.Args = bridge.Params.Value.Select(p => (IBirExpression)new BirLocal { Name = p.Name }).Append(continuation).ToArray();
     }
 
     static BirFunctionDeclaration NewSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
@@ -612,6 +676,9 @@ sealed partial class ProjectedCallableEntries
     // Keep it (and its body) if it still implements any surviving obligation.
     internal void RetireFacadeOverrides(BirFileDeclaration[] files, HashSet<string> emittedTypes)
     {
+        foreach (var owner in files.SelectMany(f => f.Types.OrEmpty()))
+            if (owner.Methods.OrEmpty().Any(m => m.ProjectedTaskView != null))
+                owner.Methods = owner.Methods.Value.Where(m => m.ProjectedTaskView == null).ToArray();
         if (exactFacades.Count == 0) return;
         HashSet<string> machines = new(StringComparer.Ordinal);
         foreach (var owner in files.SelectMany(f => f.Types.OrEmpty())) RetireAdapterGroups(owner, machines);

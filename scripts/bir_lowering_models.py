@@ -414,6 +414,8 @@ def outputs(root, definitions):
                       "    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }"]
         if name == "BirParameter":
             model += ["    internal TypeNode? DelegateRestorationType { get; set; }"]
+        if name == "BirCallInstance":
+            model += ["    internal bool TaskBridgeColdInvocation { get; set; }"]
         if name == "BirIsInstance":
             model += ["    internal bool ExactDispatchOwner { get; set; }"]
         if name == "BirNew":
@@ -424,6 +426,7 @@ def outputs(root, definitions):
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
             model += ["    internal object? OverrideAdapterGroup { get; set; }",
+                      "    internal (string Implementation, string Slot)? ProjectedTaskView { get; set; }",
                       "    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
                       "    internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }",
                       "    internal ExistentialCallableRole ExistentialCallable { get; set; }",

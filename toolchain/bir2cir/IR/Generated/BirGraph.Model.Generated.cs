@@ -6371,6 +6371,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
 {
     internal override string? SelectedGenericCallable { get; set; }
     internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
+    internal bool TaskBridgeColdInvocation { get; set; }
     public override string Tag => "callInstance";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
@@ -11205,6 +11206,7 @@ internal sealed record BirDeclarationPosition : BirGraphValue
 internal sealed record BirFunctionDeclaration : BirGraphValue
 {
     internal object? OverrideAdapterGroup { get; set; }
+    internal (string Implementation, string Slot)? ProjectedTaskView { get; set; }
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
     internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }
     internal ExistentialCallableRole ExistentialCallable { get; set; }
