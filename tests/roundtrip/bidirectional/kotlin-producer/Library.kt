@@ -19,6 +19,9 @@ class ImportedTextResult : ProjectedTextResult<Concrete> {
 suspend fun importedTextLength(view: ProjectedTextResult<Concrete>): Int =
     view.text<Concrete>(Concrete()).length
 
+suspend fun importedTextIsString(view: ProjectedTextResult<Concrete>): Boolean =
+    view.text<Concrete>(Concrete()) is String
+
 class ImportedProjectedResult : ProjectedResult<Concrete> {
     override suspend fun <A : Concrete> nullableUnit() {}
     override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }

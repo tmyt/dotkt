@@ -45,7 +45,9 @@ interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
 }
 
-interface ProjectedTextResult<K> where K : Base, K : ILeft, K : IRight {
+interface OptionalCompletion<T> { suspend fun completed(): T? }
+interface ProjectedTextResult<K> : OptionalCompletion<Unit> where K : Base, K : ILeft, K : IRight {
+    override suspend fun completed() {}
     suspend fun <A : K> text(value: K): CharSequence
 }
 

@@ -67,7 +67,8 @@ static partial class FBoundStarProjectionErasure
                 Enumerable.Range(0, owner.Arity).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray())),
             Virtual = method.Virtual.OrDefault() || method.Abstract.OrDefault(),
             Recv = OptionalField<IBirExpression>.Of(new BirThis()), Method = method.Name,
-            Sig = signature.ToArray(), Ret = BirGraphValue.CopyType(originalRet), Args = arguments.ToArray(),
+            Sig = signature.ToArray(), Ret = BirGraphValue.CopyType(method.SuspendRet.OrDefault() ?? originalRet),
+            Args = arguments.ToArray(),
             _exactExistentialBridgeOwnerCall = true, ClrOwnerResolved = true,
         };
         if (method.DeclarationId.HasValue) call.DeclarationId = method.DeclarationId;
@@ -98,10 +99,6 @@ static partial class FBoundStarProjectionErasure
         if (context.Definition(owner).Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         if (method.Mods.HasValue) bridge.Mods = (BirModifiers)method.Mods.Value.DeepClone();
         CopyResultFactsSource(method, bridge, context);
-        // Suspend lowering will wrap the selected completion slot in Task, not
-        // the type used for an ordinary return inside the forwarding body.
-        if (bridge.SuspendTaskResult.HasValue)
-            implementation.Ret = BirGraphValue.CopyType(bridge.SuspendTaskResult.Value);
         return bridge;
     }
 
