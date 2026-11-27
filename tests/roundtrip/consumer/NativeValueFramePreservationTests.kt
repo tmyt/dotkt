@@ -84,7 +84,7 @@ private fun <T> replaceStoredMarkerLocal(value: StoredMarker<T>, replacement: St
 private interface PlainStoredBound { fun count(): Int }
 private class PlainStoredCounter : PlainStoredBound { override fun count(): Int = 17 }
 private fun <T : PlainStoredBound> readPlainStoredBound(value: T): Int = Stored(value).value.count()
-private class StoredNativeValueEcho : NativeValueEcho {
+internal class StoredNativeValueEcho : NativeValueEcho {
     override fun <T> Echo(value: T): T = Stored(value).value
 }
 private class StoredNativeBoundedValueEcho : NativeBoundedValueEcho {

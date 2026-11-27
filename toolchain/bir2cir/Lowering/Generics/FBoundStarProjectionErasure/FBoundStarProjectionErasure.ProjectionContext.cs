@@ -110,6 +110,9 @@ static partial class FBoundStarProjectionErasure
             SelectLocalPhysicalClass(name) is { } local ? ClassLayout(local)
                 : References.NullableTypeFrames.GetValueOrDefault(name);
 
+        internal TypeNode MaterialNativeMethodArgument(TypeNode type) => PreservesNestedNativeWitnessHead(type, this)
+            ? Rewrite(type, preserveConstructedHead: true) : type;
+
         internal TypeNode Rewrite(TypeNode type, bool boundDeclaration = false,
             bool preserveConstructedHead = false, bool preserveArrayShape = false, bool sourceOverrideOwner = false)
         {
@@ -272,6 +275,18 @@ static partial class FBoundStarProjectionErasure
             if (References.PhysicalConstraintType(bound) is not TypeNode.Fqn exact) return null;
             var native = References.PhysicalTypeForProof(exact.Name, exact.Args?.Length ?? 0);
             return native?.IsInterface == true ? "interface" : native?.IsClass == true ? "class" : null;
+        }
+
+        internal TypeNode PreserveReferenceBound(BirTypeParameter row, TypeNode bound, TypeNode projected)
+        {
+            // The carrier preserves Kotlin membership, not the fact that its
+            // source upper bound is a class. Keep that independent CLR proof.
+            if (StripSourceNullability(bound) is TypeNode.Fqn { Args.Length: > 0 } f && BoundKind(f) == "class"
+                && TryExistentialCarrier(f.Name, out var carrier)
+                && StripSourceNullability(projected) is TypeNode.Fqn p && p.Name == carrier
+                && !row.SpecialConstraints.OrEmpty().Contains("class"))
+                row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("class").ToArray();
+            return projected;
         }
 
         internal sealed record FixedSupertypeConstraint(int Index, TypeNode.Fqn Bound, string Owner);
@@ -568,11 +583,13 @@ static partial class FBoundStarProjectionErasure
                 allowIntersection: allowIntersection, acceptsPrimary: acceptsPrimary);
         }
 
-        internal StorageWitness MethodClassWitness(WitnessSlot slot, Func<int, TypeNode> closeArgument)
+        internal StorageWitness MethodClassWitness(WitnessSlot slot, Func<int, TypeNode> closeArgument,
+            Func<int,bool> keepUnboundedMaterial)
         {
             var method = slot.Entry.LocalMethod;
             return SharedClassWitness(slot, closeArgument, method == null ? null
-                : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(method, i, bound)), allowIntersection: true);
+                : (i, bound) => Rewrite(bound, NativeProofs.IsPhysicalConstraint(method, i, bound)), allowIntersection: true,
+                keepUnboundedMaterial: keepUnboundedMaterial);
         }
 
         bool HasPhysicalSupertype(TypeNode.Fqn candidate, TypeNode.Fqn required)
@@ -584,7 +601,8 @@ static partial class FBoundStarProjectionErasure
 
         StorageWitness SharedClassWitness(WitnessSlot selected,
             Func<int, TypeNode> closeArgument, Func<int, TypeNode, TypeNode> physicalBound = null,
-            bool allowIntersection = false, Func<TypeNode.Fqn, bool> acceptsPrimary = null)
+            bool allowIntersection = false, Func<TypeNode.Fqn, bool> acceptsPrimary = null,
+            Func<int,bool> keepUnboundedMaterial = null)
         {
             if (selected.Formal == null || selected.ConstructedArgument is not { Args.Length: > 0 } application) return null;
             var entry = selected.Entry;
@@ -628,7 +646,7 @@ static partial class FBoundStarProjectionErasure
             var separateMaterial = scope == "method" && linked.Any(i =>
                 entry.Slot(i).Role is { Representation: NullableRepresentationFrame.Role.Ordinary } role &&
                 frame.StorageIndices.Contains(role.SourceIndex));
-            if (bounds.Length == 0 && !separateMaterial) return null;
+            if (bounds.Length == 0 && (!separateMaterial || keepUnboundedMaterial != null && linked.Any(keepUnboundedMaterial))) return null;
             TypeNode Identity(TypeNode type) => ConstraintKey(type);
             var classBound = bounds.OfType<TypeNode.Fqn>().Any(bound => !IsObjectish(bound) && BoundKind(bound) == "class");
             if (!classBound && !separateMaterial) return null;
@@ -715,6 +733,12 @@ static partial class FBoundStarProjectionErasure
     static bool IsExactNativeArrayWitness(TypeNode type, CarrierProjectionContext context) =>
         StripSourceNullability(type) is TypeNode.Array array &&
         (PreservesNativeWitnessHead(array.Elem, context) || IsExactNativeArrayWitness(array.Elem, context));
+
+    static bool PreservesNestedNativeWitnessHead(TypeNode type, CarrierProjectionContext context) =>
+        StripSourceNullability(type) is TypeNode.Fqn { Args.Length: > 0 } nested
+        && nested.Args.Any(ContainsExistentialProjection) && !nested.Args.Any(IsExistentialArgument)
+        && context.Values?.IsBindingAlias(nested.Name) != true && context.LocalClrAliases?.ContainsKey(nested.Name) != true
+        && IsNativeArrayOwner(nested, context.References, context.LocalClrAliases);
 
     static TypeNode ProjectOrdinaryParameter(TypeNode type, CarrierProjectionContext context) => type switch {
         TypeNode.Nullable nullable => new TypeNode.Nullable(ProjectOrdinaryParameter(nullable.Of, context)),

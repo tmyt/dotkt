@@ -224,6 +224,9 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T EchoValue<T>(T value) => value;
+    public static System.Collections.Generic.List<T> MakeList<T>() => new();
+    public static void Append<T,U>(U value, System.Collections.Generic.List<T> list) where U : T => list.Add(value);
     public static T ReplaceRecord<T>(IMarkedRecord<T> record, T item) where T : IProjectedMark
     {
         record.Write(item);
