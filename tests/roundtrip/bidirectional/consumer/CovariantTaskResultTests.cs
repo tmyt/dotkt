@@ -72,5 +72,19 @@ public class CovariantTaskResultInteropTests
             && method.GetParameters().Length == 2 && method.GetParameters()[1].ParameterType == typeof(string));
         Assert.That(index, Is.GreaterThanOrEqualTo(0));
         Assert.That(map.TargetMethods[index].ReturnType, Is.EqualTo(typeof(Task<object>)));
+        var imported = new ImportedOrdinaryTextResult();
+        TextTaskResult view = imported;
+        Assert.That((await view.text()).ToString(), Is.EqualTo("separate"));
+        Assert.That(await imported.lengthViaInterface(), Is.EqualTo(8));
+        Assert.That(await view.optionalText(false), Is.Null);
+        Assert.That(await LibraryKt.forwardOptionalText(view, false), Is.Null);
+        var forwarded = await LibraryKt.forwardOptionalText(view, true);
+        Assert.That(forwarded, Is.TypeOf<string>());
+        Assert.That(forwarded, Is.EqualTo("separate"));
+        Assert.That(await view.signal(false), Is.Null);
+        Assert.That(await view.signal(true), Is.SameAs(kotlin.Unit.INSTANCE));
+        var textMap = imported.GetType().GetInterfaceMap(typeof(TextTaskResult));
+        var signal = Array.FindIndex(textMap.InterfaceMethods, method => method.Name == "signal");
+        Assert.That(textMap.TargetMethods[signal], Is.EqualTo(imported.GetType().GetMethod("signal")));
     }
 }

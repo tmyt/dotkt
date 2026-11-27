@@ -47,6 +47,11 @@ class SharedResult : ConstrainedResult<Concrete>, NominalResult<Concrete> {
 interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
 }
+interface TextTaskResult {
+    suspend fun text(): CharSequence
+    suspend fun optionalText(present: Boolean): CharSequence?
+    suspend fun signal(present: Boolean): Unit?
+}
 
 interface OptionalCompletion<T> { suspend fun completed(): T? }
 interface ProjectedTextResult<K> : OptionalCompletion<Unit> where K : Base, K : ILeft, K : IRight {

@@ -12,6 +12,7 @@ import roundtrip.covarianttaskresults.NominalReader
 import roundtrip.covarianttaskresults.ProjectedTextResult
 import roundtrip.covarianttaskresults.TaskResultBase
 import roundtrip.covarianttaskresults.TaskResultDerived
+import roundtrip.covarianttaskresults.TextTaskResult
 import roundtrip.selectedbounds.Concrete
 
 class ImportedTextResult : ProjectedTextResult<Concrete> {
@@ -46,6 +47,18 @@ suspend fun importedNominalRead(target: NominalReader<Concrete>, gate: Task1<Int
     target.read<Concrete>(Concrete(), gate)
 suspend fun importedConstrainedRead(target: ProjectedResult<Concrete>, gate: Task1<Int>) =
     target.read<Concrete>(Concrete(), gate)
+
+class ImportedOrdinaryTextResult : TextTaskResult {
+    override suspend fun text(): CharSequence = "separate"
+    override suspend fun optionalText(present: Boolean): CharSequence? = if (present) "separate" else null
+    override suspend fun signal(present: Boolean): Unit? = if (present) Unit else null
+    suspend fun lengthViaInterface(): Int {
+        val source: TextTaskResult = this
+        return source.text().length
+    }
+}
+
+suspend fun forwardOptionalText(source: TextTaskResult, present: Boolean): Any? = source.optionalText(present)
 
 @FlagsAttribute
 @ClrEnum
