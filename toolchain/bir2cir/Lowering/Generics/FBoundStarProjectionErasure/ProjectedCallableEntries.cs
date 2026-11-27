@@ -145,7 +145,7 @@ sealed partial class ProjectedCallableEntries
                     var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
                     TypeNode PhysicalSlot(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, references);
                     if (owner.Kind.OrDefault() == "interface" ||
-                        !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(p.Type.Value)))
+                        !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(FunctionSignatureIdentity.SignatureType(p))))
                         || PhysicalSlot(descriptor.Ret.Value) != PhysicalSlot(method.Ret.Value))
                         arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
                     if (arguments != null)
