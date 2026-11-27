@@ -17,6 +17,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A suspend override implementing two generic Kotlin interfaces from another assembly can be called through either interface even when their generic constraints differ (#2056).
 - Overriding a CLR base's projected `iterator()` in Kotlin also supplies its non-generic `IEnumerable.GetEnumerator()` implementation (#2004).
 - Passing a smart-cast local such as an `Any` narrowed to `String` as a writable reference to the narrower type is now diagnosed instead of silently writing to a copy (#1965).
+- A writable reference can no longer widen a Kotlin local's declared type. Passing a non-null local to a nullable CLR `ref`, including `Array.Resize`, now requires declaring the local nullable (#2028).
 - Overriding one inherited CLR default interface member in Kotlin preserves the native base's explicit implementation of its other members (#2013).
 - Kotlin overrides of an overloaded CLR interface default now dispatch through the constructed interface without redirecting its other overloads (#2021).
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).

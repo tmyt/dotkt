@@ -1,2 +1,9 @@
 cannot pass 'local' by reference through an implicit change of type
 cannot pass 'elements' by reference through an implicit change of type
+cannot pass 'number' by reference through an implicit change of type
+cannot pass 'generic' by reference through an implicit change of type
+cannot pass 'list' by reference through an implicit change of type
+cannot pass 'text' by reference through an implicit change of type
+cannot pass 'nonNull' by reference through an implicit change of type
+cannot pass 'live' by reference through an implicit change of type
+cannot pass 'values' by reference through an implicit change of type
