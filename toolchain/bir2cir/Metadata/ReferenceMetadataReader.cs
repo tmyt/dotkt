@@ -770,6 +770,7 @@ static class ReferenceMetadataReader
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
                             SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
+                            IsFinal = method.IsFinal,
                             ReflectedWitnessIndices = declarationIdentity?.ReflectedWitnessIndices,
                             ValueAdapter = valueMember?.ConstructorArguments[0].Value as string,
                             ValueSlot = valueMember?.ConstructorArguments[1].Value as string,
