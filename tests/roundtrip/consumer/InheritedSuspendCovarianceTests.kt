@@ -36,6 +36,22 @@ private interface StringPicker { suspend fun <M> pick(x: String): String }
 private class SelectedPicker : OverloadedBase(), StringPicker
 class InheritedSuspendCovarianceTests {
     @TestAttribute
+    fun classOnlyCovariancePreservesTaskDispatchAndResult() {
+        val gate = Gate()
+        val result = Narrow("derived")
+        val child = NarrowClassFactory(gate)
+        check(InheritedSuspendTaskApi.ChooseThroughClass(child, result).Result === result)
+        val wide = InheritedSuspendTaskApi.FromWideClass(child)
+        check(!wide.IsCompleted)
+        gate.resume(result)
+        check(wide.Wait(5000) && wide.Result === result)
+        val narrow = InheritedSuspendTaskApi.FromNarrowClass(child)
+        check(!narrow.IsCompleted)
+        gate.resume(result)
+        check(narrow.Wait(5000) && narrow.Result === result)
+    }
+
+    @TestAttribute
     fun inheritedNumericResultBoxesAfterSuspension() {
         val first = IntGate()
         val produced: NumericFactory = ProducedNumeric(first)

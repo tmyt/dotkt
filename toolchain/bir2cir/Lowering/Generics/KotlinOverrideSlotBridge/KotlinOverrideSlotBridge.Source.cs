@@ -108,6 +108,10 @@ static partial class KotlinOverrideSlotBridge
             // A selected Nothing-returning override never produces a value.
             // It owes the same exact slot whether its base is local or imported.
             if (NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+            // This is an already-selected Kotlin override. Adapt its completed
+            // value to the class slot before constructing the invariant CLR Task.
+            else if (!supIsInterface && phase == Phase.SuspendValueBridges && differingSuspendResult)
+                retFit = Fit.Bridge;
             // Keep the erased Kotlin body; the native enumeration protocol can adapt this exact result.
             else if (phase == Phase.PhysicalBridges && supIsInterface && referencedSlot
                 && NativeCursorResult(impl.Source?.RetKotlinType.OrDefault() ?? impl.Header?.RetKotlinType.OrDefault(),

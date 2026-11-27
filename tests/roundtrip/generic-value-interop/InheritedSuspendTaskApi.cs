@@ -9,6 +9,10 @@ public interface IJoinedPicker : roundtrip.selectedbounds.SuspendPicker<roundtri
 
 public static class InheritedSuspendTaskApi
 {
+    public static Task<Value> FromWideClass(WideClassFactory factory) => factory.make();
+    public static Task<Narrow> FromNarrowClass(NarrowClassFactory factory) => factory.make();
+    public static Task<Value> ChooseThroughClass(WideClassFactory factory, Narrow input) => factory.choose<Narrow, Narrow>(input);
+
     private static T Complete<T>(Task<T> task, IntGate gate)
     {
         if (task.IsCompleted) throw new Exception("Expected a suspended Task");

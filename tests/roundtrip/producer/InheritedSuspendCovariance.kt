@@ -9,6 +9,14 @@ open class OverloadedBase {
 
 open class Value(val text: String)
 class Narrow(text: String) : Value(text)
+open class WideClassFactory {
+    open suspend fun make(): Value = Value("base")
+    open suspend fun <T : Value> choose(value: T): Value = Value("base")
+}
+class NarrowClassFactory(private val gate: Gate) : WideClassFactory() {
+    override suspend fun make(): Narrow = gate.await()
+    override suspend fun <T : Value> choose(value: T): T = value
+}
 class Gate {
     private var pending: Continuation<Narrow>? = null
     suspend fun await(): Narrow = suspendCoroutine { pending = it }
