@@ -1562,6 +1562,7 @@ internal static class BirGraphDom
                 case "argTypes": break;
                 case "args": break;
                 case "namedArgs": break;
+                case "constructorNativeKey": break;
                 case "attrExternal": break;
                 case "attrAssembly": break;
                 case "memberRef": break;
@@ -1574,6 +1575,7 @@ internal static class BirGraphDom
             ArgTypes = Field<TypeNode[]>(fields, "argTypes", value => ((JsonArray)value!).Select(item0 => TypeNode.Read(item0) ?? throw new FormatException()).ToArray()),
             Args = Field<IBirAttributeValue[]>(fields, "args", value => ((JsonArray)value!).Select(item0 => ReadBirAttributeValue(item0!)).ToArray()),
             NamedArgs = Field<BirAttributeNamedArgument[]>(fields, "namedArgs", value => ((JsonArray)value!).Select(item0 => ReadBirAttributeNamedArgument(item0!)).ToArray()),
+            ConstructorNativeKey = Field<string>(fields, "constructorNativeKey", value => value!.GetValue<string>()),
             AttrExternal = Field<bool>(fields, "attrExternal", value => value!.GetValue<bool>()),
             AttrAssembly = Field<string>(fields, "attrAssembly", value => value!.GetValue<string>()),
             MemberRef = Field<BirMemberReference>(fields, "memberRef", value => ReadBirMemberReference(value!)),
