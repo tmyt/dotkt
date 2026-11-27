@@ -25,8 +25,10 @@ open class TaskResultBase(val text: String)
 class TaskResultDerived(text: String) : TaskResultBase(text)
 interface ProjectedResult<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> read(value: K, gate: Task1<Int>): TaskResultBase
+    suspend fun <A : K> boxed(value: K, gate: Task1<Int>): Any
 }
 class ProjectedDerivedResult : ProjectedResult<Concrete> {
+    override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
     override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
         gate.await()
         return TaskResultDerived("projected")

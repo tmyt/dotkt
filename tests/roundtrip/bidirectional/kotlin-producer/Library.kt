@@ -12,6 +12,7 @@ import roundtrip.covarianttaskresults.TaskResultDerived
 import roundtrip.selectedbounds.Concrete
 
 class ImportedProjectedResult : ProjectedResult<Concrete> {
+    override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
     override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultDerived {
         gate.await()
         return TaskResultDerived("imported")

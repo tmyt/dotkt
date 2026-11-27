@@ -24,6 +24,13 @@ public class CovariantTaskResultInteropTests
         result = Start(source.Task);
         source.SetException(failure);
         Assert.That(Assert.ThrowsAsync<InvalidOperationException>(async () => { await result; }), Is.SameAs(failure));
+
+        source = new TaskCompletionSource<int>();
+        Task<object> boxed = view.boxed<Concrete, Concrete>(new Concrete(), source.Task);
+        Assert.That((object)boxed, Is.InstanceOf<Task<object>>());
+        Assert.That(boxed.IsCompleted, Is.False);
+        source.SetResult(0);
+        Assert.That(await boxed, Is.SameAs(kotlin.Unit.INSTANCE));
     }
     [Test]
     public async Task DirectAndInterfaceTaskEntriesKeepTheirOwnResultTypes()

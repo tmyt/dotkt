@@ -183,18 +183,22 @@ sealed partial class ProjectedCallableEntries
         // Kotlin body with its own value parameters and witness ordering.
         var bridge = NewSlotForwarder(owner, target, descriptor, contract.CloneParameters(), isInterface);
         bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :
-            (isInterface ? ProjectedTaskBody(owner, bridge, target, descriptor, contract, arguments, id) : null) ?? ForwardBody(owner, bridge, target, arguments);
+            isInterface && NeedsTaskView(target, descriptor.Ret.Value, arguments)
+                ? ProjectedTaskBody(owner, bridge, target, (TypeNode.Fqn)descriptor.Owner.Value, contract, id)
+                : ForwardBody(owner, bridge, target, arguments);
     }
 
+    // Only an authored suspend bridge materializes a completed value; an ordinary
+    // Kotlin method returning Task<T> must retain that task and its identity.
+    static bool NeedsTaskView(BirFunctionDeclaration target, TypeNode result, TypeNode[] arguments) =>
+        target.SuspendBridge.OrDefault() && result is TypeNode.Fqn { Args.Length: 1 } &&
+        result != FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(target.Ret.Value, [], arguments);
+
     IBirStatement[] ProjectedTaskBody(IBirTypeDeclaration owner, BirFunctionDeclaration bridge, BirFunctionDeclaration target,
-        BirMethodImpl descriptor, ProjectedMethodPlan contract, TypeNode[] arguments, string id)
+        TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
     {
-        if (!target.SuspendBridge.OrDefault() || bridge.Ret.Value is not TypeNode.Fqn { Args.Length: 1 } wide ||
-            target.Ret.Value is not TypeNode.Fqn narrow || ReferenceMetadataReader.StripGenericArity(wide.Name) != ReferenceMetadataReader.StripGenericArity(narrow.Name) ||
-            wide == FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(narrow, [], arguments)) return null;
-        var instance = (TypeNode.Fqn)descriptor.Owner.Value;
         var implementation = target.LocalBodyEntry?.Id ?? target.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
-        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) && m.Ret.OrDefault() == wide);
+        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) && m.Ret.OrDefault() == bridge.Ret.Value);
         var coldId = id + "|cold";
         var local = localSlots.TryGetValue(coldId, out var cold);
         if (!local && !references.TryDeclarationSignatureSlot(EntryId(coldId), out cold))
@@ -204,6 +208,8 @@ sealed partial class ProjectedCallableEntries
         var actual = contract.ForwardTo(coldPlan, references.WitnessConstraintKey) ??
             Enumerable.Range(0, cold.Arity).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
         var body = template.Body.Value.Select(s => (IBirStatement)((BirGraphValue)s).DeepClone()).ToArray();
+        // Only replace the explicitly marked invocation. Root creation, completion, exception
+        // handling and cancellation are the ordinary, already-bound suspend implementation.
         int calls = 0;
         foreach (var s in body) ((BirGraphValue)s).Visit(n => {
             if (n is not BirCallInstance { TaskBridgeColdInvocation: true } c) return;
