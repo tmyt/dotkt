@@ -6,29 +6,38 @@ sealed partial class ProjectedCallableEntries
 {
     readonly HashSet<string> operationTypes = new(StringComparer.Ordinal);
     readonly HashSet<BirMethodImpl> replacedAdapterSlots = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<BirMethodImpl, HashSet<string>> replacedLocalSlots = new(ReferenceEqualityComparer.Instance);
 
     // Earlier slot synthesis may already have supplied a forwarder for the
     // selected declaration. Replace only that interface assignment; a bridge
     // shared with another interface or base slot still has work to do.
-    void RetireInterfaceForwarder(IBirTypeDeclaration owner, TypeNode.Fqn application, ReferencedDeclarationSlot slot)
+    void RetireInterfaceForwarder(IBirTypeDeclaration owner, TypeNode.Fqn application, ReferencedDeclarationSlot slot, string id)
     {
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, application.Args ?? []);
         bool Matches(BirMethodImpl directive) => directive.Owner.OrDefault() == application &&
             directive.Member.OrDefault() == slot.Name && directive.Arity.OrDefault() == slot.Arity &&
             directive.Params.OrEmpty().SequenceEqual(slot.Parameters.Select(Close)) && directive.Ret.OrDefault() == Close(slot.Return);
+        var dim = owner.Kind.OrDefault() == "interface";
         foreach (var bridge in owner.Methods.OrEmpty().Where(m => m.Generated.OrDefault() &&
-            (m.ClrInterfaceSlotBridge.OrDefault() || m.OverrideAdapterGroup != null)))
+            (m.OverrideAdapterGroup != null || dim && m.ClrInterfaceSlotBridge.OrDefault())))
         {
             var old = bridge.ClrInterfaceImpls.OrEmpty();
             if (bridge.OverrideAdapterGroup != null)
             {
-                replacedAdapterSlots.UnionWith(old.Where(Matches));
+                foreach (var d in old.Where(d => d.Owner.OrDefault() == application))
+                    if (d.LocalOverrideTargets is { Count: > 0 } targets)
+                    {
+                        // Local overloads can acquire modifiers after adapter synthesis.
+                        if (!targets.Contains(id)) continue;
+                        if (!replacedLocalSlots.TryGetValue(d, out var retired)) replacedLocalSlots[d] = retired = new(StringComparer.Ordinal);
+                        retired.Add(id);
+                    }
+                    else if (Matches(d)) replacedAdapterSlots.Add(d);
                 continue;
             }
             var active = old.Where(d => !Matches(d)).ToArray();
             if (old.Length == active.Length) continue;
-            if (active.Length == 0 && bridge.ClrBaseImpls.OrEmpty().Length == 0)
-                owner.Methods = owner.Methods.Value.Where(m => !ReferenceEquals(m, bridge)).ToArray();
+            if (active.Length == 0) owner.Methods = owner.Methods.Value.Where(m => !ReferenceEquals(m, bridge)).ToArray();
             else bridge.ClrInterfaceImpls = active;
         }
     }
@@ -73,7 +82,7 @@ sealed partial class ProjectedCallableEntries
         if (selected.SourceArity != destination.SourceArity) throw new InvalidOperationException("Selected override source arities disagree");
         var weakRows = contract?.CloneParameters() ?? rows.Select(p => CapturedGenericInvocation.CloneParameter(p, Close)).ToArray();
         if (projectedSlot != null) slot = projectedSlot;
-        RetireInterfaceForwarder(owner, selectedOwner, slot);
+        RetireInterfaceForwarder(owner, selectedOwner, slot, projectedSlot == null ? id : EntryId(id));
         int Position(int index, bool material = false)
         {
             var role = destination.PhysicalSlot(index);

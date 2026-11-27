@@ -131,9 +131,9 @@ sealed partial class ProjectedCallableEntries
                             if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
                                 RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
                                     source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
-                                    source.Method.Ret.Value, true, false));
+                                    source.Method.Ret.Value, true, false), id);
                             else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
-                                references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade);
+                                references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade, id);
                         }
                     }
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
@@ -671,15 +671,15 @@ sealed partial class ProjectedCallableEntries
                 method.Visit(n => Bind(n, new(ownerParameters, []), new(method.TypeParams.OrEmpty(), [])));
     }
 
-    // Only the projected entry is an override point. Several selected declarations can
-    // share one provisional descriptor before physical overload signatures are allocated.
-    // Keep it (and its body) if it still implements any surviving obligation.
-    internal void RetireFacadeOverrides(BirFileDeclaration[] files, HashSet<string> emittedTypes)
+    // A facade that is no longer virtual, or an ordinary slot now served by a
+    // projected forwarder, no longer needs its old adapter assignment. Keep
+    // the group while any of its other selected slots is still live.
+    internal void RetireReplacedOverrides(BirFileDeclaration[] files, HashSet<string> emittedTypes)
     {
         foreach (var owner in files.SelectMany(f => f.Types.OrEmpty()))
             if (owner.Methods.OrEmpty().Any(m => m.ProjectedTaskView != null))
                 owner.Methods = owner.Methods.Value.Where(m => m.ProjectedTaskView == null).ToArray();
-        if (exactFacades.Count == 0 && replacedAdapterSlots.Count == 0) return;
+        if (exactFacades.Count == 0 && replacedAdapterSlots.Count == 0 && replacedLocalSlots.Count == 0) return;
         HashSet<string> machines = new(StringComparer.Ordinal);
         foreach (var owner in files.SelectMany(f => f.Types.OrEmpty())) RetireAdapterGroups(owner, machines);
         if (machines.Count == 0) return;
@@ -696,7 +696,8 @@ sealed partial class ProjectedCallableEntries
     void RetireAdapterGroups(IBirTypeDeclaration owner, HashSet<string> machines)
     {
         bool Obsolete(BirMethodImpl d) => replacedAdapterSlots.Contains(d)
-            || d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(exactFacades.Contains);
+            || d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(id => exactFacades.Contains(id)
+                || replacedLocalSlots.TryGetValue(d, out var retired) && retired.Contains(id));
         HashSet<object> unused = null;
         foreach (var m in owner.Methods.OrEmpty())
         {

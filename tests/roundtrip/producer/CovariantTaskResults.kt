@@ -39,6 +39,7 @@ class ProjectedDerivedResult : ProjectedResult<Concrete> {
 interface NominalResult<K : Base> {
     suspend fun <A : K> value(): TaskResultBase
     suspend fun <A : K> read(input: K, gate: Task1<Int>): TaskResultBase
+    suspend fun <A : K> read(other: Any, gate: Task1<Int>): TaskResultBase
 }
 interface ConstrainedResult<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> value(): TaskResultBase
@@ -50,8 +51,13 @@ class SharedResult : ConstrainedResult<Concrete>, NominalResult<Concrete> {
         gate.await()
         return TaskResultDerived("shared")
     }
+    override suspend fun <A : Concrete> read(other: Any, gate: Task1<Int>): TaskResultBase {
+        gate.await()
+        return TaskResultBase("other")
+    }
 }
 suspend fun sharedNominal(source: NominalResult<Concrete>, x: Concrete, gate: Task1<Int>) = source.read<Concrete>(x, gate)
+suspend fun sharedOther(source: NominalResult<Concrete>, x: Any, gate: Task1<Int>) = source.read<Concrete>(x, gate)
 suspend fun sharedConstrained(source: ConstrainedResult<Concrete>, x: Concrete, gate: Task1<Int>) = source.read<Concrete>(x, gate)
 interface ReferenceTaskResult<T> {
     suspend fun read(value: T, pause: suspend () -> Unit): TaskResultBase
