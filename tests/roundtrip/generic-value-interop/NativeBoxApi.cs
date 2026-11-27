@@ -17,6 +17,20 @@ public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public interface IJointTag<T> where T : ILeftMark, IRightMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public sealed class NativeStreamSlot<T> where T : System.IO.Stream
+{
+    public T Value { get; set; }
+    public bool UsesExactType(T item) => typeof(T) == item.GetType();
+}
+public static class NestedBounds
+{
+    public class Root { }
+    public class Mid : Root { }
+    public interface ISink<in T> { }
+    public sealed class MidSink : ISink<Mid> { }
+    public sealed class Slot<T> where T : Root { public T Value { get; set; } }
+    public sealed class Joint<T, S> where T : Root where S : ISink<T> { public T Value { get; set; } }
+}
 public sealed class NativeResultProbe
 {
     private System.Array backing;

@@ -77,6 +77,7 @@ private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T
 private fun <V : System.IO.Stream> readStream(make: () -> V): Any = StreamFactory(make).read()
 private fun <V : System.IO.Stream> relayStream(make: () -> V): Any = forwardStream(make)
 private fun readProjectedChunk(value: StreamChunk<*>): Any = relayStream { value }
+private class NestedLeaf<T>(val data: T) : GenericValueInterop.NestedBounds.Mid()
 private fun <T> erase(value: T): Any? = value
 private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(make())
 private class UnconstrainedForwarder<A : System.IO.Stream>(val make: () -> A) {
@@ -658,6 +659,21 @@ class ConstrainedNullableBoundTests {
         check(queue.get(1) === text && queue.get(1).result == "text")
         val exact = ClrList<StreamChunk<Long>>()
         val chunk = StreamChunk(42L)
+        val starSlot = GenericValueInterop.NativeStreamSlot<StreamChunk<*>>()
+        starSlot.Value = chunk
+        check(starSlot.Value === chunk)
+        val other = StreamChunk("other")
+        starSlot.Value = other
+        check(starSlot.Value === other && starSlot.Value.data == "other")
+        val nested = GenericValueInterop.NestedBounds.Slot<NestedLeaf<*>>()
+        val leaf = NestedLeaf("nested")
+        nested.Value = leaf
+        check(nested.Value === leaf && nested.Value.data == "nested")
+        val joint = GenericValueInterop.NestedBounds.Joint<NestedLeaf<*>, GenericValueInterop.NestedBounds.MidSink>()
+        joint.Value = leaf
+        check(joint.Value === leaf)
+        val exactSlot = GenericValueInterop.NativeStreamSlot<StreamChunk<Long>>()
+        check(exactSlot.UsesExactType(chunk))
         check(readStream { chunk } === chunk)
         check(readProjectedChunk(chunk) === chunk)
         check(deferredStream { chunk }() === chunk)

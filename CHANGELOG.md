@@ -8,6 +8,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Generic Kotlin helpers can take a star-projected mutable list and an independently constructed list without requiring identical CLR storage types (#1963).
 - A suspend override can forward a CLR function pointer unchanged while specializing another parameter of a generic base method from a different assembly (#2035).
 - Kotlin can receive a reference from a projected CLR generic call even when another argument must stay stack-only, without losing the returned object's identity (#1942).
+- Kotlin can construct a class-constrained CLR container with a star-projected element and read back the values written to it (#1954).
 - A projected generic Kotlin interface can return `CharSequence` from a suspend method across DLLs. Kotlin callers retain the returned value across suspension, and CLR callers can await the interface's declared task (#2046).
 - A suspend override implementing two generic Kotlin interfaces from another assembly can be called through either interface even when their generic constraints differ (#2056).
 - Overriding a CLR base's projected `iterator()` in Kotlin also supplies its non-generic `IEnumerable.GetEnumerator()` implementation (#2004).
