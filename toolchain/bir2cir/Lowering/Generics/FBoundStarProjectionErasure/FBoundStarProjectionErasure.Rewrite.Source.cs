@@ -158,7 +158,8 @@ static partial class FBoundStarProjectionErasure
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
             var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases, state.SharedOuters);
-            var bound = scope.Bound || BoundTypeSlot(facts, field) || field == "type" && node is BirIsInstance { ExactDispatchOwner: true };
+            var bound = scope.Bound || BoundTypeSlot(facts, field) || field == "type" && (node is BirIsInstance { ExactDispatchOwner: true }
+                || node is BirCast && exact && runtimeOperand is BirGraphValue operand && SourceExactOuter(operand));
             var shape = scope.ArrayShape || NativeArrayTypeSlot(facts, field);
             // An inner still captures its actual enclosing instance. Where
             // that declaration has two implementations, store the common
