@@ -261,7 +261,9 @@ static partial class KotlinOverrideSlotBridge
                 || definition.Kind == "class" && reimplements && (slot.DescriptorMember != implementation.Name
                     || slot.Referenced && ReintroducesBaseFace(slot.DescriptorSpec))
                 || definition.Kind == "class" && inheritedDefault);
-            var needsBase = !slot.IsInterface && !slot.Referenced && slot.DescriptorMember != implementation.Name;
+            var needsBase = !slot.IsInterface && slot.DescriptorMember != implementation.Name
+                && (!slot.Referenced || slot.PropertyAccessor != null
+                    && IsNativeSlotOwner(slot.DescriptorSpec.Name, defs, refs.HasDotKtOwner));
             BirMethodImpl Descriptor(string local = null)
             {
                 var descriptor = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,

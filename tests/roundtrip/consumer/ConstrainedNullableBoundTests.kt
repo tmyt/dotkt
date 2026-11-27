@@ -81,6 +81,7 @@ private class NestedLeaf<T>(val data: T) : GenericValueInterop.NestedBounds.Mid(
 
 private class OpenVisitor : GenericValueInterop.NativeMiddleVisitor<String, StreamChunk<*>>() {
     override fun Visit(item: StreamChunk<*>): StreamChunk<*> = item
+    override var Current: StreamChunk<*> = StreamChunk(0)
 }
 private class BoundVisitor : GenericValueInterop.NativeBoundVisitor<StreamChunk<*>>() {
     override fun Visit(item: StreamChunk<*>): Any? = item.data
@@ -646,6 +647,10 @@ class ConstrainedNullableBoundTests {
         val child = OpenVisitor()
         val open: GenericValueInterop.NativeOpenVisitor<StreamChunk<*>> = child
         check(open.Dispatch(text) === text && open.Dispatch(number) === number)
+        open.Store(text)
+        check(child.Current === text)
+        child.Current = number
+        check(open.Load() === number)
         check(child.DispatchOther("other type") == "middle")
         val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = BoundVisitor()
         check(bounded.Dispatch(text) == "payload" && bounded.Dispatch(number) == 42L)

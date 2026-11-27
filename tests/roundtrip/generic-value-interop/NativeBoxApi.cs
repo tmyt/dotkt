@@ -21,6 +21,9 @@ public class NativeOpenVisitor<T>
 {
     public virtual T Visit(T item) => throw new System.NotImplementedException();
     public T Dispatch(T item) => Visit(item);
+    public virtual T Current { get; set; }
+    public void Store(T item) => Current = item;
+    public T Load() => Current;
 }
 public class NativeMiddleVisitor<TUnused,T> : NativeOpenVisitor<T>
 {

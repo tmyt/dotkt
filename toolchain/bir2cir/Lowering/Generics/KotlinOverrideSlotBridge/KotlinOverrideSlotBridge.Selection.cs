@@ -332,6 +332,8 @@ static partial class KotlinOverrideSlotBridge
                     if (phase != Phase.PhysicalBridges
                         || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeOwner) continue;
                     physicalSelectedSpec = spec;
+                    if (!nativeOwner.IsInterface && FBoundStarProjectionErasure.ContainsExistentialProjection(owner))
+                        selectedArgs = supArgs;
                 }
                 // A class has one base chain. Bind its property only at the reached
                 // declarer: the edge already carries the exact CLR storage arguments.
