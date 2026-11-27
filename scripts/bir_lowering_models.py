@@ -422,6 +422,8 @@ def outputs(root, definitions):
             model += ["    internal string? ReferencedProjectedFactoryId { get; set; }"]
         if name == "BirMethodImpl":
             model += ["    internal IReadOnlyList<string>? LocalOverrideTargets { get; set; }"]
+        if name == "BirOverride":
+            model += ["    internal (bool Selected, System.Reflection.MethodInfo? Method) ProjectedNativeBase { get; set; }"]
         if name == "BirCallStatic":
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":

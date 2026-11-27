@@ -1520,9 +1520,9 @@ internal fun BirEmitter.overrideDeclarations(fn: IrSimpleFunction, ordinaryPrope
 			(m.isFakeOverride && m.overriddenSymbols.any { replaced(it.owner) })
 		ordered.filterNot { selected.isNotEmpty() && replaced(it) }.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
 			kotc.bir.BirOverride(overrideOwnerType(fn, owner), m.name.asString(), "method", emittedParamCount(m),
-				declarationId = declarationIdForPhysicalAllocation(m)) } } + selected.map { (m, owner) ->
+				declarationId = declarationIdForPhysicalAllocation(m), nativeMethodKey = if (m.isFakeOverride) null else nativeDeclarationKey(m, "methodKey")) } } + selected.map { (m, owner) ->
 			kotc.bir.BirOverride(birType(owner), m.name.asString(), "method", emittedParamCount(m),
-				declarationId = declarationIdForPhysicalAllocation(m)) }
+				declarationId = declarationIdForPhysicalAllocation(m), nativeMethodKey = nativeDeclarationKey(m, "methodKey")) }
 	}
 	return items.takeIf { it.isNotEmpty() }
 }

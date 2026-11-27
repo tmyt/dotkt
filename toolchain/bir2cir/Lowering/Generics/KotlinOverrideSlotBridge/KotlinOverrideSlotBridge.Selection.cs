@@ -9,7 +9,8 @@ static partial class KotlinOverrideSlotBridge
         TypeNode[] Parameters, TypeNode Return, OverrideMethod Implementation, BirTypeParameter[] TypeParameters,
         bool UnitValueReturn = false, TypeNode[] Signature = null, string ReferenceMember = null,
         TypeNode SemanticReturn = null, OverrideMethod SelectedLocal = null, string SelectedReferencedDeclarationId = null,
-        System.Reflection.MethodInfo NativeInterfaceMethod = null, TypeNode[] NativeBaseParameterViews = null);
+        System.Reflection.MethodInfo NativeInterfaceMethod = null, TypeNode[] NativeBaseParameterViews = null,
+        System.Reflection.MethodInfo NativeBaseMethod = null);
 
     static string SelectedSlotKey(SelectedSlot slot)
     {
@@ -271,6 +272,15 @@ static partial class KotlinOverrideSlotBridge
                 // exact physical CLR slot independently of the implementation MethodDef name.
                 var overrideKind = o.Kind;
                 var accessorKind = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
+                // Resolve the declaration before two distinct Kotlin applications can become
+                // the same carrier. A fake override on an intermediate type is not a MethodDef.
+                if (phase == Phase.DeclarationMoves && !supIsInterface && accessorKind == null && o.Row != null && !refs.HasDotKtOwner(owner.Name)
+                    && !o.Row.ProjectedNativeBase.Selected && FBoundStarProjectionErasure.ContainsExistentialProjection(owner)
+                    && refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is { IsInterface: false } open)
+                    o.Row.ProjectedNativeBase = (true, refs.SelectProjectedNativeBase(open, o.Row.NativeMethodKey.OrDefault()));
+                var nativeSelection = o.Row?.ProjectedNativeBase ?? default;
+                if (nativeSelection.Selected && (supIsInterface || nativeSelection.Method == null
+                    || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeSelection.Method.DeclaringType)) continue;
                 // dll2klib preserves every flattened property override owner even when the emitted CLR interface
                 // hierarchy cannot preserve the semantic @ClrTypeAlias edge (Collection -> IReadOnlyCollection).
                 // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods need
@@ -390,7 +400,18 @@ static partial class KotlinOverrideSlotBridge
                         semanticConstraints: semanticSelection,
                         selectedDeclarationId: o.DeclarationId))
                     continue;
-                if (suspendValues)
+                if (phase == Phase.PhysicalBridges && nativeSelection.Method is { } selectedNative)
+                {
+                    signatureParameters = ClrMemberReferences.RefParamsOf(refs, null, selectedNative);
+                    slotParams0 = signatureParameters.Select(SignatureValueTypes.Of).ToArray();
+                    slotRet0 = ClrMemberReferences.RefReturnOf(refs, null, selectedNative);
+                    selectedSlotTypeParams = selectedNative.GetGenericArguments().Select(v =>
+                        ReferenceMetadataReader.GenericParamDeclaration(v, native: true)).ToArray();
+                    selectedPhysicalMember = selectedNative.Name;
+                    slotReturnsValue = !IsVoid(slotRet0);
+                    refused = null;
+                }
+                else if (suspendValues)
                 {
                     var suspendDeclaration = selectedClassDeclaration;
                     if (accessorKind != null || suspendDeclaration == null && !refs.TrySelectedOverrideDeclarationByShape(
@@ -615,6 +636,7 @@ static partial class KotlinOverrideSlotBridge
                         ? SupertypeGraph.SubstOwnerTvs(slotRet0, selectedArgs) : null,
                     SelectedReferencedDeclarationId: selectedClassDeclaration?.DeclarationId ?? o.DeclarationId,
                     NativeInterfaceMethod: selectedInterfaceMethod,
+                    NativeBaseMethod: nativeSelection.Method,
                     NativeBaseParameterViews: !lookupArgs.SequenceEqual(selectedSlotArgs)
                         ? slotParams0.Select(type => type is TypeNode.Tv { Scope: "type" } tv
                             ? lookupArgs[tv.I] : null).ToArray() : null));

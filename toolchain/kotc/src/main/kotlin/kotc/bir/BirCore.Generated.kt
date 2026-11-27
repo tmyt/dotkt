@@ -507,7 +507,8 @@ data class BirOverride(
     val member: String,
     val kind: String,
     val arity: Int,
-    val declarationId: String? = null
+    val declarationId: String? = null,
+    val nativeMethodKey: String? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -522,6 +523,10 @@ data class BirOverride(
         output.append(arity)
         declarationId?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"declarationId\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        nativeMethodKey?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"nativeMethodKey\":")
             TypeNodeJson.writeString(value, output)
         }
         output.append('}')
