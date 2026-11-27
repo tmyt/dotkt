@@ -105,6 +105,7 @@ static partial class DeclarationSignatureIdentity
                     {
                         var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
                         BindSlot(file, owner, method, new BirMethodImpl {
+                            LocalOverrideTargets = selected.Method == null ? null : new[] { id },
                             Owner = BirGraphValue.CopyType(selectedOwner), Member = name, Arity = arity,
                             Params = openParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray(),
                             Ret = SupertypeGraph.SubstOwnerTvs(openReturn, arguments),

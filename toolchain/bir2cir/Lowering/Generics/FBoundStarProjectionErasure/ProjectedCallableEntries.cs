@@ -17,6 +17,7 @@ sealed partial class ProjectedCallableEntries
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
     readonly Dictionary<string, ReferencedDeclarationSlot> localSlots = new(StringComparer.Ordinal);
+    readonly HashSet<string> exactFacades = new(StringComparer.Ordinal);
     readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
@@ -405,7 +406,11 @@ sealed partial class ProjectedCallableEntries
             if (owner != null && !m.Static.OrDefault())
             {
                 if (carrierSlot || carrierBridge) { copy.Virtual = true; copy.ClrFinal = carrierBridge; }
-                else if (m.SourceCallableVirtual) MakeExactFacade(owner, m, copy, entry.Plan);
+                else if (m.SourceCallableVirtual)
+                {
+                    exactFacades.Add(id);
+                    MakeExactFacade(owner, m, copy, entry.Plan);
+                }
                 else if (m.Virtual.OrDefault())
                 {
                     // The exact method implements a compiler-generated carrier
@@ -596,6 +601,51 @@ sealed partial class ProjectedCallableEntries
         foreach (var method in owner.Methods.OrEmpty())
             if (MethodEntry(method) == null)
                 method.Visit(n => Bind(n, new(ownerParameters, []), new(method.TypeParams.OrEmpty(), [])));
+    }
+
+    // Only the projected entry is an override point. Several selected declarations can
+    // share one provisional descriptor before physical overload signatures are allocated.
+    // Keep it (and its body) if it still implements any surviving obligation.
+    internal void RetireFacadeOverrides(BirFileDeclaration[] files, HashSet<string> emittedTypes)
+    {
+        if (exactFacades.Count == 0) return;
+        HashSet<string> machines = new(StringComparer.Ordinal);
+        foreach (var owner in files.SelectMany(f => f.Types.OrEmpty())) RetireAdapterGroups(owner, machines);
+        if (machines.Count == 0) return;
+        foreach (var file in files)
+            foreach (var method in file.Methods.OrEmpty().Concat(file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty())))
+                if (method.ColdEntryMachine is { } live) machines.Remove(live.Name);
+        foreach (var file in files)
+            if (file.Types.OrEmpty().Any(t => machines.Contains(t.Name.OrDefault())))
+                file.Types = file.Types.Value.Where(t => !machines.Contains(t.Name.OrDefault())).ToArray();
+        emittedTypes.ExceptWith(machines);
+
+    }
+
+    void RetireAdapterGroups(IBirTypeDeclaration owner, HashSet<string> machines)
+    {
+        bool Obsolete(BirMethodImpl d) => d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(exactFacades.Contains);
+        HashSet<object> unused = null;
+        foreach (var m in owner.Methods.OrEmpty())
+        {
+            var interfaces = m.ClrInterfaceImpls.OrEmpty();
+            var bases = m.ClrBaseImpls.OrEmpty();
+            if (!interfaces.Any(Obsolete) && !bases.Any(Obsolete)) continue;
+            if (interfaces.Length != 0) m.ClrInterfaceImpls = interfaces.Where(d => !Obsolete(d)).ToArray();
+            if (bases.Length != 0) m.ClrBaseImpls = bases.Where(d => !Obsolete(d)).ToArray();
+            if (m.OverrideAdapterGroup is { } group)
+                (unused ??= new()).Add(group);
+        }
+        if (unused == null) return;
+        // Hot entry, cold entry and cold state machine implement one adapter.
+        // A surviving slot on either entry keeps the whole group reachable.
+        foreach (var m in owner.Methods.Value)
+            if (m.ClrInterfaceImpls.OrEmpty().Length != 0 || m.ClrBaseImpls.OrEmpty().Length != 0)
+                unused.Remove(m.OverrideAdapterGroup);
+        if (unused.Count == 0) return;
+        foreach (var m in owner.Methods.Value)
+            if (unused.Contains(m.OverrideAdapterGroup) && m.ColdEntryMachine is { } machine) machines.Add(machine.Name);
+        owner.Methods = owner.Methods.Value.Where(m => !unused.Contains(m.OverrideAdapterGroup)).ToArray();
     }
 
     internal void Finish(BirFileDeclaration[] files, HashSet<string> emittedTypes)

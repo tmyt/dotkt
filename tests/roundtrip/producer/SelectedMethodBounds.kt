@@ -26,6 +26,10 @@ interface OverloadedPicker<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> pick(value: K, source: Iterable<Int>): Any
     suspend fun <A : K> pick(value: K, source: Sequence<Int>): Any
 }
+class LocalOverloadedPicker : OverloadedPicker<Concrete> {
+    override suspend fun <A : Concrete> pick(value: Concrete, source: Iterable<Int>): Any = "iterable"
+    override suspend fun <A : Concrete> pick(value: Concrete, source: Sequence<Int>): Any = "sequence"
+}
 interface SuspendPicker<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> pick(value: K): Any
     fun <A : K> write(value: K, condition: Boolean, target: ClrRef<Int>)
