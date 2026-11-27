@@ -48,6 +48,8 @@ private fun countOblivious(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountOblivious(items)
 private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
     GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
+private fun readWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): System.IO.Stream? =
+    GenericValueInterop.CollectionStorageApi.ReadWith(box, System.MemoryExtensions.AsSpan("value"))
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
     inner class Caller {
         fun clear(items: CsList<out System.IO.Stream>): Unit =
@@ -86,7 +88,11 @@ class CapturedGenericInvocationTests {
         check(nullableInts.Count == 1)
     }
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
-        check(identifyWithSpan(GenericValueInterop.CaptureBox<System.IO.MemoryStream>()) == "MemoryStream:value")
+        val empty = GenericValueInterop.CaptureBox<System.IO.MemoryStream>()
+        check(identifyWithSpan(empty) == "MemoryStream:value")
+        check(readWithSpan(empty) == null)
+        val stream = System.IO.MemoryStream()
+        check(readWithSpan(GenericValueInterop.CollectionStorageApi.BoxStream(stream)) === stream)
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
         val derived = CsList<System.IO.MemoryStream>()
         derived.Add(System.IO.MemoryStream())
