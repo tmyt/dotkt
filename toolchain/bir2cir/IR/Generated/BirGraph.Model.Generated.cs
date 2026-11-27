@@ -528,6 +528,7 @@ internal sealed record CapturedGenericArgument : BirGraphValue
 {
     public OptionalField<int> Argument { get; set; }
     public OptionalField<int[]> OwnerPositions { get; set; }
+    public OptionalField<int[]> AppliedPositions { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
     }
@@ -568,12 +569,14 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
         OwnerPositions = OwnerPositions.HasValue ? OptionalField<int[]>.Of(OwnerPositions.Value.Select(item0 => item0).ToArray()) : OwnerPositions,
+        AppliedPositions = AppliedPositions.HasValue ? OptionalField<int[]>.Of(AppliedPositions.Value.Select(item0 => item0).ToArray()) : AppliedPositions,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
     {
         var result = this with
         {
             OwnerPositions = OwnerPositions.HasValue ? OptionalField<int[]>.Of(OwnerPositions.Value.Select(item0 => item0).ToArray()) : OwnerPositions,
+            AppliedPositions = AppliedPositions.HasValue ? OptionalField<int[]>.Of(AppliedPositions.Value.Select(item0 => item0).ToArray()) : AppliedPositions,
         };
         born(this, result);
         return result;
@@ -612,12 +615,14 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     public override bool StructurallyEquals(BirGraphValue other)
         => other is CapturedGenericArgument value
             && EqualField(Argument, value.Argument, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
-            && EqualField(OwnerPositions, value.OwnerPositions, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)));
+            && EqualField(OwnerPositions, value.OwnerPositions, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)))
+            && EqualField(AppliedPositions, value.AppliedPositions, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
         WriteOptional(writer, "argument", Argument, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "ownerPositions", OwnerPositions, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "appliedPositions", AppliedPositions, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -625,6 +630,7 @@ internal sealed record CapturedGenericArgument : BirGraphValue
         var result = new JsonObject();
         if (Argument.IsPresent) result["argument"] = Argument.IsNull ? null : JsonValue.Create(Argument.Value);
         if (OwnerPositions.IsPresent) result["ownerPositions"] = OwnerPositions.IsNull ? null : new JsonArray(OwnerPositions.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
+        if (AppliedPositions.IsPresent) result["appliedPositions"] = AppliedPositions.IsNull ? null : new JsonArray(AppliedPositions.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         projected?.Invoke(this, result);
         return result;
     }

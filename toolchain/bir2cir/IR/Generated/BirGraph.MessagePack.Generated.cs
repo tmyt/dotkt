@@ -449,6 +449,7 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         ulong seen = 0;
         OptionalField<int> field0 = default;
         OptionalField<int[]> field1 = default;
+        OptionalField<int[]> field2 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -461,6 +462,10 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 1);
                     field1 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
                     break;
+                case "appliedPositions":
+                    Seen(ref seen, 1UL << 2);
+                    field2 = reader.TryReadNil() ? OptionalField<int[]>.Null : OptionalField<int[]>.Of(ReadArray<int>(ref reader, (ref MessagePackReader reader) => reader.ReadInt32()));
+                    break;
                 default: throw new FormatException();
             }
         }
@@ -469,13 +474,14 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         {
             Argument = field0,
             OwnerPositions = field1,
+            AppliedPositions = field2,
         };
     }
 
     internal static void WriteCapturedGenericArgument(ref MessagePackWriter writer, CapturedGenericArgument value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Argument.IsPresent ? 1 : 0) + (value.OwnerPositions.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Argument.IsPresent ? 1 : 0) + (value.OwnerPositions.IsPresent ? 1 : 0) + (value.AppliedPositions.IsPresent ? 1 : 0));
         if (value.Argument.IsPresent)
         {
             writer.Write("argument");
@@ -494,6 +500,20 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                 CheckDepth(depth + 1);
                 writer.WriteArrayHeader(value.OwnerPositions.Value.Length);
                 foreach (var item0 in value.OwnerPositions.Value)
+                {
+                    writer.Write(item0);
+                }
+            }
+        }
+        if (value.AppliedPositions.IsPresent)
+        {
+            writer.Write("appliedPositions");
+            if (value.AppliedPositions.IsNull) writer.WriteNil();
+            else
+            {
+                CheckDepth(depth + 1);
+                writer.WriteArrayHeader(value.AppliedPositions.Value.Length);
+                foreach (var item0 in value.AppliedPositions.Value)
                 {
                     writer.Write(item0);
                 }

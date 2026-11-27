@@ -114,7 +114,10 @@
     },
     "capturedGenericArgument": {
       "type": "object", "x-dotkt-model": { "name": "CapturedGenericArgument", "domain": "birLoweringValues" },
-      "properties": { "argument": { "type": "integer" }, "ownerPositions": { "type": "array", "items": { "type": "integer" } } },
+      "properties": {
+        "argument": { "type": "integer" }, "ownerPositions": { "type": "array", "items": { "type": "integer" } },
+        "appliedPositions": { "type": "array", "items": { "type": "integer" }, "description": "Invariant result positions instantiated against the surrounding call's approximation, not independent storage witnesses." }
+      },
       "required": ["argument", "ownerPositions"], "additionalProperties": false
     },
     "birOpaqueBytes": {
