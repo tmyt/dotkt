@@ -34,10 +34,12 @@ internal class ClrAttributeArguments(session: FirSession) : FirAdditionalChecker
         context(context: CheckerContext, reporter: DiagnosticReporter)
         override fun check(expression: FirAnnotationCall) {
             val args = expression.argumentList as? FirResolvedArgumentList ?: return
-            for (argument in args.originalArgumentList?.arguments.orEmpty()) {
-                if (argument is FirNamedArgumentExpression) continue
-                val parameter = args.mapping[argument] ?: continue
-                if (parameter.hasAnnotation(marker, context.session)) {
+            // Resolution can replace source expressions (for example an array literal).
+            // The member role belongs to the resolved parameter, the explicit name to the source.
+            val suppliedNames = args.originalArgumentList?.arguments.orEmpty()
+                .filterIsInstance<FirNamedArgumentExpression>().map { it.name }.toSet()
+            for ((argument, parameter) in args.mapping) {
+                if (parameter.name !in suppliedNames && parameter.hasAnnotation(marker, context.session)) {
                     reporter.reportOn(argument.source, FirErrors.UNSUPPORTED,
                         "CLR attribute member '${parameter.name}' requires a named argument ('${parameter.name} = ...')")
                 }

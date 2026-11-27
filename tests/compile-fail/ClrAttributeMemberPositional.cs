@@ -12,3 +12,8 @@ public class FlagAttribute : System.Attribute
     public FlagAttribute(int code) { }
     public bool Enabled;
 }
+
+public class IntsAttribute : System.Attribute
+{
+    public int[] Values { get; set; }
+}

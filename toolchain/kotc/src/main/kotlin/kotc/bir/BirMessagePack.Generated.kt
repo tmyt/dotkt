@@ -1286,7 +1286,7 @@ internal object BirMessagePack {
 
     private fun writeBirAttribute(value: BirAttribute, packer: MessagePacker, depth: Int) {
         checkDepth(depth)
-        packer.packMapHeader(3 + (if (value.attrClr == null) 0 else 1) + (if (value.namedArgs == null) 0 else 1))
+        packer.packMapHeader(3 + (if (value.attrClr == null) 0 else 1) + (if (value.namedArgs == null) 0 else 1) + (if (value.constructorNativeKey == null) 0 else 1))
         packer.packString("attr")
         writeType(value.attr, packer, depth + 1)
         value.attrClr?.let { child ->
@@ -1312,6 +1312,10 @@ internal object BirMessagePack {
             for (item0 in child) {
                 writeBirAttributeNamedArgument(item0, packer, depth + 1 + 1)
             }
+        }
+        value.constructorNativeKey?.let { child ->
+            packer.packString("constructorNativeKey")
+            MessagePackText.write(packer, child)
         }
     }
 

@@ -1,4 +1,6 @@
 import ClrPInvoke.NativeMethods
+import ClrPInvoke.NamedOrObjectAttribute
+import ClrPInvoke.NullableOverloadAttribute
 import ClrPInvoke.OverloadProbeAttribute
 import ClrPInvoke.ProjectionProbeAttribute
 import kotlin.clr.byref
@@ -13,6 +15,8 @@ class OverloadCarrier
 class NamedOverloadCarrier
 
 fun main() {
+    check(NamedOrObjectAttribute("value").Name == "ctor:value")
+    check(NullableOverloadAttribute("value").Fixed)
     val ordinary = OverloadProbeAttribute(7).apply { Name = "ordinary" }
     check(ordinary.Name == "ordinary" && ordinary.Value == 0)
     check(NativeMethods.Add(20, 22) == 42)

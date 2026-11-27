@@ -2507,8 +2507,6 @@ internal sealed partial class AssemblyScanner : IDisposable
                 if (isAnnotation && primary) hasAnnotationPrimary = true;
                 var namedArgumentsForConstructor = isAnnotation && primary
                     ? attributeNamedArguments : Array.Empty<AttributeNamedArgument>();
-                if (namedArgumentsForConstructor.Length != 0)
-                    RenameFixedAttributeParameters(parameters, namedArgumentsForConstructor, names);
                 var constructor = new Constructor
                 {
                     Flags = CallableVisibility(methodHandle, Flags.Constructor(method.Attributes, primary)),
@@ -2524,6 +2522,17 @@ internal sealed partial class AssemblyScanner : IDisposable
                     AddStringAnnotationArgument(native, names, "constructorKey", RawSignatureTypeProvider.ConstructorKey(_md, methodHandle));
                     constructor.ConstructorAnnotation.Add(native);
                     constructor.Flags |= 1;
+                }
+                // K2 applies an annotation through its primary. Ordinary construction must resolve
+                // against the real CLR signatures, not the member parameters of that annotation view.
+                var ordinary = constructor;
+                if (namedArgumentsForConstructor.Length != 0)
+                {
+                    ordinary = constructor.Clone();
+                    ordinary.Flags |= 1 << 4; // secondary
+                    result.Constructor.Add(ordinary);
+                    RenameFixedAttributeParameters(parameters, namedArgumentsForConstructor, names);
+                    AddLowPriorityAnnotation(constructor.ConstructorAnnotation, names);
                 }
                 foreach (var named in namedArgumentsForConstructor)
                 {
@@ -2542,7 +2551,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                 result.Constructor.Add(constructor);
                 projectedConstructors.Add(new ProjectedConstructor(
                     methodHandle,
-                    constructor,
+                    ordinary,
                     PhysicalParameterKeys(method, context)));
             }
             else if (!name.StartsWith('<') && ((method.Attributes & MethodAttributes.SpecialName) == 0 ||
@@ -2633,8 +2642,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         }
         if (!_attrs.IsDotKtAssembly)
         {
-            // An annotation application resolves only its primary, never a narrowed view of a sibling overload.
-            if (!isAnnotation) AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names);
+            AddNrtParamsOverloadBridges(projectedConstructors, result.Constructor, names, isAnnotation);
             AddNrtParamsOverloadBridges(projectedFunctions, result.Function, names);
         }
         if (comparisons != null)
@@ -4823,7 +4831,7 @@ internal sealed partial class AssemblyScanner : IDisposable
     private static void AddNrtParamsOverloadBridges(
         IReadOnlyList<ProjectedConstructor> constructors,
         Google.Protobuf.Collections.RepeatedField<Constructor> declarations,
-        NameTable names)
+        NameTable names, bool isAnnotation)
     {
         var existing = declarations.Select(ConstructorSurfaceKey).ToHashSet(StringComparer.Ordinal);
         var variadics = constructors.Where(x => IsParamsConstructor(x.Declaration)).ToList();
@@ -4839,6 +4847,7 @@ internal sealed partial class AssemblyScanner : IDisposable
                     continue;
 
                 var bridge = fixedConstructor.Declaration.Clone();
+                if (isAnnotation) bridge.Flags |= 1 << 4; // Only the declared annotation view is primary.
                 for (var i = 0; i < fixedTypes.Count; i++)
                     bridge.ValueParameter[i].Type = variadicTypes[i].Clone();
                 var key = ConstructorSurfaceKey(bridge);

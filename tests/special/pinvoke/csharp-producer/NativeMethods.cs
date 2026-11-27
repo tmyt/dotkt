@@ -36,6 +36,14 @@ public class ProtectedOnlyAttribute : Attribute
 
 public class NullableOverloadAttribute : Attribute
 {
-    public NullableOverloadAttribute(string? value) { }
+    public NullableOverloadAttribute(string? value) { Fixed = true; }
     public NullableOverloadAttribute(string value, params int[] rest) { }
+    public bool Fixed { get; }
+}
+
+public class NamedOrObjectAttribute : Attribute
+{
+    public NamedOrObjectAttribute() { }
+    public NamedOrObjectAttribute(object value) { Name = "ctor:" + value; }
+    public string Name { get; set; } = "";
 }

@@ -774,6 +774,11 @@ Kotlin-generated APIs can therefore expose `object` to C# where their source dec
 `System.Attribute` signatures remain exact. Like the other declaration-owned union classifiers below, this does
 not implement full Kotlin reflection: `Annotation::class` names its physical alias, `System.Object`.
 
+In a native CLR annotation application, positional arguments fill only the selected primary
+constructor's parameters. Assign a writable field or property by name: if the selected constructor
+is parameterless, `@A(Name = "x")` is valid but `@A("x")` is not. Ordinary expressions such as
+`A("x")` call a real CLR constructor and do not assign annotation members.
+
 String arguments serialized into CLR custom-attribute metadata use native SerString (UTF-8).
 An unpaired UTF-16 surrogate is observed as U+FFFD, matching a same-target C# attribute application.
 This metadata limitation does not apply to ordinary runtime strings, UTF-16 literal field constants,

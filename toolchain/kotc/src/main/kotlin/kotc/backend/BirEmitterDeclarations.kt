@@ -1746,7 +1746,8 @@ internal fun BirEmitter.sourceAttributes(anns: List<IrConstructorCall>): List<Bi
 		}
 		BirAttribute(attr = TypeNode.Fqn(clr ?: typeName(ac)), attrClr = attrClr,
 			argTypes = types, args = args,
-			namedArgs = named.takeIf { it.isNotEmpty() }?.toList())
+			namedArgs = named.takeIf { it.isNotEmpty() }?.toList(),
+			constructorNativeKey = nativeConstructorKey(ann.symbol.owner))
 	}
 }
 

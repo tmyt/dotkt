@@ -552,7 +552,8 @@
       "properties": {
         "attr": { "$ref": "#/$defs/type" }, "attrClr": { "type": "boolean" },
         "argTypes": { "x-dotkt-ownership-role": "ForeignVector", "x-dotkt-frame-role": "ReferencedDeclaration", "type": "array", "items": { "$ref": "#/$defs/type" } }, "args": { "type": "array", "items": { "$ref": "#/$defs/birExpressionNode" } },
-        "namedArgs": { "type": "array", "items": { "$ref": "#/$defs/birAttributeNamedArgument" } }
+        "namedArgs": { "type": "array", "items": { "$ref": "#/$defs/birAttributeNamedArgument" } },
+        "constructorNativeKey": { "type": "string", "description": "Native declaration identity of the constructor selected for a projected CLR annotation application." }
       },
       "required": ["attr", "argTypes", "args"], "additionalProperties": false
     },

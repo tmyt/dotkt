@@ -165,7 +165,7 @@ static void VerifyCSharpKlib(string path)
         .Select(constructor => string.Join(",", constructor.ValueParameter.Select(parameter => String(fragment, parameter.Name))))
         .OrderBy(shape => shape, StringComparer.Ordinal)
         .ToArray();
-    Require(constructorShapes.SequenceEqual(new[] { "__fixed_Value,Value,Values" }),
+    Require(constructorShapes.SequenceEqual(new[] { "Value", "__fixed_Value,Value,Values" }.Order(StringComparer.Ordinal)),
         "CLR attribute overload/named-member projection has unexpected constructors: " +
         string.Join(" | ", constructorShapes));
 
@@ -182,7 +182,7 @@ static void VerifyCSharpKlib(string path)
         .Select(constructor => string.Join(",", constructor.ValueParameter.Select(parameter => String(fragment, parameter.Name))))
         .OrderBy(shape => shape, StringComparer.Ordinal)
         .ToArray();
-    Require(secondaryShapes.SequenceEqual(new[] { "", "text" }),
+    Require(secondaryShapes.SequenceEqual(new[] { "", "Value", "text" }),
         "secondary CLR attribute constructors acquired named members");
     var protectedOnly = fragment.Class.Single(candidate =>
         QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.ProtectedOnlyAttribute");

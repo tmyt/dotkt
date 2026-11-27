@@ -52,10 +52,11 @@ static partial class ClrMemberResolution
             assembly = bindingReferences.CompileStdlibName
                 ?? throw new InvalidOperationException($"{attrFqn.Name} requires the stdlib in the compile references");
         var arguments = attr.ArgTypes.OrEmpty();
-        if (ResolveAppliedAttributeCtor(bindingLocalTypes, bindingReferences, attrFqn, assembly, arguments) is { } selected)
+        if (ResolveAppliedAttributeCtor(bindingLocalTypes, bindingReferences, attrFqn, assembly, arguments, attr.ConstructorNativeKey.OrDefault()) is { } selected)
         {
             attr.AttrExternal = true;
             attr.MemberRef = BirMemberReference.FromPhysical(selected);
+            attr.ConstructorNativeKey = default;
         }
         else if (stdlibMeta)
             throw new InvalidOperationException($"{attrFqn.Name} constructor not found in '{assembly}'");
@@ -69,7 +70,7 @@ static partial class ClrMemberResolution
         return attribute with { MemberRef = ResolveAppliedAttributeCtor(bindingLocalTypes, refs, type, attribute.AttrAssembly, attribute.ArgTypes) };
     }
 
-    static MemberRefNode ResolveAppliedAttributeCtor(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments)
+    static MemberRefNode ResolveAppliedAttributeCtor(IReadOnlySet<string> bindingLocalTypes, ReferenceMetadataIndex bindingReferences, TypeNode.Fqn attrFqn, string assembly, IReadOnlyList<TypeNode> arguments, string nativeKey = null)
     {
         // The exact declaring scope when one is stated: a compiler-synthesized attribute can share its FQN with
         // a private lookalike, which is why that key exists at all.
@@ -79,6 +80,9 @@ static partial class ClrMemberResolution
         // An attribute type outside the reference set is already skipped downstream — a compile-time opt-in
         // marker that need not survive into IL. Nothing to name, so nothing is claimed.
         if (open == null) return null;
+        if (nativeKey != null)
+            return ClrMemberReferences.MemberRefOf(bindingReferences, bindingLocalTypes,
+                bindingReferences.SelectedNativeConstructor(open, nativeKey), MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
         // An attribute's declared argument vector admits BOTH spellings CIR allows for a primitive — the
         // metadata-reader shorthand (`int`) and the BCL FQN (`System.Int32`) — because it is written by
         // whichever pass authored the attribute. Canonicalize before matching, or the same constructor is
