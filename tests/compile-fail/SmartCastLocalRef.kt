@@ -31,3 +31,14 @@ fun <T : Number> widerBorrows(input: T, strings: List<String>, nonNull: String) 
     var text = nonNull
     clear(byref(text))
 }
+
+fun <T> definitelyNonNull(input: T & Any, replacement: T) {
+    fun put(slot: ClrRef<T>) { slot.value = replacement }
+    var nonNull: T & Any = input
+    put(byref<T>(nonNull))
+}
+
+fun aliasedLocal() {
+    var live by byref<String>(System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference<String>(arrayOf("before")))
+    clear(byref<String?>(live))
+}

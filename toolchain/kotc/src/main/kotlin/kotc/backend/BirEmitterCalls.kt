@@ -63,6 +63,11 @@ import org.jetbrains.kotlin.ir.types.IrSimpleType
 import org.jetbrains.kotlin.ir.types.typeConstructorParameters
 import org.jetbrains.kotlin.ir.types.IrTypeProjection
 import org.jetbrains.kotlin.ir.types.impl.IrCapturedType
+import org.jetbrains.kotlin.ir.types.impl.buildSimpleType
+import org.jetbrains.kotlin.ir.types.impl.makeTypeProjection
+import org.jetbrains.kotlin.ir.types.IrTypeSystemContextImpl
+import org.jetbrains.kotlin.ir.types.isSubtypeOf
+import org.jetbrains.kotlin.ir.types.isNullable
 import org.jetbrains.kotlin.ir.expressions.IrWhileLoop
 import org.jetbrains.kotlin.ir.expressions.IrBreak
 import org.jetbrains.kotlin.ir.expressions.IrContinue
@@ -2358,27 +2363,55 @@ private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): B
 	var storage = arg
 	while (storage is IrTypeOperatorCall && storage.operator == IrTypeOperator.IMPLICIT_CAST && storage !in planReads)
 		storage = storage.argument
-	if (storage is IrGetValue && pointee != null) {
-		val declaredType = storage.symbol.owner.type
-		// A nullable writer could store null in a non-null local even when both
-		// share a CLR reference type. Platform flexibility alone isn't such a writer.
-		val widensNullability = pointee.isMarkedNullable() && !pointee.hasFlexibleNullability() &&
-			!declaredType.isMarkedNullable() && !declaredType.hasFlexibleNullability()
-		if (!widensNullability && declaredType.makeNotNull() == pointee.makeNotNull()) {
-			val location = localAddress(storage)
-			val requested = birType(pointee)
-			val declared = birType(declaredType)
-			// Platform flexibility alone is not a Kotlin conversion of the lvalue (T to T!,
-			// for example). Leave the location visible to native generic address selection.
-			fun inflexible(t: TypeNode): TypeNode = if (t is TypeNode.Oblivious) t.of else t
-			return if (inflexible(requested) == inflexible(declared)) location
-			else BirByRefLoad(elem = requested, ptr = BirByRefOf(inner = location))
+	val local = (storage as? IrGetValue)?.symbol?.owner
+	val live = (storage as? IrCall)?.let { call -> localDelegates[call.symbol.owner]?.takeIf {
+		it.getter === call.symbol.owner && birType(it.delegate!!.type) is TypeNode.ByRef
+	} }
+	val declaredType = local?.type ?: live?.getter?.returnType
+	if (declaredType != null && pointee != null) {
+		var checkLayout = false
+		var incompatibleNullability = false
+		// Fir2Ir represents flexible types by annotated upper bounds, including inside
+		// arrays. Compare at the Kotlin type chosen by the other side of each such slot.
+		fun align(type: IrType, other: IrType, declaredSide: Boolean, nested: Boolean = false): IrType {
+			if (type === other || type !is IrSimpleType || other !is IrSimpleType || type.classifier != other.classifier ||
+				type.arguments.size != other.arguments.size) return type
+			val flex = type.hasFlexibleNullability() && !other.hasFlexibleNullability()
+			if (flex && other.isMarkedNullable()) checkLayout = true
+			if (declaredSide && !type.hasFlexibleNullability() && !other.hasFlexibleNullability() &&
+				type.nullability != other.nullability && type.isNullable() != other.isNullable() &&
+				(nested || other.isNullable())) incompatibleNullability = true
+			val args = type.arguments.mapIndexed { i, a ->
+				val b = other.arguments[i]
+				if (a !is IrTypeProjection || b !is IrTypeProjection) a
+				else align(a.type, b.type, declaredSide, nested = true).let { if (it === a.type) a else makeTypeProjection(it, a.variance) }
+			}
+			if (!flex && args.indices.all { args[it] === type.arguments[it] }) return type
+			return type.buildSimpleType {
+				arguments = args
+				if (flex) nullability = other.nullability
+			}
+		}
+		var declared = align(declaredType, pointee, true)
+		val requested = align(pointee, declaredType, false)
+		// Preserve a proven non-null read of nullable storage. bir2cir still has to
+		// establish whether taking its real address is legal for that representation.
+		if (declared.isMarkedNullable() && !requested.isMarkedNullable()) {
+			declared = declared.makeNotNull()
+			checkLayout = true
+		}
+		if (!incompatibleNullability && (declared == requested || irBuiltIns?.let(::IrTypeSystemContextImpl)?.let { context ->
+				declared.isSubtypeOf(requested, context) && requested.isSubtypeOf(declared, context)
+			} == true)) {
+			val location = if (storage is IrGetValue) localAddress(storage) else expr(storage)
+			return if (checkLayout) BirByRefLoad(elem = birType(pointee), ptr = BirByRefOf(inner = location))
+				else location
 		}
 		// An ordinary upcast can be implicit even in IR: the local itself still has
 		// its declared type. A writable reference cannot use that wider read type.
 		hadError = true
 		messageCollector?.report(CompilerMessageSeverity.ERROR,
-			"cannot pass '${storage.symbol.owner.name}' by reference through an implicit change of type; " +
+			"cannot pass '${local?.name ?: live!!.name}' by reference through an implicit change of type; " +
 				"request its declared type or use a separate local of the required type", locationOf(arg))
 		return kotc.bir.BirUnsupportedExpression("incompatible byref location")
 	}
