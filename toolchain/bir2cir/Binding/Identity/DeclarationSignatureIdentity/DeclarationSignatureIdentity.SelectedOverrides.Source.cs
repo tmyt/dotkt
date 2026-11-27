@@ -88,7 +88,9 @@ static partial class DeclarationSignatureIdentity
                         openParameters = selected.Method.Params.Value.Select(parameter => parameter.Type.OrDefault()).ToArray();
                         openReturn = selected.Method.Ret.OrDefault();
                     }
-                    else if (refs?.TryDeclarationSignatureSlot(id, out var referenced) == true)
+                    // The source identity may designate a nonvirtual forwarding entry.
+                    // Only an actual virtual MethodDef can be the target of a MethodImpl.
+                    else if (refs?.TryDeclarationSignatureSlot(id, out var referenced, requireVirtual: true) == true)
                     {
                         selectedOwnerName = referenced.Owner; selectedInterface = referenced.IsInterface;
                         name = referenced.Name; arity = referenced.Arity; openParameters = referenced.Parameters;

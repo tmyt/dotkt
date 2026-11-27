@@ -275,10 +275,11 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     // A preserved override edge selects this declaration before signature erasure. Return its complete open CLR
     // signature, including modifiers; the consumer closes the selected declaring owner through its supertype graph.
-    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration)
+    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration, bool requireVirtual = false)
     {
         declaration = null;
-        if (id == null || !_declarationById.TryGetValue(id, out var binding) || binding.IsStatic) return false;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
+            || (requireVirtual && !binding.IsVirtual)) return false;
         var owner = binding.DeclarationPhysicalOwner ?? binding.Owner;
         declaration = new ReferencedDeclarationSlot(owner, binding.Name, binding.MethodArity,
             binding.SignatureParameters ?? throw new InvalidOperationException($"Declaration '{id}' has no signature parameters"),
@@ -5299,7 +5300,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             index._ownerKindByPhysicalOwner[slotOwner] = "interface";
             var signature = new TypeNode.Mod(false, new TypeNode.Fqn("ExistingFunctionIdentity"),
                 new TypeNode.Fqn("System.Object"));
-            var binding = new MemberBinding(slotOwner, slot.Name, 1, null, true, false, MetadataToken: slot.MetadataToken) {
+            var binding = new MemberBinding(slotOwner, slot.Name, 1, null, slot.IsAbstract, slot.IsStatic,
+                IsVirtual: slot.IsVirtual, MetadataToken: slot.MetadataToken) {
                 SignatureParameters = new TypeNode[] { signature }, SignatureReturn = new TypeNode.Fqn("void"),
             };
             index._declarationById["referenced-slot"] = binding;
