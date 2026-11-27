@@ -666,6 +666,9 @@ static partial class FBoundStarProjectionErasure
             b.Of, ownerArguments, methodArguments)),
         TypeNode.Ptr p => new TypeNode.Ptr(SubstituteDeclarationTypeArguments(
             p.Of, ownerArguments, methodArguments)),
+        TypeNode.FnPtr p => p with {
+            Ret = SubstituteDeclarationTypeArguments(p.Ret, ownerArguments, methodArguments),
+            Params = p.Params.Select(t => SubstituteDeclarationTypeArguments(t, ownerArguments, methodArguments)).ToArray() },
         TypeNode.Mod m => new TypeNode.Mod(m.Req,
             SubstituteDeclarationTypeArguments(m.M, ownerArguments, methodArguments),
             SubstituteDeclarationTypeArguments(m.Of, ownerArguments, methodArguments)),
