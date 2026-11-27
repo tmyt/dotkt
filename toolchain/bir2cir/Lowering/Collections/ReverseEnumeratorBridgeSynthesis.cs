@@ -69,9 +69,10 @@ static partial class ReverseEnumeratorBridgeSynthesis
     // Reserve exactly the slots this pass will materialize. Earlier override allocation must not map a
     // foreign base's enumeration onto them when Kotlin's selected iterator owns the iteration protocol.
     // The comparison uses constructed physical signatures, not generated bridge names or method names alone.
+    // A raw-only reservation has no generic element and owns only IEnumerable.GetEnumerator.
     public sealed record SlotReservation(TypeNode Element)
     {
-        internal BottomSlot Bottom { get; init; }
+        internal ReservedProvider Provider { get; init; }
         public bool Owns(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
             TypeNode result, Func<TypeNode, TypeNode> physical, ReferenceMetadataIndex refs)
         {
@@ -90,7 +91,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
             }
             if (Bare(face.Name) == IEnumerable && face.Args is not { Length: > 0 })
                 return Bare(ret.Name) == IEnumerator && ret.Args is not { Length: > 0 };
-            return Bare(face.Name) == IEnumerableT && face.Args is { Length: 1 } args
+            return Element != null && Bare(face.Name) == IEnumerableT && face.Args is { Length: 1 } args
                 && Bare(ret.Name) == IEnumeratorT && ret.Args is { Length: 1 } retArgs
                 && ClrMemberResolution.SameInterfaceSlotType(args[0], Element)
                 && ClrMemberResolution.SameInterfaceSlotType(retArgs[0], Element);
@@ -102,15 +103,20 @@ static partial class ReverseEnumeratorBridgeSynthesis
         IReadOnlyDictionary<string, IBirTypeDeclaration> declarations, IDictionary<string, SlotReservation> reservations = null)
     {
         if (Plan(def, defs, refs, declarations) is not { } plan) return null;
+        bool bottom = NodeType.IsNothing(plan.Iterator.SemanticReturn);
         var slot = new SlotReservation(plan.Element) {
-            Bottom = NodeType.IsNothing(plan.Iterator.SemanticReturn)
-                ? new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId) : null,
+            Provider = bottom || plan.Element == null
+                ? new(plan.Iterator.Owner.Name, plan.Iterator.Name, plan.Iterator.DeclarationId, bottom) : null,
         };
         if (reservations != null) reservations[def.Name] = slot;
         return slot;
     }
 
-    internal sealed record BottomSlot(string Owner, string Method, string DeclarationId);
+    internal sealed record ReservedProvider(string Owner, string Method, string DeclarationId, bool Bottom);
+
+    static bool OverridesRawMember(BirFunctionDeclaration method, string name, ReferenceMetadataIndex refs) =>
+        method.Overrides.OrEmpty().Any(edge => edge.Member.OrDefault() == name
+            && edge.Owner.OrDefault() is TypeNode.Fqn { Name: IEnumerable } face && refs?.EnumerableFaces(face).Raw == true);
 
     static bool KotlinIterationProtocol(string name) => Bare(name) is "kotlin.collections.Iterable" or "kotlin.sequences.Sequence";
 
@@ -120,7 +126,7 @@ static partial class ReverseEnumeratorBridgeSynthesis
     {
         if (def.Kind != "class") return null;
         var reservation = reserved?.GetValueOrDefault(def.Name);
-        if (reservation?.Bottom is { } slot)
+        if (reservation?.Provider is { } slot)
         {
             // Nothing and Nothing? can both have become System.Object. Bind the
             // reserved provider's current declaring type and physical return.
@@ -138,9 +144,13 @@ static partial class ReverseEnumeratorBridgeSynthesis
             }
             else ret = refs.AccessibleDeclaredKotlinInstanceMethods(owner, IteratorMember, 0)
                 .Single(m => m.PhysicalName == slot.Method && m.Parameters.Length == 0).Return;
-            return (new IteratorProvider(owner, name, ret, new TypeNode.Fqn("kotlin.Nothing"), false), reservation.Element);
+            return (new IteratorProvider(owner, name, ret, slot.Bottom ? new TypeNode.Fqn("kotlin.Nothing") : ret, false), reservation.Element);
         }
         if (FindIteratorProvider(def, defs, refs, declarations) is not { } iterator) return null;
+        // A raw CLR slot has no element argument. Only a declaration overriding
+        // the projected slot can replace its inherited native implementation.
+        bool overridesRaw = iterator.Owner.Name == def.Name && iterator.RawOverride &&
+            !declarations[def.Name].Methods.OrEmpty().Any(m => OverridesRawMember(m, GetEnumeratorName, refs));
         if (NodeType.IsNothing(iterator.SemanticReturn))
         {
             if (reserved != null) return null;
@@ -157,18 +167,19 @@ static partial class ReverseEnumeratorBridgeSynthesis
                     .FirstOrDefault(face => (KotlinIterationProtocol(face.Name) || Bare(face.Name) == IEnumerableT) && face.Args is { Length: 1 });
                 if (semantic != null) semantic = SupertypeGraph.SubstOwnerTvs(semantic, iterator.Owner.Args ?? []) as TypeNode.Fqn;
             }
-            if (semantic == null) return null;
+            if (semantic == null) return overridesRaw ? (iterator, null) : null;
             return (iterator, BirTypeLowering.LowerPhysicalType(semantic.Args[0], refs.Aliases, refs.IsValueType,
                 refs.PhysicalTypeNames, typeArg: true, localTypeNames: defs.Keys.ToHashSet(StringComparer.Ordinal)));
         }
-        if (Element(def, defs, refs, iterator.SemanticReturn, reservation != null) is not { } element) return null;
+        if (Element(def, defs, refs, iterator.SemanticReturn, reservation != null) is not { } element)
+            return overridesRaw ? (iterator, null) : null;
         return (iterator, element);
     }
 
     // Preserved Kotlin declaration facts choose the iteration protocol; the
     // current emitted return independently selects the physical call descriptor.
     sealed record IteratorProvider(TypeNode.Fqn Owner, string Name, TypeNode Return, TypeNode SemanticReturn, bool Abstract,
-        string DeclarationId = null);
+        string DeclarationId = null, bool RawOverride = false);
 
     // Resolve the declaration that supplies `iterator()` in the receiver's own type-parameter frame. Class members
     // win before interface defaults, exactly as CLR dispatch does. For interfaces, retain only the most-specific
@@ -239,8 +250,9 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 && method.Arity == 0 && method.SemanticReturn != null)
             .Select(method => new IteratorProvider(owner, method.Name,
                 SupertypeGraph.SubstOwnerTvs(method.Return, args),
-                SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract, method.Declaration.DeclarationId.OrDefault()))
-            .Where(provider => NodeType.IsNothing(provider.SemanticReturn) || IteratorElement(provider.SemanticReturn, defs, refs) != null)
+                SupertypeGraph.SubstOwnerTvs(method.SemanticReturn, args), method.Abstract, method.Declaration.DeclarationId.OrDefault(),
+                OverridesRawMember(method.Declaration, IteratorMember, refs)))
+            .Where(provider => provider.RawOverride || NodeType.IsNothing(provider.SemanticReturn) || IteratorElement(provider.SemanticReturn, defs, refs) != null)
             .ToList();
         return candidates.Count == 1 ? candidates[0] : null;
     }

@@ -37,6 +37,9 @@ internal abstract record BirGraphValue
     // A callable construction can return another Kotlin function. Its Invoke
     // result in ordinary delegate storage may have already been erased to object.
     internal TypeNode.Fn? SourceFunctionResult { get; set; }
+    // For a native producer, keep the Kotlin callable contract before value
+    // erasure. The closed CLR return slot still comes from the selected member.
+    internal TypeNode.Fn? ProjectedFunctionResult { get; set; }
     // Reference spreads keep their array operands until physical value lowering.
     internal bool LogicalSpreadOperands { get; set; }
     // A phase-local block carrying a fresh allocation and its ordinary CLR

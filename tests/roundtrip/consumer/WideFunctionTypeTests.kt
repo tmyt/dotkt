@@ -16,6 +16,14 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
+private typealias WideFactory = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> WideIntCallback
+private fun nativeFactory(): WideFactory = GenericValueInterop.NativeWideCallbacks.Factory
+private suspend fun <T : GenericValueInterop.ILeftMark> stagedFactory(tag: T, pause: suspend () -> Unit): Int {
+    pause()
+    val factory = GenericValueInterop.NativeWideCallbacks.SelectFactory<T>(tag)
+    val inner = factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+    return inner(GenericValueInterop.MarkedValue<T> { tag }, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+}
 private class DerivedCallbackScope : GenericValueInterop.NativeCallbackScope() {
     fun visitStored(f: WideCallback<Unit>) = Visit<String>(f)
 }
@@ -106,7 +114,14 @@ class WideFunctionTypeTests {
     }
 
     @TestAttribute
-    fun aNativeConsumerCanInvokeTheReturnedFunction() {
+    fun returnedFunctionsAreCallableOnBothSidesOfTheNativeBoundary() {
+        fun invokeFactory(factory: WideFactory) = invokeWithRange(factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
+        assertEquals(-32, invokeFactory(nativeFactory()))
+        assertEquals(-32, invokeWithRange(GenericValueInterop.NativeWideCallbacks.Factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)))
+        val erased: Any? = GenericValueInterop.NativeWideCallbacks.Factory
+        @Suppress("UNCHECKED_CAST")
+        assertEquals(-32, invokeFactory(erased as WideFactory))
+        assertEquals(42, runCrossModuleSuspend { stagedFactory(GenericValueInterop.SharedNativeStream<Int>()) {} })
         val factory = CallbackFactory()
         assertEquals(36, NestedCallbackDerived(factory).Read())
         val stored: WideCallback<WideIntCallback> = factory
