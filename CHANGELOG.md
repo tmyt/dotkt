@@ -11,6 +11,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Kotlin overrides of an overloaded CLR interface default now dispatch through the constructed interface without redirecting its other overloads (#2021).
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).
 - A Kotlin class can implement both constructions of the same generic suspend interface inherited through a CLR interface (#2009).
+- A separately compiled Kotlin abstract class can dispatch erased-colliding generic suspend overloads to a derived implementation (#2040).
 - Kotlin classes can implement a separately compiled interface with generic suspend overloads that erase to the same CLR signature (#2019).
 - Constructing a star-projected Kotlin class preserves its suspend overrides when called through a generic interface from another DLL (#2015).
 - A suspend override returning its bounded class type parameter can be called through its interface when the class also stores that parameter (#2024).
