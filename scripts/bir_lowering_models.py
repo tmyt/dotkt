@@ -423,7 +423,7 @@ def outputs(root, definitions):
         if name == "BirCallStatic":
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
-            model += ["    internal bool IsOverrideAdapter { get; set; }",
+            model += ["    internal object? OverrideAdapterGroup { get; set; }",
                       "    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
                       "    internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }",
                       "    internal ExistentialCallableRole ExistentialCallable { get; set; }",

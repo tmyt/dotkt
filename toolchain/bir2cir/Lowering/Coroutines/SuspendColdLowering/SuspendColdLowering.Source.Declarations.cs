@@ -164,6 +164,7 @@ static partial class SuspendColdLowering
                 method.ImplicitExistentialImplementationId = coldEntry ? implementation + "|cold" : implementation;
             if (!_physicalSlotBridge) return;
             method.PhysicalSlotBridge = true;
+            method.OverrideAdapterGroup = _m.OverrideAdapterGroup;
             if (_clrInterfaceSlotBridge) method.ClrInterfaceSlotBridge = true;
             if (coldEntry && _taskOnlySlotBridge) return;
             if (_taskOnlySlotBridge) method.SuspendTaskOnlyBridge = true;
@@ -178,6 +179,8 @@ static partial class SuspendColdLowering
                 {
                     if (coldEntry)
                     {
+                        if (descriptor.LocalOverrideTargets is { } targets)
+                            descriptor.LocalOverrideTargets = targets.Select(id => id + "|cold").ToArray();
                         descriptor.Member = (descriptor.Member.OrDefault() ?? _name) + "$dotkt_suspend";
                         descriptor.Params = descriptor.Params.OrEmpty().Append(ContAny()).ToArray();
                         descriptor.Ret = AnyTn;

@@ -11198,7 +11198,7 @@ internal sealed record BirDeclarationPosition : BirGraphValue
 
 internal sealed record BirFunctionDeclaration : BirGraphValue
 {
-    internal bool IsOverrideAdapter { get; set; }
+    internal object? OverrideAdapterGroup { get; set; }
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
     internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }
     internal ExistentialCallableRole ExistentialCallable { get; set; }

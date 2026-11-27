@@ -107,7 +107,7 @@ static partial class KotlinOverrideSlotBridge
         var method = new BirFunctionDeclaration {
             Name = name, Static = false, Override = false, Virtual = true, Abstract = false, ObjectOverride = false,
             Vis = "private", Params = bridgeParameters, Ret = BirGraphValue.CopyType(result), Body = new[] { statement },
-            Attrs = Array.Empty<BirAttribute>(), Generated = true, PhysicalSlotBridge = true, IsOverrideAdapter = true,
+            Attrs = Array.Empty<BirAttribute>(), Generated = true, PhysicalSlotBridge = true, OverrideAdapterGroup = new object(),
             ClrInterfaceImpls = Array.Empty<BirMethodImpl>(), ClrBaseImpls = Array.Empty<BirMethodImpl>(),
         };
         // A final physical bridge implements the selected signature. Keep both the

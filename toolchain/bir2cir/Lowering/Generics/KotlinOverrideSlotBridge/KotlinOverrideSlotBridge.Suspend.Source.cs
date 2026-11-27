@@ -211,7 +211,7 @@ static partial class KotlinOverrideSlotBridge
         DotktValueReturn = unitValueReturn ? OptionalField<bool>.Of(true) : default,
     };
 
-    static BirMethodImpl AddSourceImpl(BirFunctionDeclaration method, BirMethodImpl descriptor, bool isInterface)
+    internal static BirMethodImpl AddSourceImpl(BirFunctionDeclaration method, BirMethodImpl descriptor, bool isInterface)
     {
         var existing = isInterface ? method.ClrInterfaceImpls : method.ClrBaseImpls;
         if (existing.OrEmpty().FirstOrDefault(value => value.StructurallyEquals(descriptor)) is { } attached)
