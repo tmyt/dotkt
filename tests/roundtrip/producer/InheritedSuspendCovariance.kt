@@ -44,6 +44,6 @@ interface WideResult<T> { suspend fun next(value: T): Any? }
 open class GenericResult<T> : WideResult<T> {
     override suspend fun next(value: T): T = value
 }
-class ProducedIntResult : GenericResult<Int>() {
-    override suspend fun next(value: Int): Int = value + 1
+class ProducedIntResult(private val gate: IntGate) : GenericResult<Int>() {
+    override suspend fun next(value: Int): Int = value + gate.await()
 }

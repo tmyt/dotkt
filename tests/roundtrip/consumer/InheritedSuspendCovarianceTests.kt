@@ -17,8 +17,8 @@ class ConsumedOverride(gate: Gate) : Consumed(gate) {
 class ImportedOverride(gate: Gate) : Produced(gate) {
     override suspend fun make(): Narrow = Narrow(super.make().text + "#")
 }
-private class ConsumedIntResult : GenericResult<Int>() {
-    override suspend fun next(value: Int): Int = value + 2
+private class ConsumedIntResult(private val gate: IntGate) : GenericResult<Int>() {
+    override suspend fun next(value: Int): Int = value + gate.await() + 1
 }
 private class Completion<T> : Continuation<T> {
     var outcome: Result<T>? = null
@@ -95,10 +95,11 @@ class InheritedSuspendCovarianceTests {
     fun publicTaskSlotPreservesBaseDispatch() {
         val gate = Gate()
         assertEquals("task#", InheritedSuspendTaskApi.ThroughBase(ImportedOverride(gate), gate))
-        val produced = ProducedIntResult()
-        assertEquals(4, InheritedSuspendTaskApi.DirectIntResult(produced))
-        assertEquals(11, InheritedSuspendTaskApi.VirtualIntResults(produced))
-        assertEquals(13, InheritedSuspendTaskApi.VirtualIntResults(ConsumedIntResult()))
+        val intGate = IntGate()
+        val produced = ProducedIntResult(intGate)
+        assertEquals(4, InheritedSuspendTaskApi.DirectIntResult(produced, intGate))
+        assertEquals(11, InheritedSuspendTaskApi.VirtualIntResults(produced, intGate))
+        assertEquals(13, InheritedSuspendTaskApi.VirtualIntResults(ConsumedIntResult(intGate), intGate))
     }
     @TestAttribute
     fun producedAndConsumedSlotsResume() {

@@ -86,7 +86,8 @@ static partial class KotlinOverrideSlotBridge
                         DeclaredSlot(t, isValue, physical: phase == Phase.PhysicalBridges), supArgs)).ToArray();
                 // A base declaration can keep its Kotlin return T but complete Task<object>
                 // to implement an ancestor. Build the adapter before the Task body is emitted.
-                var slotRet0 = phase == Phase.SuspendValueBridges && !supIsInterface
+                var slotRet0 = phase == Phase.SuspendValueBridges
+                    && !IsVoid(slot.Return) && !IsUnitValueSlot(slot.Return)
                     ? slot.Source?.SuspendTaskResult.OrDefault() ?? slot.Return : slot.Return;
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
@@ -390,10 +391,14 @@ static partial class KotlinOverrideSlotBridge
                         spec.Name, member, null, methodArity, implementationSignature, supArgs,
                         MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
                         continue;
-                    // For an imported class the selected hot MethodDef already states the completion type.
-                    slotRet0 = !supIsInterface && suspendDeclaration.PhysicalReturn is TypeNode.Fqn
-                        { Name: "System.Threading.Tasks.Task", Args: [var completion] }
-                        ? completion : suspendDeclaration.Return;
+                    // The hot MethodDef states the completion type. Retain the logical result
+                    // when it already has that representation (notably nullable Unit).
+                    slotRet0 = suspendDeclaration.Return;
+                    if (suspendDeclaration.PhysicalReturn is TypeNode.Fqn { Args: [var completion] } task
+                        && ReferenceMetadataReader.StripGenericArity(task.Name) == "System.Threading.Tasks.Task"
+                        && !BirTypeLowering.SamePhysicalSlotType(slotRet0, completion, refs.Aliases, isValue,
+                            refs.PhysicalTypeNames, returnPosition: false, nullableFrames: refs.NullableTypeFrames))
+                        slotRet0 = completion;
                     slotParams0 = suspendDeclaration.PhysicalParameters;
                     signatureParameters = suspendDeclaration.SignatureParameters;
                     refused = null;
