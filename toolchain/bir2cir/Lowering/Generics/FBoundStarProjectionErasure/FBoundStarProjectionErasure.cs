@@ -748,9 +748,9 @@ static partial class FBoundStarProjectionErasure
                             && context.ProjectionCanChangeConstruction(variant)),
                     sourceOverrideOwner: sourceOverrideOwner);
             }).ToArray();
-            // An override binding can contain rewritten nested types, but none of
-            // its applications are independent CLR constraint obligations.
-            if (nativeOwner || boundDeclaration || sourceOverrideOwner) return physical;
+            // Real CLR applications must satisfy their declared bounds too; a
+            // binding alias owns its argument representation instead.
+            if ((nativeOwner && !nativeArguments) || boundDeclaration || sourceOverrideOwner) return physical;
             // A bound such as B : A needs A's chosen CLR argument, even when B
             // comes first in the declaration. Start recursive edges at the ordinary projection.
             bool[] visited = null;

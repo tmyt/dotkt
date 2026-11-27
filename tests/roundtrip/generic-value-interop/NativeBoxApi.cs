@@ -17,6 +17,11 @@ public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public interface IJointTag<T> where T : ILeftMark, IRightMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public sealed class NativeStreamSlot<T> where T : System.IO.Stream
+{
+    public T Value { get; set; }
+    public bool UsesExactType(T item) => typeof(T) == item.GetType();
+}
 public sealed class NativeResultProbe
 {
     private System.Array backing;

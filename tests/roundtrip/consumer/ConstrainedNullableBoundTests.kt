@@ -658,6 +658,14 @@ class ConstrainedNullableBoundTests {
         check(queue.get(1) === text && queue.get(1).result == "text")
         val exact = ClrList<StreamChunk<Long>>()
         val chunk = StreamChunk(42L)
+        val starSlot = GenericValueInterop.NativeStreamSlot<StreamChunk<*>>()
+        starSlot.Value = chunk
+        check(starSlot.Value === chunk)
+        val other = StreamChunk("other")
+        starSlot.Value = other
+        check(starSlot.Value === other)
+        val exactSlot = GenericValueInterop.NativeStreamSlot<StreamChunk<Long>>()
+        check(exactSlot.UsesExactType(chunk))
         check(readStream { chunk } === chunk)
         check(readProjectedChunk(chunk) === chunk)
         check(deferredStream { chunk }() === chunk)
