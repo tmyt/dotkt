@@ -241,6 +241,13 @@ public static class NativeBoxApi
     public static int ReadVariant(StoredVariant<int, int> value) => (int)value.value;
     public static object Dispatch(NativeBoxReceiver receiver, Box<string, string> value) => receiver.Accept(value);
 
+    public static bool ReplaceCaptured<T>(CaptureBox<T> witness, ref Box<string, string> slot, Box<string, string>[] other)
+        where T : System.IDisposable, allows ref struct
+    {
+        slot = new Box<string, string>("changed");
+        return typeof(T) == typeof(System.IO.MemoryStream);
+    }
+
     public static bool ReplaceAliased(ref Box<string, string> first, ref Box<string, string> second)
     {
         first = new Box<string, string>("first");

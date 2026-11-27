@@ -324,6 +324,7 @@ static partial class CapturedGenericInvocation
         TypeNode.Array a => new TypeNode.Array(Map(a.Elem, tv), a.Rank, a.SzArray),
         TypeNode.ByRef r => new TypeNode.ByRef(Map(r.Of, tv)),
         TypeNode.Ptr p => new TypeNode.Ptr(Map(p.Of, tv)),
+        TypeNode.FnPtr f => f with { Ret = Map(f.Ret, tv), Params = f.Params.Select(p => Map(p, tv)).ToArray() },
         TypeNode.Mod m => new TypeNode.Mod(m.Req, Map(m.M, tv), Map(m.Of, tv)),
         _ => type,
     };
