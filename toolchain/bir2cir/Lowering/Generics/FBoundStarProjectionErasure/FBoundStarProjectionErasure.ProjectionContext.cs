@@ -245,10 +245,17 @@ static partial class FBoundStarProjectionErasure
             return native?.IsInterface == true ? "interface" : native?.IsClass == true ? "class" : null;
         }
 
-        internal bool LosesClassConstraint(TypeNode bound, TypeNode projected) =>
-            bound is TypeNode.Fqn { Args.Length: > 0 } f && BoundKind(f) == "class"
-            && TryExistentialCarrier(f.Name, out var carrier)
-            && projected is TypeNode.Fqn p && p.Name == carrier;
+        internal TypeNode PreserveReferenceBound(BirTypeParameter row, TypeNode bound, TypeNode projected)
+        {
+            // The carrier preserves Kotlin membership, not the fact that its
+            // source upper bound is a class. Keep that independent CLR proof.
+            if (StripSourceNullability(bound) is TypeNode.Fqn { Args.Length: > 0 } f && BoundKind(f) == "class"
+                && TryExistentialCarrier(f.Name, out var carrier)
+                && StripSourceNullability(projected) is TypeNode.Fqn p && p.Name == carrier
+                && !row.SpecialConstraints.OrEmpty().Contains("class"))
+                row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("class").ToArray();
+            return projected;
+        }
 
         internal sealed record FixedSupertypeConstraint(int Index, TypeNode.Fqn Bound, string Owner);
 

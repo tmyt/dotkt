@@ -5,6 +5,12 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.projectedclrconstruction.*
 
 class ProjectedClrConstructionTests {
+    fun <A : BoundFace<*>> interfaceBound(value: A): A = value
+
+    private class Forwarder<X, A : BoundValue<X>> {
+        fun forward(value: A): A = referenceBound(value)
+    }
+
     private fun <A : BoundValue<String>> exactBound(value: A): A =
         ProjectedConstructionInterop.NonNullBox<A>(referenceBound(value)).Value
 
@@ -40,6 +46,11 @@ class ProjectedClrConstructionTests {
         check(nonNullProjectedArgument(strings) === strings)
         val bound = BoundValue<String>()
         check(exactBound(bound) === bound)
+        check(Forwarder<String, BoundValue<String>>().forward(bound) === bound)
+        val row = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetType("roundtriptests.projectedclrconstruction.ProjectedClrConstructionTests", true)!!
+            .GetMethod("interfaceBound")!!.GetGenericArguments()[0]
+        check(row.GenericParameterAttributes == System.Reflection.GenericParameterAttributes.None)
         val hidden: BoundValue<*> = BoundValue<Int>()
         check(referenceBound(hidden) === hidden)
         check(obliviousProjectedArgument(integers) === integers)

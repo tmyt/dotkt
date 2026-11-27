@@ -20,6 +20,7 @@ static partial class FBoundStarProjectionErasure
         internal bool Descriptor { get; init; }
         internal DeclarationBinding ParameterOwner { get; init; }
         internal int ParameterIndex { get; init; } = -1;
+        internal bool RepresentationCompanion { get; init; }
     }
 
     internal static void RewriteCarrierBodiesSource(IReadOnlyList<BirFileDeclaration> roots,
@@ -197,12 +198,8 @@ static partial class FBoundStarProjectionErasure
                 || facts.TypeDefinition && field is "base" or "interfaces"
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape,
                 sourceOverrideOwner: node is BirOverride);
-            // The carrier interface preserves Kotlin membership but no longer
-            // tells the CLR that this parameter ranges over reference types.
-            if (node is BirTypeParameter row && field == "constraints" && state.Projection.LosesClassConstraint(type, projectedType)
-                && !row.SpecialConstraints.OrEmpty().Contains("class"))
-                row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("class").ToArray();
-            return projectedType;
+            return node is BirTypeParameter row && field == "constraints" && !scope.RepresentationCompanion
+                ? state.Projection.PreserveReferenceBound(row, type, projectedType) : projectedType;
         }, (field, role, child) => {
             // A use-site override edge selects a source declaration, not an
             // application of its physical frame. The expression's owner is
@@ -213,11 +210,14 @@ static partial class FBoundStarProjectionErasure
             var next = childScope with { Bound = scope.Bound || BoundTypeSlot(facts, field),
                 ArrayShape = scope.ArrayShape || NativeArrayTypeSlot(facts, field),
                 Descriptor = field is "clrBaseImpls" or "clrInterfaceImpls" or "overrides" or "inheritedImplementation",
-                ParameterOwner = null, ParameterIndex = -1 };
+                ParameterOwner = null, ParameterIndex = -1, RepresentationCompanion = false };
             if (field == "typeParams" && child.Value is BirTypeParameter)
             {
                 var index = positions.GetValueOrDefault(field);
                 positions[field] = index + 1;
+                var frame = node is BirFunctionDeclaration fn ? fn.NullableRepresentationFrame.OrDefault()
+                    : NullableRepresentationViews.TypeFacts(node)?.NullableFrame;
+                next = next with { RepresentationCompanion = IsRepresentationCompanion(frame, index) };
                 if (state.Demand.Preparation.Bindings.TryGetCapturedSource(node, out var binding))
                     next = next with { ParameterOwner = binding, ParameterIndex = index };
             }
