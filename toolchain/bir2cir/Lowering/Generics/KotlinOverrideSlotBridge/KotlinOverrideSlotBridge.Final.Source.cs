@@ -293,7 +293,7 @@ static partial class KotlinOverrideSlotBridge
             {
                 implementation.SetVirtual();
                 var descriptor = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,
-                    slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn);
+                    slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn,slot.SelectedLocal?.DeclarationId);
                 if (slot.Signature == null)
                     for (var i=0;i<implementation.Parameters.Length;i++)
                         if (implementation.Parameters[i].Signature is { } discriminator)
@@ -356,7 +356,7 @@ static partial class KotlinOverrideSlotBridge
                 }
             }
             var exact = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,
-                slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn);
+                slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn,slot.SelectedLocal?.DeclarationId);
             if (slot.ReferenceMember != null && slot.ReferenceMember != slot.DescriptorMember) exact.ReferenceMember = slot.ReferenceMember;
             context.Attach(declaration,bridge,exact,slot.IsInterface);
             bool PendingOwner(TypeNode pending) => slot.SemanticReturn == null

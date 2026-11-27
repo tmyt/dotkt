@@ -279,11 +279,11 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     // A preserved override edge selects this declaration before signature erasure. Return its complete open CLR
     // signature, including modifiers; the consumer closes the selected declaring owner through its supertype graph.
-    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration, bool requireVirtual = false)
+    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration, bool requireOverridable = false)
     {
         declaration = null;
         if (id == null || !_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
-            || (requireVirtual && !binding.IsVirtual)) return false;
+            || (requireOverridable && (!binding.IsVirtual || binding.IsFinal))) return false;
         var owner = binding.DeclarationPhysicalOwner ?? binding.Owner;
         declaration = new ReferencedDeclarationSlot(owner, binding.Name, binding.MethodArity,
             binding.SignatureParameters ?? throw new InvalidOperationException($"Declaration '{id}' has no signature parameters"),
@@ -1113,7 +1113,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         && a.PropertyName == b.PropertyName && Same(a.ByrefPositions, b.ByrefPositions)
         && a.Suspend == b.Suspend && a.Conv == b.Conv && a.ConvTo == b.ConvTo
         && Same(a.ReturnType, b.ReturnType) && a.MethodArity == b.MethodArity
-        && Same(a.ParamTypeNodes, b.ParamTypeNodes) && a.IsVirtual == b.IsVirtual
+        && Same(a.ParamTypeNodes, b.ParamTypeNodes) && a.IsVirtual == b.IsVirtual && a.IsFinal == b.IsFinal
         && Same(a.KotlinReturnType, b.KotlinReturnType) && Same(a.NullableGenericRet, b.NullableGenericRet)
         && Same(a.NullableGenericParams, b.NullableGenericParams) && Same(a.ReturnTypeNode, b.ReturnTypeNode)
         && a.SourcePropertyName == b.SourcePropertyName
@@ -5836,6 +5836,7 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     public string ValueSlot { get; init; }
     public NativeSignatureReader.Signature MetadataValueSignature { get; init; }
     public bool SignatureAllocated { get; init; }
+    public bool IsFinal { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
     public string PhysicalVisibility { get; init; }

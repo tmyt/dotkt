@@ -95,6 +95,13 @@ class SelectedMethodBoundsTests {
         override suspend fun <A : Concrete> pick(value: Concrete): Any = "single"
         override fun <A : Concrete> write(value: Concrete, condition: Boolean, target: ClrRef<Int>) = Unit
     }
+    private open class OverloadedChild : OverloadedPickerBase<Concrete>() {
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Iterable<Int>): Any = value
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Sequence<Int>): Any = source
+    }
+    private class OverloadedLeaf : OverloadedChild() {
+        override suspend fun <A : Concrete> pick(value: Concrete, source: Iterable<Int>): Any = source
+    }
     private suspend fun <K> via(picker: SuspendPicker<K>, value: K): Any where K : Base, K : ILeft, K : IRight =
         picker.pick<K>(value)
 
@@ -117,9 +124,18 @@ class SelectedMethodBoundsTests {
             check(pickThrough(first, Item()) == "first" && pickThrough(second, OtherItem()) == "second")
             check(pickThrough(Single() as SuspendPicker<OtherItem>, OtherItem()) == "single")
             check(pickStar(Single()) == "single")
-            val overloaded: OverloadedPicker<Concrete> = Overloaded()
-            check(overloaded.pick<Concrete>(Concrete(), listOf(1)) == "iterable")
-            check(overloaded.pick<Concrete>(Concrete(), sequenceOf(1)) == "sequence")
+            for (overloaded in listOf<OverloadedPicker<Concrete>>(Overloaded(), LocalOverloadedPicker())) {
+                check(overloaded.pick<Concrete>(Concrete(), listOf(1)) == "iterable")
+                check(overloaded.pick<Concrete>(Concrete(), sequenceOf(1)) == "sequence")
+            }
+            val base: OverloadedPickerBase<Concrete> = OverloadedChild()
+            val item = Concrete()
+            val sequence = sequenceOf(3)
+            check(base.pick<Concrete>(item, listOf(1)) === item)
+            check(base.pick<Concrete>(item, sequence) === sequence)
+            val leaf: OverloadedPickerBase<Concrete> = OverloadedLeaf()
+            val list = listOf(1)
+            check(leaf.pick<Concrete>(item, list) === list && leaf.pick<Concrete>(item, sequence) === sequence)
             var order = ""
             check(run { order += "r"; first }.pick<Item>(run { order += "a"; Item() }) == "first")
             check(order == "ra")
