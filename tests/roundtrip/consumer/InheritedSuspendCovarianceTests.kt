@@ -20,6 +20,9 @@ class ImportedOverride(gate: Gate) : Produced(gate) {
 private class ConsumedIntResult(private val gate: IntGate) : GenericResult<Int>() {
     override suspend fun next(value: Int): Int = value + gate.await() + 1
 }
+private class ConsumerClassFactory<T : Value>(private val item: T) : WideClassFactory() {
+    override suspend fun make(): T = item
+}
 private class Completion<T> : Continuation<T> {
     var outcome: Result<T>? = null
     override val context: CoroutineContext get() = EmptyCoroutineContext
@@ -40,7 +43,9 @@ class InheritedSuspendCovarianceTests {
         val gate = Gate()
         val result = Narrow("derived")
         val child = NarrowClassFactory(gate)
+        check(InheritedSuspendTaskApi.FromWideClass(ConsumerClassFactory(result)).Result === result)
         check(InheritedSuspendTaskApi.ChooseThroughClass(child, result).Result === result)
+        check(InheritedSuspendTaskApi.CheckClassLabels(child).Result)
         val wide = InheritedSuspendTaskApi.FromWideClass(child)
         check(!wide.IsCompleted)
         gate.resume(result)
