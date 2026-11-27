@@ -62,6 +62,7 @@ static partial class FBoundStarProjectionErasure
                 if (requiresBridge)
                 {
                     var bridge = BridgeMethodSource(owner, method, context, slotTypeParams: slot.TypeParams.OrDefault());
+                    row.InterfaceForwarder = bridge;
                     DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
                     context.AttachMethod(definition, bridge, method);
                 }
@@ -70,6 +71,7 @@ static partial class FBoundStarProjectionErasure
                     var bridge = BridgeMethodSource(owner, method, context, StarMethodNameSource(definition, method),
                         slotMemberName: slot.ExplicitClrName.OrDefault() ?? slot.Name.OrDefault(),
                         slotTypeParams: slot.TypeParams.OrDefault());
+                    row.InterfaceForwarder = bridge;
                     DeclarationSignatureIdentity.RecordSelectedImplementationSlot(bridge, slot);
                     context.AttachMethod(definition, bridge, method);
                 }
@@ -149,6 +151,7 @@ static partial class FBoundStarProjectionErasure
         if (localName != null) erased.Vis = "internal";
         else if (CarrierRealizationContext.VisibilityInScope(definition, scope) is { } visibility) erased.Vis = visibility;
         context.AttachType(root, erased);
+        AddConstructedDispatchView(owner, definition, erased, context);
         foreach (var slot in methods)
         {
             var binding = context.Bindings.GetCapturedSource(slot);

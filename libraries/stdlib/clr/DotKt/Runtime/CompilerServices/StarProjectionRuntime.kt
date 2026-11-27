@@ -709,16 +709,17 @@ private fun starProjectionCollectCaptures(arity: Int, arguments: Array<Any?>,
     if (owners == null) return null
     val plan = coordinates!!
     val found = arrayOfNulls<StarProjectionType>(arity)
-    val nominalCount = plan[0]
-    // Only a non-null witness fixes a slot. An opaque argument's backing type
-    // can still supply a missing slot, even when a nominal parameter exists.
-    val fixed = if (nominalCount > 0 && nominalCount < owners.size) BooleanArray(arity) else null
+    // Rows are sorted by the compiler: nominal, observed storage, then
+    // constructed storage. Only a non-null witness fixes the rank of a slot.
+    // Values at the same rank must still agree on its physical construction.
+    val ranks = if (plan[4] != plan[plan.size - 1]) IntArray(arity) else null
     for (i in owners.indices) {
-        val row = 1 + 4 * i
+        val row = 5 * i
         val slot = plan[row + 2]
-        if (i >= nominalCount && fixed != null && fixed[slot]) continue
+        val rank = plan[row + 4]
+        if (ranks != null && found[slot] != null && ranks[slot] != rank) continue
         starProjectionBindCapture(found, arguments[plan[row]], owners[i], plan[row + 1], slot, plan[row + 3])
-        if (i < nominalCount && fixed != null && found[slot] != null) fixed[slot] = true
+        if (ranks != null && found[slot] != null) ranks[slot] = rank
     }
     return found
 }

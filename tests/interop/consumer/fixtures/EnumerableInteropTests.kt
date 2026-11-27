@@ -34,7 +34,60 @@ private fun sumNativeElements(values: ClrEnumerable<Int>): Int {
 
 private class DelegatingNativeProbe<T>(values: kotlin.collections.ClrEnumerable<T>) : kotlin.collections.ClrEnumerable<T> by values
 
+private class InheritedPublicRaw : Kfc.PublicRaw()
+private class InheritedExplicitRaw : Kfc.ExplicitRaw()
+private class InheritedDual : Kfc.DualEnumerable()
+private class InheritedRelisted : Kfc.Relisted()
+private class InheritedPattern : Kfc.PatternAndRaw()
+private class OverridesRaw<I : Iterator<Any?>>(val cursor: I) : Kfc.ExplicitRaw() {
+    override fun iterator(): I = cursor
+}
+private class WrapsRaw : Kfc.PublicRaw() {
+    var calls = 0
+    override fun iterator(): Iterator<Any?> {
+        check(++calls == 1)
+        return super.iterator()
+    }
+}
+private class BothRawEntries : System.Collections.IEnumerable {
+    override fun iterator(): Iterator<Any?> = listOf<Any?>("Kotlin").iterator()
+    override fun GetEnumerator(): System.Collections.IEnumerator = Kfc.PublicRaw().GetEnumerator()
+}
+
+private fun firstRawElement(source: System.Collections.IEnumerable): Any? {
+    for (element in source) return element
+    return null
+}
+
 class EnumerableInteropTests {
+    @TestAttribute
+    fun subclassesInheritTheSelectedNativeIterator() {
+        val cursor = InheritedPublicRaw().iterator()
+        check(cursor.hasNext() && cursor.next() == 17)
+        check(cursor.hasNext() && cursor.next() == "public" && !cursor.hasNext())
+        var count = 0
+        for (value in InheritedExplicitRaw()) { check(value == "explicit"); count++ }
+        check(count == 1)
+
+        // Both CLR slots return object elements, but their implementations differ.
+        val dual = InheritedDual()
+        check(dual.iterator().next() == "typed")
+        val raw = dual as System.Collections.IEnumerable
+        check(raw.iterator().next() == "raw")
+        check(firstRawElement(raw) == "raw")
+        check(InheritedExplicitRaw().iterator(5) == 5)
+        val replacement = OverridesRaw(listOf<Any?>("replacement").iterator())
+        check(Kfc.ExplicitRaw.First(replacement) == "replacement")
+        check(Kfc.ExplicitRaw.First(WrapsRaw()) == 17)
+        val both = BothRawEntries()
+        check(both.iterator().next() == "Kotlin" && Kfc.ExplicitRaw.First(both) == 17)
+        val fromBase: String = InheritedRelisted().iterator().next()
+        check(fromBase == "base")
+        val pattern = InheritedPattern()
+        val fromPattern: String = pattern.iterator().next()
+        check(fromPattern == "pattern" && firstRawElement(pattern) == 17)
+    }
+
     @TestAttribute
     fun nativeInterfaceIteration() {
         val ints = EnumerationProbe<Int>(arrayOf(10, 20, 30))

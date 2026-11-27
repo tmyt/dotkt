@@ -111,6 +111,7 @@ static partial class SuspendColdLowering
                 return new BirCallInstance {
                     OwnerType = _selfType, Virtual = false, ClrOwnerResolved = true, Recv = new BirThis(),
                     Method = _coldName, Sig = signature, Args = args, Ret = AnyTn, TypeArgs = typeArguments,
+                    SelectedGenericCallable = ForwarderEntry(true),
                     DeclarationId = _declarationId == null ? default : OptionalField<string>.Of(_declarationId + "|cold"),
                 };
             return new BirCallStatic {

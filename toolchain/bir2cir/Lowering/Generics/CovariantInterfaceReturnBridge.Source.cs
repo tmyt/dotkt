@@ -13,9 +13,10 @@ static partial class CovariantInterfaceReturnBridge
             System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Implementation), value.Descriptor);
     }
 
-    sealed class SourceDefinition(BirFileDeclaration file, IBirTypeDeclaration declaration)
+    sealed class SourceDefinition(BirFileDeclaration file, IBirTypeDeclaration declaration, string carrier)
     {
         internal BirFileDeclaration File => file;
+        internal string Carrier => carrier;
         internal IBirTypeDeclaration Declaration => declaration;
         internal string Name => declaration.Name.OrDefault();
         internal string Kind => declaration.Kind.OrDefault();
@@ -28,17 +29,20 @@ static partial class CovariantInterfaceReturnBridge
     internal static IReadOnlySet<SourceBridgedSlot> ApplyAll(IReadOnlyList<BirFileDeclaration> roots,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized = null, bool metadataBuild = false)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized = null, bool metadataBuild = false,
+        IReadOnlyDictionary<string, string> localCarriers = null)
     {
         // The late hierarchy is last-declaration-wins, with the actual flat
         // file inventory. Appended adapters do not enter this captured view.
         var definitions = new Dictionary<string, SourceDefinition>(StringComparer.Ordinal);
         foreach (var file in roots)
             foreach (var declaration in file.Types.OrEmpty())
-                if (declaration.Name.HasValue) definitions[declaration.Name.Value] = new(file, declaration);
+                if (declaration.Name.HasValue) definitions[declaration.Name.Value] = new(file, declaration,
+                    localCarriers?.GetValueOrDefault(declaration.Name.Value));
         var bridged = new HashSet<SourceBridgedSlot>(new SourceSlotComparer());
+        var hierarchy = new Lazy<Dictionary<string, SupertypeGraph.Def>>(() => SupertypeGraph.CollectSource(roots));
         foreach (var owner in definitions.Values.Where(value => value.Kind is "class" or "interface"))
-            ApplySourceOwner(owner, definitions, refs, isValue, representations, sourceParameters, bridged, onMaterialized, metadataBuild);
+            ApplySourceOwner(owner, definitions, refs, isValue, representations, sourceParameters, bridged, onMaterialized, metadataBuild, hierarchy);
         return bridged;
     }
 
@@ -49,7 +53,8 @@ static partial class CovariantInterfaceReturnBridge
     static void ApplySourceOwner(SourceDefinition owner, IReadOnlyDictionary<string, SourceDefinition> definitions,
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters, ISet<SourceBridgedSlot> bridged,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild,
+        Lazy<Dictionary<string, SupertypeGraph.Def>> hierarchy)
     {
         if (!owner.Declaration.Methods.HasValue) return;
         var bridges = new Dictionary<SourceBridgedSlot, BirFunctionDeclaration>(new SourceSlotComparer());
@@ -101,14 +106,16 @@ static partial class CovariantInterfaceReturnBridge
                     PublishSourceBridge(owner, bridge, onMaterialized);
                     AssociateSourceProperty(owner, bridge, implementation, property, accessor, slotParameters, slotReturn);
                 }
-                bridge.ClrInterfaceImpls = bridge.ClrInterfaceImpls.Value.Append(SourceDescriptor(application, slot.Name.Value,
+                var descriptor = SourceDescriptor(application, slot.Name.Value,
                     arity, signature, slotReturn, KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
-                        slot.TypeParams.OrDefault(), arguments), valueReturn)).ToArray();
+                        slot.TypeParams.OrDefault(), arguments), valueReturn);
+                if (slot.DeclarationId.HasValue) descriptor.LocalOverrideTargets = new[] { slot.DeclarationId.Value };
+                KotlinOverrideSlotBridge.AddSourceImpl(bridge, descriptor, true);
                 bridged.Add(new(implementation, DescriptorKey(application, slot.Name.Value, arity, slotParameters, slotReturn, refs, isValue)));
             }
         }
         ApplySourceReferenced(owner, definitions, refs, isValue, representations, sourceParameters,
-            bridges, bridged, ref ordinal, onMaterialized, metadataBuild);
+            bridges, bridged, ref ordinal, onMaterialized, metadataBuild, hierarchy);
     }
 
     static void PublishSourceBridge(SourceDefinition owner, BirFunctionDeclaration bridge,
@@ -131,7 +138,8 @@ static partial class CovariantInterfaceReturnBridge
         ReferenceMetadataIndex refs, ValueTypeOracle isValue, GenericRepresentationPolicy representations,
         IReadOnlyDictionary<BirFunctionDeclaration, TypeNode[]> sourceParameters,
         Dictionary<SourceBridgedSlot, BirFunctionDeclaration> bridges, ISet<SourceBridgedSlot> bridged, ref int ordinal,
-        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild)
+        Action<BirFileDeclaration, IBirTypeDeclaration, BirFunctionDeclaration> onMaterialized, bool metadataBuild,
+        Lazy<Dictionary<string, SupertypeGraph.Def>> hierarchy)
     {
         if (refs == null) return;
         var ownArguments = owner.OwnArguments;
@@ -213,6 +221,13 @@ static partial class CovariantInterfaceReturnBridge
                         refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
                         nullableFrames: refs.NullableTypeFrames, leftReturnsValue: !suspend && declaration.ReturnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
+                TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
+                    refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);
+                if (owner.Kind == "class" && hierarchy.Value.TryGetValue(owner.Name, out var cls)
+                    && KotlinOverrideSlotBridge.HasNativeBaseMapping(cls, hierarchy.Value, refs, Physical,
+                        descriptorOwner, descriptorMember, arity, slotParameters, slotReturn)
+                    && !KotlinOverrideSlotBridge.ReachesFromDeclaredPhysicalInterface(KotlinOverrideSlotBridge.DeclaredFaces(cls, owner.Carrier), descriptorOwner,
+                        hierarchy.Value, refs, isValue, null)) continue;
                 var key = SourceBridgeKey(implementation, arity,
                     KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(declarationParameters, physicalArguments),
                     slotParameters, slotReturn, valueReturn, refs, isValue);
@@ -226,8 +241,7 @@ static partial class CovariantInterfaceReturnBridge
                 }
                 var descriptor = SourceDescriptor(descriptorOwner, descriptorMember, arity, slotParameters, slotReturn,
                     KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(declarationParameters, physicalArguments), valueReturn);
-                if (!bridge.ClrInterfaceImpls.Value.Any(existing => existing.StructurallyEquals(descriptor)))
-                    bridge.ClrInterfaceImpls = bridge.ClrInterfaceImpls.Value.Append(descriptor).ToArray();
+                KotlinOverrideSlotBridge.AddSourceImpl(bridge, descriptor, true);
                 bridged.Add(new(implementation, DescriptorKey(descriptorOwner, descriptorMember, arity, slotParameters, slotReturn, refs, isValue)));
             }
         }
@@ -253,7 +267,8 @@ static partial class CovariantInterfaceReturnBridge
         }).ToArray();
         var ownerArguments = owner.OwnArguments;
         var call = new BirCallInstance { OwnerType = new TypeNode.Fqn(owner.Name, ownerArguments.Length == 0 ? null : ownerArguments),
-            Virtual = true, ClrOwnerResolved = true, Recv = new BirThis(), Method = implementation.Name,
+            Virtual = true, ClrOwnerResolved = true, _exactExistentialBridgeOwnerCall = true,
+            Recv = new BirThis(), Method = implementation.Name,
             Sig = source.Select(FunctionSignatureIdentity.SignatureType).ToArray(),
             DynRet = BirGraphValue.CopyType(implementation.Ret.OrDefault()), Ret = BirGraphValue.CopyType(implementation.Ret.OrDefault()),
             Args = bridgeParameters.Select(parameter => (IBirExpression)new BirLocal { Name = parameter.Name }).ToArray() };
@@ -263,7 +278,8 @@ static partial class CovariantInterfaceReturnBridge
         var bridge = new BirFunctionDeclaration { Name = name, Static = false, Override = false, Virtual = true,
             Abstract = false, ObjectOverride = false, Vis = "private", Generated = true, Params = bridgeParameters,
             Ret = BirGraphValue.CopyType(result), Body = new IBirStatement[] { new BirReturn { Value = call } },
-            Attrs = Array.Empty<BirAttribute>(), PhysicalSlotBridge = true, ClrInterfaceImpls = Array.Empty<BirMethodImpl>() };
+            Attrs = Array.Empty<BirAttribute>(), PhysicalSlotBridge = true, OverrideAdapterGroup = new object(),
+            ClrInterfaceImpls = Array.Empty<BirMethodImpl>() };
         if (valueReturn) bridge.DotktValueReturn = true;
         if (owner.Kind == "interface") bridge.ClrInterfaceSlotBridge = true;
         if (SourceSuspend(implementation))

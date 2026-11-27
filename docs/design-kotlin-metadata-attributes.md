@@ -60,6 +60,16 @@ ELIMINATED; the real CLR stdlib superseded it). They are metadata-only, never ex
 Physical cold entries and state-machine helpers are not additional source declarations. This source fact is
 independent of the projection policy that assigns low priority to synthetic foreign-CLR overload views.
 
+A CLR interface can inherit two constructions of the same Kotlin interface. For a method
+whose type parameter is bounded by an owner parameter, the Kotlin declaration ID selects
+the method but does not select the receiver construction. The compiler publishes a
+construction-keyed interface with the same erased slot signature. Its type parameters
+identify the construction and do not repeat the nominal owner's CLR constraints.
+The nominal interface forwards both slots to the same implementation. Calls through an
+unchecked Kotlin view still use the ordinary erased slot when the selected construction
+is not present. `KotlinConstructedDispatchAttribute` marks this generated interface as
+physical-only so it adds no Kotlin supertype or abstract member to a downstream KLIB.
+
 ### Provenance
 
 Full-name equality is not enough to identify these internal carriers: an ordinary C# assembly can declare a

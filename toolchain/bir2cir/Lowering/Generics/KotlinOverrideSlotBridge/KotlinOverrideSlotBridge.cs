@@ -378,6 +378,10 @@ static partial class KotlinOverrideSlotBridge
         return false;
     }
 
+    internal static Def DeclaredFaces(Def owner, string carrier) => new() {
+        Interfaces = carrier == null ? owner.Interfaces : owner.Interfaces.Where(face => face.Name != carrier).ToArray()
+    };
+
     static bool ReachesFromDeclaredInterface(Def cls, TypeNode.Fqn slotOwner,
         IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
     {
@@ -387,7 +391,7 @@ static partial class KotlinOverrideSlotBridge
         return false;
     }
 
-    static bool ReachesFromDeclaredPhysicalInterface(Def cls, TypeNode.Fqn slotOwner,
+    internal static bool ReachesFromDeclaredPhysicalInterface(Def cls, TypeNode.Fqn slotOwner,
         IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         IReadOnlySet<string> localTypeNames)
     {
@@ -405,6 +409,19 @@ static partial class KotlinOverrideSlotBridge
 
     static TypeNode[] ClassOwnArgs(Def def) =>
         Enumerable.Range(0, def.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+
+    internal static bool HasNativeBaseMapping(Def owner, IReadOnlyDictionary<string, Def> defs,
+        ReferenceMetadataIndex refs, Func<TypeNode, TypeNode> physical, TypeNode.Fqn slot, string member,
+        int arity, TypeNode[] parameters, TypeNode result, System.Reflection.MethodInfo selected = null)
+    {
+        if (owner.Base == null || physical(slot) is not TypeNode.Fqn face) return false;
+        var signature = parameters.Select(physical).ToArray();
+        var ret = physical(result);
+        return SupertypeGraph.ReachableFromClass(owner.Base, defs, refs).Any(edge => !edge.isInterface
+            && !defs.ContainsKey(edge.spec.Name) && physical(edge.spec) is TypeNode.Fqn nativeBase
+            && (refs.DeclaresExplicitInterfaceSlot(nativeBase, face, member, arity, signature, ret)
+                || selected != null && refs.MapsPublicInterfaceMethod(nativeBase, face, selected)));
+    }
 
     static string SafeName(string name) => new(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 }

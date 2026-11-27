@@ -43,7 +43,11 @@ internal class KotlinIteratorOverEnumerator<out T>(private val e: ClrEnumerator<
 /** Wrap a BCL enumerable as a Kotlin `Iterator<T>`. `Iterable<T>.iterator()` (CLR-bound to IEnumerable) delegates here;
  *  because the default body is Kotlin, rule 3 hoists it to a static helper automatically. */
 public fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> =
-    KotlinIteratorOverEnumerator(self.GetEnumerator())
+    iteratorOverEnumerator(self.GetEnumerator())
+
+/** Adapt the enumerator returned by a CLR enumeration pattern without switching interface slots. */
+public fun <T> iteratorOverEnumerator(enumerator: ClrEnumerator<T>): Iterator<T> =
+    KotlinIteratorOverEnumerator(enumerator)
 
 /** The RAW (non-generic `System.Collections.IEnumerator`) twin of [KotlinIteratorOverEnumerator] — #74b(ii): a
  *  star-projected/erased collection (`Collection<*>`/`Map<*,*>`) only implements the NON-generic BCL enumerable
@@ -72,3 +76,7 @@ internal class KotlinIteratorOverRawEnumerator(private val e: ClrRawEnumerator) 
  *  reason `clrElemToString`/`clrMapGet` cast internally instead of taking the raw facade as their param). */
 public fun iteratorOverRawEnumerable(self: Any): Iterator<Any?> =
     KotlinIteratorOverRawEnumerator((self as ClrRawEnumerable).GetEnumerator())
+
+/** Adapt a previously selected enumerator without dispatching GetEnumerator a second time. */
+public fun iteratorOverRawEnumerator(enumerator: Any): Iterator<Any?> =
+    KotlinIteratorOverRawEnumerator(enumerator as ClrRawEnumerator)

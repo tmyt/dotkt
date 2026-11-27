@@ -81,9 +81,9 @@ static class MetadataDeclaredMembersTests
                 refs.ModuleMetadata(ctor.Module), (MethodDefinitionHandle)MetadataTokens.Handle(ctor.MetadataToken));
             var coreKey = Key(coreConstructor);
             var importedKey = Key(importedConstructor);
-            if (coreKey == importedKey || !DotKt.Toolchain.RawSignatureTypeProvider<object>.SameConstructor(
+            if (coreKey == importedKey || !DotKt.Toolchain.RawSignatureTypeProvider<object>.SameDeclaration(
                     coreKey, importedKey, refs.SameDefinition)
-                || DotKt.Toolchain.RawSignatureTypeProvider<object>.SameConstructor(coreKey, importedKey, (_, _, _) => false))
+                || DotKt.Toolchain.RawSignatureTypeProvider<object>.SameDeclaration(coreKey, importedKey, (_, _, _) => false))
                 throw new Exception("constructor signature identity did not follow exactly the resolved nominal type");
         }
         MalformedEnumeration(paths);

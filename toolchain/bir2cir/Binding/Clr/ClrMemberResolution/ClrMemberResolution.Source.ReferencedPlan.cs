@@ -5,7 +5,7 @@ static partial class ClrMemberResolution
 {
     sealed record ReferencedCallInput(string Kind, TypeNode Owner, string Name, TypeNode[] Signature,
         int MethodArity, string Identity, bool AlreadyBound, TypeNode[] SourceSignature,
-        string PropertyName, string PropertyKind, string Prop, bool Super);
+        string PropertyName, string PropertyKind, string Prop, bool Super, string NativeMethodKey = null);
 
     sealed record ReferencedCallPlan(bool ClearIdentity = false, bool PropertySelected = false,
         string PropertyName = null, string PropertyKind = null, string PhysicalName = null, bool SetVirtual = false,
@@ -43,6 +43,14 @@ static partial class ClrMemberResolution
             setVirtual = accessorVirtual && !call.Super;
         }
         var isStatic = call.Kind is "callStatic" or "newDelegate";
+        if (call.NativeMethodKey != null)
+        {
+            var open = ResolveOwnerType(owner, refs);
+            var selected = ClrDeclarationMatching.MethodForNativeKey(refs, open, name, call.MethodArity, !isStatic, call.NativeMethodKey);
+            var reference = ClrMemberReferences.MemberRefOf(refs, localTypes, selected, MemberRefNode.Kinds.Method, open, owner.Args);
+            return new(Signature: reference.ParameterTypes, Reference: reference, Declaration: selected,
+                DelegateOwnerArguments: (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>());
+        }
         if (!property && call.Identity != null)
         {
             var callOwner = ResolveOwnerType(owner, refs)

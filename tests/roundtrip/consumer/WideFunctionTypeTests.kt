@@ -1,4 +1,5 @@
 import NUnit.Framework.TestAttribute
+import GenericValueInterop.VisitExtension
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.wide.acceptWidened
 import roundtrip.wide.narrowSource
@@ -15,6 +16,25 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
+private typealias WideFactory = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> WideIntCallback
+private fun nativeFactory(): WideFactory = GenericValueInterop.NativeWideCallbacks.Factory
+private suspend fun <T : GenericValueInterop.ILeftMark> stagedFactory(tag: T, pause: suspend () -> Unit): Int {
+    pause()
+    val factory = GenericValueInterop.NativeWideCallbacks.SelectFactory<T>(tag)
+    val inner = factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+    return inner(GenericValueInterop.MarkedValue<T> { tag }, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+}
+private class DerivedCallbackScope : GenericValueInterop.NativeCallbackScope() {
+    fun visitStored(f: WideCallback<Unit>) = Visit<String>(f)
+}
+private class ValueVisitor(val f: WideCallback<Unit>) : GenericValueInterop.NativeVisitor() {
+    override fun <T : GenericValueInterop.IVisitWide> Accept(value: T): Boolean = value.Apply(f)
+}
+private class UnitRecorder : WideCallback<Unit> {
+    var sum = 0
+    override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
+                        j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int) { sum += a + q }
+}
 private class FirstPlusLast : WideIntCallback {
     override fun invoke(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int, i: Int,
                         j: Int, k: Int, l: Int, m: Int, n: Int, o: Int, p: Int, q: Int): Int = a + q
@@ -32,8 +52,30 @@ private class NativeGetterDerived : GenericValueInterop.NativeCallbackBase(Gener
 private class NativeArrayDerived(op: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any)
     : GenericValueInterop.NativeArrayCallbackBase(op)
 private class CallbackBox<T>(val value: T)
+fun returnedCallback(source: GenericValueInterop.NativeIntCallbackBase): WideIntCallback = source.Callback
+private fun stagedCallback(source: GenericValueInterop.NativeIntCallbackBase, tag: Any): WideIntCallback? =
+    source.ReadCallback(tag) as? WideIntCallback
+private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 
 class WideFunctionTypeTests {
+    @TestAttribute
+    fun nativeValueAndVoidCallbacksInvokeTheOriginalRecorder() {
+        val recorder = UnitRecorder()
+        check(GenericValueInterop.NativeWideCallbacks.VisitUnit(recorder))
+        assertEquals(18, recorder.sum)
+        GenericValueInterop.NativeWideCallbacks.VisitVoid(recorder)
+        assertEquals(36, recorder.sum)
+        assertEquals(71, DerivedCallbackScope().visitStored(recorder))
+        assertEquals(54, recorder.sum)
+        val target = GenericValueInterop.NativeCallbackOverride()
+        assertEquals(19, target.Choose(recorder))
+        check(target.VisitExtension(recorder))
+        val visit: (WideCallback<Unit>) -> Boolean = GenericValueInterop.NativeWideCallbacks::VisitUnit
+        check(visit(recorder))
+        check(ValueVisitor(recorder).Run())
+        assertEquals(126, recorder.sum)
+    }
+
     @TestAttribute
     fun wideFunctionValuesCrossTheModuleBoundary() {
         assertEquals(17, NativeCallbackDerived(LastArgument()).Read())
@@ -46,6 +88,13 @@ class WideFunctionTypeTests {
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read(FirstPlusLast()))
         assertEquals(18, GenericValueInterop.NativeWideCallbacks.Read<String>(FirstPlusLast()))
         assertEquals(18, NativeGetterDerived().Read())
+        val before = native.CallbackReads
+        assertEquals(18, invokeWithRange(returnedCallback(native)))
+        assertEquals(18, invokeWithRange(stagedCallback(native, "tag")!!))
+        native.Callback = null
+        try { returnedCallback(native); error("null callback escaped the non-null return") }
+        catch (_: NullPointerException) {}
+        assertEquals(before + 3, native.CallbackReads)
         val array = arrayOf(CallbackBox("text"))
         val returning = NativeArrayDerived { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> array }
         check(returning.Read() === array)
@@ -65,7 +114,14 @@ class WideFunctionTypeTests {
     }
 
     @TestAttribute
-    fun aNativeConsumerCanInvokeTheReturnedFunction() {
+    fun returnedFunctionsAreCallableOnBothSidesOfTheNativeBoundary() {
+        fun invokeFactory(factory: WideFactory) = invokeWithRange(factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
+        assertEquals(-32, invokeFactory(nativeFactory()))
+        assertEquals(-32, invokeWithRange(GenericValueInterop.NativeWideCallbacks.Factory(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)))
+        val erased: Any? = GenericValueInterop.NativeWideCallbacks.Factory
+        @Suppress("UNCHECKED_CAST")
+        assertEquals(-32, invokeFactory(erased as WideFactory))
+        assertEquals(42, runCrossModuleSuspend { stagedFactory(GenericValueInterop.SharedNativeStream<Int>()) {} })
         val factory = CallbackFactory()
         assertEquals(36, NestedCallbackDerived(factory).Read())
         val stored: WideCallback<WideIntCallback> = factory

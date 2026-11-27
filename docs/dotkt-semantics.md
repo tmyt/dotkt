@@ -1355,6 +1355,10 @@ fun inspect(directory: DirectoryInfo) {
 Enumeration evaluates the source once, obtains one enumerator, and requests elements lazily through
 `MoveNext`/`Current`. Native exceptions propagate normally. Native source declarations retain their CLR types
 rather than being rewritten to Kotlin `Iterable` or `Sequence`; iteration adds no new runtime classifier rules.
+A Kotlin override of the projected raw `iterator()` also supplies the non-generic CLR enumeration slot,
+unless the subclass implements `GetEnumerator()` itself. A call to `super.iterator()` needs an accessible,
+concrete base implementation: a private explicit `IEnumerable.GetEnumerator()` can be called through the
+interface, but not as a base call. When no such base implementation is accessible, compilation fails.
 The protocol does not add automatic `Dispose` on completion, exception or early exit.
 For resource-owning enumeration, explicitly acquire the native enumerator and dispose it in `finally`;
 the inherited non-generic `MoveNext` surface can be accessed as `System.Collections.IEnumerator`.
@@ -2021,8 +2025,9 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
   public interface declaration. Kotlin subclasses therefore do not inherit a fictional abstract obligation, while
   private implementation signatures and bodies do not become ordinary class API. Colliding explicit method,
   property, indexer, and event slots remain distinct through their interface-typed receivers. A derived Kotlin class
-  may replace one of those mappings only by explicitly re-listing that interface; merely declaring a same-named
-  member keeps the base class's `MethodImpl`. If the CLR base also has a final public member with the same source
+  can reimplement a slot by declaring its interface, or a derived interface that inherits that same constructed
+  interface, and overriding the member. Merely declaring a same-named member does not reintroduce the
+  interface. If the CLR base also has a final public member with the same source
   signature, that member remains directly callable and is source-open only enough to express the separately owned
   interface reimplementation; its non-virtual CLR slot is not rewritten into a physical base override.
 
@@ -2397,6 +2402,12 @@ cross the SAM boundary; this conversion does not make the two source types ident
 overloads explicitly with their SAM constructor. The compiler-owned stdlib `KAction`/`KFunc` families retain their
 internal function-family role for arities 17..22.
 
+Kotlin variance can cross a value-type boundary that native CLR delegate variance cannot.
+For example, a native `Func<object, int>` can fill a Kotlin call's `Func2<Int, Int>` parameter:
+the adapter boxes the input before invoking the original delegate. The same rule applies to
+callbacks received as arguments or returned from another callback. A null delegate remains null;
+an already CLR-compatible delegate needs no adapter.
+
 ## 8e-bis. Ordinary Kotlin function values use identity-preserving delegate carriers
 
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
@@ -2419,6 +2430,14 @@ A C# slot can also use a wide `KFunc` or `KAction` with native value-type parame
 function to that slot leaves the original Kotlin value unchanged. If the delegate is already assignable,
 the CLR receives the same reference (including null); otherwise it receives a delegate that converts the
 arguments and result. Separate conversions need not give C# reference-identical delegates.
+
+In the other direction, a Kotlin function can return a wide callback read from a CLR property. The getter runs once.
+If the native delegate's value-type slots differ from ordinary Kotlin storage, the callable view converts the
+arguments on invocation and converts the result back to Kotlin. A nullable read preserves null; public non-null
+return checks still apply (§9c).
+If the result is itself a Kotlin function, compatibility includes that function's invocation signature, recursively.
+An outer delegate can be CLR-assignable by covariance while its inner result still requires boxing. When the whole
+chain is compatible the original delegate is used; a nominal CLR delegate result stays nominal.
 
 A Kotlin class may implement a function type directly or through an interface. At a function-typed
 boundary its delegate calls the selected `invoke` implementation. Converting the same instance

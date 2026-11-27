@@ -24,11 +24,14 @@ static partial class FBoundStarProjectionErasure
         var projected = new BirCallStatic { Owner = new TypeNode.Fqn("External"), Method = "factory",
             Ret = physical, Args = Array.Empty<IBirExpression>() };
         var second = Variable("second", logical, projected);
+        var widerInit = (BirCallStatic)projected.DeepClone();
+        var nullableAny = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
+        var wider = Variable("wider", nullableAny, widerInit);
         var operand = Local("first", logical);
         var cast = new BirCast { Type = logical, Sty = logical, E = OptionalField<IBirExpression>.Of(operand) };
         var nested = Method("nested", integer, new BirReturn { Value = OptionalField<IBirExpression>.Of(
             new BirConstant { Type = integer, Value = new BirLiteral.IntegerLiteral(1) }) });
-        var provider = Method("provider", logical, first, second,
+        var provider = Method("provider", logical, first, second, wider,
             new BirLocalFunction { Id = "nested", Decl = nested },
             new BirReturn { Value = OptionalField<IBirExpression>.Of(cast) });
         var call = new BirCallStatic { Owner = new TypeNode.Fqn("Normalization"), Method = "provider",
@@ -76,10 +79,12 @@ static partial class FBoundStarProjectionErasure
         context.Owners["Box"].Needed = true;
         var state = new SourceRewriteState(context, (_, _) => null);
         state.ProjectionFact(projected, logical);
+        state.ProjectionFact(widerInit, logical);
         state.ArrayProjection(arrayFactory, logical);
         var originalMethods = root.Methods.Value;
         var originalBody = provider.Body.Value;
         NormalizeSourceFixedPoint(new[] { root }, state, Array.Empty<SharedSyntheticSynthesis.CellStorage>());
+        Require(wider.Type.Value == nullableAny, "initializer projection narrowed a wider declared local");
         Require(first.Type.Value == physical && second.Type.Value == physical && firstRead.Sty.Value == physical
             && cast.Type.Value == physical && cast.Sty.Value == physical && provider.Ret.Value == physical
             && ReferenceEquals(cast.E.Value, operand) && ReferenceEquals(provider.Body.Value, originalBody)

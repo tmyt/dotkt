@@ -6,7 +6,7 @@ using DotKt.Bir;
 // dll2klib restores a compiler-generated existential's Kotlin surface (physical carrier -> `G<*>`) before frontend
 // analysis. That is the correct source signature, but a cross-module CIR call still has to name the referenced DLL's
 // physical parameter/return slots. Rebind only provenance-verified existential signatures from the reference index,
-// then align directly initialized locals with the physical result. Metadata remains the frontend authority; this pass
+// not the caller's local storage, which was projected from its own declaration. Metadata remains the frontend authority; this pass
 // is the Kotlin-to-CLR ABI boundary and ilemit receives an exact signature.
 static partial class ReferenceExistentialAbiBinding
 {

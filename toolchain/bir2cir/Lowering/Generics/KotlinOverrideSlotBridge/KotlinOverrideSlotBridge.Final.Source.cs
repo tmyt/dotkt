@@ -77,15 +77,7 @@ static partial class KotlinOverrideSlotBridge
         }
         internal bool CarrierSeam(TypeNode left, TypeNode right) =>
             CarrierConstruction(left, right) != null || CarrierConstruction(right, left) != null;
-        internal Def FacesForInheritedBody(Def owner, SelectedSlot slot)
-        {
-            // The class's own existential view exposes its base class's interfaces, too.
-            // Exposing an inherited slot is not a new declaration that reimplements it.
-            if (owner.Base == null || carriers == null || !carriers.TryGetValue(owner.Name, out var carrier)
-                || slot.DescriptorSpec.Name == carrier || !SupertypeGraph.Reaches(owner.Base, slot.SemanticSpec, Index.Definitions, References))
-                return owner;
-            return new Def { Interfaces = owner.Interfaces.Where(face => face.Name != carrier).ToArray() };
-        }
+        internal string CarrierOf(Def owner) => carriers?.GetValueOrDefault(owner.Name);
         internal void Append(IBirTypeDeclaration owner, BirFunctionDeclaration method)
         {
             owner.Methods = owner.Methods.OrEmpty().Append(method).ToArray();
@@ -145,6 +137,17 @@ static partial class KotlinOverrideSlotBridge
         var signatures = inherited.ToDictionary(pair => pair.Key, pair => pair.Value.SelectionParameters);
         var bridges = new Dictionary<string, BirFunctionDeclaration>(StringComparer.Ordinal);
         var claims = new Dictionary<(OverrideMethod Body, string Shape), List<OverrideMethod>>();
+        var carrier = context.CarrierOf(definition);
+        Def declaredFaces = null;
+        Def Authored() => declaredFaces ??= DeclaredFaces(definition, carrier);
+        HashSet<TypeNode> baseFaces = null, authoredFaces = null;
+        TypeNode FaceKey(TypeNode type) => ClrMemberResolution.MethodImplComparisonType(context.Physical(type), refs);
+        HashSet<TypeNode> Interfaces(Def roots) => SupertypeGraph.Reachable(roots, defs, refs)
+            .Where(edge => edge.isInterface).Select(edge => FaceKey(edge.spec)).ToHashSet();
+        bool BaseHas(TypeNode.Fqn face) => definition.Base != null
+            && (baseFaces ??= Interfaces(new Def { Base = definition.Base })).Contains(FaceKey(face));
+        bool ReintroducesBaseFace(TypeNode.Fqn face) => BaseHas(face)
+            && (authoredFaces ??= Interfaces(Authored())).Contains(FaceKey(face));
         var ordinal = 0;
         var enumeration = context.ReferenceBuild ? null : ReverseEnumeratorBridgeSynthesis.ReserveSlots(
             definition, defs, refs, context.Index.Declarations, context.IterationSlots);
@@ -203,27 +206,21 @@ static partial class KotlinOverrideSlotBridge
                 || SupertypeGraph.Reaches(provider, slot.SemanticSpec, defs, refs)
                 || slot.Referenced && ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = [provider] },
                     slot.DescriptorSpec, defs, refs, isValue, context.LocalNames))) return;
-            var faces = selectedBody is { IsDefault: false } && slot.IsInterface && slot.Referenced
-                ? context.FacesForInheritedBody(definition, slot) : definition;
+            // A generated carrier exposes inherited interfaces, including properties whose
+            // Kotlin owner spelling differs from the selected constructed CLR declaring type.
+            var faces = slot.IsInterface && slot.Referenced && carrier != null
+                && slot.DescriptorSpec.Name != carrier && BaseHas(slot.DescriptorSpec) ? Authored() : definition;
             var reimplements = slot.IsInterface && definition.Kind == "class"
                 && (ReachesFromDeclaredInterface(faces, slot.SemanticSpec, defs, refs)
                     || slot.Referenced && ReachesFromDeclaredPhysicalInterface(faces, slot.DescriptorSpec,
                         defs, refs, isValue, context.LocalNames));
-            // Owned claims are selected before inherited bodies. Reintroducing a face for
-            // one member makes the CLR reconsider implicit bindings for its siblings, too.
-            // Preserve the selected inherited body if an unrelated local method can hide it.
-            if (!reimplements && selectedBody is { IsDefault: false } && slot.IsInterface
-                && owner.Methods.Any(m => !m.Static && (m.ExplicitClrName ?? m.Name) == slot.DescriptorMember
-                    && m.Arity == implementation.Arity && m.Parameters.Length == slot.Parameters.Length))
-            {
-                var claimed = declaration.Methods.OrEmpty().SelectMany(m => m.ClrInterfaceImpls.OrEmpty())
-                    .Select(d => d.Owner.OrDefault()).OfType<TypeNode.Fqn>().Distinct().ToArray();
-                reimplements = ReachesFromDeclaredPhysicalInterface(new Def { Interfaces = claimed },
-                    slot.DescriptorSpec, defs, refs, isValue, context.LocalNames);
-            }
             var inheritedDefault = slot.IsInterface && definition.Kind == "class" && !reimplements
                 && slot.HasDefault && (selectedBody?.IsDefault != false || slot.Referenced
                     && refs.IntroducesBodyOutsideInterfaceMap(selectedBody.Owner, selectedBody.MetadataToken, slot.DescriptorSpec));
+            if (inheritedDefault && slot.Referenced && HasNativeBaseMapping(definition, defs, refs,
+                    context.Physical, slot.DescriptorSpec, slot.DescriptorMember, implementation.Arity,
+                    slot.Signature ?? slot.Parameters, slot.Return, slot.NativeInterfaceMethod))
+                inheritedDefault = false;
             if (slot.IsInterface && definition.Kind == "class" && !reimplements && !inheritedDefault) return;
             var typeParameters = SubstituteParameters(slot.TypeParameters, slot.SemanticSpec.Args ?? []);
             var nativeMetadata = slot.IsInterface && slot.Referenced
@@ -242,12 +239,27 @@ static partial class KotlinOverrideSlotBridge
             ApplyDeclarationEdits(implementation, ownArguments, slot.Parameters, slot.Return, fit,
                 Phase.PhysicalBridges, isValue, context.Annotation);
             var needsSignature = fit.Parameters.Contains(Fit.Bridge) || fit.Return == Fit.Bridge;
+            if (!needsSignature && selectedBody is { IsDefault: false, MetadataToken: not 0 } && reimplements
+                && slot.Referenced && definition.Base is {} parent && !defs.ContainsKey(parent.Name)
+                && !owner.Methods.Any(m => {
+                    m.Property(out var property, out var accessor);
+                    return !m.Static && m.Arity == implementation.Arity && m.Parameters.Length == slot.Parameters.Length
+                        && ((m.ExplicitClrName ?? m.Name) == slot.DescriptorMember || property != null && accessor != null
+                            && KotlinPropertyAccessors.PhysicalName(property, accessor) == slot.DescriptorMember);
+                })
+                && context.Physical(parent) is TypeNode.Fqn nativeBase && context.Physical(selectedBody.Owner) is TypeNode.Fqn bodyOwner
+                && context.Physical(slot.DescriptorSpec) is TypeNode.Fqn face
+                && refs.InheritsNativeInterfaceBody(nativeBase, bodyOwner, selectedBody.MetadataToken, face, slot.DescriptorMember, implementation.Arity,
+                    (slot.Signature ?? slot.Parameters).Select(context.Physical).ToArray(), context.Physical(slot.Return))) return;
             var needsProperty = slot.IsInterface && slot.PropertyAccessor != null && slot.DescriptorMember != implementation.Name
                 && (definition.Kind != "class" || reimplements || inheritedDefault);
             var needsInterface = slot.IsInterface && (selectedBody != null
                 || implementation.Parameters.Any(parameter => parameter.Signature != null)
                 || definition.Kind == "interface" && !implementation.Abstract
-                || definition.Kind == "class" && reimplements && slot.DescriptorMember != implementation.Name
+                // Implicit name matching need not replace an existing explicit base map,
+                // even when the new interface inherits the exact selected slot.
+                || definition.Kind == "class" && reimplements && (slot.DescriptorMember != implementation.Name
+                    || slot.Referenced && ReintroducesBaseFace(slot.DescriptorSpec))
                 || definition.Kind == "class" && inheritedDefault);
             var needsBase = !slot.IsInterface && !slot.Referenced && slot.DescriptorMember != implementation.Name;
             if (!needsSignature && definition.Kind == "class" && selectedBody == null
@@ -281,7 +293,7 @@ static partial class KotlinOverrideSlotBridge
             {
                 implementation.SetVirtual();
                 var descriptor = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,
-                    slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn);
+                    slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn,slot.SelectedLocal?.DeclarationId);
                 if (slot.Signature == null)
                     for (var i=0;i<implementation.Parameters.Length;i++)
                         if (implementation.Parameters[i].Signature is { } discriminator)
@@ -344,7 +356,7 @@ static partial class KotlinOverrideSlotBridge
                 }
             }
             var exact = SourceImplDescriptor(slot.DescriptorSpec,slot.DescriptorMember,implementation.Arity,
-                slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn);
+                slot.Signature ?? slot.Parameters,slot.Return,typeParameters,slot.UnitValueReturn,slot.SelectedLocal?.DeclarationId);
             if (slot.ReferenceMember != null && slot.ReferenceMember != slot.DescriptorMember) exact.ReferenceMember = slot.ReferenceMember;
             context.Attach(declaration,bridge,exact,slot.IsInterface);
             bool PendingOwner(TypeNode pending) => slot.SemanticReturn == null

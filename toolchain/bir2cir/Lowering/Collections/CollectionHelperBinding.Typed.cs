@@ -12,11 +12,12 @@ static partial class CollectionHelperBinding
     {
         bool IsInterface(string owner) => captured.Kinds.TryGetValue(owner, out var kind) ? kind == "interface"
             : references != null && references.TryResolveClrOwner(owner, out _, out var referenceKind) && referenceKind == "interface";
-        BirGraphValue Walk(BirGraphValue node, CollectionSourceContext context)
+        BirGraphValue Walk(BirGraphValue node, CollectionSourceContext context, TypeNode.Fqn lexicalBase = null)
         {
             if (node == null || node is IBirExecutablePayload or BirAttribute or BirOverride) return node;
             context = context.Extend(node);
-            node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value, context)));
+            if (node is IBirTypeDeclaration type) lexicalBase = type.Base.OrDefault() as TypeNode.Fqn;
+            node.VisitChildSlots(slot => slot.Replace(Walk(slot.Value, context, lexicalBase)));
             if (node is not BirCallInstance operation || operation.ClrOwnerResolved.OrDefault()
                 || operation.OwnerType.OrDefault() is not TypeNode.Fqn owner || !operation.Args.HasValue) return node;
             bool rebindOverride = false;
@@ -38,14 +39,34 @@ static partial class CollectionHelperBinding
             if (!aliases.ContainsKey(owner.Name))
             {
                 if (operation.Method.OrDefault() != "iterator" || arguments.Length != 0) return operation;
-                var declaresIterator = MemberCallSubstitution.HasDeclaredIterator(owner, captured.DeclaredIterators,
-                    captured.Definitions, references, aliases, sourceFrames: true);
+                var protocol = MemberCallSubstitution.ResolveIteratorProtocol(owner, captured.DeclaredIterators,
+                    captured.Definitions, references, aliases, out var enumeratorOwner, sourceFrames: true);
                 var plan = MemberCallSubstitution.SelectMissingCollectionIterator(operation.Method.OrDefault(), arguments.Length,
-                    declaresIterator, KotlinPropertyAccessors.HasIdentity(operation.PropertyName.OrDefault(), operation.PropertyAccessor.OrDefault())
+                    protocol, KotlinPropertyAccessors.HasIdentity(operation.PropertyName.OrDefault(), operation.PropertyAccessor.OrDefault())
                         || operation.Prop.OrDefault() is "get" or "set", operation.TypeArgs.OrEmpty().Length,
-                    operation.Sty.OrDefault() ?? operation.Ret.OrDefault());
+                    operation.Sty.OrDefault() ?? operation.Ret.OrDefault(), enumeratorOwner);
                 if (plan == null) return operation;
                 call = RenderCollectionOperation(plan, operation, references, MemberCallSubstitution.CollectionOperationPhase.Source);
+                if (operation.Super.OrDefault() && protocol == MemberCallSubstitution.IteratorProtocol.NonGeneric &&
+                    enumeratorOwner == null && plan.Method == "iteratorOverRawEnumerable")
+                {
+                    var baseOwner = lexicalBase ?? owner;
+                    if (operation.Recv.OrDefault() is not BirThis && context.Receiver(operation.Recv.OrDefault()) is TypeNode.Fqn receiver &&
+                        captured.Definitions.TryGetValue(receiver.Name, out var host) && host.Base != null)
+                        baseOwner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(host.Base, receiver.Args ?? []);
+                    while (captured.Definitions.TryGetValue(baseOwner.Name, out var local) && local.Base != null)
+                        baseOwner = (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(local.Base, baseOwner.Args ?? []);
+                    var (target, targetOwner) = references.RawEnumeratorBaseTarget(baseOwner);
+                    var ret = new TypeNode.Fqn("System.Collections.IEnumerator");
+                    call.Method = "iteratorOverRawEnumerator";
+                    call.Args = new IBirExpression[] { new BirCallInstance {
+                        OwnerType = targetOwner, Method = target.Name, Recv = operation.Recv, MemberSignature = Array.Empty<TypeNode>(),
+                        Sig = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(), Ret = ret, MemberReturnType = ret,
+                        MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, target,
+                            "method", target.DeclaringType, targetOwner.Args)), ClrOwnerResolved = true,
+                        Super = true, Virtual = false, MemberVisibility = target.IsPublic ? "public" : "protected",
+                    } };
+                }
             }
             else if (owner.Name is "kotlin.collections.Map" or "kotlin.collections.MutableMap")
             {
@@ -118,7 +139,15 @@ static partial class CollectionHelperBinding
         IBirExpression Operand(IBirExpression expression) => phase == MemberCallSubstitution.CollectionOperationPhase.Source
             ? expression : (IBirExpression)((BirGraphValue)expression).DeepClone();
         var operands = new List<IBirExpression>();
-        if (operation.Recv.HasValue) operands.Add(Operand(operation.Recv.Value));
+        if (operation.Recv.HasValue)
+        {
+            var receiver = Operand(operation.Recv.Value);
+            operands.Add(plan.EnumeratorOwner == null ? receiver : new BirNativeInstance {
+                Type = plan.EnumeratorOwner, Method = "GetEnumerator", Recv = OptionalField<IBirExpression>.Of(receiver),
+                ArgTypes = Array.Empty<TypeNode>(), Args = Array.Empty<IBirExpression>(),
+                Ret = new TypeNode.Fqn("System.Collections.Generic.IEnumerator`1", new[] { plan.Element })
+            });
+        }
         if (plan.NativePreference != null)
             operands.Add(MemberCallSubstitution.CollectionPreferenceType(plan.PreferenceView, references, plan.NativePreference,
                 phase) is { } preference

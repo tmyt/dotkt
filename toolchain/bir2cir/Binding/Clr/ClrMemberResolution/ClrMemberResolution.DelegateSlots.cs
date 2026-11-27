@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using DotKt.Bir;
+using DotKt.Bir.Lowering;
+using DotKt.Cir;
 
 // THE DELEGATE A LAMBDA OR CALLABLE REFERENCE PHYSICALLY CONSTRUCTS.
 //
@@ -165,8 +167,9 @@ static partial class ClrMemberResolution
     // than borrowing the enclosing method's frame or reproducing its constraints.
     internal sealed record DelegateAdapterPlan(TypeNode.Fn Frame, int Arity, TypeNode Return,
         TypeNode[] Parameters, int? GenericArity, TypeNode[] Arguments, bool PublishReturn = false,
-        ReturnedFunction ResultFunction = null);
-    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source);
+        ReturnedFunction ResultFunction = null, bool PublishArguments = false,
+        TypeNode.Fqn NominalSource = null, BirTypeParameter[] LexicalFrame = null);
+    internal sealed record ReturnedFunction(TypeNode.Fn Selected, TypeNode.Fqn Slot, TypeNode.Fn Source, bool NativeSource);
 
     // This is representation policy over immutable TypeNodes, shared by the
     // owning construction and final value-flow consumers.
@@ -282,8 +285,11 @@ static partial class ClrMemberResolution
 
     internal static string DelegateAdapterKey(DelegateAdapterPlan plan) =>
         DelegateAdapterKey(plan.Frame, plan.Arity, plan.Return, plan.Parameters, plan.GenericArity)
-        + (plan.ResultFunction is {} result ? "|function-result:" + TypeNode.ToJson(result.Selected) : "")
-        + (plan.PublishReturn ? "|native-array-return" : "");
+        + (plan.NominalSource is {} source ? "|nominal:" + TypeNode.ToJson(source) + "|" +
+            string.Join(";", plan.LexicalFrame.Select(p => string.Join(",", p.SpecialConstraints.OrEmpty()) + ":" +
+                string.Join(",", p.Constraints.OrEmpty().Select(TypeNode.ToJson)))) : "")
+        + (plan.ResultFunction is {} result ? "|function-result:" + result.NativeSource + ":" + TypeNode.ToJson(result.Selected) : "")
+        + (plan.PublishReturn ? "|native-array-return" : "") + (plan.PublishArguments ? "|native-array-arguments" : "");
 
     static string DelegateAdapterKey(TypeNode.Fn frame, int arity, TypeNode slotReturn,
         TypeNode[] slotParameters, int? genericArity) =>

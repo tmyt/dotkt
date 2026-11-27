@@ -6,9 +6,19 @@ using DotKt.Cir;
 // ordering: each appended formal is evidence for a particular ordinary slot.
 readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Slots,
     NullableRepresentationFrame Representations = null, IReadOnlyDictionary<int, TypeNode.Tv> CapturedNullable = null,
-    ProjectedMethodPlan NativePlan = null, IReadOnlyDictionary<int, CallableWitnessScope.MaterialWitness> CapturedNative = null)
+    ProjectedMethodPlan NativePlan = null, IReadOnlyDictionary<int, CallableWitnessScope.MaterialWitness> CapturedNative = null,
+    IReadOnlyDictionary<int, TypeNode.Tv> CapturedStorage = null)
 {
     internal sealed record MaterialWitness(TypeNode.Tv Variable, BirTypeParameter Formal);
+    internal static TypeNode.Tv Storage(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
+    {
+        if (argument is not TypeNode.Tv v) return null;
+        var scope = v.Scope == "method" ? method : owner;
+        if (scope.CapturedStorage?.TryGetValue(v.I, out var captured) == true) return captured;
+        if (scope.Representations is not { } frame || v.I >= frame.PhysicalArity ||
+            frame.SourceIndex(v.I) is not int source || frame.SourcePosition(source) != v.I || !frame.StorageIndices.Contains(source)) return null;
+        return frame.Variable(new TypeNode.Tv(v.Scope, source), NullableRepresentationFrame.Role.Storage);
+    }
     internal static MaterialWitness MaterialFact(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
     {
         if (argument is not TypeNode.Tv v) return null;

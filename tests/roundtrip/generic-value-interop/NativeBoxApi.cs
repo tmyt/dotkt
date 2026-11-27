@@ -2,10 +2,16 @@ using roundtrip.genericvalueinterop;
 using roundtrip.invariantstorage;
 using WideIntCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
     int, int, int, int, int, int, int, int, int>;
+using WideUnitCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
+    int, int, int, int, int, int, int, int, kotlin.Unit>;
 
 namespace GenericValueInterop;
 
+using WideIntFactory = DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+    object, object, object, object, object, object, object, object, object, object, object, WideIntCallback>;
+
 public interface ILeftMark { }
+public delegate T MarkedValue<T>() where T : ILeftMark;
 public interface IRightMark { }
 public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
@@ -89,8 +95,9 @@ public class NativeCallbackBase(DotKt.Runtime.CompilerServices.KFunc<object, obj
 public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int,
     int, int, int, int, int, int, int, int, int, int, int, int> callback)
 {
-    public DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
-        int, int, int, int, int, int, int, int, int> Callback { get; set; } = callback;
+    public int CallbackReads { get; private set; }
+    public WideIntCallback Callback { get { CallbackReads++; return callback; } set => callback = value; }
+    public WideIntCallback ReadCallback(object tag) => Callback;
     public int Read() => Callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
 public class NestedCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
@@ -104,8 +111,45 @@ public sealed class NativeCallbackOwner<T>(DotKt.Runtime.CompilerServices.KFunc<
     public T Read(T first) => callback(first, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
 public delegate WideIntCallback WideFactory();
+public class NativeCallbackScope
+{
+    protected static int Visit<T>(WideUnitCallback callback, int tag = 71) =>
+        NativeWideCallbacks.VisitUnit(callback) ? tag : -1;
+    public virtual int Choose(WideUnitCallback callback, int tag = 19) => -1;
+    public static bool operator <(NativeCallbackScope a, WideIntCallback b) => false;
+    public static bool operator >(NativeCallbackScope a, WideIntCallback b) => false;
+}
+public class NativeCallbackOverride : NativeCallbackScope
+{
+    public override int Choose(WideUnitCallback callback, int tag) =>
+        NativeWideCallbacks.VisitUnit(callback) ? tag : -1;
+}
+public interface IVisitWide { bool Apply(WideUnitCallback callback); }
+public struct WideVisitor : IVisitWide
+{
+    public bool Apply(WideUnitCallback callback) => NativeWideCallbacks.VisitUnit(callback);
+}
+public abstract class NativeVisitor
+{
+    public abstract bool Accept<T>(T value) where T : struct, IVisitWide;
+    public bool Run() => Accept(new WideVisitor());
+}
 public static class NativeWideCallbacks
 {
+    public static WideIntFactory Factory => (a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q) =>
+        (first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last) => (int)a - (int)q + first - last;
+    public static DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object, object,
+        object, object, object, object, object, object, object, object, object, object,
+        DotKt.Runtime.CompilerServices.KFunc<MarkedValue<T>, int, int, int, int, int, int, int, int,
+            int, int, int, int, int, int, int, int, int>> SelectFactory<T>(T tag) where T : ILeftMark =>
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
+            (pick, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => ReferenceEquals(pick(), tag) ? 42 : -1;
+    public static bool VisitExtension(this NativeCallbackScope scope, WideUnitCallback callback) => VisitUnit(callback);
+    public static bool VisitUnit(WideUnitCallback callback) =>
+        callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) is not null;
+    public static void VisitVoid(DotKt.Runtime.CompilerServices.KAction<int, int, int, int, int, int, int, int, int,
+        int, int, int, int, int, int, int, int> callback) =>
+        callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
     public static int ReadFactory(WideFactory factory) => Read(factory());
     public static int ReadNested(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
         int, int, int, int, int, int, int, int, WideIntCallback> factory) => new NestedCallbackBase(factory).Read();

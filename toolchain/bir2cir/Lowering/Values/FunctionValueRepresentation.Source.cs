@@ -19,6 +19,9 @@ static partial class FunctionValueRepresentation
         if (node is BirSamConversion or BirNewClosure or BirNewDelegate or BirNewBoundDelegate or BirBoundClrDelegate or BirClrStaticDelegate
             && node.FunctionTypeStamp is TypeNode.Fn functionType)
             node.SourceFunctionResult = ClrMemberResolution.ReturnedFunctionType(functionType);
+        else if (node is IBirExpression && ClrMemberResolution.FunctionTypeOf(node.ResultTypeStamp) is {} produced
+            && ClrMemberResolution.ReturnedFunctionType(produced) is { Suspend: false })
+            node.ProjectedFunctionResult = ProjectedCallableShape(produced);
         var invocationResult = node is BirDelegateInvoke { FuncType.HasValue: true } invoke
             && invoke.FuncType.Value is TypeNode.Fn { Suspend: false, Clr: null } function
                 ? function.Ret : null;
@@ -42,6 +45,16 @@ static partial class FunctionValueRepresentation
             _exactBridgeCast = true, FunctionValueRestoration = true,
             E = OptionalField<IBirExpression>.Of((IBirExpression)node),
         };
+    }
+
+    // Keep only which Invoke results are Kotlin functions, not a generic frame
+    // that will become invalid if the producing expression moves into a machine.
+    // Concrete slots (including byref-like slots) come from the bound CLR member.
+    static TypeNode.Fn ProjectedCallableShape(TypeNode type)
+    {
+        if (ClrMemberResolution.FunctionTypeOf(type) is not { Suspend: false } fn) return null;
+        return new(false, (TypeNode)ProjectedCallableShape(fn.Ret) ?? Object,
+            Enumerable.Repeat(Object, fn.DelegateParams.Length).ToArray());
     }
 
     static bool PreserveField(string field) => field is

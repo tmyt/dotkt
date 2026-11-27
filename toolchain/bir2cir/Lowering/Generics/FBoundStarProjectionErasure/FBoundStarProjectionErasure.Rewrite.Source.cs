@@ -132,7 +132,9 @@ static partial class FBoundStarProjectionErasure
             node = BindStarFieldThroughCanonicalGetterSource(node, state);
             node = BindProjectedFieldStorageSource(node, state);
             BindProjectedConstraintMemberSource(node, scope.TypeParameters, scope.MethodParameters, state);
+            var exactDispatch = PrepareConstructedDispatch(node, state);
             node = BindInheritedStarMemberSource(node, state);
+            if (exactDispatch != null) node = exactDispatch(node, names);
             BindLocalEventAccessorSource(node, state);
             if (!projectedRead) node = BindProjectedArrayReadSource(node, state);
             node = BindProjectedArrayGenericCallSource(node, state);
@@ -156,7 +158,8 @@ static partial class FBoundStarProjectionErasure
             var index = positions.GetValueOrDefault(field);
             positions[field] = index + 1;
             var facts = SourceTypeSlotFacts(node, state.Projection, scope.Descriptor, state.LocalClrAliases, state.SharedOuters);
-            var bound = scope.Bound || BoundTypeSlot(facts, field);
+            var bound = scope.Bound || BoundTypeSlot(facts, field) || field == "type" && (node is BirIsInstance { ExactDispatchOwner: true }
+                || node is BirCast && exact && runtimeOperand is BirGraphValue operand && SourceExactOuter(operand));
             var shape = scope.ArrayShape || NativeArrayTypeSlot(facts, field);
             // An inner still captures its actual enclosing instance. Where
             // that declaration has two implementations, store the common
@@ -362,7 +365,7 @@ static partial class FBoundStarProjectionErasure
     static (TypeNode Type, IBirExpression Operand, bool Exact) SourceRuntimeOperation(BirGraphValue node) => node switch {
         BirCast value => (value.Type.OrDefault(), value.E.OrDefault(), value._exactBridgeCast.OrDefault()),
         BirInstanceOrNull value => (value.Type.OrDefault(), value.E.OrDefault(), false),
-        BirIsInstance value => (value.Type.OrDefault(), value.E.OrDefault(), false),
+        BirIsInstance value => (value.Type.OrDefault(), value.E.OrDefault(), value.ExactDispatchOwner),
         BirClassReference value => (value.Type.OrDefault(), null, false), _ => (null, null, false),
     };
 

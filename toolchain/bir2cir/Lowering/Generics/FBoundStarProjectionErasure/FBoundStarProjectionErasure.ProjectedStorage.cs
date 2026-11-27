@@ -6,7 +6,9 @@ static partial class FBoundStarProjectionErasure
 {
     internal sealed record ProjectedStorageOwner(string Exact, string Carrier, string Implementation, string Outer, string OuterCarrier,
         ProjectedClassStorageFrame.InterfaceSlot[] Slots, IReadOnlyDictionary<string, string> Constructors,
-        ProjectedConstructorPlan Entry);
+        ProjectedConstructorPlan Entry, StorageOverride[] Overrides);
+
+    internal sealed record StorageOverride(string Body, string OwnSlot, string Parent, string ParentOwner, bool Suspend);
 
     static string StorageFactoryId(string constructorId) =>
         DeclarationIdentityBinding.PhysicalOnlyId(constructorId, DeclarationIdentityBinding.ProjectedConstructorRole);
@@ -54,8 +56,18 @@ static partial class FBoundStarProjectionErasure
         }
         var outer = owner.Inner && owner.SemanticOwner != null && context.Owners.TryGetValue(owner.SemanticOwner, out var enclosing)
             && enclosing.Needed ? enclosing : null;
+        // The source declaration and its selected override edges are released
+        // before the sibling's physical entries exist. Keep their identities,
+        // not a second copy of either declaration's parameter frame.
+        var overrides = (from row in context.Declarations.Slots(owner).Values
+            where row.Declaration.DeclarationId.HasValue && row.EmittedSlot?.DeclarationId.HasValue == true
+            from edge in row.Declaration.Overrides.OrEmpty()
+            where edge.DeclarationId.HasValue && edge.Owner.OrDefault() is TypeNode.Fqn
+            select new StorageOverride(row.Declaration.DeclarationId.Value, row.EmittedSlot.DeclarationId.Value,
+                edge.DeclarationId.Value, ((TypeNode.Fqn)edge.Owner.Value).Name, row.Declaration.Mods.OrDefault()?.Suspend.OrDefault() == true))
+            .Distinct().ToArray();
         context.ProjectedStorage.Add(new(owner.Name, owner.ErasedName,
-            context.Demand.AllocateTypeName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry));
+            context.Demand.AllocateTypeName(owner.Name + "$projected"), outer?.Name, outer?.ErasedName, frame.Interfaces, ids, entry, overrides));
     }
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
@@ -64,6 +76,7 @@ static partial class FBoundStarProjectionErasure
     {
         var storageOwners = new Dictionary<string, ProjectedStorageOwner>(StringComparer.Ordinal);
         var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners, carriers.Values);
+        callables.RetireFacadeOverrides(documents, emittedTypes);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
             .ToLookup(row => row.type.Name.OrDefault(), StringComparer.Ordinal);
@@ -125,6 +138,7 @@ static partial class FBoundStarProjectionErasure
                 return type;
             }
             storage.Interfaces = storage.Interfaces.OrEmpty().Select(ProjectInterface).DistinctBy(SupertypeGraph.TypeKey).ToArray();
+            callables.BindStorageOverrides(exact, storage, plan, carriers.LocalOwners);
             ProjectNativeInterfaceStorage(storage, plan, references);
             storage.Attrs = storage.Attrs.OrEmpty().Where(a =>
                 a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.RuntimeClassifierAttribute }).ToArray();
@@ -231,30 +245,42 @@ static partial class FBoundStarProjectionErasure
                         OwnPrefix(f.Args) && names.TryGetValue(f.Name, out var name)
                             ? new TypeNode.Fqn(name, Extend(f.Args)) : f);
                 });
+                if (node is BirFunctionDeclaration method && method.ColdEntryMachine is { } machine
+                    && Place(machine.Name) is { } projectedMachine)
+                {
+                    foreach (var statement in method.Body.OrEmpty())
+                        ((BirGraphValue)statement).Visit(n => n.RewriteOwnTypeFieldsInPlace((_, role, t) =>
+                            role == BirGenericFrameRole.Lexical ? SourceDeclarationSignature.RewriteType(t, f =>
+                                f.Name == machine.Name && OwnPrefix(f.Args) ? new TypeNode.Fqn(projectedMachine, Extend(f.Args)) : f) : t));
+                    method.ColdEntryMachine = (projectedMachine, machine.OwnerArity + width);
+                }
                 var target = node switch { BirNewClosure c => c.ClosureType.OrDefault() as TypeNode.Fqn,
                     BirNewSam s => s.SamType.OrDefault() as TypeNode.Fqn, _ => null };
                 if (target == null || node is not BirGraphNode creation ||
                     creation.ApplicationTypeArguments.OrDefault() is not { } args || !OwnPrefix(args) ||
-                    definition(target.Name) is not { } original || original.NestedIn.OrDefault() is not { } parent ||
-                    !names.TryGetValue(parent, out var projectedParent)) return;
-                if (!names.TryGetValue(target.Name, out var projected))
-                {
-                    projected = allocate("closure");
-                    names.Add(target.Name, projected);
-                    var closure = (BirClassDefinition)original.DeepClone();
-                    closure.Name = projected;
-                    closure.NestedIn = projectedParent;
-                    closure.RoundtripTypeHeaderPending = default;
-                    closure.RoundtripSupertypesPre = default;
-                    Scan(closure, true);
-                    closure.CapturedTypeParams = frame.Select(p => (BirTypeParameter)p.DeepClone())
-                        .Concat(closure.CapturedTypeParams.OrEmpty().Skip(prefix)).ToArray();
-                    generated.Add(closure);
-                }
+                    Place(target.Name) is not { } projected) return;
                 creation.ApplicationTypeArguments = Extend(args);
                 if (creation is BirNewClosure lambda) lambda.ClosureType = new TypeNode.Fqn(projected);
                 else ((BirNewSam)creation).SamType = new TypeNode.Fqn(projected);
             });
+        }
+        string Place(string name)
+        {
+            if (definition(name) is not { } original || original.NestedIn.OrDefault() is not { } parent ||
+                !names.TryGetValue(parent, out var projectedParent)) return null;
+            if (names.TryGetValue(name, out var projected)) return projected;
+            projected = allocate("closure");
+            names.Add(name, projected);
+            var closure = (BirClassDefinition)original.DeepClone();
+            closure.Name = projected;
+            closure.NestedIn = projectedParent;
+            closure.RoundtripTypeHeaderPending = default;
+            closure.RoundtripSupertypesPre = default;
+            Scan(closure, true);
+            closure.CapturedTypeParams = frame.Select(p => (BirTypeParameter)p.DeepClone())
+                .Concat(closure.CapturedTypeParams.OrEmpty().Skip(prefix)).ToArray();
+            generated.Add(closure);
+            return projected;
         }
         Scan(storage, false);
     }

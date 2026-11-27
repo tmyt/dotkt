@@ -51,6 +51,7 @@ private fun emit(result: Fir2IrActualizedResult, configuration: CompilerConfigur
 		val messageCollector = configuration?.get(
 			org.jetbrains.kotlin.config.CommonConfigurationKeys.MESSAGE_COLLECTOR_KEY)
 		val bir = BirEmitter(messageCollector, result.irBuiltIns, moduleFragment.files.toSet())
+		bir.constructedOverrides = kotc.frontend.FirOverrideConstructions(result.components)
 		val sourceCallables = pluginSources?.select(result)
 		// Which local `var`s need a heap ref-cell is a property of the variable, not of the emission frame, and one
 		// declaration's expression can be emitted in another file's frame (an omitted default argument is inlined at

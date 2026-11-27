@@ -110,8 +110,8 @@ static partial class DefaultArgSplice
             switch (call)
             {
                 case BirNew value: value.Args = values.ToArray(); break;
-                case BirCallStatic value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; break;
-                case BirCallInstance value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; break;
+                case BirCallStatic value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; value.DefaultNativeMethodKey = default; break;
+                case BirCallInstance value: value.Args = values.ToArray(); value.DefaultDeclarationId = default; value.DefaultOwnerType = default; value.DefaultNativeMethodKey = default; break;
             }
         }
         void Delegation(IBirExpression[] arguments, string calledOwner, TypeNode[] application, BirConstructor constructor,

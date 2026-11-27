@@ -414,16 +414,24 @@ def outputs(root, definitions):
                       "    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }"]
         if name == "BirParameter":
             model += ["    internal TypeNode? DelegateRestorationType { get; set; }"]
+        if name == "BirIsInstance":
+            model += ["    internal bool ExactDispatchOwner { get; set; }"]
         if name == "BirNew":
             model += ["    internal string? ReferencedProjectedFactoryId { get; set; }"]
+        if name == "BirMethodImpl":
+            model += ["    internal IReadOnlyList<string>? LocalOverrideTargets { get; set; }"]
         if name == "BirCallStatic":
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
-            model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
+            model += ["    internal object? OverrideAdapterGroup { get; set; }",
+                      "    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
+                      "    internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }",
                       "    internal ExistentialCallableRole ExistentialCallable { get; set; }",
                       "    internal string? ImplicitExistentialImplementationId { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",
                       "    internal bool SourceCallableVirtual { get; set; }",
+                      "    internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }",
+                      "    internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }",
                       "    internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }",
                       "    internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }",
                       "    internal int FacadeModalityFlags { get; set; }"]

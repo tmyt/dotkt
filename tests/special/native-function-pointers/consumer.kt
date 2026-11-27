@@ -52,6 +52,10 @@ fun <T> genericField(api: GenericApi<T>, p: ClrFunctionPointer<Managed, (T) -> T
     return api.Property
 }
 
+open class SuspendPointerBase<T> {
+    open suspend fun consume(value: T, pointer: ClrFunctionPointer<Managed, (Int) -> Int>): Int = -1
+}
+
 fun main() {
     val pointer = managed(Api.Get())
     Api.Value = pointer

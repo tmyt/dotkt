@@ -418,7 +418,7 @@ sealed class Pipeline
         captured = FunctionValueRepresentation.PreserveSourceFacts(captured);
         captured = ClrEventImplBinding.PreserveSourceFacts(captured);
         captured = ContinuationErasure.PreserveSourceSupertypes(captured, refs);
-        captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs);
+        captured = CapturedGenericInvocation.PreserveSourceFacts(captured, refs, signatures);
         var sourceIndex = new SourceModuleIndex(captured, refs.Aliases);
         // New physical-only forwarders are not source declarations. Keep the
         // original declaration membership while extending the owning prefix.
@@ -871,7 +871,7 @@ sealed class Pipeline
                 }
                 aliasTransitions.AdmitMaterializedTypes(file, appended);
                 genericRepresentations.AdmitMaterializedNativeTypes(file, appended);
-            }, metadataBuild: referenceBuild);
+            }, metadataBuild: referenceBuild, localCarriers: localExistentialOwners);
         // Keep the original slot-owner clock on the owning graph. Covariant
         // slots suppress duplicate suspend bridges using the same actual handles.
         KotlinOverrideSlotBridge.PrepareSuspendValueBridges(captured, isValueFqn, refs,

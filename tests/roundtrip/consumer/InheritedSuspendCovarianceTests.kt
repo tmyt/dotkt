@@ -17,6 +17,12 @@ class ConsumedOverride(gate: Gate) : Consumed(gate) {
 class ImportedOverride(gate: Gate) : Produced(gate) {
     override suspend fun make(): Narrow = Narrow(super.make().text + "#")
 }
+private class ConsumedIntResult(private val gate: IntGate) : GenericResult<Int>() {
+    override suspend fun next(value: Int): Int = value + gate.await() + 1
+}
+private class ConsumerClassFactory<T : Value>(private val item: T) : WideClassFactory() {
+    override suspend fun make(): T = item
+}
 private class Completion<T> : Continuation<T> {
     var outcome: Result<T>? = null
     override val context: CoroutineContext get() = EmptyCoroutineContext
@@ -32,6 +38,24 @@ private fun verify(gate: Gate, expected: String, action: suspend () -> Value) {
 private interface StringPicker { suspend fun <M> pick(x: String): String }
 private class SelectedPicker : OverloadedBase(), StringPicker
 class InheritedSuspendCovarianceTests {
+    @TestAttribute
+    fun classOnlyCovariancePreservesTaskDispatchAndResult() {
+        val gate = Gate()
+        val result = Narrow("derived")
+        val child = NarrowClassFactory(gate)
+        check(InheritedSuspendTaskApi.FromWideClass(ConsumerClassFactory(result)).Result === result)
+        check(InheritedSuspendTaskApi.ChooseThroughClass(child, result).Result === result)
+        check(InheritedSuspendTaskApi.CheckClassLabels(child).Result)
+        val wide = InheritedSuspendTaskApi.FromWideClass(child)
+        check(!wide.IsCompleted)
+        gate.resume(result)
+        check(wide.Wait(5000) && wide.Result === result)
+        val narrow = InheritedSuspendTaskApi.FromNarrowClass(child)
+        check(!narrow.IsCompleted)
+        gate.resume(result)
+        check(narrow.Wait(5000) && narrow.Result === result)
+    }
+
     @TestAttribute
     fun inheritedNumericResultBoxesAfterSuspension() {
         val first = IntGate()
@@ -92,6 +116,11 @@ class InheritedSuspendCovarianceTests {
     fun publicTaskSlotPreservesBaseDispatch() {
         val gate = Gate()
         assertEquals("task#", InheritedSuspendTaskApi.ThroughBase(ImportedOverride(gate), gate))
+        val intGate = IntGate()
+        val produced = ProducedIntResult(intGate)
+        assertEquals(4, InheritedSuspendTaskApi.DirectIntResult(produced, intGate))
+        assertEquals(11, InheritedSuspendTaskApi.VirtualIntResults(produced, intGate))
+        assertEquals(13, InheritedSuspendTaskApi.VirtualIntResults(ConsumedIntResult(intGate), intGate))
     }
     @TestAttribute
     fun producedAndConsumedSlotsResume() {

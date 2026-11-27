@@ -44,6 +44,7 @@ static partial class DeclarationIdentityBinding
                 method.MethodTypeParameterBoundsPre = default;
                 method.DeclarationSemanticSignature = default;
                 if (!id.Contains(ExistentialSlotMarker, StringComparison.Ordinal)
+                    && !RoundtripMetadata.IsConstructedDispatchView(owner)
                     && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedConstructorRole, StringComparison.Ordinal)
                     && !id.EndsWith(PhysicalOnlySuffix + "|" + ProjectedInnerConstructorRole, StringComparison.Ordinal))
                 {

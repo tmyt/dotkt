@@ -770,6 +770,7 @@ static class ReferenceMetadataReader
                             SemanticMethodTypeParameters(method, dotKtAuthored, declarationIdentity?.NullableFrame), declarationIdentity?.NullableFrame)
                         {
                             SourceMethodDeclaration = sourceMethod?.SourceDeclaration,
+                            IsFinal = method.IsFinal,
                             ReflectedWitnessIndices = declarationIdentity?.ReflectedWitnessIndices,
                             ValueAdapter = valueMember?.ConstructorArguments[0].Value as string,
                             ValueSlot = valueMember?.ConstructorArguments[1].Value as string,
@@ -1046,24 +1047,29 @@ static class ReferenceMetadataReader
         }
     }
 
-    internal sealed record NativeDefaultDeclaration(TypeNode.Fqn Owner, string Member, MethodSignature<TypeNode> Signature);
-
-    internal static NativeDefaultDeclaration[] NativeInterfaceDefaults(Type provider)
+    internal sealed class NativeImplementationDeclaration(MetadataReader reader, EntityHandle parent, string member,
+        EntityHandle declaration, EntityHandle body)
     {
-        using var stream = File.OpenRead(provider.Module.FullyQualifiedName);
-        using var pe = new PEReader(stream);
-        var reader = pe.GetMetadataReader();
+        internal string Member => member;
+        internal int BodyMethodDef => body.Kind == HandleKind.MethodDefinition ? MetadataTokens.GetToken(body) : 0;
+        internal (string Scope, string Name) NominalOwner => NominalMetadataOwner(reader, parent);
+        internal TypeNode.Fqn Owner => NativeSignatureReader.Type(reader, parent) as TypeNode.Fqn;
+        MethodSignature<TypeNode>? signature;
+        internal MethodSignature<TypeNode> Signature => signature ??= NativeSignatureReader.Declaration(reader, declaration);
+        internal bool ConcreteDefaultBody => body.Kind == HandleKind.MethodDefinition
+            && (reader.GetMethodDefinition((MethodDefinitionHandle)body).Attributes
+                & (MethodAttributes.Abstract | MethodAttributes.Static)) == 0;
+    }
+
+    internal static NativeImplementationDeclaration[] NativeImplementations(MetadataReader reader, Type provider)
+    {
         var definition = reader.GetTypeDefinition((TypeDefinitionHandle)MetadataTokens.Handle(provider.MetadataToken));
-        var result = new List<NativeDefaultDeclaration>();
+        var result = new List<NativeImplementationDeclaration>();
         foreach (var handle in definition.GetMethodImplementations())
         {
             var impl = reader.GetMethodImplementation(handle);
-            if (impl.MethodBody.Kind != HandleKind.MethodDefinition) continue;
-            var body = reader.GetMethodDefinition((MethodDefinitionHandle)impl.MethodBody);
-            if ((body.Attributes & (MethodAttributes.Abstract | MethodAttributes.Static)) != 0) continue;
-            if (TryMethodImplMember(reader, impl.MethodDeclaration, out var parent, out var member)
-                && NativeSignatureReader.Type(reader, parent) is TypeNode.Fqn owner)
-                result.Add(new(owner, member, NativeSignatureReader.Declaration(reader, impl.MethodDeclaration)));
+            if (TryMethodImplMember(reader, impl.MethodDeclaration, out var parent, out var member))
+                result.Add(new(reader, parent, member, impl.MethodDeclaration, impl.MethodBody));
         }
         return result.ToArray();
     }
@@ -1076,7 +1082,7 @@ static class ReferenceMetadataReader
                     (MethodDefinitionHandle)MetadataTokens.Handle(constructor.MetadataToken)), StringComparer.Ordinal);
     }
 
-    static bool TryMethodImplMember(MetadataReader reader, EntityHandle declaration,
+    internal static bool TryMethodImplMember(MetadataReader reader, EntityHandle declaration,
         out EntityHandle parent, out string member)
     {
         parent = default;
@@ -2978,22 +2984,29 @@ static class ReferenceMetadataReader
         foreach (var handle in row.GetInterfaceImplementations())
         {
             var edge = reader.GetInterfaceImplementation(handle).Interface;
-            var head = edge;
-            if (head.Kind == HandleKind.TypeSpecification)
-            {
-                var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)head).Signature);
-                var code = blob.ReadSignatureTypeCode();
-                if (code == SignatureTypeCode.GenericTypeInstance) code = blob.ReadSignatureTypeCode();
-                if (code != SignatureTypeCode.TypeHandle) throw new InvalidDataException("InterfaceImpl has no nominal declaration");
-                head = blob.ReadTypeHandle();
-            }
-            var (scope, name) = DotKt.Toolchain.RawSignatureTypeProvider<object>.NominalLeaf(reader, head);
+            var (scope, name) = NominalMetadataOwner(reader, edge);
             yield return (scope, name, (TypeNode.Fqn)NativeSignatureReader.Type(reader, edge));
         }
     }
 
+    static (string Scope, string Name) NominalMetadataOwner(MetadataReader reader, EntityHandle head)
+    {
+        if (head.Kind == HandleKind.TypeSpecification)
+        {
+            var blob = reader.GetBlobReader(reader.GetTypeSpecification((TypeSpecificationHandle)head).Signature);
+            var code = blob.ReadSignatureTypeCode();
+            if (code == SignatureTypeCode.GenericTypeInstance) code = blob.ReadSignatureTypeCode();
+            if (code != SignatureTypeCode.TypeHandle) throw new InvalidDataException("Expected nominal metadata owner");
+            head = blob.ReadTypeHandle();
+        }
+        return DotKt.Toolchain.RawSignatureTypeProvider<object>.NominalLeaf(reader, head);
+    }
+
     internal static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates) =>
         DeclarationTypeNode(type, nominalDelegates, preserveNestedIdentity: false);
+
+    internal static TypeNode NativeDeclarationType(Type type) =>
+        DeclarationTypeNode(type, nominalDelegates: true, preserveNestedIdentity: true, nativeNames: true);
 
     static TypeNode DeclarationTypeNode(Type type, bool nominalDelegates, bool preserveNestedIdentity, bool nativeNames = false)
     {
