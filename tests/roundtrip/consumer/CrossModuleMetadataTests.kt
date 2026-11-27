@@ -96,6 +96,7 @@ import nestedlist.CollectionOuter
 import nestedlist.InnerApplicationBound
 import nestedlist.Crate
 import nestedlist.appendNative
+import nestedlist.appendInArray
 import nestedlist.appendToRow
 import System.Collections.Generic.List as ClrList
 import kotlinx.cell.makeCell
@@ -515,6 +516,9 @@ class GenericMetadataRoundtripTests {
         parent.Add(optional)
         appendOptional(leaf, parent)
         check(optional[0] === leaf)
+        val arrayRow = ClrList<roundtrip.selectedbounds.Leaf<*>>()
+        appendInArray(leaf, arrayOf(arrayRow))
+        check(arrayRow[0] === leaf)
     }
 
     // #350: collection identity on a type edge has no member slot on which [KotlinCollectionIdentity] can ride.

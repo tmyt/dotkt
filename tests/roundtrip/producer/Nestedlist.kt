@@ -12,6 +12,7 @@ package nestedlist
 import System.Collections.Generic.List as ClrList
 
 fun <A> appendToRow(value: A, rows: ClrList<ClrList<A>>) { rows[0].Add(value) }
+fun <A> appendInArray(value: A, rows: Array<ClrList<A>>) { rows[0].Add(value) }
 fun <A> appendNative(value: A, list: ClrList<A>) { list.Add(value) }
 
 // `Crate`/`Store` (not `Box`/`State`) so the simple names are UNIQUE across this shared producer assembly — a

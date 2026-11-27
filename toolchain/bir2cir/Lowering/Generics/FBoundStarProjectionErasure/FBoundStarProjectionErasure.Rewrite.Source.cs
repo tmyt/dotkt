@@ -323,10 +323,18 @@ static partial class FBoundStarProjectionErasure
         // The selected declaration supplies that signature, including across DLLs.
         bool NeedsMaterialPrimary(int position)
         {
-            bool Uses(TypeNode t, int direction, bool nested = false)
+            bool Uses(TypeNode t, int direction, bool nested = false, bool sourceFrame = false)
             {
                 var core = StripSourceNullability(t);
-                if (core is TypeNode.Tv { Scope: "method" } v) return nested && direction <= 0 && v.I == position;
+                if (core is TypeNode.Tv { Scope: "method" } v)
+                {
+                    var slot = !sourceFrame || frame == null ? v.I :
+                        t is TypeNode.Nullable && frame.NullableIndices.Contains(v.I) ? frame.NullableVariable(v).I : frame.SourcePosition(v.I);
+                    return nested && direction <= 0 && slot == position;
+                }
+                // An array has its own element representation, but does not erase
+                // the invariant CLR container inside that element.
+                if (core is TypeNode.Array array) return Uses(array.Elem, direction, nested, sourceFrame);
                 if (core is not TypeNode.Fqn { Args.Length: > 0 } head) return false;
                 var native = IsNativeArrayOwner(head, state.References, state.LocalClrAliases);
                 for (int i = 0; i < head.Args.Length; i++)
@@ -334,14 +342,20 @@ static partial class FBoundStarProjectionErasure
                     var sign = native ? state.References.PhysicalOwnerTypeParameterVariance(head.Name, head.Args.Length, i) switch {
                         "out" => direction, "in" => -direction, _ => 0
                     } : nested ? 0 : direction;
-                    if (Uses(head.Args[i], sign, nested || native)) return true;
+                    if (Uses(head.Args[i], sign, nested || native, sourceFrame)) return true;
                 }
                 return false;
             }
+            bool Slot(TypeNode physical, TypeNode logical, int direction) =>
+                Uses(physical, direction) || StripSourceNullability(physical) is TypeNode.Fqn { Name: "System.Array" }
+                    && StripSourceNullability(logical) is TypeNode.Array a && Uses(a, direction, sourceFrame: true);
             if (selected?.Source is BirFunctionDeclaration local)
-                return local.Params.OrEmpty().Any(param => Uses(param.Type.OrDefault(), 1)) || Uses(local.Ret.OrDefault(), -1);
+                return local.Params.OrEmpty().Any(p => Slot(p.Type.OrDefault(), p.KotlinType.OrDefault(), 1))
+                    || Slot(local.Ret.OrDefault(), local.RetKotlinType.OrDefault(), -1);
             var signature = state.References.PhysicalDeclarationSignature(identity);
-            return signature.Parameters?.Any(t => Uses(t, 1)) == true || Uses(signature.Return, -1);
+            var logical = state.References.KotlinValueSignature(identity);
+            return signature.Parameters?.Where((t, i) => Slot(t, logical.Parameters?.ElementAtOrDefault(i), 1)).Any() == true
+                || Slot(signature.Return, logical.Return, -1);
         }
         // Keep the split proof alongside the Kotlin argument. Projected
         // entries consume both parts separately; fixed CLR calls must close
