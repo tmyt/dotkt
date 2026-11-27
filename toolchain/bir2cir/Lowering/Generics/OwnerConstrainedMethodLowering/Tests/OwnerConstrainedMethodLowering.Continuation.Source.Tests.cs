@@ -104,6 +104,16 @@ static partial class OwnerConstrainedMethodLowering
             || plans[0].Removed[0] != ownerVariable || plans[2].Removed.Any(bound => bound != ownerVariable)
             || implementation.TypeParams.Value[0].Constraints.Value.Single() != value)
             throw new InvalidOperationException("Selected override slot lost its transitive plan, unrelated row or planner input isolation");
+        var bounds = new[] { nonGenericBound, other };
+        foreach (var order in new[] { bounds, bounds.Reverse().ToArray() })
+        {
+            var slots = new OwnerConstraintOverrideBounds(order.Select(bound =>
+                new OwnerConstraintOverrideBounds.Row(0, value, ownerVariable, [bound], [value])));
+            var merged = PlanConstraintRewrite([[value]], [], null, slots, refs, _ => false,
+                type => type, _ => null, _ => [])[0];
+            if (!merged.Retained.ToHashSet().SetEquals(bounds) || !merged.Removed.SequenceEqual([value]))
+                throw new InvalidOperationException("Override order selected only one inherited constraint for the same bound");
+        }
     }
 
     static void CapturedBoundsSourceSelfTest()
