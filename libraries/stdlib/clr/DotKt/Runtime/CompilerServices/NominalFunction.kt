@@ -65,6 +65,8 @@ private fun nominalSlot(value: KotlinFunctionSource, slot: StarProjectionType): 
 @PublishedApi
 internal abstract class FunctionDelegate {
     @kotlin.clr.ClrIntrinsic("get_Target") abstract fun boundTarget(): Any?
+    @kotlin.clr.ClrIntrinsic("get_HasSingleTarget") abstract fun hasSingleTarget(): Boolean
+    @kotlin.clr.ClrIntrinsic("GetInvocationList") abstract fun invocationList(): Array<FunctionDelegate>
 }
 
 // Only compiler-published views represent their receiver. A user-created bound

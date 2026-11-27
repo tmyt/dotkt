@@ -20,6 +20,8 @@ public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
 public sealed class CallbackArrayProbe
 {
     public int Calls { get; private set; }
+    public static object Combine(object first, object second) =>
+        System.Delegate.Combine((System.Delegate)first, (System.Delegate)second);
     public DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object, object, object,
         object, object, object, object, object, object, object, object, object, object> Inspect =>
         (first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => {

@@ -1039,11 +1039,26 @@ static class TypedPhysicalValueCoercion
                 : exports.Count == 1 && !dynamicValue ? ArrayRuntimeCall("exposeProjectedArray", NativeVector, [NativeVector], index, exports[0])
                 : exports.Count == 1 ? ArrayRuntimeCall("exposeProjectedValue", Void, [Object], index, exports[0])
                 : ArrayRuntimeCall("exposeProjectedArrays", Void, [batch], index, new BirNewArray { Elem = Object, Elems = exports.ToArray() });
-            var publication = new BirExpressionStatement { Expr = publish };
-            statements.Add(conditionalDelegate ? new BirIf { Branches = new[] {new BirBranch {
+            IBirStatement publication = new BirExpressionStatement { Expr = publish };
+            if (conditionalDelegate) publication = new BirIf { Branches = new[] {new BirBranch {
                 Cond = ArrayRuntimeCall("callablePublishesArrays", new TypeNode.Fqn("System.Boolean"), [Object], index,
                     Expression(Graph(((BirDelegateInvoke)call).Recv.Value).DeepClone())),
-                Body = new IBirStatement[] { publication } }} } : publication);
+                Body = new[] { publication } }} };
+            // For already staged by-value callback operands, avoid allocating a
+            // publication batch or entering the global array lock for scalar calls.
+            if (call is BirDelegateInvoke && dynamicValue && exports.Count > 1 && vectors.Count == 0 && exports.All(e => e is BirLocal))
+            {
+                var boolean = new TypeNode.Fqn("System.Boolean");
+                IBirExpression test = null;
+                foreach (var operand in exports.AsEnumerable().Reverse())
+                {
+                    var array = new BirIsInstance { Type = NativeVector, E = Field(Expression(Graph(operand).DeepClone())) };
+                    test = test == null ? array : new BirConditional { Type = boolean, Cond = array,
+                        Then = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) }, Else = Field(test) };
+                }
+                publication = new BirIf { Branches = new[] { new BirBranch { Cond = Field(test), Body = new[] { publication } } } };
+            }
+            statements.Add(publication);
         }
         return statements.ToArray();
     }

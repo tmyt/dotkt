@@ -56,10 +56,19 @@ internal fun recordKotlinCallable(value: Any): Any {
 @PublishedApi
 internal fun callablePublishesArrays(value: Any?): Boolean {
     if (value == null) return false
-    val target = (value as? FunctionDelegate)?.boundTarget() as? KotlinClosureTarget
-    if (target?.publishedCallable === value) return false
+    val delegate = value as? FunctionDelegate ?: return true
+    if (delegate.hasSingleTarget()) return !isKotlinCallable(delegate)
+    // Combine creates a new delegate identity. Publication is a property of
+    // every target that will run, not just the last target exposed by Target.
+    for (member in delegate.invocationList()) if (!isKotlinCallable(member)) return true
+    return false
+}
+
+private fun isKotlinCallable(value: FunctionDelegate): Boolean {
+    val target = value.boundTarget() as? KotlinClosureTarget
+    if (target?.publishedCallable === value) return true
     var tag: Any? = null
-    return !kotlinCallables.find(value, byref(tag))
+    return kotlinCallables.find(value, byref(tag))
 }
 
 @kotlin.clr.ClrTypeAlias("System.ArrayTypeMismatchException")
