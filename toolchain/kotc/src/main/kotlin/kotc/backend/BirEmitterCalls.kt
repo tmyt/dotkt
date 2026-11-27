@@ -2360,7 +2360,11 @@ private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): B
 		storage = storage.argument
 	if (storage is IrGetValue && pointee != null) {
 		val declaredType = storage.symbol.owner.type
-		if (declaredType.makeNotNull() == pointee.makeNotNull()) {
+		// A nullable writer could store null in a non-null local even when both
+		// share a CLR reference type. Platform flexibility alone isn't such a writer.
+		val widensNullability = pointee.isMarkedNullable() && !pointee.hasFlexibleNullability() &&
+			!declaredType.isMarkedNullable() && !declaredType.hasFlexibleNullability()
+		if (!widensNullability && declaredType.makeNotNull() == pointee.makeNotNull()) {
 			val location = localAddress(storage)
 			val requested = birType(pointee)
 			val declared = birType(declaredType)
@@ -2370,15 +2374,13 @@ private fun BirEmitter.addressExpression(arg: IrExpression, pointee: IrType?): B
 			return if (inflexible(requested) == inflexible(declared)) location
 			else BirByRefLoad(elem = requested, ptr = BirByRefOf(inner = location))
 		}
-		if (storage !== arg || storage.type != declaredType) {
-			// Flow typing narrows a read, not the type that every alias may write.
-			// An authored cast is a value expression and never reaches this local.
-			hadError = true
-			messageCollector?.report(CompilerMessageSeverity.ERROR,
-				"cannot pass '${storage.symbol.owner.name}' by reference through an implicit change of type; " +
-					"request its declared type or use a separate local of the required type", locationOf(arg))
-			return kotc.bir.BirUnsupportedExpression("incompatible byref location")
-		}
+		// An ordinary upcast can be implicit even in IR: the local itself still has
+		// its declared type. A writable reference cannot use that wider read type.
+		hadError = true
+		messageCollector?.report(CompilerMessageSeverity.ERROR,
+			"cannot pass '${storage.symbol.owner.name}' by reference through an implicit change of type; " +
+				"request its declared type or use a separate local of the required type", locationOf(arg))
+		return kotc.bir.BirUnsupportedExpression("incompatible byref location")
 	}
 	return byrefBackingField(arg) ?: expr(arg)
 }

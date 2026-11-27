@@ -111,6 +111,8 @@ A smart cast changes what you can read from a local, not what type its storage c
 For example, after `if (x is String)`, a local declared as `Any` is still not a writable
 `ref string`. Pass that local as `ref object` if the API accepts it, or declare a separate
 `String` variable and pass that variable by reference.
+Widening is unsafe for the same reason: a `Number` local cannot be passed as
+`byref<Any>(number)`, because the callee could write a string into it.
 
 The intended behavior of a `ref`-returning method received plainly is a value copy; bind it with
 `var x by byref(m())` to keep a **live** reference whose writes flow back into the .NET storage.
