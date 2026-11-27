@@ -266,7 +266,8 @@ static partial class CovariantInterfaceReturnBridge
         }).ToArray();
         var ownerArguments = owner.OwnArguments;
         var call = new BirCallInstance { OwnerType = new TypeNode.Fqn(owner.Name, ownerArguments.Length == 0 ? null : ownerArguments),
-            Virtual = true, ClrOwnerResolved = true, Recv = new BirThis(), Method = implementation.Name,
+            Virtual = true, ClrOwnerResolved = true, _exactExistentialBridgeOwnerCall = true,
+            Recv = new BirThis(), Method = implementation.Name,
             Sig = source.Select(FunctionSignatureIdentity.SignatureType).ToArray(),
             DynRet = BirGraphValue.CopyType(implementation.Ret.OrDefault()), Ret = BirGraphValue.CopyType(implementation.Ret.OrDefault()),
             Args = bridgeParameters.Select(parameter => (IBirExpression)new BirLocal { Name = parameter.Name }).ToArray() };
