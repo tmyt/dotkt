@@ -17,6 +17,7 @@ sealed partial class ProjectedCallableEntries
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
     readonly Dictionary<string, ReferencedDeclarationSlot> localSlots = new(StringComparer.Ordinal);
+    readonly HashSet<string> exactFacades = new(StringComparer.Ordinal);
     readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
@@ -405,7 +406,11 @@ sealed partial class ProjectedCallableEntries
             if (owner != null && !m.Static.OrDefault())
             {
                 if (carrierSlot || carrierBridge) { copy.Virtual = true; copy.ClrFinal = carrierBridge; }
-                else if (m.SourceCallableVirtual) MakeExactFacade(owner, m, copy, entry.Plan);
+                else if (m.SourceCallableVirtual)
+                {
+                    exactFacades.Add(id);
+                    MakeExactFacade(owner, m, copy, entry.Plan);
+                }
                 else if (m.Virtual.OrDefault())
                 {
                     // The exact method implements a compiler-generated carrier
@@ -598,8 +603,31 @@ sealed partial class ProjectedCallableEntries
                 method.Visit(n => Bind(n, new(ownerParameters, []), new(method.TypeParams.OrEmpty(), [])));
     }
 
+    // Only the projected entry is an override point. Several selected declarations can
+    // share one provisional descriptor before physical overload signatures are allocated.
+    // Keep it (and its body) if it still implements any surviving obligation.
+    void RetireFacadeOverrides(IBirTypeDeclaration owner)
+    {
+        bool Obsolete(BirMethodImpl d) => d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(exactFacades.Contains);
+        HashSet<BirFunctionDeclaration> unused = null;
+        foreach (var m in owner.Methods.OrEmpty())
+        {
+            var interfaces = m.ClrInterfaceImpls.OrEmpty();
+            var bases = m.ClrBaseImpls.OrEmpty();
+            if (!interfaces.Any(Obsolete) && !bases.Any(Obsolete)) continue;
+            if (interfaces.Length != 0) m.ClrInterfaceImpls = interfaces.Where(d => !Obsolete(d)).ToArray();
+            if (bases.Length != 0) m.ClrBaseImpls = bases.Where(d => !Obsolete(d)).ToArray();
+            if (m.IsOverrideAdapter && m.ClrInterfaceImpls.OrEmpty().Length == 0 && m.ClrBaseImpls.OrEmpty().Length == 0)
+                (unused ??= new(ReferenceEqualityComparer.Instance)).Add(m);
+        }
+        if (unused != null) owner.Methods = owner.Methods.Value.Where(m => !unused.Contains(m)).ToArray();
+    }
+
     internal void Finish(BirFileDeclaration[] files, HashSet<string> emittedTypes)
     {
+        if (exactFacades.Count != 0)
+            foreach (var owner in files.SelectMany(f => f.Types.OrEmpty()))
+                RetireFacadeOverrides(owner);
         emittedTypes.UnionWith(operationTypes);
         if (referenceBuild || emittedEntries.Count == 0) { BindRemainingApplications(files); return; }
         foreach (var file in files)

@@ -125,7 +125,7 @@ static partial class KotlinOverrideSlotBridge
                 {
                     implementation.SetVirtual();
                     var exact = SourceImplDescriptor(slot.DescriptorSpec, slot.DescriptorMember, implementation.Arity,
-                        slot.Signature ?? slot.Parameters, slot.Return, typeParams, slot.UnitValueReturn);
+                        slot.Signature ?? slot.Parameters, slot.Return, typeParams, slot.UnitValueReturn, slot.SelectedLocal?.DeclarationId);
                     if (slot.Signature == null)
                         for (var at = 0; at < implementation.Parameters.Length; at++)
                             if (implementation.Parameters[at].Signature is { } discriminator)
@@ -180,7 +180,7 @@ static partial class KotlinOverrideSlotBridge
                     }
                 }
                 var descriptor = SourceImplDescriptor(slot.DescriptorSpec, slot.DescriptorMember, implementation.Arity,
-                    slot.Signature ?? slot.Parameters, slot.Return, typeParams, slot.UnitValueReturn);
+                    slot.Signature ?? slot.Parameters, slot.Return, typeParams, slot.UnitValueReturn, slot.SelectedLocal?.DeclarationId);
                 if (slot.ReferenceMember != null && slot.ReferenceMember != slot.DescriptorMember) descriptor.ReferenceMember = slot.ReferenceMember;
                 descriptor = AddSourceImpl(bridge, descriptor, slot.IsInterface);
                 if (!slot.IsInterface && implementation.Source is { } source
@@ -202,7 +202,8 @@ static partial class KotlinOverrideSlotBridge
     }
 
     static BirMethodImpl SourceImplDescriptor(TypeNode.Fqn owner, string member, int arity, TypeNode[] parameters,
-        TypeNode result, BirTypeParameter[] typeParameters, bool unitValueReturn) => new() {
+        TypeNode result, BirTypeParameter[] typeParameters, bool unitValueReturn, string localTarget = null) => new() {
+        LocalOverrideTargets = localTarget == null ? null : new[] { localTarget },
         Owner = BirGraphValue.CopyType(owner), Member = member, Arity = arity,
         Params = parameters.Select(BirGraphValue.CopyType).ToArray(), Ret = BirGraphValue.CopyType(result),
         TypeParams = typeParameters == null ? default(OptionalField<BirTypeParameter[]>)
@@ -213,7 +214,13 @@ static partial class KotlinOverrideSlotBridge
     static BirMethodImpl AddSourceImpl(BirFunctionDeclaration method, BirMethodImpl descriptor, bool isInterface)
     {
         var existing = isInterface ? method.ClrInterfaceImpls : method.ClrBaseImpls;
-        if (existing.OrEmpty().FirstOrDefault(value => value.StructurallyEquals(descriptor)) is { } attached) return attached;
+        if (existing.OrEmpty().FirstOrDefault(value => value.StructurallyEquals(descriptor)) is { } attached)
+        {
+            if (attached.LocalOverrideTargets is { } previous)
+                attached.LocalOverrideTargets = descriptor.LocalOverrideTargets is { } added
+                    ? previous.Union(added, StringComparer.Ordinal).ToArray() : null;
+            return attached;
+        }
         if (isInterface) method.ClrInterfaceImpls = existing.OrEmpty().Append(descriptor).ToArray();
         else method.ClrBaseImpls = existing.OrEmpty().Append(descriptor).ToArray();
         return descriptor;

@@ -418,10 +418,13 @@ def outputs(root, definitions):
             model += ["    internal bool ExactDispatchOwner { get; set; }"]
         if name == "BirNew":
             model += ["    internal string? ReferencedProjectedFactoryId { get; set; }"]
+        if name == "BirMethodImpl":
+            model += ["    internal IReadOnlyList<string>? LocalOverrideTargets { get; set; }"]
         if name == "BirCallStatic":
             model += ["    internal (BirMemberReference Member, bool Static)? NativeAccessorTarget { get; set; }"]
         if name == "BirFunctionDeclaration":
-            model += ["    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
+            model += ["    internal bool IsOverrideAdapter { get; set; }",
+                      "    internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }",
                       "    internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }",
                       "    internal ExistentialCallableRole ExistentialCallable { get; set; }",
                       "    internal string? ImplicitExistentialImplementationId { get; set; }",
