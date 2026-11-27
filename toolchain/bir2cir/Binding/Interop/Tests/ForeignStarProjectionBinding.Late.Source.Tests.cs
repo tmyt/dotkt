@@ -13,7 +13,7 @@ static partial class ForeignStarProjectionBinding
             Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location), "System.Runtime.dll"),
         });
         BeginBinding(null, new(), resetUsage: true);
-        _projectValueType = (type, _) => type;
+        ContinueWithProjection((type, _) => type, type => type);
         var projectedList = new TypeNode.Fqn("System.Collections.Generic.IList`1", new TypeNode[] { new TypeNode.Star() });
         foreach (var access in new[] { "get", "set" })
         {

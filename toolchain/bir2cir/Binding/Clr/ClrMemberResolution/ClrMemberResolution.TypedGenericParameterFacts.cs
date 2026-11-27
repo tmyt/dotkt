@@ -4,6 +4,53 @@ using DotKt.Cir;
 
 static partial class ClrMemberResolution
 {
+    // Echo<T>(T) can carry the opaque projected object unchanged. A slot such
+    // as List<T> instead commits the invocation to the exact material T.
+    internal static bool HasInvariantGenericUse(BirGraphValue call, int index, ReferenceMetadataIndex refs)
+    {
+        var selected = call switch {
+            BirGenericStatic s when s.Type.OrDefault() is TypeNode.Fqn owner && s.ResolvedMemberParams.HasValue =>
+                SelectedGenericProofDeclaration(null, owner, s.Method.Value, s.TypeArgs.Value.Length, false,
+                    s.ResolvedMemberParams.Value, refs, nativeMethodKey: s.NativeMethodKey.OrDefault()),
+            BirGenericInstance s when s.Type.OrDefault() is TypeNode.Fqn owner && s.ResolvedMemberParams.HasValue =>
+                SelectedGenericProofDeclaration(null, owner, s.Method.Value, s.TypeArgs.Value.Length, true,
+                    s.ResolvedMemberParams.Value, refs, nativeMethodKey: s.NativeMethodKey.OrDefault()),
+            _ => null,
+        };
+        return selected != null && RequiresMaterialMethodArgument(selected, index);
+    }
+
+    internal static bool RequiresMaterialMethodArgument(System.Reflection.MethodInfo selected, int index)
+    {
+        var variables = selected.GetGenericArguments();
+        bool Uses(Type type, Type variable, int direction, bool nested = false)
+        {
+            if (type == variable) return nested && direction <= 0;
+            if (type.HasElementType) return Uses(type.GetElementType(), variable, 0, true);
+            if (!type.IsGenericType) return false;
+            var arguments = type.GetGenericArguments();
+            var parameters = type.GetGenericTypeDefinition().GetGenericArguments();
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                var variance = parameters[i].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.VarianceMask;
+                var sign = variance switch {
+                    System.Reflection.GenericParameterAttributes.Covariant => direction,
+                    System.Reflection.GenericParameterAttributes.Contravariant => -direction,
+                    _ => 0,
+                };
+                if (Uses(arguments[i], variable, sign, true)) return true;
+            }
+            return false;
+        }
+        // An argument can widen M to object under covariance. At a return the
+        // conversion runs the other way. Invariance is absorbing at any depth.
+        var seen = new HashSet<Type>();
+        bool RequiresMaterial(Type v) => seen.Add(v) &&
+            (Uses(selected.ReturnType, v, -1) || selected.GetParameters().Any(p => Uses(p.ParameterType, v, 1))
+            || v.GetGenericParameterConstraints().Any(bound => bound.IsGenericParameter && variables.Contains(bound) && RequiresMaterial(bound)));
+        return RequiresMaterial(variables[index]);
+    }
+
     // These are the selected native MethodDef's physical CLR parameter facts,
     // not a Kotlin signature or a source-frame re-projection. The existing
     // metadata builder preserves declaration-relative owner/method variables,

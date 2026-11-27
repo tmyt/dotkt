@@ -151,6 +151,14 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>
         (binding.SignatureParameters, binding.SignatureReturn);
 
+    internal (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(string identity) =>
+        identity != null && _declarationById.TryGetValue(identity, out var binding)
+            ? PhysicalDeclarationSignature(binding) : default;
+
+    internal (TypeNode[] Parameters, TypeNode Return) KotlinValueSignature(string identity) =>
+        identity != null && _declarationById.TryGetValue(identity, out var binding)
+            ? (binding.KotlinParameterTypes, binding.KotlinReturnType) : default;
+
     internal TypeNode DeclarationSignatureSlot(ParameterInfo parameter) =>
         ReadDeclarationSignatureSlot(parameter, _nativeSignatures);
 

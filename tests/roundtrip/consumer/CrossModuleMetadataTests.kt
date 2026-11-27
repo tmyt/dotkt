@@ -94,6 +94,11 @@ import nestedlist.ReadonlyEdge
 import nestedlist.MixedInterfaceEdges
 import nestedlist.CollectionOuter
 import nestedlist.InnerApplicationBound
+import nestedlist.Crate
+import nestedlist.appendNative
+import nestedlist.appendInArray
+import nestedlist.appendToRow
+import System.Collections.Generic.List as ClrList
 import kotlinx.cell.makeCell
 import demo.hello
 import demo.Plain
@@ -285,6 +290,9 @@ private class LocalProjectedHolder<M : LocalProjectedSink<in String>>(private va
 }
 
 class GenericMetadataRoundtripTests {
+    private fun <A> sameNativeList(value: ClrList<A>): Any = value
+    private fun <A> relayNativeValue(value: A): A = GenericValueInterop.NativeBoxApi.EchoValue(value)
+    private fun <A> appendOptional(value: A, rows: ClrList<ClrList<A?>>) { rows[0].Add(value) }
     @TestAttribute
     fun genericMemberTypeVariablesRoundTrip() {
         val p = pair2(7, mutableListOf(1, 2))     // Pair2<Int, MutableList<Int>>
@@ -478,6 +486,39 @@ class GenericMetadataRoundtripTests {
         // (the direct `mb.v` generic-member read — the #33 shape — is covered by genmember's p.b/w.items; omitting
         //  it here keeps this method's emitted IL ilverify-clean, since the read-only vs invariant collection
         //  interface of the Root-V collapse would surface a formal-only IList/IReadOnlyCollection variance finding.)
+    }
+
+    @TestAttribute
+    fun nestedNativeArgumentsKeepTheirRowAcrossGenericCalls() {
+        val rows = ClrList<ClrList<Crate<*>>>()
+        val row = ClrList<Crate<*>>()
+        appendNative<ClrList<Crate<*>>>(row, rows)
+        val item = Crate(42)
+        appendToRow<Crate<*>>(item, rows)
+        check(rows[0] === row && row[0] === item)
+
+        val native = GenericValueInterop.NativeBoxApi.MakeList<ClrList<Crate<*>>>()
+        GenericValueInterop.NativeBoxApi.Append(row, native)
+        check(native[0] === row)
+        val other: Any = ClrList<Crate<String>>()
+        @Suppress("UNCHECKED_CAST")
+        val opaque = other as ClrList<Crate<*>>
+        check(GenericValueInterop.NativeBoxApi.EchoValue(opaque) === other)
+        check(roundtriptests.nativevalueframe.StoredNativeValueEcho().Echo(opaque) === other)
+        check(relayNativeValue(opaque) === other)
+        val opaqueParent: Any = ClrList<Any>()
+        @Suppress("UNCHECKED_CAST")
+        val view = opaqueParent as ClrList<ClrList<Crate<*>>>
+        check(sameNativeList(view) === opaqueParent)
+        val leaf: roundtrip.selectedbounds.Leaf<*> = roundtrip.selectedbounds.Leaf<String>()
+        val optional = ClrList<roundtrip.selectedbounds.Leaf<*>?>()
+        val parent = ClrList<ClrList<roundtrip.selectedbounds.Leaf<*>?>>()
+        parent.Add(optional)
+        appendOptional(leaf, parent)
+        check(optional[0] === leaf)
+        val arrayRow = ClrList<roundtrip.selectedbounds.Leaf<*>>()
+        appendInArray(leaf, arrayOf(arrayRow))
+        check(arrayRow[0] === leaf)
     }
 
     // #350: collection identity on a type edge has no member slot on which [KotlinCollectionIdentity] can ride.
