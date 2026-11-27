@@ -735,6 +735,13 @@ static class TypedPhysicalValueCoercion
             return SelectNativeArray(allocation, new TypeNode.Array(componentType), scope, index, witness);
         }
         RewriteChildren(node, scope, index, resultUsed);
+        // A function pointer has a signature, not a class on which to perform a checked cast.
+        if (node is BirCast { Type.Value: TypeNode.FnPtr targetPointer, E.Value: BirGraphValue pointerValue }
+            && ExprType(pointerValue, scope, index) is TypeNode.FnPtr sourcePointer)
+        {
+            ValidateNativePointerConversion(sourcePointer, targetPointer);
+            return pointerValue;
+        }
         if (node is BirBinaryOperation { Op.Value: "===" } identity) return LowerIdentity(identity, scope, index);
         if (node is BirSpreadConcat { LogicalSpreadOperands: true } spread)
             return PackLogicalSpread(spread, index);

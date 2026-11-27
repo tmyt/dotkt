@@ -107,9 +107,15 @@ static partial class SuspendColdLowering
             // Each entry implements the corresponding entry of the selected source
             // declaration. A generated carrier forwarder is not another source override.
             if (_m.SourceCallableVirtual && _typeParams.Count != 0)
+            {
                 method.SignatureOverrideDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
                     .Select(edge => edge.PhysicalDeclarationId.OrDefault() ?? edge.DeclarationId.Value)
                     .Distinct(StringComparer.Ordinal).ToArray();
+                if (coldEntry)
+                    method.OverrideRepresentationDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
+                        .Select(edge => (Slot: edge.PhysicalDeclarationId.Value, Source: edge.DeclarationId.Value))
+                        .Distinct().ToDictionary(edge => edge.Slot, edge => edge.Source);
+            }
         }
 
         void CarrySourceDeclaration(BirFunctionDeclaration method)
@@ -164,6 +170,7 @@ static partial class SuspendColdLowering
                 method.ImplicitExistentialImplementationId = coldEntry ? implementation + "|cold" : implementation;
             if (!_physicalSlotBridge) return;
             method.PhysicalSlotBridge = true;
+            method.OverrideAdapterGroup = _m.OverrideAdapterGroup;
             if (_clrInterfaceSlotBridge) method.ClrInterfaceSlotBridge = true;
             if (coldEntry && _taskOnlySlotBridge) return;
             if (_taskOnlySlotBridge) method.SuspendTaskOnlyBridge = true;
@@ -178,9 +185,17 @@ static partial class SuspendColdLowering
                 {
                     if (coldEntry)
                     {
+                        if (descriptor.LocalOverrideTargets is { } targets)
+                            descriptor.LocalOverrideTargets = targets.Select(id => id + "|cold").ToArray();
                         descriptor.Member = (descriptor.Member.OrDefault() ?? _name) + "$dotkt_suspend";
                         descriptor.Params = descriptor.Params.OrEmpty().Append(ContAny()).ToArray();
                         descriptor.Ret = AnyTn;
+                    }
+                    else if (_m.ExistentialCallable == ExistentialCallableRole.Forwarder)
+                    {
+                        // The generated forwarder implements its paired carrier slot
+                        // with the very same completion ABI, including Task for Unit.
+                        descriptor.Ret = BirGraphValue.CopyType(method.Ret.Value);
                     }
                     else if (descriptor.Ret.HasValue)
                     {

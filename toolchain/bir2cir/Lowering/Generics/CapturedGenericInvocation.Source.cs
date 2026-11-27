@@ -482,13 +482,18 @@ static partial class CapturedGenericInvocation
                     if (logical is not int sourceSlot) continue;
                     var nullable = frame?.NullableIndices.Contains(sourceSlot) == true
                         ? frame.NullableVariable(new TypeNode.Tv("method", sourceSlot)).I : -1;
-                    rows.Add(new(index, head, pos, variable.I, nullable, witnesses[index].StorageOnly));
+                    var kind = !witnesses[index].StorageOnly ? WitnessSource.Nominal :
+                        entry.AppliedPositions.OrDefault()?.Contains(position) == true ? WitnessSource.Construction : WitnessSource.Storage;
+                    rows.Add(new(index, head, pos, variable.I, nullable, kind));
                 }
             }
             // A declaration transported as object accepts the existing value independently
             // of its closed backing type. Its recovered construction can supply an otherwise
             // unknown slot, but cannot constrain a slot witnessed by a nominal parameter.
-            return rows.OrderBy(row => row.StorageOnly).ToArray();
+            // A generic construction is not an independent constraint on its
+            // input. When it is the *only* source, its real storage is still
+            // observable by a native use of the closed method argument.
+            return rows.OrderBy(row => row.Source).ToArray();
         }
 
         BirGraphValue Expand(Invocation call, CaptureFacts capture, TypeNode result,
@@ -531,16 +536,19 @@ static partial class CapturedGenericInvocation
                 var type = formal is TypeNode.Tv
                     ? FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(formal, owner.Args ?? [], call.TypeArguments.Value)
                     : formal;
-                return HasAddress(type) || ByRefLike(type, refs) || type is TypeNode.Tv v &&
+                return HasAddress(type) || type is TypeNode.FnPtr || ByRefLike(type, refs) || type is TypeNode.Tv v &&
                     (v.Scope == "method" ? methodFrame : ownerFrame)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct");
             }
             var typedInput = declarationParameters.Any(RequiresTypedTransport);
-            if (RequiresTypedTransport(declaredReturn) || typedInput && (local || declarationParameters.Any(HasAddress) ||
+            // Independent managed references can travel through the typed adapter unchanged.
+            // The captured-slot check below still excludes a reference whose pointee would change.
+            if (RequiresTypedTransport(declaredReturn) || typedInput && (local ||
                 captureIndices.Any(i => RequiresTypedTransport(declarationParameters[i])))) return call.Node;
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.
             var rows = CaptureRows(capture, declarationParameters, refs);
+            if (rows.Length == 0) return call.Node;
             var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
             // Null can inhabit a reference construction for every closing of its arguments.
             // A bare captured variable is different: reflection silently turns null into
@@ -571,7 +579,6 @@ static partial class CapturedGenericInvocation
             {
                 // Close the invariant operand from its runtime witness, but pass
                 // independent stack-only values through the typed Invoke signature.
-                if (rows.Length == 0) return call.Node;
                 if (!TrySelectedMethod(call, owner, refs, out var method))
                     throw new InvalidOperationException("Captured invocation lost its selected MethodDef");
                 var target = AddressTarget.FromReference(method, call.Member, selectedFrame);

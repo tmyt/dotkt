@@ -122,6 +122,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.DeclarationSemanticParams : null;
 
+    internal TypeNode DeclarationSourceReturn(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            ? binding.DeclarationSemanticReturn ?? binding.KotlinReturnType : null;
+
     internal TypeNode[] DeclarationOverrideParameters(string id)
     {
         if (id == null || !_declarationById.TryGetValue(id, out var binding)) return null;
@@ -146,6 +150,14 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     static (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(MemberBinding binding) =>
         (binding.SignatureParameters, binding.SignatureReturn);
+
+    internal (TypeNode[] Parameters, TypeNode Return) PhysicalDeclarationSignature(string identity) =>
+        identity != null && _declarationById.TryGetValue(identity, out var binding)
+            ? PhysicalDeclarationSignature(binding) : default;
+
+    internal (TypeNode[] Parameters, TypeNode Return) KotlinValueSignature(string identity) =>
+        identity != null && _declarationById.TryGetValue(identity, out var binding)
+            ? (binding.KotlinParameterTypes, binding.KotlinReturnType) : default;
 
     internal TypeNode DeclarationSignatureSlot(ParameterInfo parameter) =>
         ReadDeclarationSignatureSlot(parameter, _nativeSignatures);
@@ -275,10 +287,11 @@ sealed partial class ReferenceMetadataIndex : IDisposable
 
     // A preserved override edge selects this declaration before signature erasure. Return its complete open CLR
     // signature, including modifiers; the consumer closes the selected declaring owner through its supertype graph.
-    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration)
+    internal bool TryDeclarationSignatureSlot(string id, out ReferencedDeclarationSlot declaration, bool requireOverridable = false)
     {
         declaration = null;
-        if (id == null || !_declarationById.TryGetValue(id, out var binding) || binding.IsStatic) return false;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding) || binding.IsStatic
+            || (requireOverridable && (!binding.IsVirtual || binding.IsFinal))) return false;
         var owner = binding.DeclarationPhysicalOwner ?? binding.Owner;
         declaration = new ReferencedDeclarationSlot(owner, binding.Name, binding.MethodArity,
             binding.SignatureParameters ?? throw new InvalidOperationException($"Declaration '{id}' has no signature parameters"),
@@ -1108,7 +1121,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         && a.PropertyName == b.PropertyName && Same(a.ByrefPositions, b.ByrefPositions)
         && a.Suspend == b.Suspend && a.Conv == b.Conv && a.ConvTo == b.ConvTo
         && Same(a.ReturnType, b.ReturnType) && a.MethodArity == b.MethodArity
-        && Same(a.ParamTypeNodes, b.ParamTypeNodes) && a.IsVirtual == b.IsVirtual
+        && Same(a.ParamTypeNodes, b.ParamTypeNodes) && a.IsVirtual == b.IsVirtual && a.IsFinal == b.IsFinal
         && Same(a.KotlinReturnType, b.KotlinReturnType) && Same(a.NullableGenericRet, b.NullableGenericRet)
         && Same(a.NullableGenericParams, b.NullableGenericParams) && Same(a.ReturnTypeNode, b.ReturnTypeNode)
         && a.SourcePropertyName == b.SourcePropertyName
@@ -2892,7 +2905,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             ?? declarations[0].ReturnTypeNode;
         // Selection happens while calls still have Kotlin suspend semantics. The Task MethodDef is the metadata
         // owner, not the value produced by the later cold-entry call; use its explicit logical result carrier.
-        physicalResult = candidates[0].SuspendReturnType ?? candidates[0].ReturnTypeNode;
+        physicalResult = candidates[0].ProjectedInvocationResult;
         return true;
     }
 
@@ -4159,6 +4172,30 @@ sealed partial class ReferenceMetadataIndex : IDisposable
     // MethodDef identity. This matters when the Kotlin source name and CLR slot name differ. The identity is produced
     // by the same walk and therefore cannot drift from the slot facts; no caller re-resolves it from the physical
     // signature.
+    internal MethodInfo SelectProjectedNativeBase(Type open, string key)
+    {
+        if (key == null) return null;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        return open.GetMethods(flags).Single(m => m.IsVirtual && !m.IsFinal && MatchesNativeMethod(m, key));
+    }
+
+    internal MethodInfo SelectNativePropertyOverride(Type open, TypeNode.Fqn owner, string member, string role,
+        TypeNode[] parameters)
+    {
+        // The value passed to a setter does not select a different property.
+        // Select the readable Kotlin property's getter by its index parameters,
+        // then take the requested MethodSemantics association of that very row.
+        var indexes = role == "set" ? parameters[..^1] : parameters;
+        if (!TrySelectedOverrideDeclarationByShape(owner.Name, member, "get", 0, indexes, owner.Args ?? [],
+            KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(null, owner.Args ?? []), false, out var selected,
+            false, null)) return null;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        var property = open.GetProperties(flags).SingleOrDefault(p => p.GetGetMethod(true)?.MetadataToken == selected.MetadataToken);
+        var method = role == "set" ? property?.GetSetMethod(true) : property?.GetGetMethod(true);
+        return method is { IsVirtual: true, IsFinal: false } && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly)
+            ? method : null;
+    }
+
     internal bool TrySelectedNullableGenericSlotByShape(string ownerFqn, string name, bool isStatic, int argCount,
         int methodArity, IReadOnlyList<TypeNode> resolvedSignature, TypeNode resolvedReturn,
         TypeNode[] ownerTypeArguments, string selectedShape,
@@ -5299,7 +5336,8 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             index._ownerKindByPhysicalOwner[slotOwner] = "interface";
             var signature = new TypeNode.Mod(false, new TypeNode.Fqn("ExistingFunctionIdentity"),
                 new TypeNode.Fqn("System.Object"));
-            var binding = new MemberBinding(slotOwner, slot.Name, 1, null, true, false, MetadataToken: slot.MetadataToken) {
+            var binding = new MemberBinding(slotOwner, slot.Name, 1, null, slot.IsAbstract, slot.IsStatic,
+                IsVirtual: slot.IsVirtual, MetadataToken: slot.MetadataToken) {
                 SignatureParameters = new TypeNode[] { signature }, SignatureReturn = new TypeNode.Fqn("void"),
             };
             index._declarationById["referenced-slot"] = binding;
@@ -5824,12 +5862,17 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
     // Capture the selected reference MethodDef while scanning it. A local type may shadow its owner
     // during stdlib self-compilation; resolving that owner again is not declaration identity.
     public TypeNode[] SignatureParameters { get; init; }
+    // A suspend carrier stores the source classifier. When materializing a call
+    // in the current module it needs the same binding identity as a local use.
+    public TypeNode ProjectedInvocationResult => SuspendReturnType is { } source
+        ? TypedCharSequenceIdentity.RewriteType(source) : ReturnTypeNode;
     public string SourceMethodDeclaration { get; init; }
     public int[] ReflectedWitnessIndices { get; init; }
     public string ValueAdapter { get; init; }
     public string ValueSlot { get; init; }
     public NativeSignatureReader.Signature MetadataValueSignature { get; init; }
     public bool SignatureAllocated { get; init; }
+    public bool IsFinal { get; init; }
     public LateinitStateTarget LateinitState { get; init; }
     public TypeNode SignatureReturn { get; init; }
     public string PhysicalVisibility { get; init; }

@@ -5,20 +5,36 @@ using DotKt.Cir;
 sealed partial class ProjectedCallableEntries
 {
     readonly HashSet<string> operationTypes = new(StringComparer.Ordinal);
+    readonly HashSet<BirMethodImpl> replacedAdapterSlots = new(ReferenceEqualityComparer.Instance);
+    readonly Dictionary<BirMethodImpl, HashSet<string>> replacedLocalSlots = new(ReferenceEqualityComparer.Instance);
 
-    // Slot synthesis can already have supplied a forwarding DIM. Once the
-    // selected slot is replaced, retire exactly its descriptor. A bridge
-    // shared with a different slot still has that other job to do.
-    void RetireInterfaceForwarder(IBirTypeDeclaration owner, TypeNode.Fqn application, ReferencedDeclarationSlot slot)
+    // Earlier slot synthesis may already have supplied a forwarder for the
+    // selected declaration. Replace only that interface assignment; a bridge
+    // shared with another interface or base slot still has work to do.
+    void RetireInterfaceForwarder(IBirTypeDeclaration owner, TypeNode.Fqn application, ReferencedDeclarationSlot slot, string id)
     {
-        if (owner.Kind.OrDefault() != "interface") return;
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, application.Args ?? []);
         bool Matches(BirMethodImpl directive) => directive.Owner.OrDefault() == application &&
             directive.Member.OrDefault() == slot.Name && directive.Arity.OrDefault() == slot.Arity &&
             directive.Params.OrEmpty().SequenceEqual(slot.Parameters.Select(Close)) && directive.Ret.OrDefault() == Close(slot.Return);
-        foreach (var bridge in owner.Methods.OrEmpty().Where(m => m.Generated.OrDefault() && m.ClrInterfaceSlotBridge.OrDefault()))
+        var dim = owner.Kind.OrDefault() == "interface";
+        foreach (var bridge in owner.Methods.OrEmpty().Where(m => m.Generated.OrDefault() &&
+            (m.OverrideAdapterGroup != null || dim && m.ClrInterfaceSlotBridge.OrDefault())))
         {
             var old = bridge.ClrInterfaceImpls.OrEmpty();
+            if (bridge.OverrideAdapterGroup != null)
+            {
+                foreach (var d in old.Where(d => d.Owner.OrDefault() == application))
+                    if (d.LocalOverrideTargets is { Count: > 0 } targets)
+                    {
+                        // Local overloads can acquire modifiers after adapter synthesis.
+                        if (!targets.Contains(id)) continue;
+                        if (!replacedLocalSlots.TryGetValue(d, out var retired)) replacedLocalSlots[d] = retired = new(StringComparer.Ordinal);
+                        retired.Add(id);
+                    }
+                    else if (Matches(d)) replacedAdapterSlots.Add(d);
+                continue;
+            }
             var active = old.Where(d => !Matches(d)).ToArray();
             if (old.Length == active.Length) continue;
             if (active.Length == 0) owner.Methods = owner.Methods.Value.Where(m => !ReferenceEquals(m, bridge)).ToArray();
@@ -50,7 +66,10 @@ sealed partial class ProjectedCallableEntries
         {
             if (!references.TryDeclarationSignatureSlot(id, out slot) || !slot.IsInterface) return;
             rows = references.PhysicalMethodTypeParametersInPhysicalFrame(id, nativeNames: true);
-            selectedFrame = references.NullableMethodFrame(contract?.RepresentationDeclaration ?? id);
+            // The physical entry supplies the slot, but the source declaration
+            // owns the ordinary/nullable/storage frame shared by its entries.
+            selectedFrame = references.NullableMethodFrame(contract?.RepresentationDeclaration
+                ?? target.OverrideRepresentationDeclarations?.GetValueOrDefault(id) ?? id);
         }
         if (rows is not { Length: > 0 } || selectedFrame == null || !selectedFrame.StorageIndices.Any()) return;
         if (selectedOwner == null)
@@ -66,7 +85,7 @@ sealed partial class ProjectedCallableEntries
         if (selected.SourceArity != destination.SourceArity) throw new InvalidOperationException("Selected override source arities disagree");
         var weakRows = contract?.CloneParameters() ?? rows.Select(p => CapturedGenericInvocation.CloneParameter(p, Close)).ToArray();
         if (projectedSlot != null) slot = projectedSlot;
-        RetireInterfaceForwarder(owner, selectedOwner, slot);
+        RetireInterfaceForwarder(owner, selectedOwner, slot, projectedSlot == null ? id : EntryId(id));
         int Position(int index, bool material = false)
         {
             var role = destination.PhysicalSlot(index);
@@ -107,6 +126,13 @@ sealed partial class ProjectedCallableEntries
         var ret = Close(slot.Return);
         var args = inputs.Select(i => (TypeNode)new TypeNode.Tv("method", i))
             .Concat(plan.AddressOperands.Select(i => ((TypeNode.ByRef)SignatureValueTypes.Of(formals[i].Type.Value)).Of)).ToArray();
+        if (NeedsTaskView(target, ret, args))
+        {
+            var view = Bridge(selectedOwner, slot.Name, weakRows);
+            view.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :
+                ProjectedTaskBody(owner, view, target, selectedOwner, contract, id);
+            return;
+        }
         if (anchors.Length == 0)
         {
             var direct = Bridge(selectedOwner, slot.Name, weakRows);

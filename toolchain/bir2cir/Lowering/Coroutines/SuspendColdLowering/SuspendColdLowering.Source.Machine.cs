@@ -146,6 +146,8 @@ static partial class SuspendColdLowering
             }
             node.RewriteOwnTypeFieldsInPlace((field, _, type) => field is "sig" or "resolvedMemberParams"
                 || field == "argTypes" && node is not BirNew ? type : Rebind(type));
+            if (node.MaterialMethodArguments is { } material)
+                node.MaterialMethodArguments = material.ToDictionary(entry => entry.Key, entry => Rebind(entry.Value));
             node.VisitOwnChildSlots((_, _, slot) => RebindMethodTypeVariablesToSm(slot.Value, ownerArity));
         }
     }

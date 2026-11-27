@@ -10,6 +10,8 @@ import roundtrip.genericvalueinterop.Box
 import roundtrip.invariantstorage.*
 
 private fun forwardedNativeBox(): Box<String> = Box("forwarded")
+private fun replaceCaptured(key: GenericValueInterop.CaptureBox<out System.IO.Stream>, slots: Array<Box<String>>,
+    other: Array<Box<String>>) = NativeBoxApi.ReplaceCaptured(key, byref(slots[0]), other)
 private fun isImportedBox(value: Any): Boolean {
     val matches = value is Box<*>
     return matches
@@ -250,12 +252,17 @@ class InvariantValueStorageTests {
         val wrong = Box(42)
         val erased = wrong as Box<String>
         other[0] = erased
+        val key = GenericValueInterop.CaptureBox<System.IO.MemoryStream>()
+        check(try { replaceCaptured(key, slots, other); false } catch (_: ClassCastException) { true })
         check(try { NativeBoxApi.ContainsSlot(byref(slots[0]), other); false } catch (_: ClassCastException) { true })
         slots[0] = erased // A rejected call did not publish the earlier operand.
+        other[0] = first
+        check(try { replaceCaptured(key, slots, other); false } catch (_: ClassCastException) { true })
         check(try { NativeBoxApi.ReplaceAliased(byref(slots[0]), byref(slots[0])); false } catch (_: ClassCastException) { true })
         check((slots[0] as Any) === wrong)
         slots[0] = first
         slots[1] = erased
+        check(replaceCaptured(key, slots, other) && slots[0].value == "changed")
         check(NativeBoxApi.ReplaceAliased(byref(slots[0]), byref(slots[0])))
         check(slots[0].value == "second" && (slots[1] as Any) === wrong)
         check(try { slots[0] = erased; false } catch (_: ClassCastException) { true })

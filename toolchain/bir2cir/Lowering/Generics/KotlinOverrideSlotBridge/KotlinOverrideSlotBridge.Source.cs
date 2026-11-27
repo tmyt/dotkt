@@ -14,7 +14,7 @@ static partial class KotlinOverrideSlotBridge
         Func<TypeNode,TypeNode,bool> CarrierParameterSeam, Func<TypeNode,TypeNode,bool> CanForwardPhysicalValue,
         Func<TypeNode,bool> canPassAsObject, Func<TypeNode,TypeNode,bool> canForwardClassReturn,
         Func<bool> existingAlreadyOwns, Func<bool> covariantAlreadyOwns, Func<TypeNode,bool> hasClassifier = null,
-        BirTypeLowering.PhysicalTypeContext nativeMetadata = null)
+        BirTypeLowering.PhysicalTypeContext nativeMetadata = null, TypeNode[] nativeBaseParameterViews = null)
     {
         var declParams = impl.Parameters;
         var declRet = impl.Return;
@@ -47,6 +47,12 @@ static partial class KotlinOverrideSlotBridge
             var declT = declParams[i].Type;
             if (declT == null) { fit = null; break; }
             fit[i] = Compare(slotParams[i], SupertypeGraph.SubstOwnerTvs(declT, ownArgs), false);
+            // The selected native MethodDef declares this exact bare owner variable.
+            // Its CLR base instantiation supplies the incoming type; the bridge
+            // checks that value against the actual Kotlin override parameter.
+            if (fit[i] == Fit.Foreign && nativeBaseParameterViews?[i] is { } view
+                && Compare(view, SupertypeGraph.SubstOwnerTvs(declT, ownArgs), false) == Fit.Same
+                && canPassAsObject(declT) && canPassAsObject(slotParams[i])) fit[i] = Fit.Bridge;
             if (fit[i] == Fit.Foreign && SameSourceRepresentationVariables(slotParams[i],
                     SupertypeGraph.SubstOwnerTvs(declT, ownArgs), sourceMapping.OwnerFrame))
                 fit[i] = Fit.Bridge;
@@ -108,13 +114,17 @@ static partial class KotlinOverrideSlotBridge
             // A selected Nothing-returning override never produces a value.
             // It owes the same exact slot whether its base is local or imported.
             if (NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+            // This is an already-selected Kotlin override. Adapt its completed
+            // value to the class slot before constructing the invariant CLR Task.
+            else if (!supIsInterface && phase == Phase.SuspendValueBridges && differingSuspendResult)
+                retFit = Fit.Bridge;
             // Keep the erased Kotlin body; the native enumeration protocol can adapt this exact result.
             else if (phase == Phase.PhysicalBridges && supIsInterface && referencedSlot
                 && NativeCursorResult(impl.Source?.RetKotlinType.OrDefault() ?? impl.Header?.RetKotlinType.OrDefault(),
                     declRet, slotRet, isValue, refs) != null)
                 retFit = Fit.Bridge;
             else if (!supIsInterface && phase == Phase.PhysicalBridges
-                && StringCharSequenceBridge.CanAdaptStringReturn(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), slotRet))
+                && StringCharSequenceBridge.CanAdaptSlotReturn(SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), slotRet))
                 retFit = Fit.Bridge;
             // A source-selected covariant class override still owes the base's exact CLR slot,
             // including when the narrow override is abstract. Reuse the ordinary virtual forwarder

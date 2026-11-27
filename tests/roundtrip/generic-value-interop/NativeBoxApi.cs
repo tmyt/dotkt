@@ -27,6 +27,45 @@ public sealed class CallbackArrayProbe
             return ((System.Array)first).GetValue(0) is null ? null : first;
         };
 }
+public class NativeOpenVisitor<T>
+{
+    public virtual T Visit(T item) => throw new System.NotImplementedException();
+    public T Dispatch(T item) => Visit(item);
+    public virtual T Current { get; set; }
+    public void Store(T item) => Current = item;
+    public T Load() => Current;
+}
+public class NativeMiddleVisitor<TUnused,T> : NativeOpenVisitor<T>
+{
+    public virtual object Visit(object item) => "middle";
+    public object DispatchOther(object item) => Visit(item);
+}
+public class NativeBoundVisitor<T> where T : System.IO.Stream
+{
+    public virtual object Visit(T item) => "base";
+    public virtual object Visit(System.IO.Stream item) => "other";
+    public virtual T Current { get; set; }
+    public void Store(T item) => Current = item;
+    public T Load() => Current;
+    public virtual int Count { get; private set; } = 1;
+    public int ReadCount() => Count;
+    public object Dispatch(T item) => Visit(item);
+    public object DispatchStream(System.IO.Stream item) => Visit(item);
+}
+public sealed class NativeStreamSlot<T> where T : System.IO.Stream
+{
+    public T Value { get; set; }
+    public bool UsesExactType(T item) => typeof(T) == item.GetType();
+}
+public static class NestedBounds
+{
+    public class Root { }
+    public class Mid : Root { }
+    public interface ISink<in T> { }
+    public sealed class MidSink : ISink<Mid> { }
+    public sealed class Slot<T> where T : Root { public T Value { get; set; } }
+    public sealed class Joint<T, S> where T : Root where S : ISink<T> { public T Value { get; set; } }
+}
 public sealed class NativeResultProbe
 {
     private System.Array backing;
@@ -195,6 +234,9 @@ public delegate object NativeBoxConsumer(Box<string, string> value);
 
 public static class NativeBoxApi
 {
+    public static T EchoValue<T>(T value) => value;
+    public static System.Collections.Generic.List<T> MakeList<T>() => new();
+    public static void Append<T,U>(U value, System.Collections.Generic.List<T> list) where U : T => list.Add(value);
     public static T ReplaceRecord<T>(IMarkedRecord<T> record, T item) where T : IProjectedMark
     {
         record.Write(item);
@@ -250,6 +292,13 @@ public static class NativeBoxApi
     public static StoredVariant<int, int> CreateVariant() => new(42);
     public static int ReadVariant(StoredVariant<int, int> value) => (int)value.value;
     public static object Dispatch(NativeBoxReceiver receiver, Box<string, string> value) => receiver.Accept(value);
+
+    public static bool ReplaceCaptured<T>(CaptureBox<T> witness, ref Box<string, string> slot, Box<string, string>[] other)
+        where T : System.IDisposable, allows ref struct
+    {
+        slot = new Box<string, string>("changed");
+        return typeof(T) == typeof(System.IO.MemoryStream);
+    }
 
     public static bool ReplaceAliased(ref Box<string, string> first, ref Box<string, string> second)
     {

@@ -165,19 +165,32 @@ static void VerifyCSharpKlib(string path)
         .Select(constructor => string.Join(",", constructor.ValueParameter.Select(parameter => String(fragment, parameter.Name))))
         .OrderBy(shape => shape, StringComparer.Ordinal)
         .ToArray();
-    Require(constructorShapes.SequenceEqual(new[] { "__fixed_Value,Value,Values" }),
+    Require(constructorShapes.SequenceEqual(new[] { "Value", "__fixed_Value,Value,Values" }.Order(StringComparer.Ordinal)),
         "CLR attribute overload/named-member projection has unexpected constructors: " +
         string.Join(" | ", constructorShapes));
 
     var overload = fragment.Class.Single(candidate =>
         QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.OverloadProbeAttribute");
-    var overloadShapes = overload.Constructor
+    static bool Primary(Constructor constructor) => (constructor.Flags & (1 << 4)) == 0;
+    var primary = overload.Constructor.Single(Primary);
+    Require((primary.Flags & 0xe) == 6 &&
+        primary.ValueParameter.Select(parameter => String(fragment, parameter.Name))
+            .SequenceEqual(new[] { "__fixed_Value", "Value", "Name" }) &&
+        QualifiedName(fragment, primary.ValueParameter[0].Type.ClassName) == "kotlin.Int",
+        "overloaded CLR attribute did not expose its public int constructor with named members");
+    var secondaryShapes = overload.Constructor.Where(constructor => !Primary(constructor))
         .Select(constructor => string.Join(",", constructor.ValueParameter.Select(parameter => String(fragment, parameter.Name))))
         .OrderBy(shape => shape, StringComparer.Ordinal)
         .ToArray();
-    Require(overloadShapes.SequenceEqual(new[] { "", "Value" }),
-        "overloaded CLR attribute constructors were broadened with named members: " +
-        string.Join(" | ", overloadShapes));
+    Require(secondaryShapes.SequenceEqual(new[] { "", "Value", "text" }),
+        "secondary CLR attribute constructors acquired named members");
+    var protectedOnly = fragment.Class.Single(candidate =>
+        QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.ProtectedOnlyAttribute");
+    Require(!protectedOnly.Constructor.Any(Primary), "a protected-only CLR attribute acquired a primary constructor");
+    var narrowed = fragment.Class.Single(candidate =>
+        QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.NullableOverloadAttribute");
+    Require(narrowed.Constructor.Single(Primary).ValueParameter.Single().Type.Nullable,
+        "a synthetic overload displaced the nullable annotation primary");
 }
 
 static void VerifyProjectedAttributes(string path)
@@ -201,7 +214,13 @@ static void VerifyProjectedAttributes(string path)
         .Single(attribute => attribute.AttributeType.FullName == "ClrPInvoke.OverloadProbeAttribute");
     Require((int)overload.ConstructorArguments.Single().Value! == 7 && overload.NamedArguments.Count == 0,
         "overloaded CLR attribute positional argument was rebound as a named member");
-
+    var explicitNamed = CustomAttributeData.GetCustomAttributes(
+            assembly.GetType("NamedOverloadCarrier", throwOnError: true)!)
+        .Single(attribute => attribute.AttributeType == overload.AttributeType);
+    Require(overload.Constructor.GetParameters() is [var fixedParameter] && fixedParameter.ParameterType == typeof(int) &&
+        explicitNamed.Constructor == overload.Constructor && (int)explicitNamed.ConstructorArguments.Single().Value! == 7 &&
+        explicitNamed.NamedArguments is [{ IsField: false, MemberName: "Name", TypedValue.Value: "x" }],
+        "CLR attribute did not retain its exact int constructor and explicit named property");
 }
 
 static bool BooleanValue(Annotation.Types.Argument.Types.Value value) => value.IntValue != 0;

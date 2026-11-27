@@ -2,6 +2,7 @@ package roundtriptests.capturedgeneric
 
 import NUnit.Framework.TestAttribute
 import System.Collections.Generic.List as CsList
+import kotlin.clr.byref
 import kotlin.coroutines.CoroutineContext
 import roundtrip.capturedgeneric.*
 
@@ -19,6 +20,28 @@ private fun <T> missingKey(): PlainKey<T>? = null
 private fun <T> copyCount(key: PlainKey<T>?, xs: MutableList<T>): Int =
     GenericValueInterop.CollectionStorageApi.Copy<T>(xs).size
 private fun copyUsingListWitness(xs: MutableList<*>): Int = copyCount(missingKey(), xs)
+@Suppress("UNCHECKED_CAST")
+private fun <T> suppliedList(): MutableList<T> = mutableListOf(17) as MutableList<T>
+private fun copyWithoutNominalWitness(key: PlainKey<*>?): Int = copyCount(key, suppliedList())
+private fun <T> copyBetween(left: MutableList<T>, right: MutableList<T>, fromLeft: Boolean, original: Any): Any {
+    val source = if (fromLeft) left else right
+    val dest = if (fromLeft) right else left
+    check(source === original)
+    dest.add(GenericValueInterop.CollectionStorageApi.Copy<T>(source)[0])
+    return dest
+}
+private fun <T> firstList(vararg xs: MutableList<T>) = xs[0]
+private fun copyToFresh(xs: MutableList<*>, reverse: Boolean, failFirst: Boolean) {
+    var created: Any? = null
+    val record: (Any) -> Unit = { created = it }
+    fun <T> local(): MutableList<T> = freshList(record)
+    val dest = if (reverse) copyBetween(local(), sameList(xs), false, xs)
+        else copyBetween(firstList(xs), try {
+            if (failFirst) throw IllegalStateException()
+            freshList(record)
+        } catch (e: IllegalStateException) { freshList(record) }, true, xs)
+    check(dest === created && dest == listOf(17))
+}
 private fun collectWithToken(key: kotlin.reflect.KClass<*>): Int = collectTokenSize(key, mutableListOf())
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
@@ -26,6 +49,13 @@ private fun countOblivious(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountOblivious(items)
 private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): String =
     GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
+private fun readWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): System.IO.Stream? =
+    GenericValueInterop.CollectionStorageApi.ReadWith(box, System.MemoryExtensions.AsSpan("value"))
+private fun visitAliased(box: GenericValueInterop.CaptureBox<out System.IO.Stream>) {
+    var visits = 2
+    check(GenericValueInterop.CollectionStorageApi.VisitAliased(box, byref(visits), byref(visits)) == 4)
+    check(visits == 4)
+}
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
     inner class Caller {
         fun clear(items: CsList<out System.IO.Stream>): Unit =
@@ -46,6 +76,8 @@ private class ThrowingElement : CoroutineContext.Element {
 }
 
 class CapturedGenericInvocationTests {
+    @TestAttribute fun capturedCallPreservesIndependentRefAliases() =
+        visitAliased(GenericValueInterop.CaptureBox<System.IO.MemoryStream>())
     @TestAttribute fun nullCannotBecomeAValueOfTheCapturedNativeType() {
         val ints = CsList<Int>()
         var rejected = false
@@ -64,7 +96,11 @@ class CapturedGenericInvocationTests {
         check(nullableInts.Count == 1)
     }
     @TestAttribute fun projectionDoesNotBoxAnIndependentSpan() {
-        check(identifyWithSpan(GenericValueInterop.CaptureBox<System.IO.MemoryStream>()) == "MemoryStream:value")
+        val empty = GenericValueInterop.CaptureBox<System.IO.MemoryStream>()
+        check(identifyWithSpan(empty) == "MemoryStream:value")
+        check(readWithSpan(empty) == null)
+        val stream = System.IO.MemoryStream()
+        check(readWithSpan(GenericValueInterop.CollectionStorageApi.BoxStream(stream)) === stream)
         check(countWithSpan(CsList<System.IO.Stream>()) == 0)
         val derived = CsList<System.IO.MemoryStream>()
         derived.Add(System.IO.MemoryStream())
@@ -171,6 +207,15 @@ class CapturedGenericInvocationTests {
         fun clear(key: PlainKey<*>): Any = clearCollected(existing(), key)
         check(clear(IntegerKey) === shared && shared.isEmpty())
         check(copyUsingListWitness(mutableListOf(17)) == 1)
+        check(copyWithoutNominalWitness(null) == 1)
+        val ints = mutableListOf(17)
+        copyToFresh(ints, false, false)
+        copyToFresh(ints, false, true)
+        copyToFresh(ints, true, false)
+        var size = 0
+        withIndependentList(ints) { size = it }
+        check(size == 1)
+        check(ints == listOf(17))
     }
     @TestAttribute fun superCallKeepsNonVirtualDispatch() {
         check(DerivedKeyReader().readBase(TextKey) == "base-key")

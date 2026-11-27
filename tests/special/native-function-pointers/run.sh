@@ -33,8 +33,6 @@ cp "$STDLIB_RT_DLL" "$implementation" "$OUT/il/"
 actual="$(dotnet "$OUT/il/NativePointerConsumer.dll")"
 [[ "$actual" == 420 ]] || die "native function-pointer consumer returned '$actual', expected 420"
 echo "Native function-pointer DLL/KLIB/BIR/CIR/CIL execution: PASS"
-dotnet run --project "$ROOT/tests/special/native-function-pointers/consumer/Consumer.csproj" -c Release \
-    -p:ConsumerAssembly="$OUT/il/NativePointerConsumer.dll"
 dotnet run --project "$ROOT/tests/special/native-function-pointers/metadata/Metadata.csproj" -c Release -- \
     "$reference" "$OUT/il/NativePointerConsumer.dll" "$implementation"
 bash "$ROOT/tests/special/native-function-pointers/run-diagnostics.sh"
@@ -58,3 +56,6 @@ cp "$STDLIB_RT_DLL" "$implementation" "$OUT/il/NativePointerConsumer.dll" "$OUT/
 roundtrip_actual="$(dotnet "$OUT/roundtrip-il/NativePointerRoundtrip.dll")"
 [[ "$roundtrip_actual" == 84 ]] || die "native function-pointer cross-module consumer returned '$roundtrip_actual', expected 84"
 echo "Native function-pointer Kotlin declaration roundtrip: PASS"
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/roundtrip-il/NativePointerRoundtrip.dll"
+dotnet run --project "$ROOT/tests/special/native-function-pointers/consumer/Consumer.csproj" -c Release \
+    -p:ConsumerAssembly="$OUT/il/NativePointerConsumer.dll" -p:RoundtripAssembly="$OUT/roundtrip-il/NativePointerRoundtrip.dll"

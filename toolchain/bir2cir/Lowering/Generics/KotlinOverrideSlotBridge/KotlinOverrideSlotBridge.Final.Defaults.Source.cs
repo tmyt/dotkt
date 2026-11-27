@@ -60,7 +60,7 @@ static partial class KotlinOverrideSlotBridge
                         var result = SupertypeGraph.SubstOwnerTvs(source.Ret.OrDefault(),arguments);
                         Add(fact.Member.Value,null,spec,SelectedMethodHeader.FromSource(source),null,
                             new[] { SourceImplDescriptor(spec,source.ExplicitClrName.OrDefault() ?? source.Name.OrDefault(),arity,
-                                slotParameters,result,SubstituteParameters(source.TypeParams.OrDefault(),arguments),false) },arguments,[],false);
+                                slotParameters,result,SubstituteParameters(source.TypeParams.OrDefault(),arguments),false,source.DeclarationId.OrDefault()) },arguments,[],false);
                         if (source.DeclarationId.HasValue)
                             foreach (var bridge in methods.Where(candidate => context.ExactSources.TryGetValue(candidate,out var identity)
                                          && identity == source.DeclarationId.Value && candidate.ClrInterfaceImpls.HasValue))
@@ -234,8 +234,10 @@ static partial class KotlinOverrideSlotBridge
                 bridges[key]=bridge;
                 context.Append(declaration,bridge);
             }
-            context.Attach(declaration,bridge,SourceImplDescriptor(owner,descriptor.Member.Value,descriptor.Arity.Value,
-                slotParameters,slotReturn,slotTypeParameters,false),true);
+            var projected=SourceImplDescriptor(owner,descriptor.Member.Value,descriptor.Arity.Value,
+                slotParameters,slotReturn,slotTypeParameters,false);
+            projected.LocalOverrideTargets=descriptor.LocalOverrideTargets;
+            context.Attach(declaration,bridge,projected,true);
         }
     }
 

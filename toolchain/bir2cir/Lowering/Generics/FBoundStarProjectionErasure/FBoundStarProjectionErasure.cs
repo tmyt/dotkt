@@ -666,6 +666,9 @@ static partial class FBoundStarProjectionErasure
             b.Of, ownerArguments, methodArguments)),
         TypeNode.Ptr p => new TypeNode.Ptr(SubstituteDeclarationTypeArguments(
             p.Of, ownerArguments, methodArguments)),
+        TypeNode.FnPtr p => p with {
+            Ret = SubstituteDeclarationTypeArguments(p.Ret, ownerArguments, methodArguments),
+            Params = p.Params.Select(t => SubstituteDeclarationTypeArguments(t, ownerArguments, methodArguments)).ToArray() },
         TypeNode.Mod m => new TypeNode.Mod(m.Req,
             SubstituteDeclarationTypeArguments(m.M, ownerArguments, methodArguments),
             SubstituteDeclarationTypeArguments(m.Of, ownerArguments, methodArguments)),
@@ -737,17 +740,21 @@ static partial class FBoundStarProjectionErasure
                     is NullableRepresentationFrame.Role.Ordinary or NullableRepresentationFrame.Role.Nullable;
                 var exact = nativeArguments && (PreservesNativeWitnessHead(argument, context) || IsExactNativeArrayWitness(argument, context))
                     || context.NativeProofs?.ExactTypeArgument(application.Name, index) == true;
+                // A native construction consumes a CLR argument, not the opaque value
+                // slot used to hold an arbitrary imported projection. Retain a nested
+                // native head whose own arguments are specified, and close them in turn.
+                var nestedNative = nativeArguments && PreservesNestedNativeWitnessHead(argument, context);
                 // A variant Kotlin value keeps its carrier even as a nested ordinary witness.
                 return RewriteType(argument, context, boundDeclaration,
                     preserveArrayShape: nativeOwner || ordinary,
-                    preserveConstructedHead: exact && !ContainsExistentialProjection(argument)
+                    preserveConstructedHead: nestedNative || exact && !ContainsExistentialProjection(argument)
                         || ordinary && !(StripSourceNullability(argument) is TypeNode.Fqn variant
                             && context.ProjectionCanChangeConstruction(variant)),
                     sourceOverrideOwner: sourceOverrideOwner);
             }).ToArray();
-            // An override binding can contain rewritten nested types, but none of
-            // its applications are independent CLR constraint obligations.
-            if (nativeOwner || boundDeclaration || sourceOverrideOwner) return physical;
+            // Real CLR applications must satisfy their declared bounds too; a
+            // binding alias owns its argument representation instead.
+            if ((nativeOwner && !nativeArguments) || boundDeclaration || sourceOverrideOwner) return physical;
             // A bound such as B : A needs A's chosen CLR argument, even when B
             // comes first in the declaration. Start recursive edges at the ordinary projection.
             bool[] visited = null;
@@ -760,8 +767,9 @@ static partial class FBoundStarProjectionErasure
                 visited[i] = true;
                 if (!context.NeedsClassWitness(application.Args[i], physical[i]))
                     return physical[i];
-                witnessFrame ??= context.SelectPhysicalClassApplication(application);
-                return physical[i] = context.ClassConstrainedArgument(witnessFrame.Value.Slot(i), physical[i], Close);
+                witnessFrame ??= context.SelectPhysicalClassApplication(application, nativeNames: nativeArguments);
+                return physical[i] = context.ClassConstrainedArgument(witnessFrame.Value.Slot(i), physical[i], Close,
+                    nativeArguments ? physical : null);
             }
             for (int i = 0; i < physical.Length; ++i) Close(i);
             return physical;
@@ -943,7 +951,7 @@ static partial class FBoundStarProjectionErasure
         _ => false,
     };
 
-    static bool ContainsExistentialProjection(TypeNode t) => t switch
+    internal static bool ContainsExistentialProjection(TypeNode t) => t switch
     {
         TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Fqn { Args: { } args } => args.Any(ContainsExistentialProjection),

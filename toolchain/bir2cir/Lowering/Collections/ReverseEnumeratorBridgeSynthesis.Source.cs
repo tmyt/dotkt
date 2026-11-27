@@ -50,11 +50,18 @@ static partial class ReverseEnumeratorBridgeSynthesis
                 else
                 {
                     result = new BirNew {
-                        Type = Constructed(AdapterName, BirGraphValue.CopyType(element)),
+                        Type = Constructed(AdapterName, element == null ? new TypeNode.Fqn("System.Object") : BirGraphValue.CopyType(element)),
                         ArgTypes = new[] { KotlinIteratorPhysicalProtocol.Carrier(refs) },
                         Args = new IBirExpression[] { iteratorCall }, LocalCtorIndex = 0,
                     };
                     adapterHost ??= root;
+                }
+                if (element == null)
+                {
+                    var raw = RawBridge(result);
+                    type.Methods = type.Methods.Value.Append(raw).ToArray();
+                    publishMethods(root, type, [raw]);
+                    continue;
                 }
                 var generic = SourceMethod(genericName, nameTaken ? "private" : "public", Constructed(IEnumeratorT, element),
                     new IBirStatement[] { SourceReturn(result) });
@@ -144,13 +151,16 @@ static partial class ReverseEnumeratorBridgeSynthesis
         };
     }
 
-    static BirFunctionDeclaration RawForwarder(TypeNode owner, string member, TypeNode result)
+    static BirFunctionDeclaration RawForwarder(TypeNode owner, string member, TypeNode result) =>
+        RawBridge(new BirCallInstance {
+            OwnerType = BirGraphValue.CopyType(owner), Virtual = true, Recv = E(new BirThis()),
+            Method = member, Sig = Array.Empty<TypeNode>(), Ret = BirGraphValue.CopyType(result), Args = Array.Empty<IBirExpression>(),
+        });
+
+    static BirFunctionDeclaration RawBridge(IBirExpression result)
     {
         var raw = SourceMethod(NonGenericBridgeName, "private", new TypeNode.Fqn(IEnumerator),
-            [SourceReturn(new BirCallInstance {
-                OwnerType = BirGraphValue.CopyType(owner), Virtual = true, Recv = E(new BirThis()),
-                Method = member, Sig = Array.Empty<TypeNode>(), Ret = BirGraphValue.CopyType(result), Args = Array.Empty<IBirExpression>(),
-            })]);
+            [SourceReturn(result)]);
         raw.Generated = true;
         raw.ClrInterfaceImpls = new[] { SourceDescriptor(new TypeNode.Fqn(IEnumerable), GetEnumeratorName, new TypeNode.Fqn(IEnumerator)) };
         return raw;

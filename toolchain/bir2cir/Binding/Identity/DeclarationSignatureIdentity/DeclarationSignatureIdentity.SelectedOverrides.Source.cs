@@ -88,7 +88,9 @@ static partial class DeclarationSignatureIdentity
                         openParameters = selected.Method.Params.Value.Select(parameter => parameter.Type.OrDefault()).ToArray();
                         openReturn = selected.Method.Ret.OrDefault();
                     }
-                    else if (refs?.TryDeclarationSignatureSlot(id, out var referenced) == true)
+                    // The source identity may designate a nonvirtual forwarding entry.
+                    // A nonvirtual or final facade is not the overridable MethodDef.
+                    else if (refs?.TryDeclarationSignatureSlot(id, out var referenced, requireOverridable: true) == true)
                     {
                         selectedOwnerName = referenced.Owner; selectedInterface = referenced.IsInterface;
                         name = referenced.Name; arity = referenced.Arity; openParameters = referenced.Parameters;
@@ -103,6 +105,7 @@ static partial class DeclarationSignatureIdentity
                     {
                         var arguments = selectedOwner.Args ?? Array.Empty<TypeNode>();
                         BindSlot(file, owner, method, new BirMethodImpl {
+                            LocalOverrideTargets = selected.Method == null ? null : new[] { id },
                             Owner = BirGraphValue.CopyType(selectedOwner), Member = name, Arity = arity,
                             Params = openParameters.Select(type => SupertypeGraph.SubstOwnerTvs(type, arguments)).ToArray(),
                             Ret = SupertypeGraph.SubstOwnerTvs(openReturn, arguments),

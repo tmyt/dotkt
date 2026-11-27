@@ -6,12 +6,32 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - Calling an already-compatible CLR callback from Kotlin now checks array arguments before entering native code, without copying them (#1999).
+- A Kotlin override of a mutable CLR property on a star-projected generic base now dispatches both reads and writes to the Kotlin accessor (#2064).
+- A Kotlin type parameter bounded by a constructed Kotlin class can be used as a CLR reference-type argument without losing the original value (#2065).
+- Passing a nested native collection through a generic Kotlin helper preserves the original collection and its elements when the element type contains a star projection (#1956).
+- Generic Kotlin helpers can take a star-projected mutable list and an independently constructed list without requiring identical CLR storage types (#1963).
+- A suspend override can forward a CLR function pointer unchanged while specializing another parameter of a generic base method from a different assembly (#2035).
+- Kotlin can receive a reference from a projected CLR generic call even when another argument must stay stack-only, without losing the returned object's identity (#1942).
+- Kotlin can construct a class-constrained CLR container with a star-projected element and read back the values written to it (#1954).
+- Virtual calls from a CLR base class reach the Kotlin override when the base's type argument is a star-projected Kotlin class (#2060).
+- A projected generic Kotlin interface can return `CharSequence` from a suspend method across DLLs. Kotlin callers retain the returned value across suspension, and CLR callers can await the interface's declared task (#2046).
+- A suspend override implementing two generic Kotlin interfaces from another assembly can be called through either interface even when their generic constraints differ (#2056).
+- Overriding a CLR base's projected `iterator()` in Kotlin also supplies its non-generic `IEnumerable.GetEnumerator()` implementation (#2004).
 - Passing a smart-cast local such as an `Any` narrowed to `String` as a writable reference to the narrower type is now diagnosed instead of silently writing to a copy (#1965).
 - Overriding one inherited CLR default interface member in Kotlin preserves the native base's explicit implementation of its other members (#2013).
 - Kotlin overrides of an overloaded CLR interface default now dispatch through the constructed interface without redirecting its other overloads (#2021).
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).
 - A Kotlin class can implement both constructions of the same generic suspend interface inherited through a CLR interface (#2009).
+- A separately compiled Kotlin abstract class can dispatch erased-colliding generic suspend overloads to a derived implementation (#2040).
+- A shared suspend override can take its interfaces' constructed owner type as a parameter even when their generic constraints differ (#2050).
+- Kotlin classes can implement an interface with generic suspend overloads that erase to the same CLR signature, whether the interface is imported from another assembly (#2019) or declared in the same module (#2038).
+- A projected generic suspend interface call from .NET returns the interface's declared `Task<T>` even when the Kotlin override returns a narrower value (#2044).
 - Constructing a star-projected Kotlin class preserves its suspend overrides when called through a generic interface from another DLL (#2015).
+- A generic suspend call on a star-projected interface keeps the separate CLR class and interface witnesses required by its method argument (#2049).
+- A suspend override returning its bounded class type parameter can be called through its interface when the class also stores that parameter (#2024).
+- A suspend override returning a value type now returns a valid Task through its concrete, generic base, and interface declarations (#2031).
+- Calling a suspend override through its CLR base class now runs the derived body when it returns a narrower class (#2034).
+- Kotlin can implement a suspend interface method returning `CharSequence` when the interface comes from another DLL (#2052).
 - Implementing a derived CLR interface no longer adds private forwarding methods for inherited slots already implemented by the selected native base method (#1984).
 - Kotlin callbacks returning `Unit` can be passed to wide CLR delegates that require a `kotlin.Unit` return value, as well as delegates returning `void` (#1946).
 - Passing a CLR delegate through Kotlin now adapts variant inputs and results that require boxing, including nested delegates (#1953).
@@ -26,6 +46,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A top-level `main` renamed with `@ClrName` remains the executable entry point, including when it is a suspend function (#1933).
 - Storing the result of an `is` check against a star-projected Kotlin class from another DLL now preserves the Boolean result (#1983).
 - Direct CLR constructor calls now adapt stored Kotlin functions to the selected delegate parameter (#1952).
+- CLR attribute applications select one public constructor. Positional arguments bind only to its parameters; fields and properties must be supplied by name, including on overloaded attributes (#1986).
 - Kotlin subclasses can iterate CLR base classes that implement non-generic `IEnumerable` without declaring their own `iterator()` (#1985).
 - A Kotlin override now receives calls through a reimplemented CLR interface even when a base class explicitly implemented its inherited slot (#2007).
 - Overriding a CLR class method in Kotlin no longer replaces the base class's explicit interface implementation just because the interface also declares a default body (#2011).

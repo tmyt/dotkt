@@ -9,7 +9,8 @@ static partial class KotlinOverrideSlotBridge
         TypeNode[] Parameters, TypeNode Return, OverrideMethod Implementation, BirTypeParameter[] TypeParameters,
         bool UnitValueReturn = false, TypeNode[] Signature = null, string ReferenceMember = null,
         TypeNode SemanticReturn = null, OverrideMethod SelectedLocal = null, string SelectedReferencedDeclarationId = null,
-        System.Reflection.MethodInfo NativeInterfaceMethod = null);
+        System.Reflection.MethodInfo NativeInterfaceMethod = null, TypeNode[] NativeBaseParameterViews = null,
+        System.Reflection.MethodInfo NativeBaseMethod = null);
 
     static string SelectedSlotKey(SelectedSlot slot)
     {
@@ -84,7 +85,11 @@ static partial class KotlinOverrideSlotBridge
                 var slotParams = rawSlotParams
                     .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(
                         DeclaredSlot(t, isValue, physical: phase == Phase.PhysicalBridges), supArgs)).ToArray();
-                var slotRet0 = slot.Return;
+                // A base declaration can keep its Kotlin return T but complete Task<object>
+                // to implement an ancestor. Build the adapter before the Task body is emitted.
+                var slotRet0 = phase == Phase.SuspendValueBridges
+                    && !IsVoid(slot.Return) && !IsUnitValueSlot(slot.Return)
+                    ? slot.Source?.SuspendTaskResult.OrDefault() ?? slot.Return : slot.Return;
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
                     DeclaredSlot(slotRet0, isValue, physical: phase == Phase.PhysicalBridges), supArgs);
@@ -267,6 +272,17 @@ static partial class KotlinOverrideSlotBridge
                 // exact physical CLR slot independently of the implementation MethodDef name.
                 var overrideKind = o.Kind;
                 var accessorKind = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
+                // Resolve the declaration before two distinct Kotlin applications can become
+                // the same carrier. A fake override on an intermediate type is not a MethodDef.
+                if (phase == Phase.DeclarationMoves && !supIsInterface && o.Row != null && !refs.HasDotKtOwner(owner.Name)
+                    && !o.Row.ProjectedNativeBase.Selected && (accessorKind != null || FBoundStarProjectionErasure.ContainsExistentialProjection(owner))
+                    && refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is { IsInterface: false } open)
+                    o.Row.ProjectedNativeBase = (true, accessorKind == null
+                        ? refs.SelectProjectedNativeBase(open, o.Row.NativeMethodKey.OrDefault())
+                        : refs.SelectNativePropertyOverride(open, owner, member, accessorKind, ps.Select(p => p.Type).ToArray()));
+                var nativeSelection = o.Row?.ProjectedNativeBase ?? default;
+                if (nativeSelection.Selected && (supIsInterface || nativeSelection.Method == null
+                    || refs.ResolveNetType(spec.Name, supArgs.Length) != nativeSelection.Method.DeclaringType)) continue;
                 // dll2klib preserves every flattened property override owner even when the emitted CLR interface
                 // hierarchy cannot preserve the semantic @ClrTypeAlias edge (Collection -> IReadOnlyCollection).
                 // That exact frontend-selected owner is sufficient for a property slot. Ordinary methods need
@@ -294,6 +310,12 @@ static partial class KotlinOverrideSlotBridge
                     selectedSlotSpec = owner;
                 }
                 var selectedSlotArgs = selectedSlotSpec.Args ?? Array.Empty<TypeNode>();
+                // For a native class the authored override and the single reached
+                // base can close the same MethodDef at different representations.
+                // Select the overload in the former frame, emit its slot in the latter.
+                var lookupArgs = phase == Phase.PhysicalBridges && !supIsInterface && (accessorKind == null || nativeSelection.Method != null)
+                    && !refs.HasDotKtOwner(spec.Name) && SupertypeGraph.SameDeclaration(spec, owner, refs.PhysicalTypeNames)
+                    ? owner.Args ?? Array.Empty<TypeNode>() : selectedSlotArgs;
                 // A referenced interface can redeclare a Kotlin property while its flattened override facts also name
                 // an inherited semantic declaration whose CLR slot has a different identity. Resolve each property
                 // marker against the declaration OWNER it names, not only against the directly-listed interface spec:
@@ -380,15 +402,32 @@ static partial class KotlinOverrideSlotBridge
                         semanticConstraints: semanticSelection,
                         selectedDeclarationId: o.DeclarationId))
                     continue;
-                if (suspendValues)
+                if (phase == Phase.PhysicalBridges && nativeSelection.Method is { } selectedNative)
                 {
-                    if (accessorKind != null || !refs.TrySelectedOverrideDeclarationByShape(
+                    signatureParameters = ClrMemberReferences.RefParamsOf(refs, null, selectedNative);
+                    slotParams0 = signatureParameters.Select(SignatureValueTypes.Of).ToArray();
+                    slotRet0 = ClrMemberReferences.RefReturnOf(refs, null, selectedNative);
+                    selectedSlotTypeParams = selectedNative.GetGenericArguments().Select(v =>
+                        ReferenceMetadataReader.GenericParamDeclaration(v, native: true)).ToArray();
+                    selectedPhysicalMember = selectedNative.Name;
+                    slotReturnsValue = !IsVoid(slotRet0);
+                    refused = null;
+                }
+                else if (suspendValues)
+                {
+                    var suspendDeclaration = selectedClassDeclaration;
+                    if (accessorKind != null || suspendDeclaration == null && !refs.TrySelectedOverrideDeclarationByShape(
                         spec.Name, member, null, methodArity, implementationSignature, supArgs,
-                        MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out var suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
+                        MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
                         continue;
-                    // The selected suspend declaration supplies its logical open return independently from its
-                    // already-emitted Task signature. Decide value-ness before closing the owner's type arguments.
+                    // The hot MethodDef states the completion type. Retain the logical result
+                    // when it already has that representation (notably nullable Unit).
                     slotRet0 = suspendDeclaration.Return;
+                    if (suspendDeclaration.PhysicalReturn is TypeNode.Fqn { Args: [var completion] } task
+                        && ReferenceMetadataReader.StripGenericArity(task.Name) == "System.Threading.Tasks.Task"
+                        && !BirTypeLowering.SamePhysicalSlotType(slotRet0, completion, refs.Aliases, isValue,
+                            refs.PhysicalTypeNames, returnPosition: false, nullableFrames: refs.NullableTypeFrames))
+                        slotRet0 = completion;
                     slotParams0 = suspendDeclaration.PhysicalParameters;
                     signatureParameters = suspendDeclaration.SignatureParameters;
                     refused = null;
@@ -423,7 +462,7 @@ static partial class KotlinOverrideSlotBridge
                             out slotRet0, out slotParams0, out refused, includeUnchanged: true)
                         : refs.TrySelectedNullableGenericSlotByShape(selectedSlotSpec.Name, member, isStatic: false, ps.Length, methodArity,
                             implementationSignature, bindingReturn,
-                            selectedSlotArgs,
+                            lookupArgs,
                             MethodTypeParameterShapeKey(phase == Phase.DeclarationMoves ? AuthoredParameters(impl) : impl.TypeParameters, ownArgs,
                                 phase == Phase.DeclarationMoves ? null : refs.PhysicalConstraintType),
                             out slotRet0, out slotParams0, out refused,
@@ -598,7 +637,11 @@ static partial class KotlinOverrideSlotBridge
                     nativeOwner != null && !descriptorIsInterface && slotRet0 != null
                         ? SupertypeGraph.SubstOwnerTvs(slotRet0, selectedArgs) : null,
                     SelectedReferencedDeclarationId: selectedClassDeclaration?.DeclarationId ?? o.DeclarationId,
-                    NativeInterfaceMethod: selectedInterfaceMethod));
+                    NativeInterfaceMethod: selectedInterfaceMethod,
+                    NativeBaseMethod: nativeSelection.Method,
+                    NativeBaseParameterViews: !lookupArgs.SequenceEqual(selectedSlotArgs)
+                        ? slotParams0.Select(type => type is TypeNode.Tv { Scope: "type" } tv
+                            ? lookupArgs[tv.I] : null).ToArray() : null));
                 // Flattened property override facts can name several distinct CLR obligations (a redeclared Kotlin
                 // accessor and its aliased BCL ancestor). Let each exact owner contribute its descriptor; the common
                 // Fill/AddImplDescriptor path deduplicates genuinely identical rows. Ordinary methods retain their

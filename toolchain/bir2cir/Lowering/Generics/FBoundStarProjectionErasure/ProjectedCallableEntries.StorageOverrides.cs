@@ -105,7 +105,7 @@ sealed partial class ProjectedCallableEntries
                     // Its ordinary facade supplies its own proof to its projected slot.
                     var rows = parentEntry.Original.Select(p => CapturedGenericInvocation.CloneParameter(p,
                         t => SupertypeGraph.SubstOwnerTvs(t, f.Args ?? []))).ToArray();
-                    var facade = NewInterfaceForwarder(storage, body, descriptor, rows);
+                    var facade = NewSlotForwarder(storage, body, descriptor, rows, isInterface: true);
                     var companion = Descriptor(projectedSlot, f);
                     var callee = new BirFunctionDeclaration { Name = projectedSlot.Name, Ret = companion.Ret,
                         Params = companion.Params.Value.Select(t => new BirParameter { Type = t }).ToArray() };
@@ -128,6 +128,8 @@ sealed partial class ProjectedCallableEntries
                         // that this interface, unlike the implementation, does not expose.
                         target = selected;
                         selectedPlan = Find(exactId).Plan.OnOwner(application.Args ?? []);
+                        if (CompletionInvocation(selected.Body.OrEmpty()) is { } call && call.OwnerType.OrDefault() is { } before && Key(before) == Key(application))
+                            WireCompletionInvocation(call, selected, f, selectedPlan, slotId);
                         break;
                     }
                 if (target == null) throw new InvalidOperationException($"No compatible implementation of projected storage slot '{slot.Owner}.{slot.Name}'");
@@ -140,7 +142,7 @@ sealed partial class ProjectedCallableEntries
                     if (contract.ForwardTo(destination, references.WitnessConstraintKey) is { } arguments)
                     {
                         target.ClrInterfaceImpls = target.ClrInterfaceImpls.OrEmpty().Where(r => !IsSlot(r, slot, f)).ToArray();
-                        AddInterfaceForwarder(storage, target, descriptor, contract, arguments);
+                        AddSlotForwarder(storage, target, descriptor, contract, arguments, isInterface: true, slotId);
                         continue;
                     }
                 }

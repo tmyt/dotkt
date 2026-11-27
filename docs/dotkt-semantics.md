@@ -774,6 +774,11 @@ Kotlin-generated APIs can therefore expose `object` to C# where their source dec
 `System.Attribute` signatures remain exact. Like the other declaration-owned union classifiers below, this does
 not implement full Kotlin reflection: `Annotation::class` names its physical alias, `System.Object`.
 
+In a native CLR annotation application, positional arguments fill only the selected primary
+constructor's parameters. Assign a writable field or property by name: if the selected constructor
+is parameterless, `@A(Name = "x")` is valid but `@A("x")` is not. Ordinary expressions such as
+`A("x")` call a real CLR constructor and do not assign annotation members.
+
 String arguments serialized into CLR custom-attribute metadata use native SerString (UTF-8).
 An unpaired UTF-16 surrogate is observed as U+FFFD, matching a same-target C# attribute application.
 This metadata limitation does not apply to ordinary runtime strings, UTF-16 literal field constants,
@@ -1294,6 +1299,14 @@ ordinary type argument is the opaque `List<String>` value representation. Alloca
 they do not copy the array or its elements. Nullable generic representations remain a separate declaration-owned
 contract. Map's invariant outer construction is handled by §5c, not by changing the type of its contained lists.
 
+An explicitly imported CLR generic type is different from a Kotlin collection alias.
+For example, if `Row` names `System.Collections.Generic.List<Crate<*>>`, passing a
+`Row` through a scalar identity function preserves the original object, including
+after an unchecked Kotlin cast. Constructing a CLR `List<Row>`, on the other hand,
+requires a concrete CLR element type. A generic call that reads or writes through
+that invariant list must use the same element type as the list; it does not copy or
+retype the list. A value incompatible with the actual CLR storage cannot be written.
+
 ## 5c-ter. Physical collection conversions must preserve source semantics
 
 CLR `IList<T>` and `IReadOnlyList<T>` do not inherit from one another. bir2cir must resolve the physical conversion
@@ -1355,6 +1368,10 @@ fun inspect(directory: DirectoryInfo) {
 Enumeration evaluates the source once, obtains one enumerator, and requests elements lazily through
 `MoveNext`/`Current`. Native exceptions propagate normally. Native source declarations retain their CLR types
 rather than being rewritten to Kotlin `Iterable` or `Sequence`; iteration adds no new runtime classifier rules.
+A Kotlin override of the projected raw `iterator()` also supplies the non-generic CLR enumeration slot,
+unless the subclass implements `GetEnumerator()` itself. A call to `super.iterator()` needs an accessible,
+concrete base implementation: a private explicit `IEnumerable.GetEnumerator()` can be called through the
+interface, but not as a base call. When no such base implementation is accessible, compilation fails.
 The protocol does not add automatic `Dispose` on completion, exception or early exit.
 For resource-owning enumeration, explicitly acquire the native enumerator and dispose it in `finally`;
 the inherited non-generic `MoveNext` surface can be accessed as `System.Collections.IEnumerator`.

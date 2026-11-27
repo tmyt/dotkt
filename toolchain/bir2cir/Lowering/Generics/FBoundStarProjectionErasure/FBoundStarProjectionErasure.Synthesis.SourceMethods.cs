@@ -67,7 +67,8 @@ static partial class FBoundStarProjectionErasure
                 Enumerable.Range(0, owner.Arity).Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray())),
             Virtual = method.Virtual.OrDefault() || method.Abstract.OrDefault(),
             Recv = OptionalField<IBirExpression>.Of(new BirThis()), Method = method.Name,
-            Sig = signature.ToArray(), Ret = BirGraphValue.CopyType(originalRet), Args = arguments.ToArray(),
+            Sig = signature.ToArray(), Ret = BirGraphValue.CopyType(method.SuspendRet.OrDefault() ?? originalRet),
+            Args = arguments.ToArray(),
             _exactExistentialBridgeOwnerCall = true, ClrOwnerResolved = true,
         };
         if (method.DeclarationId.HasValue) call.DeclarationId = method.DeclarationId;
@@ -129,6 +130,9 @@ static partial class FBoundStarProjectionErasure
             var copy = (BirTypeParameter)parameter.DeepClone();
             if (!parameter.Constraints.HasValue) return copy;
             var erased = new List<TypeNode>();
+            TypeNode ProjectBound(TypeNode source, TypeNode target) =>
+                IsRepresentationCompanion(method.NullableRepresentationFrame.OrDefault(), index) ? target
+                    : context.Projection.PreserveReferenceBound(copy, source, target);
             foreach (var original in parameter.Constraints.Value)
             {
                 var physical = context.NativeProofs.IsPhysicalConstraint(binding, index, original);
@@ -136,14 +140,15 @@ static partial class FBoundStarProjectionErasure
                 if (ContainsOwnerTv(bound) || OwnerConstrainedMethodLowering.HasConstructedDependency(bound, "method", index,
                     method.NullableRepresentationFrame.OrDefault(), context.References))
                 {
-                    if (PhysicalBoundClassifier(bound, context.Projection) is { } classifier && !erased.Contains(classifier)) erased.Add(classifier);
+                    if (PhysicalBoundClassifier(bound, context.Projection) is { } classifier && !erased.Contains(classifier))
+                        erased.Add(ProjectBound(original, classifier));
                     foreach (var consequence in ContainsOwnerTv(bound)
                         ? OwnerConstrainedMethodLowering.IndependentBounds(bound, ownerParameters) : Enumerable.Empty<TypeNode>())
                         if (!IsObjectish(consequence) && !erased.Contains(consequence)) erased.Add(consequence);
                     continue;
                 }
                 var result = physical ? bound : EraseOwnerTv(bound, context.Owners, context.References);
-                if (!IsObjectish(result)) erased.Add(result);
+                if (!IsObjectish(result)) erased.Add(ProjectBound(original, result));
             }
             foreach (var proof in context.NativeProofs.Bounds(binding, index).Where(proof => !ContainsOwnerTv(proof)))
                 if (!erased.Any(row => context.References.PhysicalConstraintType(row) == context.References.PhysicalConstraintType(proof))) erased.Add(proof);
@@ -157,6 +162,7 @@ static partial class FBoundStarProjectionErasure
         OptionalField<TypeNode> Project(OptionalField<TypeNode> fact) => fact.HasValue
             ? OptionalField<TypeNode>.Of(BirGraphValue.CopyType(EraseOwnerTv(fact.Value, context.Owners, context.References))) : default;
         target.SuspendRet = Project(source.SuspendRet);
+        target.SuspendTaskResult = Project(source.SuspendTaskResult);
         target.SuspendResult = Project(source.SuspendResult);
         target.NullableGenericRet = Project(source.NullableGenericRet);
         target.NullableGenericSuspendRet = Project(source.NullableGenericSuspendRet);

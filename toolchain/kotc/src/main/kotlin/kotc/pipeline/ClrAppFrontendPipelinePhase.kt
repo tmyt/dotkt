@@ -104,7 +104,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		val (librariesScope, incrementalCompilationContext) = prepareIncrementalCompilationContextAndLibrariesScope(
 			configuration, projectEnvironment, incrementalExcludesScope = null,
 		)
-		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar
+		val extensionRegistrars = configuration.getCompilerExtensions(FirExtensionRegistrar) + ClrStaticStatusRegistrar + ClrAttributeArguments.Registrar
 		val ktFiles = environment.getSourceFiles()
 		val sourceFiles = ktFiles.map { KtPsiSourceFile(it) }
 

@@ -528,6 +528,7 @@ internal sealed record CapturedGenericArgument : BirGraphValue
 {
     public OptionalField<int> Argument { get; set; }
     public OptionalField<int[]> OwnerPositions { get; set; }
+    public OptionalField<int[]> AppliedPositions { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
     {
     }
@@ -568,12 +569,14 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     public override BirGraphValue DeepClone() => this with
     {
         OwnerPositions = OwnerPositions.HasValue ? OptionalField<int[]>.Of(OwnerPositions.Value.Select(item0 => item0).ToArray()) : OwnerPositions,
+        AppliedPositions = AppliedPositions.HasValue ? OptionalField<int[]>.Of(AppliedPositions.Value.Select(item0 => item0).ToArray()) : AppliedPositions,
     };
     public override BirGraphValue DeepClone(Action<BirGraphValue, BirGraphValue> born)
     {
         var result = this with
         {
             OwnerPositions = OwnerPositions.HasValue ? OptionalField<int[]>.Of(OwnerPositions.Value.Select(item0 => item0).ToArray()) : OwnerPositions,
+            AppliedPositions = AppliedPositions.HasValue ? OptionalField<int[]>.Of(AppliedPositions.Value.Select(item0 => item0).ToArray()) : AppliedPositions,
         };
         born(this, result);
         return result;
@@ -612,12 +615,14 @@ internal sealed record CapturedGenericArgument : BirGraphValue
     public override bool StructurallyEquals(BirGraphValue other)
         => other is CapturedGenericArgument value
             && EqualField(Argument, value.Argument, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
-            && EqualField(OwnerPositions, value.OwnerPositions, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)));
+            && EqualField(OwnerPositions, value.OwnerPositions, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)))
+            && EqualField(AppliedPositions, value.AppliedPositions, (left, right) => EqualItems(left, right, (left0, right0) => EqualityComparer<int>.Default.Equals(left0, right0)));
     public override void WriteJson(Utf8JsonWriter writer)
     {
         writer.WriteStartObject();
         WriteOptional(writer, "argument", Argument, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "ownerPositions", OwnerPositions, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
+        WriteOptional(writer, "appliedPositions", AppliedPositions, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { writer.WriteNumberValue(item0); } writer.WriteEndArray(); });
         writer.WriteEndObject();
     }
     public override JsonObject ToDom(Action<BirGraphValue, JsonObject>? projected = null)
@@ -625,6 +630,7 @@ internal sealed record CapturedGenericArgument : BirGraphValue
         var result = new JsonObject();
         if (Argument.IsPresent) result["argument"] = Argument.IsNull ? null : JsonValue.Create(Argument.Value);
         if (OwnerPositions.IsPresent) result["ownerPositions"] = OwnerPositions.IsNull ? null : new JsonArray(OwnerPositions.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
+        if (AppliedPositions.IsPresent) result["appliedPositions"] = AppliedPositions.IsNull ? null : new JsonArray(AppliedPositions.Value.Select(item0 => (JsonNode?)(JsonValue.Create(item0))).ToArray());
         projected?.Invoke(this, result);
         return result;
     }
@@ -5386,11 +5392,13 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
 
 internal sealed record BirOverride : BirGraphValue
 {
+    internal (bool Selected, System.Reflection.MethodInfo? Method) ProjectedNativeBase { get; set; }
     public OptionalField<TypeNode> Owner { get; set; }
     public OptionalField<string> Member { get; set; }
     public OptionalField<string> Kind { get; set; }
     public OptionalField<int> Arity { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public OptionalField<string> PhysicalDeclarationId { get; set; }
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -5421,6 +5429,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Member.HasValue) { visit((string)Member.Value); }
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
         if (PhysicalDeclarationId.HasValue) { visit((string)PhysicalDeclarationId.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
@@ -5498,6 +5507,7 @@ internal sealed record BirOverride : BirGraphValue
             && EqualField(Kind, value.Kind, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Arity, value.Arity, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(DeclarationId, value.DeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(PhysicalDeclarationId, value.PhysicalDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5507,6 +5517,7 @@ internal sealed record BirOverride : BirGraphValue
         WriteOptional(writer, "kind", Kind, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "arity", Arity, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "physicalDeclarationId", PhysicalDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
@@ -5518,6 +5529,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Kind.IsPresent) result["kind"] = Kind.IsNull ? null : JsonValue.Create(Kind.Value);
         if (Arity.IsPresent) result["arity"] = Arity.IsNull ? null : JsonValue.Create(Arity.Value);
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         if (PhysicalDeclarationId.IsPresent) result["physicalDeclarationId"] = PhysicalDeclarationId.IsNull ? null : JsonValue.Create(PhysicalDeclarationId.Value);
         projected?.Invoke(this, result);
         return result;
@@ -6365,6 +6377,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
 {
     internal override string? SelectedGenericCallable { get; set; }
     internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
+    internal bool TaskBridgeColdInvocation { get; set; }
     public override string Tag => "callInstance";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
@@ -10111,6 +10124,7 @@ internal sealed record BirAttribute : BirGraphValue
     public OptionalField<TypeNode[]> ArgTypes { get; set; }
     public OptionalField<IBirAttributeValue[]> Args { get; set; }
     public OptionalField<BirAttributeNamedArgument[]> NamedArgs { get; set; }
+    public OptionalField<string> ConstructorNativeKey { get; set; }
     public OptionalField<bool> AttrExternal { get; set; }
     public OptionalField<string> AttrAssembly { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
@@ -10150,6 +10164,7 @@ internal sealed record BirAttribute : BirGraphValue
     {
         if (Attr.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Attr.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
+        if (ConstructorNativeKey.HasValue) { visit((string)ConstructorNativeKey.Value); }
         if (AttrAssembly.HasValue) { visit((string)AttrAssembly.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
@@ -10270,6 +10285,7 @@ internal sealed record BirAttribute : BirGraphValue
             && EqualField(ArgTypes, value.ArgTypes, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(Args, value.Args, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(NamedArgs, value.NamedArgs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ConstructorNativeKey, value.ConstructorNativeKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(AttrExternal, value.AttrExternal, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(AttrAssembly, value.AttrAssembly, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(MemberRef, value.MemberRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -10281,6 +10297,7 @@ internal sealed record BirAttribute : BirGraphValue
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "namedArgs", NamedArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "constructorNativeKey", ConstructorNativeKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "attrExternal", AttrExternal, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "attrAssembly", AttrAssembly, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -10294,6 +10311,7 @@ internal sealed record BirAttribute : BirGraphValue
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (NamedArgs.IsPresent) result["namedArgs"] = NamedArgs.IsNull ? null : new JsonArray(NamedArgs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ConstructorNativeKey.IsPresent) result["constructorNativeKey"] = ConstructorNativeKey.IsNull ? null : JsonValue.Create(ConstructorNativeKey.Value);
         if (AttrExternal.IsPresent) result["attrExternal"] = AttrExternal.IsNull ? null : JsonValue.Create(AttrExternal.Value);
         if (AttrAssembly.IsPresent) result["attrAssembly"] = AttrAssembly.IsNull ? null : JsonValue.Create(AttrAssembly.Value);
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom(projected);
@@ -11198,6 +11216,8 @@ internal sealed record BirDeclarationPosition : BirGraphValue
 
 internal sealed record BirFunctionDeclaration : BirGraphValue
 {
+    internal object? OverrideAdapterGroup { get; set; }
+    internal (string Implementation, string Slot)? ProjectedTaskView { get; set; }
     internal IReadOnlyList<string>? SelectedGenericOverrides { get; set; }
     internal IReadOnlyList<(string Id, TypeNode.Fqn Owner)>? ConstructedOverrideOwners { get; set; }
     internal ExistentialCallableRole ExistentialCallable { get; set; }
@@ -11206,6 +11226,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     internal bool SourceCallableVirtual { get; set; }
     internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }
+    internal IReadOnlyDictionary<string, string>? OverrideRepresentationDeclarations { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }
     internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }
     internal int FacadeModalityFlags { get; set; }
@@ -35724,6 +35745,7 @@ internal sealed record BirPInvoke : BirGraphValue
 
 internal sealed record BirMethodImpl : BirGraphValue
 {
+    internal IReadOnlyList<string>? LocalOverrideTargets { get; set; }
     public OptionalField<TypeNode> Owner { get; set; }
     public OptionalField<string> Member { get; set; }
     public OptionalField<int> Arity { get; set; }

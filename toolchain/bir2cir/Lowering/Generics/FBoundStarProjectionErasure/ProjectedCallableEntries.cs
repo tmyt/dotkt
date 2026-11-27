@@ -17,6 +17,7 @@ sealed partial class ProjectedCallableEntries
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
     readonly Dictionary<string, ReferencedDeclarationSlot> localSlots = new(StringComparer.Ordinal);
+    readonly HashSet<string> exactFacades = new(StringComparer.Ordinal);
     readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
@@ -130,28 +131,31 @@ sealed partial class ProjectedCallableEntries
                             if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
                                 RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
                                     source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
-                                    source.Method.Ret.Value, true, false));
+                                    source.Method.Ret.Value, true, false), id);
                             else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
-                                references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade);
+                                references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade, id);
                         }
-                        var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
-                        if (entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
+                    }
+                    var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
+                    if (slot.IsInterface && entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
                             references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound))))
-                        {
-                            DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
-                            continue;
-                        }
-                        var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
-                        TypeNode PhysicalSlot(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, references);
-                        if (owner.Kind.OrDefault() == "interface" ||
-                            !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(p.Type.Value)))
-                            || PhysicalSlot(descriptor.Ret.Value) != PhysicalSlot(method.Ret.Value))
-                            arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
-                        if (arguments != null)
-                        {
-                            AddInterfaceForwarder(owner, method, descriptor, contract, arguments);
-                            continue;
-                        }
+                    {
+                        DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
+                        continue;
+                    }
+                    var arguments = contract.ForwardTo(entry.Plan, references.WitnessConstraintKey);
+                    TypeNode PhysicalSlot(TypeNode t) => ClrMemberResolution.MethodImplComparisonType(t, references);
+                    if (owner.Kind.OrDefault() == "interface" ||
+                        !descriptor.Params.Value.Select(PhysicalSlot).SequenceEqual(method.Params.OrEmpty().Select(p => PhysicalSlot(FunctionSignatureIdentity.SignatureType(p))))
+                        || PhysicalSlot(descriptor.Ret.Value) != PhysicalSlot(method.Ret.Value))
+                        arguments ??= Enumerable.Range(0, contract.Parameters.Length).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+                    if (arguments != null)
+                    {
+                        AddSlotForwarder(owner, method, descriptor, contract, arguments, slot.IsInterface, id);
+                        continue;
+                    }
+                    if (slot.IsInterface)
+                    {
                         // A final Kotlin method can fill a carrier slot directly.
                         // MethodImpl needs a virtual body, not a new override point.
                         if (!method.Virtual.OrDefault()) { method.Virtual = true; method.ClrFinal = true; }
@@ -172,17 +176,81 @@ sealed partial class ProjectedCallableEntries
         => SupertypeGraph.SelectedOverrideOwners(hierarchy[owner.Name.Value], hierarchy, references,
             method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
-    void AddInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
-        ProjectedMethodPlan contract, TypeNode[] arguments)
+    void AddSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
+        ProjectedMethodPlan contract, TypeNode[] arguments, bool isInterface, string id)
     {
-        // Independently published interfaces can order the same witnesses
-        // differently. Their MethodImpls forward to the same Kotlin body.
-        var bridge = NewInterfaceForwarder(owner, target, descriptor, contract.CloneParameters());
-        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, target, arguments);
+        // The MethodImpl keeps the selected declaration's ABI. Dispatch to the
+        // Kotlin body with its own value parameters and witness ordering.
+        var bridge = NewSlotForwarder(owner, target, descriptor, contract.CloneParameters(), isInterface);
+        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :
+            isInterface && NeedsTaskView(target, descriptor.Ret.Value, arguments)
+                ? ProjectedTaskBody(owner, bridge, target, (TypeNode.Fqn)descriptor.Owner.Value, contract, id)
+                : ForwardBody(owner, bridge, target, arguments);
     }
 
-    static BirFunctionDeclaration NewInterfaceForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
-        BirMethodImpl descriptor, BirTypeParameter[] parameters)
+    // Only an authored suspend bridge materializes a completed value; an ordinary
+    // Kotlin method returning Task<T> must retain that task and its identity.
+    static bool NeedsTaskView(BirFunctionDeclaration target, TypeNode result, TypeNode[] arguments) =>
+        target.SuspendBridge.OrDefault() && result is TypeNode.Fqn { Args.Length: 1 } &&
+        result != FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(target.Ret.Value, [], arguments);
+
+    IBirStatement[] ProjectedTaskBody(IBirTypeDeclaration owner, BirFunctionDeclaration bridge, BirFunctionDeclaration target,
+        TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
+    {
+        var implementation = target.LocalBodyEntry?.Id ?? target.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
+        var completion = ((TypeNode.Fqn)bridge.Ret.Value).Args.Single();
+        bool text = StringCharSequenceBridge.CanRestoreMaterializedValue(new TypeNode.Fqn("kotlin.Any"), completion);
+        var template = owner.Methods.Value.Single(m => m.ProjectedTaskView is { } view && view == (implementation, id) &&
+            m.Ret.OrDefault() is TypeNode.Fqn { Args: [var result] } && (text ? result == completion : result is TypeNode.Tv));
+        var body = template.Body.Value.Select(s => (IBirStatement)((BirGraphValue)s).DeepClone()).ToArray();
+        if (((TypeNode.Fqn)template.Ret.Value).Args[0] is TypeNode.Tv variable)
+            foreach (var s in body) TypedExecutableFrames.RewriteDeclarationFrameInPlace((BirGraphValue)s,
+                t => TypedExecutableFrames.RewriteType(t, v => v == variable ? completion : v));
+        var call = CompletionInvocation(body) ?? throw new InvalidOperationException("Missing cold call in suspend completion view");
+        WireCompletionInvocation(call, bridge, instance, contract, id);
+        return body;
+    }
+
+    static BirCallInstance CompletionInvocation(IBirStatement[] body)
+    {
+        BirCallInstance call = null;
+        foreach (var s in body) ((BirGraphValue)s).Visit(n => {
+            if (n is BirCallInstance { TaskBridgeColdInvocation: true } c)
+            {
+                if (call != null) throw new InvalidOperationException("Ambiguous cold call in suspend completion view");
+                call = c;
+            }
+        });
+        return call;
+    }
+
+    void WireCompletionInvocation(BirCallInstance c, BirFunctionDeclaration bridge, TypeNode.Fqn instance, ProjectedMethodPlan contract, string id)
+    {
+        var coldId = id + "|cold";
+        var projection = contract == null ? null : Find(coldId);
+        var physicalId = projection == null ? coldId : EntryId(coldId);
+        ReferencedDeclarationSlot cold = null;
+        if (projection != null) localSlots.TryGetValue(coldId, out cold);
+        else if (originalSlots.TryGetValue(coldId, out var original))
+            cold = new(original.Owner.Name.Value, original.Method.Name.Value, original.Method.TypeParams.OrEmpty().Length,
+                original.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(), original.Method.Ret.Value, true, false);
+        bool local = cold != null;
+        if (!local && !references.TryDeclarationSignatureSlot(physicalId, out cold))
+            throw new InvalidOperationException("Projected suspend interface declaration lacks its cold slot");
+        var selected = local ? null : references.SelectedPhysicalMethod(physicalId);
+        var actual = (projection == null ? null : contract.ForwardTo(projection.Plan.OnOwner(instance.Args ?? []), references.WitnessConstraintKey)) ??
+            Enumerable.Range(0, cold.Arity).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+        var continuation = c.Args.Value[^1];
+        c.OwnerType = instance; c.Recv = new BirThis(); c.Method = cold.Name; c.Virtual = true;
+        c.TypeArgs = actual; c.Sig = cold.Parameters.Select(t => SupertypeGraph.SubstOwnerTvs(t, instance.Args ?? [])).ToArray();
+        c.CalleeParams = cold.Parameters; c.CalleeRet = cold.Return;
+        c.MemberRef = selected == null ? default(OptionalField<BirMemberReference>) :
+            BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references, selected, "method", selected.DeclaringType, instance.Args));
+        c.Args = bridge.Params.Value.Select(p => (IBirExpression)new BirLocal { Name = p.Name }).Append(continuation).ToArray();
+    }
+
+    static BirFunctionDeclaration NewSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target,
+        BirMethodImpl descriptor, BirTypeParameter[] parameters, bool isInterface)
     {
         var names = owner.Methods.Value.Select(m => m.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
         var name = target.Name.Value + "$forward";
@@ -192,8 +260,9 @@ sealed partial class ProjectedCallableEntries
                 Name = target.Params.Value[i].Name, Type = BirGraphValue.CopyType(type) }).ToArray(),
             Ret = descriptor.Ret, TypeParams = parameters,
             Vis = "private", Virtual = true, Abstract = false, ClrFinal = true, Static = false, Generated = true,
-            ClrInterfaceImpls = new[] { descriptor },
         };
+        if (isInterface) bridge.ClrInterfaceImpls = new[] { descriptor };
+        else bridge.ClrBaseImpls = new[] { descriptor };
         if (owner.Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
         owner.Methods = owner.Methods.Value.Append(bridge).ToArray();
         return bridge;
@@ -405,7 +474,11 @@ sealed partial class ProjectedCallableEntries
             if (owner != null && !m.Static.OrDefault())
             {
                 if (carrierSlot || carrierBridge) { copy.Virtual = true; copy.ClrFinal = carrierBridge; }
-                else if (m.SourceCallableVirtual) MakeExactFacade(owner, m, copy, entry.Plan);
+                else if (m.SourceCallableVirtual)
+                {
+                    exactFacades.Add(id);
+                    MakeExactFacade(owner, m, copy, entry.Plan);
+                }
                 else if (m.Virtual.OrDefault())
                 {
                     // The exact method implements a compiler-generated carrier
@@ -596,6 +669,56 @@ sealed partial class ProjectedCallableEntries
         foreach (var method in owner.Methods.OrEmpty())
             if (MethodEntry(method) == null)
                 method.Visit(n => Bind(n, new(ownerParameters, []), new(method.TypeParams.OrEmpty(), [])));
+    }
+
+    // A facade that is no longer virtual, or an ordinary slot now served by a
+    // projected forwarder, no longer needs its old adapter assignment. Keep
+    // the group while any of its other selected slots is still live.
+    internal void RetireReplacedOverrides(BirFileDeclaration[] files, HashSet<string> emittedTypes)
+    {
+        foreach (var owner in files.SelectMany(f => f.Types.OrEmpty()))
+            if (owner.Methods.OrEmpty().Any(m => m.ProjectedTaskView != null))
+                owner.Methods = owner.Methods.Value.Where(m => m.ProjectedTaskView == null).ToArray();
+        if (exactFacades.Count == 0 && replacedAdapterSlots.Count == 0 && replacedLocalSlots.Count == 0) return;
+        HashSet<string> machines = new(StringComparer.Ordinal);
+        foreach (var owner in files.SelectMany(f => f.Types.OrEmpty())) RetireAdapterGroups(owner, machines);
+        if (machines.Count == 0) return;
+        foreach (var file in files)
+            foreach (var method in file.Methods.OrEmpty().Concat(file.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty())))
+                if (method.ColdEntryMachine is { } live) machines.Remove(live.Name);
+        foreach (var file in files)
+            if (file.Types.OrEmpty().Any(t => machines.Contains(t.Name.OrDefault())))
+                file.Types = file.Types.Value.Where(t => !machines.Contains(t.Name.OrDefault())).ToArray();
+        emittedTypes.ExceptWith(machines);
+
+    }
+
+    void RetireAdapterGroups(IBirTypeDeclaration owner, HashSet<string> machines)
+    {
+        bool Obsolete(BirMethodImpl d) => replacedAdapterSlots.Contains(d)
+            || d.LocalOverrideTargets is { Count: > 0 } ids && ids.All(id => exactFacades.Contains(id)
+                || replacedLocalSlots.TryGetValue(d, out var retired) && retired.Contains(id));
+        HashSet<object> unused = null;
+        foreach (var m in owner.Methods.OrEmpty())
+        {
+            var interfaces = m.ClrInterfaceImpls.OrEmpty();
+            var bases = m.ClrBaseImpls.OrEmpty();
+            if (!interfaces.Any(Obsolete) && !bases.Any(Obsolete)) continue;
+            if (interfaces.Length != 0) m.ClrInterfaceImpls = interfaces.Where(d => !Obsolete(d)).ToArray();
+            if (bases.Length != 0) m.ClrBaseImpls = bases.Where(d => !Obsolete(d)).ToArray();
+            if (m.OverrideAdapterGroup is { } group)
+                (unused ??= new()).Add(group);
+        }
+        if (unused == null) return;
+        // Hot entry, cold entry and cold state machine implement one adapter.
+        // A surviving slot on either entry keeps the whole group reachable.
+        foreach (var m in owner.Methods.Value)
+            if (m.ClrInterfaceImpls.OrEmpty().Length != 0 || m.ClrBaseImpls.OrEmpty().Length != 0)
+                unused.Remove(m.OverrideAdapterGroup);
+        if (unused.Count == 0) return;
+        foreach (var m in owner.Methods.Value)
+            if (unused.Contains(m.OverrideAdapterGroup) && m.ColdEntryMachine is { } machine) machines.Add(machine.Name);
+        owner.Methods = owner.Methods.Value.Where(m => !unused.Contains(m.OverrideAdapterGroup)).ToArray();
     }
 
     internal void Finish(BirFileDeclaration[] files, HashSet<string> emittedTypes)

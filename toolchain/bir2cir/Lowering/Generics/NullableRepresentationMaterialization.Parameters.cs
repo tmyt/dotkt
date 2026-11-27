@@ -42,6 +42,11 @@ static partial class NullableRepresentationMaterialization
             {
                 var owner = new NullableRepresentationViews.Owner(declaration);
                 published |= owner.Base is { } baseType && Contains(baseType) || owner.Interfaces.Any(Contains);
+                // An owner scalar exposed by a method has the same storage
+                // obligation as a method scalar. Its body may forward that
+                // owner argument to another assembly without closing it.
+                published |= owner.Methods.OrEmpty().Any(m => SourceScalar(m.RetKotlinType.OrDefault() ?? m.Ret.OrDefault())
+                    || m.Params.OrEmpty().Any(p => SourceScalar(p.KotlinType.OrDefault() ?? p.Type.OrDefault())));
             }
             if (published)
             {
