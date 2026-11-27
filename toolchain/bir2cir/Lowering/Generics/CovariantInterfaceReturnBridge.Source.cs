@@ -224,10 +224,14 @@ static partial class CovariantInterfaceReturnBridge
                 }
                 if (slotParameters.Any(type => type == null) || slotReturn == null
                     || !ParametersPhysicallyEqual(SourceParameterTypes(implementation), slotParameters, ownArguments, refs, isValue)) continue;
-                var implementationReturn = SubstOwnerTvs(implementationReturnOriginal, ownArguments);
+                // Compare the two Task entries. The implementation may deliberately
+                // resume Kotlin callers with a different (unwrapped) representation.
+                var implementationReturn = SubstOwnerTvs(suspend
+                    ? implementation.SuspendTaskResult.OrDefault() ?? implementationReturnOriginal
+                    : implementationReturnOriginal, ownArguments);
                 if (implementationReturn == slotReturn || BirTypeLowering.SamePhysicalSlotType(slotReturn, implementationReturn,
                         refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true,
-                        nullableFrames: refs.NullableTypeFrames, leftReturnsValue: !suspend && declaration.ReturnsValue)
+                        nullableFrames: refs.NullableTypeFrames, leftReturnsValue: returnsValue)
                     || KotlinOverrideSlotBridge.IsErasureDivergence(slotReturn, implementationReturn)) continue;
                 TypeNode Physical(TypeNode type) => BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
                     refs.PhysicalTypeNames, typeArg: false, nullableFrames: refs.NullableTypeFrames);

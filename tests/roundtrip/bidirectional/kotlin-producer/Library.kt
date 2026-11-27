@@ -23,11 +23,15 @@ class ImportedProjectedResult : ProjectedResult<Concrete> {
 
 class ImportedOrdinaryTextResult : TextTaskResult {
     override suspend fun text(): CharSequence = "separate"
+    override suspend fun optionalText(present: Boolean): CharSequence? = if (present) "separate" else null
+    override suspend fun signal(present: Boolean): Unit? = if (present) Unit else null
     suspend fun lengthViaInterface(): Int {
         val source: TextTaskResult = this
         return source.text().length
     }
 }
+
+suspend fun forwardOptionalText(source: TextTaskResult, present: Boolean): Any? = source.optionalText(present)
 
 @FlagsAttribute
 @ClrEnum

@@ -46,6 +46,8 @@ interface ReferenceTaskResult<T> {
 }
 interface TextTaskResult {
     suspend fun text(): CharSequence
+    suspend fun optionalText(present: Boolean): CharSequence?
+    suspend fun signal(present: Boolean): Unit?
 }
 
 interface MethodTaskResult<T> {
