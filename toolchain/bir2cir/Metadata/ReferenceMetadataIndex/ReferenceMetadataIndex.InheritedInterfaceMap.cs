@@ -8,6 +8,63 @@ sealed partial class ReferenceMetadataIndex
     // The interface closure is independent of the member under consideration.
     readonly Dictionary<Type, (ILookup<Type, TypeNode.Fqn> Edges, HashSet<Type> Ambiguous)> _nativeInterfaceEdges = new();
 
+    // A projected super.iterator() must call the named base's implementation, not
+    // redispatch the interface on the derived receiver. Follow native mappings,
+    // including an explicit MethodImpl whose body need not be named GetEnumerator.
+    internal (MethodInfo Method, TypeNode.Fqn Owner) RawEnumeratorBaseTarget(TypeNode.Fqn owner)
+    {
+        var iface = _universe.CoreType("System.Collections.IEnumerable");
+        var cursor = _universe.CoreType("System.Collections.IEnumerator");
+        var start = ClrMemberResolution.ResolveOwnerType(owner, this);
+        var chain = new Stack<(Type Def, TypeNode.Fqn Spec)>();
+        for (var t = start; t != null; t = t.BaseType)
+        {
+            var decl = t.IsConstructedGenericType ? t.GetGenericTypeDefinition() : t;
+            var spec = t == start ? owner : (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(NativeDeclarationType(t), owner.Args ?? []);
+            chain.Push((decl, spec));
+        }
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        MethodInfo ExplicitBody(Type type)
+        {
+            var body = DeclaredMethodImpls(type).SingleOrDefault(row => row.Member == "GetEnumerator" &&
+                row.NominalOwner.Name == iface.FullName && (row.NominalOwner.Scope == iface.Assembly.FullName ||
+                    _universe.SameDefinition(iface.FullName, row.NominalOwner.Scope, iface.Assembly.FullName)) &&
+                row.Signature is { GenericParameterCount: 0, ParameterTypes.Length: 0 });
+            return body == null ? null : type.GetMethods(flags).Single(m => m.MetadataToken == body.BodyMethodDef);
+        }
+        (MethodInfo Method, TypeNode.Fqn Owner) selected = default, visible = default;
+        var defaults = new Dictionary<(Type Definition, TypeNode.Fqn Owner), MethodInfo>();
+        foreach (var (type, spec) in chain)
+        {
+            var methods = type.GetMethods(flags);
+            var found = methods.SingleOrDefault(m => m.IsPublic && m.IsVirtual && m.Name == "GetEnumerator" && !m.IsGenericMethod
+                && m.GetParameters().Length == 0 && m.ReturnType == cursor);
+            var inheritedVirtual = visible.Method;
+            if (found != null) visible = (found, spec);
+            var edges = MetadataInterfaceOwners(type, spec.Args ?? []).Where(edge => edge.Definition.IsInterface).ToArray();
+            foreach (var edge in edges)
+                if (ExplicitBody(edge.Definition) is { } defaultBody) defaults[edge] = defaultBody;
+            if (ExplicitBody(type) is { } body)
+                selected = (body, spec);
+            else if (found != null && (_metadataInterfaces[type].Any(edge => edge.Definition == iface)
+                || (found.Attributes & MethodAttributes.NewSlot) == 0 && selected.Method is { IsFinal: false }
+                    && inheritedVirtual == selected.Method))
+                selected = (found, spec);
+            else if (selected.Method == null && edges.Any(edge => edge.Definition == iface))
+                selected = visible;
+        }
+        if (selected.Method == null)
+        {
+            var mostSpecific = defaults.Where(d => !defaults.Keys.Any(k => k != d.Key &&
+                MetadataInterfaceOwners(k.Definition, k.Owner.Args ?? []).Contains(d.Key))).ToArray();
+            if (mostSpecific is [var only]) selected = (only.Value, only.Key.Owner);
+        }
+        if (selected.Method is { IsAbstract: false } target &&
+            (target.IsPublic || !target.DeclaringType.IsInterface && (target.IsFamily || target.IsFamilyOrAssembly)))
+            return selected;
+        throw new InvalidOperationException($"super.iterator() on '{owner.Name}' has no accessible concrete base implementation of IEnumerable.GetEnumerator()");
+    }
+
     // Match in the interface-implementing class's declaration frame: closing a
     // generic class first can make M(T) collide with an unrelated M(string).
     internal bool MapsPublicInterfaceMethod(TypeNode.Fqn owner, TypeNode.Fqn face, MethodInfo slot)
