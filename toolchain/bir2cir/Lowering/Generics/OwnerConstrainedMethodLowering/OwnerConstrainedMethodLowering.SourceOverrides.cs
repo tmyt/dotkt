@@ -11,14 +11,14 @@ static partial class OwnerConstrainedMethodLowering
     internal static void RecordOverride(BirFunctionDeclaration implementation, IReadOnlyList<BirTypeParameter> slotParameters,
         TypeNode[] ownerArgs, IReadOnlyList<BirTypeParameter> ownerParameters,
         IReadOnlyList<BirTypeParameter> implementationOwnerParameters = null,
-        Func<TypeNode.Fqn, TypeNode> storageConstraint = null, bool sourceParameters = false)
+        GenericRepresentationPolicy representations = null, bool sourceParameters = false)
     {
         if (slotParameters == null) return;
         var rows = (implementation._ownerConstraintOverrideBounds.OrDefault()
             ?? new OwnerConstraintOverrideBounds(Array.Empty<OwnerConstraintOverrideBounds.Row>()))
             .Append(BuildOverrideRows(implementation.NullableRepresentationFrame.OrDefault(),
                 ConstraintVectors(implementation.TypeParams.OrDefault()), ConstraintVectors(slotParameters), ownerArgs,
-                ConstraintVectors(ownerParameters), ConstraintVectors(implementationOwnerParameters), storageConstraint, sourceParameters));
+                ConstraintVectors(ownerParameters), ConstraintVectors(implementationOwnerParameters), representations, sourceParameters));
         if (rows.Rows.Count > 0)
             implementation._ownerConstraintOverrideBounds = OptionalField<OwnerConstraintOverrideBounds>.Of(rows);
     }
@@ -37,7 +37,7 @@ static partial class OwnerConstrainedMethodLowering
         IReadOnlyList<TypeNode[]> implementationConstraints, IReadOnlyList<TypeNode[]> slotConstraints,
         TypeNode[] ownerArgs, IReadOnlyList<TypeNode[]> ownerConstraints,
         IReadOnlyList<TypeNode[]> implementationOwnerConstraints,
-        Func<TypeNode.Fqn, TypeNode> storageConstraint, bool sourceParameters)
+        GenericRepresentationPolicy representations, bool sourceParameters)
     {
         IEnumerable<TypeNode> Independent(TypeNode bound, IReadOnlyList<TypeNode[]> constraints) =>
             IndependentBounds(bound, constraints.Count, index => constraints[index]);
@@ -53,16 +53,18 @@ static partial class OwnerConstrainedMethodLowering
             var closedBound = SupertypeGraph.SubstOwnerTvs(template, ownerArgs);
             // Materialization can publish classifier consequences on companion
             // slots of the SAME source parameter; weaken those together.
-            var physicalBounds = new[] { closedBound }.Concat(Independent(closedBound, implementationOwnerConstraints)
-                .OfType<TypeNode.Fqn>()
-                .Select(type => storageConstraint == null ? type : storageConstraint(type))
-                .Where(type => type != null)).Distinct().ToArray();
+            var classifiers = Independent(closedBound, implementationOwnerConstraints).OfType<TypeNode.Fqn>()
+                .Select(type => representations == null ? type : representations.StorageConstraint(type))
+                .Where(type => type != null).Distinct().ToArray();
+            var ordinaryBounds = new[] { closedBound }.Concat(classifiers).Distinct().ToArray();
+            var storageBounds = representations == null ? ordinaryBounds : classifiers.SelectMany(representations.StorageBoundRows)
+                .Where(row => !row.Erased).Select(row => row.Bound).Distinct().ToArray();
             var positions = frame == null ? new[] { physicalIndex } : Enumerable.Range(0, frame.PhysicalArity)
                 .Where(position => position == physicalIndex
-                    || frame.PhysicalSlot(position).SourceIndex == frame.PhysicalSlot(physicalIndex).SourceIndex
-                        && implementationConstraints[position].Any(physicalBounds.Contains));
+                    || frame.PhysicalSlot(position).SourceIndex == frame.PhysicalSlot(physicalIndex).SourceIndex);
             foreach (var position in positions)
-            foreach (var physicalBound in physicalBounds.Where(candidate =>
+            foreach (var physicalBound in (frame?.PhysicalSlot(position).Representation == NullableRepresentationFrame.Role.Storage
+                ? storageBounds : ordinaryBounds).Where(candidate =>
                 position == physicalIndex && candidate.Equals(closedBound)
                 || implementationConstraints[position].Contains(candidate)))
                 yield return new OwnerConstraintOverrideBounds.Row(position, physicalBound, template,

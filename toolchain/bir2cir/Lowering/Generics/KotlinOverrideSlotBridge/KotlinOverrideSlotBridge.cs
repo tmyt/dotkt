@@ -338,7 +338,10 @@ static partial class KotlinOverrideSlotBridge
         {
             var constraints = parameter.Constraints
                 .Select(constraint => SupertypeGraph.SubstOwnerTvs(constraint, ownerArgs ?? Array.Empty<TypeNode>()))
-                .Select(constraint => SupertypeGraph.TypeKey(constraintType?.Invoke(constraint) ?? constraint))
+                // An imported spelling can retain Kotlin classifier metadata that the
+                // materialized parameter does not. The override shape uses the nominal type.
+                .Select(constraint => SupertypeGraph.TypeKey(SourceDeclarationSignature.RewriteType(
+                    constraintType?.Invoke(constraint) ?? constraint, named => named with { Classifier = null })))
                 .OrderBy(key => key, StringComparer.Ordinal);
             var specials = parameter.Specials.OrderBy(value => value, StringComparer.Ordinal);
             shapes.Add("{" + string.Join(",", constraints) + "}|{" + string.Join(",", specials) + "}");

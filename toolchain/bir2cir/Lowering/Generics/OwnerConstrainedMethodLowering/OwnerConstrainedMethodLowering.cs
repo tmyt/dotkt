@@ -139,13 +139,13 @@ static partial class OwnerConstrainedMethodLowering
     // substituting Base<T> with Base<Animal> must not hide that its method bound originally depended on T.
     internal static void RecordOverride(JsonObject implementation, JsonArray slotParameters, TypeNode[] ownerArgs,
         JsonArray ownerParameters, JsonArray implementationOwnerParameters = null,
-        Func<TypeNode.Fqn, TypeNode> storageConstraint = null, bool sourceParameters = false)
+        GenericRepresentationPolicy representations = null, bool sourceParameters = false)
     {
         if (slotParameters == null) return;
         var rows = (ReadOverrideBounds(implementation) ?? new OwnerConstraintOverrideBounds(Array.Empty<OwnerConstraintOverrideBounds.Row>()))
             .Append(BuildOverrideRows(ReadMethodFrame(implementation),
                 ConstraintVectors(implementation["typeParams"] as JsonArray), ConstraintVectors(slotParameters), ownerArgs,
-                ConstraintVectors(ownerParameters), ConstraintVectors(implementationOwnerParameters), storageConstraint, sourceParameters));
+                ConstraintVectors(ownerParameters), ConstraintVectors(implementationOwnerParameters), representations, sourceParameters));
         if (rows.Rows.Count > 0) implementation[OverrideBoundsKey] = OwnerConstraintOverrideBounds.ToDom(rows);
     }
 

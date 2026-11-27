@@ -38,6 +38,17 @@ private class SplitSuspendFactory<K>(val value: K) : SuspendLeft<K>, SuspendRigh
 
 private class SplitLeaf<T> : Base(), ILeft, IRight
 
+private interface IdentityView<B> { fun <A : B> keep(value: A): A }
+private class StarIdentity : IdentityView<SplitLeaf<*>> {
+    override fun <A : SplitLeaf<*>> keep(value: A): A = value
+}
+private class ImportedStarIdentity : TaggedIdentity<TaggedLeaf<*>> {
+    override fun <A : TaggedLeaf<*>> keep(value: A): A {
+        check(value.tag == 42)
+        return value
+    }
+}
+
 private class SuspendChild<C>(val ownerValue: C, val gate: IntGate) :
     SuspendParent(), SuspendLeft<Concrete>, SuspendRight<Concrete> where C : Base, C : ILeft {
     var calls = 0
@@ -64,6 +75,17 @@ class StoredEcho<K>(val stored: K, val gate: IntGate) : SuspendEcho<K>
 }
 
 class SelectedMethodBoundsTests {
+    @TestAttribute
+    fun inheritedMethodBoundDoesNotStrengthenOnAStarProjectedOwnerArgument() {
+        val view: IdentityView<SplitLeaf<*>> = StarIdentity()
+        val first = SplitLeaf<Int>()
+        val second = SplitLeaf<String>()
+        check(view.keep(first) === first && view.keep(second) === second)
+        val imported: TaggedIdentity<TaggedLeaf<*>> = ImportedStarIdentity()
+        val tagged = TaggedLeaf<Int>(42)
+        check(imported.keep(tagged) === tagged)
+    }
+
     @TestAttribute
     fun covariantSuspendBridgeRetainsItsReceiverAcrossSuspension() {
         val item = Item()

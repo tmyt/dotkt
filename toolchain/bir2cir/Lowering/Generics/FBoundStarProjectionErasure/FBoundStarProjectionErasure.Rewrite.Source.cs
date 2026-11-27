@@ -188,6 +188,11 @@ static partial class FBoundStarProjectionErasure
                     : state.Projection.Rewrite(t, bound, preserveConstructedHead: true, preserveArrayShape: true);
                 return Row(type);
             }
+            // The inherited row is lowered from its selected declaration after value
+            // projection. Erasing it here loses the source occurrence that owns that row.
+            if (!typesOnly && field == "constraints" && scope.ParameterOwner?.Source is BirFunctionDeclaration method
+                && method._ownerConstraintOverrideBounds.OrDefault()?.Rows.Any(row =>
+                    row.Index == scope.ParameterIndex && row.Bound.Equals(type)) == true) return type;
             if (field == "constraints" && scope.ParameterOwner != null
                 && state.Demand.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
             return state.Projection.Rewrite(type, bound, preserveConstructedHead:

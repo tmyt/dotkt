@@ -173,25 +173,23 @@ sealed partial class GenericRepresentationPolicy
     internal IEnumerable<TypeNode> NativeProofsFromClass(TypeNode[] bounds) =>
         bounds.Where(IsNominalStorageBound).SelectMany(InheritedNativeWitnesses);
 
-    internal void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds)
+    internal IEnumerable<(TypeNode Bound, bool Erased)> StorageBoundRows(TypeNode bound)
     {
-        var physical = new List<TypeNode>();
-        var erased = new List<TypeNode>();
         // A Kotlin value can use an existential storage type that implements no single
         // closed construction of this native interface. Its proof belongs to the native use.
         bool StorageProof(TypeNode proof) => CanReferenceStorageProof(proof) && !NeedsNativeWitness(proof);
-        foreach (var bound in bounds)
-        {
-            if (!IsNominalStorageBound(bound) && StorageProof(bound)) { physical.Add(bound); continue; }
-            erased.Add(bound);
-            // Use the same public proof set at both ends of an open generic call,
-            // including when its source bound is an explicitly named hidden interface.
-            var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
-            foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
-                if (isInterface && StorageConstraint(parent) is { } proof && StorageProof(proof)) physical.Add(proof);
-        }
-        if (physical.Count != 0) parameter.Constraints = physical.Distinct().ToArray();
-        if (erased.Count != 0) parameter.ErasedInnerConstraints = erased.ToArray();
+        if (!IsNominalStorageBound(bound) && StorageProof(bound)) { yield return (bound, false); yield break; }
+        yield return (bound, true);
+        var start = new SupertypeGraph.Def { Base = (TypeNode.Fqn)bound };
+        foreach (var (parent, isInterface) in SupertypeGraph.Reachable(start, _sourceHierarchy, _references, sourceFrames: true))
+            if (isInterface && StorageConstraint(parent) is { } proof && StorageProof(proof)) yield return (proof, false);
+    }
+
+    internal void SetStorageBounds(BirTypeParameter parameter, TypeNode[] bounds)
+    {
+        var rows = bounds.SelectMany(StorageBoundRows).ToArray();
+        if (rows.Any(row => !row.Erased)) parameter.Constraints = rows.Where(row => !row.Erased).Select(row => row.Bound).Distinct().ToArray();
+        if (rows.Any(row => row.Erased)) parameter.ErasedInnerConstraints = rows.Where(row => row.Erased).Select(row => row.Bound).ToArray();
     }
 
     // Inferred storage evidence is part of the callable ABI. It must be usable
