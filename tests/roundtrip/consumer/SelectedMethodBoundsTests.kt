@@ -124,9 +124,10 @@ class SelectedMethodBoundsTests {
             check(pickThrough(first, Item()) == "first" && pickThrough(second, OtherItem()) == "second")
             check(pickThrough(Single() as SuspendPicker<OtherItem>, OtherItem()) == "single")
             check(pickStar(Single()) == "single")
-            val overloaded: OverloadedPicker<Concrete> = Overloaded()
-            check(overloaded.pick<Concrete>(Concrete(), listOf(1)) == "iterable")
-            check(overloaded.pick<Concrete>(Concrete(), sequenceOf(1)) == "sequence")
+            for (overloaded in listOf<OverloadedPicker<Concrete>>(Overloaded(), LocalOverloadedPicker())) {
+                check(overloaded.pick<Concrete>(Concrete(), listOf(1)) == "iterable")
+                check(overloaded.pick<Concrete>(Concrete(), sequenceOf(1)) == "sequence")
+            }
             val base: OverloadedPickerBase<Concrete> = OverloadedChild()
             val item = Concrete()
             val sequence = sequenceOf(3)

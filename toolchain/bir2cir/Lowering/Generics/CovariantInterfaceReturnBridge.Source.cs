@@ -106,9 +106,11 @@ static partial class CovariantInterfaceReturnBridge
                     PublishSourceBridge(owner, bridge, onMaterialized);
                     AssociateSourceProperty(owner, bridge, implementation, property, accessor, slotParameters, slotReturn);
                 }
-                bridge.ClrInterfaceImpls = bridge.ClrInterfaceImpls.Value.Append(SourceDescriptor(application, slot.Name.Value,
+                var descriptor = SourceDescriptor(application, slot.Name.Value,
                     arity, signature, slotReturn, KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
-                        slot.TypeParams.OrDefault(), arguments), valueReturn)).ToArray();
+                        slot.TypeParams.OrDefault(), arguments), valueReturn);
+                if (slot.DeclarationId.HasValue) descriptor.LocalOverrideTargets = new[] { slot.DeclarationId.Value };
+                KotlinOverrideSlotBridge.AddSourceImpl(bridge, descriptor, true);
                 bridged.Add(new(implementation, DescriptorKey(application, slot.Name.Value, arity, slotParameters, slotReturn, refs, isValue)));
             }
         }
@@ -239,8 +241,7 @@ static partial class CovariantInterfaceReturnBridge
                 }
                 var descriptor = SourceDescriptor(descriptorOwner, descriptorMember, arity, slotParameters, slotReturn,
                     KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(declarationParameters, physicalArguments), valueReturn);
-                if (!bridge.ClrInterfaceImpls.Value.Any(existing => existing.StructurallyEquals(descriptor)))
-                    bridge.ClrInterfaceImpls = bridge.ClrInterfaceImpls.Value.Append(descriptor).ToArray();
+                KotlinOverrideSlotBridge.AddSourceImpl(bridge, descriptor, true);
                 bridged.Add(new(implementation, DescriptorKey(descriptorOwner, descriptorMember, arity, slotParameters, slotReturn, refs, isValue)));
             }
         }
@@ -277,7 +278,8 @@ static partial class CovariantInterfaceReturnBridge
         var bridge = new BirFunctionDeclaration { Name = name, Static = false, Override = false, Virtual = true,
             Abstract = false, ObjectOverride = false, Vis = "private", Generated = true, Params = bridgeParameters,
             Ret = BirGraphValue.CopyType(result), Body = new IBirStatement[] { new BirReturn { Value = call } },
-            Attrs = Array.Empty<BirAttribute>(), PhysicalSlotBridge = true, ClrInterfaceImpls = Array.Empty<BirMethodImpl>() };
+            Attrs = Array.Empty<BirAttribute>(), PhysicalSlotBridge = true, OverrideAdapterGroup = new object(),
+            ClrInterfaceImpls = Array.Empty<BirMethodImpl>() };
         if (valueReturn) bridge.DotktValueReturn = true;
         if (owner.Kind == "interface") bridge.ClrInterfaceSlotBridge = true;
         if (SourceSuspend(implementation))
