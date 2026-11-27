@@ -155,24 +155,53 @@ sealed partial class ProjectedCallableEntries
         // Kotlin body for every combination. Establish the nominal proofs first
         // so a true CLR entry can use its exact primary even for an open caller.
         var receiver = Enrich(weak, Missing(weakRows, optional.Select(p => p.Target)));
-        foreach (var p in optional)
+        int Choose(IBirExpression condition, int yes, int no, bool reference)
         {
             var parameters = receiver.TypeParams.Value;
             var next = Bridge(null, null, parameters.Select(row => (BirTypeParameter)row.DeepClone())
-                .Append(new BirTypeParameter { Name = "$chosen" + p.Native, SpecialConstraints = new[] { "class" } }).ToArray());
+                .Append(new BirTypeParameter { Name = "$chosen" + parameters.Length,
+                    SpecialConstraints = reference ? new[] { "class" } : Array.Empty<string>() }).ToArray());
             var frame = Enumerable.Range(0, parameters.Length).Select(i => (TypeNode)Var(i)).ToArray();
-            var actual = inputs[p.Native];
             if (referenceBuild) receiver.Body = RefBodySquash.SourceThrowStubBody(references);
             else
             {
                 IBirStatement[] With(int i) => ForwardBody(owner, receiver, next, frame.Append(Var(i)).ToArray());
                 receiver.Body = new IBirStatement[] { new BirIf { Branches = new[] { new BirBranch {
-                    Cond = new BirBinaryOperation { Op = "===", Lhs = new BirClassReference { Type = Var(actual) },
-                        Rhs = new BirClassReference { Type = Var(p.Reference) } }, Body = With(p.Reference) } } } }
-                    .Concat(With(p.Primary)).ToArray();
+                    Cond = OptionalField<IBirExpression>.Of(condition), Body = With(yes) } } } }.Concat(With(no)).ToArray();
             }
-            inputs[p.Native] = parameters.Length;
             receiver = next;
+            return parameters.Length;
+        }
+        foreach (var p in optional)
+        {
+            var test = new BirBinaryOperation { Op = "===", Lhs = new BirClassReference { Type = Var(inputs[p.Native]) },
+                Rhs = new BirClassReference { Type = Var(p.Reference) } };
+            inputs[p.Native] = Choose(test, p.Reference, p.Primary, true);
+            // A fixed CLR entry may have supplied erased Kotlin storage. It
+            // remains preferable to the exact material when it actually meets
+            // this implementation's storage bounds (e.g. Leaf$star vs Leaf<int>).
+            var storage = Position(p.Target, true);
+            if (storage == p.Primary) continue;
+            var uses = Enumerable.Range(0, inputs.Length).Where(i => inputs[i] == storage).ToArray();
+            var requirements = Missing(receiver.TypeParams.Value, uses);
+            if (requirements.Length == 0) continue;
+            var type = new TypeNode.Fqn("System.Type");
+            var boolean = new TypeNode.Fqn("System.Boolean");
+            var operation = ClrMemberResolution.PlanArrayStorageCall(null, references,
+                "IsAssignableFrom", ["System.Type"], "System.Type", false);
+            var member = BirMemberReference.FromPhysical(operation.Reference);
+            IBirExpression accepts = null;
+            foreach (var (_, bound) in requirements)
+            {
+                var check = new BirCallInstance { OwnerType = type, Method = "IsAssignableFrom", Virtual = true,
+                    Recv = new BirClassReference { Type = bound }, Args = new IBirExpression[] { new BirClassReference { Type = Var(storage) } },
+                    Sig = member.ParameterTypes.Value, Ret = boolean, CalleeRet = member.ReturnType.Value,
+                    CalleeParams = member.ParameterTypes.Value, MemberRef = member };
+                accepts = accepts == null ? check : new BirConditional { Type = boolean, Cond = check,
+                    Then = OptionalField<IBirExpression>.Of(accepts), Else = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(false) } };
+            }
+            var chosen = Choose(accepts, storage, inputs[p.Native], false);
+            foreach (int i in uses) inputs[i] = chosen;
         }
         var body = Enrich(receiver, Missing(receiver.TypeParams.Value, Enumerable.Range(0, inputs.Length)));
         body.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, body, target, Arguments());
