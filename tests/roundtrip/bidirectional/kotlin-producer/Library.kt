@@ -10,6 +10,7 @@ import System.Threading.Tasks.Task1
 import roundtrip.covarianttaskresults.ProjectedResult
 import roundtrip.covarianttaskresults.NominalReader
 import roundtrip.covarianttaskresults.ProjectedTextResult
+import roundtrip.covarianttaskresults.TaskResultBase
 import roundtrip.covarianttaskresults.TaskResultDerived
 import roundtrip.selectedbounds.Concrete
 
@@ -32,9 +33,19 @@ class ImportedProjectedResult : ProjectedResult<Concrete>, NominalReader<Concret
     }
 }
 
-suspend fun importedColdRead(target: ImportedProjectedResult, gate: Task1<Int>, nominal: Boolean) =
-    if (nominal) (target as NominalReader<Concrete>).read<Concrete>(Concrete(), gate)
-    else (target as ProjectedResult<Concrete>).read<Concrete>(Concrete(), gate)
+class ImportedExactResult : ProjectedResult<Concrete>, NominalReader<Concrete> {
+    override suspend fun <A : Concrete> nullableUnit() {}
+    override suspend fun <A : Concrete> boxed(value: Concrete, gate: Task1<Int>) { gate.await() }
+    override suspend fun <A : Concrete> read(value: Concrete, gate: Task1<Int>): TaskResultBase {
+        gate.await()
+        return TaskResultDerived("exact")
+    }
+}
+
+suspend fun importedNominalRead(target: NominalReader<Concrete>, gate: Task1<Int>) =
+    target.read<Concrete>(Concrete(), gate)
+suspend fun importedConstrainedRead(target: ProjectedResult<Concrete>, gate: Task1<Int>) =
+    target.read<Concrete>(Concrete(), gate)
 
 @FlagsAttribute
 @ClrEnum

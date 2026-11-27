@@ -163,13 +163,8 @@ static partial class SuspendColdLowering
             // Generated forwarding methods carry physical slot IDs rather than FIR
             // override markers. Both entries must implement their corresponding slots.
             if (_m.ExistentialCallable == ExistentialCallableRole.Forwarder && _m.SignatureOverrideDeclarations.HasValue)
-            {
                 method.SignatureOverrideDeclarations = _m.SignatureOverrideDeclarations.Value
                     .Select(id => coldEntry ? id + "|cold" : id).ToArray();
-                if (coldEntry)
-                    method.OverrideRepresentationDeclarations = _m.SignatureOverrideDeclarations.Value.Distinct()
-                        .ToDictionary(id => id + "|cold", id => id);
-            }
             if (ForwarderEntry(coldEntry) is { } entry) method.LocalBodyEntry = (entry, null);
             if (_m.ImplicitExistentialImplementationId is string implementation)
                 method.ImplicitExistentialImplementationId = coldEntry ? implementation + "|cold" : implementation;

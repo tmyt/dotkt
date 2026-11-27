@@ -16,17 +16,18 @@ public class CovariantTaskResultInteropTests
         await view.completed();
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
-    public async Task ProjectedInterfaceReturnsItsDeclaredTaskAcrossSuspension(bool imported)
+    [TestCase(typeof(ProjectedDerivedResult))]
+    [TestCase(typeof(ImportedProjectedResult))]
+    [TestCase(typeof(ImportedExactResult))]
+    public async Task ProjectedInterfaceReturnsItsDeclaredTaskAcrossSuspension(Type implementation)
     {
-        ProjectedResult<Concrete> view = imported ? new ImportedProjectedResult() : new ProjectedDerivedResult();
+        var view = (ProjectedResult<Concrete>)Activator.CreateInstance(implementation);
         Task<TaskResultBase> Start(Task<int> gate) => view.read<Concrete, Concrete>(new Concrete(), gate);
         var source = new TaskCompletionSource<int>();
         var result = Start(source.Task);
-        var otherEntries = view is ImportedProjectedResult target ? new[] {
-            ((NominalReader<Concrete>)target).read<Concrete, Concrete>(new Concrete(), source.Task),
-            LibraryKt.importedColdRead(target, source.Task, true), LibraryKt.importedColdRead(target, source.Task, false)
+        var otherEntries = view is NominalReader<Concrete> nominal ? new[] {
+            nominal.read<Concrete, Concrete>(new Concrete(), source.Task),
+            LibraryKt.importedNominalRead(nominal, source.Task), LibraryKt.importedConstrainedRead(view, source.Task)
         } : Array.Empty<Task<TaskResultBase>>();
         Assert.That(Array.TrueForAll(otherEntries, entry => !entry.IsCompleted), Is.True);
         Assert.That((object)result, Is.InstanceOf<Task<TaskResultBase>>());
