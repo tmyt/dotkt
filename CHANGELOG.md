@@ -36,6 +36,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - A top-level `main` renamed with `@ClrName` remains the executable entry point, including when it is a suspend function (#1933).
 - Storing the result of an `is` check against a star-projected Kotlin class from another DLL now preserves the Boolean result (#1983).
 - Direct CLR constructor calls now adapt stored Kotlin functions to the selected delegate parameter (#1952).
+- CLR attribute applications select one public constructor. Positional arguments bind only to its parameters; fields and properties must be supplied by name, including on overloaded attributes (#1986).
 - Kotlin subclasses can iterate CLR base classes that implement non-generic `IEnumerable` without declaring their own `iterator()` (#1985).
 - A Kotlin override now receives calls through a reimplemented CLR interface even when a base class explicitly implemented its inherited slot (#2007).
 - Overriding a CLR class method in Kotlin no longer replaces the base class's explicit interface implementation just because the interface also declares a default body (#2011).

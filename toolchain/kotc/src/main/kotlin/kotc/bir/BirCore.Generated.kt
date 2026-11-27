@@ -1463,7 +1463,8 @@ data class BirAttribute(
     val argTypes: List<TypeNode>,
     val args: List<BirExpression>,
     val attrClr: Boolean? = null,
-    val namedArgs: List<BirAttributeNamedArgument>? = null
+    val namedArgs: List<BirAttributeNamedArgument>? = null,
+    val constructorNativeKey: String? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -1496,6 +1497,10 @@ data class BirAttribute(
                 item0.writeJson(output)
             }
             output.append(']')
+        }
+        constructorNativeKey?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"constructorNativeKey\":")
+            TypeNodeJson.writeString(value, output)
         }
         output.append('}')
     }
