@@ -599,12 +599,16 @@ sealed partial class ProjectedCallableEntries
                 }
             }
             bool material = methodScope.NativePlan?.NativeIndices.Length > 0 || capturedNative != null;
-            bool splitUse = node is BirGraphNode && (methodScope.Representations?.NullableIndices.Count > 0 || capturedNullable != null || material)
-                || capturedNative != null && node is (BirFieldDeclaration or BirParameter or BirFunctionDeclaration);
+            bool splitStorage = methodScope.Slots?.Length > 0 && methodScope.Representations?.StorageIndices.Count > 0
+                || capturedStorage != null;
+            bool dependent = methodScope.Representations?.NullableIndices.Count > 0 || capturedNullable != null || material;
+            bool splitUse = node is BirGraphNode && (dependent || splitStorage)
+                || (capturedNative != null || capturedStorage != null) && node is (BirFieldDeclaration or BirParameter or BirFunctionDeclaration);
             TypeNode Close(TypeNode type) {
-                var closed = SourceDeclarationSignature.RewriteType(type, f => CloseDependentOwner(f, ownerScope, methodScope));
-                return material ? ProjectedMethodPlan.NativeUses(closed, references,
-                    (v, _, _, _) => Scope.Material(v, ownerScope, methodScope)) : closed;
+                var closed = dependent ? SourceDeclarationSignature.RewriteType(type,
+                    f => CloseDependentOwner(f, ownerScope, methodScope)) : type;
+                return material || splitStorage ? ProjectedMethodPlan.NativeUses(closed, references,
+                    (v, row, args, _) => NativeBodyArgument(v, row, args, ownerScope, methodScope)) : closed;
             }
             if (splitUse) node.RewriteOwnTypeFieldsInPlace((field, role, t) =>
                 role == BirGenericFrameRole.Lexical && field is not ("calleeRet" or "calleeParams") ? Close(t) : t);
@@ -775,6 +779,21 @@ sealed partial class ProjectedCallableEntries
 
     bool Proves(TypeNode source, TypeNode target) =>
         ProjectedConstructorPlan.Proves(source, target, classHierarchy.Value, references);
+
+    TypeNode NativeBodyArgument(TypeNode.Tv source, BirTypeParameter formal, TypeNode[] arguments,
+        Scope owner, Scope method)
+    {
+        if (Scope.MaterialFact(source, owner, method) is { } established) return established.Variable;
+        if (Scope.Storage(source, owner, method) is not { } storage || formal.SpecialConstraints.OrEmpty().Length != 0
+            || formal.Constraints.OrEmpty() is not { Length: > 0 } constraints) return source;
+        // The native application has a single CLR argument for the whole conjunction.
+        // Separate interface witnesses are not interchangeable with that stored value type.
+        var scope = source.Scope == "method" ? method : owner;
+        var required = constraints.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
+        bool Satisfies(TypeNode.Tv variable) => required.All(c =>
+            scope.Parameters[variable.I].Constraints.OrEmpty().Any(bound => Proves(bound, c)));
+        return !Satisfies(source) && Satisfies(storage) ? storage : source;
+    }
 
     TypeNode[] ForwardConstructor(ProjectedConstructorPlan plan, TypeNode[] actual, Scope owner, Scope method)
     {

@@ -413,6 +413,14 @@ class ConstrainedNullableBoundTests {
 
     @TestAttribute
     fun parameterlessVirtualFactoriesUseTheDeclaredJointWitness() {
+        val native: roundtrip.selectedbounds.JointFactory<roundtrip.selectedbounds.Concrete> =
+            roundtrip.selectedbounds.NativeFactory()
+        check(RoundtripDependentNative.JoinedSlot.IsValue<roundtrip.selectedbounds.Item>(
+            native.make<roundtrip.selectedbounds.Item>()))
+        check(RoundtripDependentNative.JoinedSlot.IsValue<roundtrip.selectedbounds.OtherItem>(
+            native.make<roundtrip.selectedbounds.OtherItem>()))
+        val exact = roundtrip.selectedbounds.Item()
+        check(native.select(exact) === exact)
         val factory: roundtrip.constrainedbound.JoinedFactoryContract = ParameterlessFactory()
         check(factory.make<JoinedChild<Int>>() is RoundtripDependentNative.IJoinedValue<*>)
         check(factory.make<JoinedChild<*>>() is RoundtripDependentNative.IJoinedValue<*>)

@@ -17,6 +17,12 @@ public sealed class NullableListSink<T,Y> where T : Y
     public void Append<X>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);
 }
 public interface IJoinedValue<T> where T : ILeft, IRight { }
+public sealed class NativeProduct<T> : IJoinedValue<T> where T : ILeft, IRight
+{
+    public NativeProduct() { }
+    public NativeProduct(T value) { Value = value; }
+    public T Value { get; }
+}
 public static class JoinedSlot
 {
     public static bool IsValue<T>(object value) where T : ILeft, IRight => value is IJoinedValue<T>;
