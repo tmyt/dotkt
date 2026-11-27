@@ -1,7 +1,8 @@
 # A Unit lambda fills a slot whose Invoke RETURNS. No method pointer is delegate-compatible with such a slot, so
 # the construction becomes a newClosure over an adapter bir2cir authors, and the natural void delegate — with its
-# own already-resolved constructor and Invoke — becomes that adapter's single capture, untouched.
-?any(.[] | .. | objects; ir_matches({"k":"newClosure","closureType":{"t":"fqn","name":"dotkt$UnitDelegateAdapterProbeKt$UnitDelegateAdapter0"},"method":"invoke","captures":{"$prefix":[{"k":"newDelegate","method":"lambda"}]}}))
+# own already-resolved constructor and Invoke — is the adapter's only capture. The provenance call returns
+# that same delegate; it must not allocate another adapter or substitute a different delegate target.
+?any(.[] | .. | objects; ir_matches({"k":"newClosure","closureType":{"t":"fqn","name":"dotkt$UnitDelegateAdapterProbeKt$UnitDelegateAdapter0"},"method":"invoke","captures":[{"k":"cast","type":{"t":"fn","clr":"System.Action"},"e":{"k":"callStatic","memberRef":{"assembly":"DotKt.Stdlib","name":"recordKotlinCallable"},"args":[{"k":"newDelegate","method":"lambda","delegateCtorRef":{"declaringType":{"name":"System.Action`1","args":[{"t":"fqn","name":"System.Int32"}]}}}]}}]}))
 +"funcType":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"void"},"params":[{"t":"fqn","name":"System.Int32"}],"clr":"System.Action"}
 # The construction states the SLOT's delegate and the adapter instantiation, both closed over the call site's
 # natural Int32 parameter and destination object carrier parameter.
