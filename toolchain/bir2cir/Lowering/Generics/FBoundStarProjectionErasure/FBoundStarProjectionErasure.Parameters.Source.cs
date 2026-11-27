@@ -108,8 +108,11 @@ static partial class FBoundStarProjectionErasure
     }
 
     static bool ProjectedNativeOverride(BirFunctionDeclaration method, CarrierProjectionContext context) =>
-        method?.DeclarationId.HasValue == true && !method.Generated.OrDefault() && method.Overrides.OrEmpty().Any(edge =>
-            edge.NativeMethodKey.HasValue && edge.Owner.OrDefault() is TypeNode.Fqn owner && ContainsExistentialProjection(owner)
+        method != null && method.Overrides.OrEmpty().Any(edge =>
+            (edge.NativeMethodKey.HasValue && method.DeclarationId.HasValue && !method.Generated.OrDefault()
+                || KotlinPropertyAccessors.TryIdentity(method, out _, out var kind)
+                    && (kind, edge.Kind.OrDefault()) is ("get", "getter") or ("set", "setter"))
+            && edge.Owner.OrDefault() is TypeNode.Fqn owner && ContainsExistentialProjection(owner)
             && context.References?.ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is { IsInterface: false });
 
     static bool UsesProjectedValueCarrier(TypeNode type, TypeNode value, CarrierProjectionContext context) =>
