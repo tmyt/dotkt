@@ -42,3 +42,8 @@ fun aliasedLocal() {
     var live by byref<String>(System.Runtime.InteropServices.MemoryMarshal.GetArrayDataReference<String>(arrayOf("before")))
     clear(byref<String?>(live))
 }
+
+fun resizeNonNullLocal() {
+    var values = arrayOf("before")
+    System.Array.Resize(byref(values), 4)
+}

@@ -114,6 +114,16 @@ For example, after `if (x is String)`, a local declared as `Any` is still not a 
 Widening is unsafe for the same reason: a `Number` local cannot be passed as
 `byref<Any>(number)`, because the callee could write a string into it.
 
+If a CLR `ref` parameter permits writing `null`, pass a nullable Kotlin variable.
+A `[NotNull]` postcondition applies on normal return; it does not prevent a null
+write during the call. For example:
+
+```kotlin
+var names: Array<String>? = arrayOf("first")
+System.Array.Resize(byref(names), 4)
+val resized = checkNotNull(names)
+```
+
 The intended behavior of a `ref`-returning method received plainly is a value copy; bind it with
 `var x by byref(m())` to keep a **live** reference whose writes flow back into the .NET storage.
 
