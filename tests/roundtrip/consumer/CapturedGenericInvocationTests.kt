@@ -19,6 +19,15 @@ private fun <T> missingKey(): PlainKey<T>? = null
 private fun <T> copyCount(key: PlainKey<T>?, xs: MutableList<T>): Int =
     GenericValueInterop.CollectionStorageApi.Copy<T>(xs).size
 private fun copyUsingListWitness(xs: MutableList<*>): Int = copyCount(missingKey(), xs)
+private fun <T> copyBetween(left: MutableList<T>, right: MutableList<T>, fromLeft: Boolean): Any {
+    val source = if (fromLeft) left else right
+    val dest = if (fromLeft) right else left
+    dest.add(GenericValueInterop.CollectionStorageApi.Copy<T>(source)[0])
+    return dest
+}
+private fun copyToFresh(xs: MutableList<*>, reverse: Boolean, useFactory: Boolean) =
+    if (reverse) copyBetween(freshList(), sameList(xs), false)
+    else copyBetween(sameList(xs), if (useFactory) freshList() else mutableListOf(), true)
 private fun collectWithToken(key: kotlin.reflect.KClass<*>): Int = collectTokenSize(key, mutableListOf())
 private fun countWithSpan(items: CsList<out System.IO.Stream>): Int =
     GenericValueInterop.CollectionStorageApi.CountWith(items, System.MemoryExtensions.AsSpan("value"))
@@ -171,6 +180,11 @@ class CapturedGenericInvocationTests {
         fun clear(key: PlainKey<*>): Any = clearCollected(existing(), key)
         check(clear(IntegerKey) === shared && shared.isEmpty())
         check(copyUsingListWitness(mutableListOf(17)) == 1)
+        val ints = mutableListOf(17)
+        check(copyToFresh(ints, false, false) == listOf(17))
+        check(copyToFresh(ints, false, true) == listOf(17))
+        check(copyToFresh(ints, true, false) == listOf(17))
+        check(ints == listOf(17))
     }
     @TestAttribute fun superCallKeepsNonVirtualDispatch() {
         check(DerivedKeyReader().readBase(TextKey) == "base-key")

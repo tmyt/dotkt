@@ -51,6 +51,8 @@ fun <T> plainTag(key: PlainKey<T>): String = "plain-key"
 fun readPlainKey(key: PlainKey<*>): String = plainTag(key)
 fun <T> collectSize(key: PlainKey<T>, sink: MutableList<T>): Int = sink.size
 fun <T : Any> collectTokenSize(key: kotlin.reflect.KClass<T>, sink: MutableList<T>): Int = sink.size
+fun <T> freshList(): MutableList<T> = mutableListOf()
+fun <T> sameList(source: MutableList<T>): MutableList<T> = source
 fun collectHere(key: PlainKey<*>): Int = collectSize(key, mutableListOf())
 fun <T> clearCollected(sink: MutableList<T>, key: PlainKey<T>): Any {
     sink.clear()

@@ -526,6 +526,7 @@ internal sealed record BirMethodWitness : BirGraphValue
 
 internal sealed record CapturedGenericArgument : BirGraphValue
 {
+    internal int[]? AppliedPositions { get; set; }
     public OptionalField<int> Argument { get; set; }
     public OptionalField<int[]> OwnerPositions { get; set; }
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)

@@ -122,6 +122,10 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         id != null && _declarationById.TryGetValue(id, out var binding)
             ? binding.DeclarationSemanticParams : null;
 
+    internal TypeNode DeclarationSourceReturn(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            ? binding.DeclarationSemanticReturn ?? binding.KotlinReturnType : null;
+
     internal TypeNode[] DeclarationOverrideParameters(string id)
     {
         if (id == null || !_declarationById.TryGetValue(id, out var binding)) return null;

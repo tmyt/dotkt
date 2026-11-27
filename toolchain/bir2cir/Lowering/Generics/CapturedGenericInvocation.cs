@@ -24,7 +24,8 @@ static partial class CapturedGenericInvocation
         _ => null,
     };
 
-    public static BirFileDeclaration[] PreserveSourceFacts(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
+    public static BirFileDeclaration[] PreserveSourceFacts(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs,
+        SourceDeclarationSignatures signatures = null)
     {
         _next = 0;
         _parameterWitnesses.Clear();
@@ -61,16 +62,8 @@ static partial class CapturedGenericInvocation
                     || CaptureOwner(BirNodeType.Of(arguments[index] as BirGraphNode)) is not { Args: { } actualArgs } actual
                     || !actualArgs.Any(NeedsCapture)) continue;
                 var formalOwner = OwnerIdentity(formal.Name);
-                if (OwnerIdentity(actual.Name) != formalOwner)
-                {
-                    hierarchy ??= SupertypeGraph.CollectSource(roots);
-                    var seed = new SupertypeGraph.Def { Interfaces = new[] { actual } };
-                    var views = SupertypeGraph.Reachable(seed, hierarchy, refs, sourceFrames: true)
-                        .Where(edge => OwnerIdentity(edge.spec.Name) == formalOwner)
-                        .Select(edge => edge.spec with { Name = formalOwner }).DistinctBy(SupertypeGraph.TypeKey).Take(2).ToArray();
-                    if (views.Length != 1 || views[0].Args == null) continue;
-                    actualArgs = views[0].Args;
-                }
+                actualArgs = View(actual, formalOwner);
+                if (actualArgs == null) continue;
                 if (actualArgs.Length != formalArgs.Length) continue;
                 var local = locals.TryGetValue(formal.Name, out var localParameters);
                 var parameters = local ? localParameters : refs.OwnerTypeParametersInPhysicalFrame(formal.Name);
@@ -81,9 +74,54 @@ static partial class CapturedGenericInvocation
                         IsMethodSlot(formalArgs[slot])
                         && NeedsCapture(actualArgs[slot])
                         && parameters[frame?.SourcePosition(slot) ?? slot].Variance.OrDefault() is not ("in" or "out")).ToArray();
-                if (positions.Length != 0) captures.Add(new CapturedGenericArgument { Argument = index, OwnerPositions = positions });
+                if (positions.Length != 0) captures.Add(new CapturedGenericArgument { Argument = index, OwnerPositions = positions,
+                    AppliedPositions = AppliedPositions(arguments[index], formalOwner, positions) });
             }
             return captures.ToArray();
+        }
+
+        // A generic producer returning List<T> applies its invocation's T. It
+        // does not discover T from the resulting list. Keep an existential
+        // return (List<*>) and a call which itself recovered T as real evidence.
+        int[] AppliedPositions(IBirExpression operand, string formalOwner, int[] positions)
+        {
+            if (operand is BirValueBlock block)
+                return AppliedPositions(block.Result.OrDefault(), formalOwner, positions);
+            if (operand is BirConditional branch)
+            {
+                // Only the selected result contributes a value; neither the
+                // condition nor statements evaluated for effects are witnesses.
+                var left = AppliedPositions(branch.Then.OrDefault(), formalOwner, positions);
+                return left is { Length: > 0 } ? AppliedPositions(branch.Else.OrDefault(), formalOwner, left) : null;
+            }
+            var (id, typeArgs, inputs, signature) = operand switch {
+                BirCallStatic s when !s.SuspendCall.OrDefault() => (s.DeclarationId.OrDefault(), s.TypeArgs.OrDefault(), s._capturedGenericArgument.OrDefault(), s.Sig.OrDefault() ?? s.ShapeTypes.OrDefault()),
+                BirCallInstance m when !m.SuspendCall.OrDefault() => (m.DeclarationId.OrDefault(), m.TypeArgs.OrDefault(), m._capturedGenericArgument.OrDefault(), m.Sig.OrDefault() ?? m.ShapeTypes.OrDefault()),
+                _ => default,
+            };
+            if (id == null || typeArgs is not { Length: > 0 }) return null;
+            var result = signatures != null && signatures.TryGetValue(id, out var local)
+                ? local.Return : refs?.DeclarationSourceReturn(id);
+            if (CaptureOwner(result) is not { } declared || View(declared, formalOwner) is not { } slots)
+                return null;
+            bool Recovered(int index) => inputs?.Any(input => {
+                var args = CaptureOwner(signature[input.Argument.Value])?.Args;
+                return input.OwnerPositions.Value.Any(p => input.AppliedPositions?.Contains(p) != true &&
+                    (args?[p] is TypeNode.Oblivious o ? o.Of : args?[p]) is TypeNode.Tv { Scope: "method" } v && v.I == index);
+            }) == true;
+            return positions.Where(i => i < slots.Length && slots[i] is TypeNode.Tv { Scope: "method" } t &&
+                t.I < typeArgs.Length && typeArgs[t.I] is not (TypeNode.Star or TypeNode.Projection) && !Recovered(t.I)).ToArray();
+        }
+
+        TypeNode[] View(TypeNode.Fqn type, string owner)
+        {
+            if (OwnerIdentity(type.Name) == owner) return type.Args;
+            hierarchy ??= SupertypeGraph.CollectSource(roots);
+            var seed = new SupertypeGraph.Def { Interfaces = new[] { type } };
+            var views = SupertypeGraph.Reachable(seed, hierarchy, refs, sourceFrames: true)
+                .Where(edge => OwnerIdentity(edge.spec.Name) == owner)
+                .Select(edge => edge.spec with { Name = owner }).DistinctBy(SupertypeGraph.TypeKey).Take(2).ToArray();
+            return views.Length == 1 ? views[0].Args : null;
         }
 
         BirGraphValue Visit(BirGraphValue node)

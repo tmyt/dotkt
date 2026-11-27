@@ -474,6 +474,7 @@ static partial class CapturedGenericInvocation
                     : refs.NullableTypeFrames.GetValueOrDefault(owner.Name);
                 foreach (var position in entry.OwnerPositions.Value)
                 {
+                    if (witnesses[index].StorageOnly && entry.AppliedPositions?.Contains(position) == true) continue;
                     // Other occurrences of this method variable need not be invariant.
                     // Only the projected owner position supplies the runtime witness.
                     var pos = ownerFrame?.SourcePosition(position) ?? position;
@@ -541,6 +542,7 @@ static partial class CapturedGenericInvocation
             // construction into the captured construction. Do not replace that
             // existing edge with a verifier-green but uncallable thunk.
             var rows = CaptureRows(capture, declarationParameters, refs);
+            if (rows.Length == 0) return call.Node;
             var closedSlots = rows.SelectMany(row => new[] { row.Slot, row.Nullable }).Where(i => i >= 0).ToArray();
             // Null can inhabit a reference construction for every closing of its arguments.
             // A bare captured variable is different: reflection silently turns null into
@@ -571,7 +573,6 @@ static partial class CapturedGenericInvocation
             {
                 // Close the invariant operand from its runtime witness, but pass
                 // independent stack-only values through the typed Invoke signature.
-                if (rows.Length == 0) return call.Node;
                 if (!TrySelectedMethod(call, owner, refs, out var method))
                     throw new InvalidOperationException("Captured invocation lost its selected MethodDef");
                 var target = AddressTarget.FromReference(method, call.Member, selectedFrame);

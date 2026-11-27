@@ -414,6 +414,8 @@ def outputs(root, definitions):
                       "    internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }"]
         if name == "BirParameter":
             model += ["    internal TypeNode? DelegateRestorationType { get; set; }"]
+        if name == "CapturedGenericArgument":
+            model += ["    internal int[]? AppliedPositions { get; set; }"]
         if name == "BirIsInstance":
             model += ["    internal bool ExactDispatchOwner { get; set; }"]
         if name == "BirNew":
