@@ -2,6 +2,7 @@ package roundtriptests.capturedgeneric
 
 import NUnit.Framework.TestAttribute
 import System.Collections.Generic.List as CsList
+import kotlin.clr.byref
 import kotlin.coroutines.CoroutineContext
 import roundtrip.capturedgeneric.*
 
@@ -50,6 +51,11 @@ private fun identifyWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.S
     GenericValueInterop.CollectionStorageApi.IdentifyWith(box, null, System.MemoryExtensions.AsSpan("value"))
 private fun readWithSpan(box: GenericValueInterop.CaptureBox<out System.IO.Stream>): System.IO.Stream? =
     GenericValueInterop.CollectionStorageApi.ReadWith(box, System.MemoryExtensions.AsSpan("value"))
+private fun visitAliased(box: GenericValueInterop.CaptureBox<out System.IO.Stream>) {
+    var visits = 2
+    check(GenericValueInterop.CollectionStorageApi.VisitAliased(box, byref(visits), byref(visits)) == 4)
+    check(visits == 4)
+}
 private class SpanCallOwner : GenericValueInterop.ProjectedListConsumer() {
     inner class Caller {
         fun clear(items: CsList<out System.IO.Stream>): Unit =
@@ -70,6 +76,8 @@ private class ThrowingElement : CoroutineContext.Element {
 }
 
 class CapturedGenericInvocationTests {
+    @TestAttribute fun capturedCallPreservesIndependentRefAliases() =
+        visitAliased(GenericValueInterop.CaptureBox<System.IO.MemoryStream>())
     @TestAttribute fun nullCannotBecomeAValueOfTheCapturedNativeType() {
         val ints = CsList<Int>()
         var rejected = false

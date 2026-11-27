@@ -540,7 +540,9 @@ static partial class CapturedGenericInvocation
                     (v.Scope == "method" ? methodFrame : ownerFrame)[v.I].SpecialConstraints.OrEmpty().Contains("allowsRefStruct");
             }
             var typedInput = declarationParameters.Any(RequiresTypedTransport);
-            if (RequiresTypedTransport(declaredReturn) || typedInput && (local || declarationParameters.Any(HasAddress) ||
+            // Independent managed references can travel through the typed adapter unchanged.
+            // The captured-slot check below still excludes a reference whose pointee would change.
+            if (RequiresTypedTransport(declaredReturn) || typedInput && (local || declarationParameters.Any(t => t is TypeNode.Ptr) ||
                 captureIndices.Any(i => RequiresTypedTransport(declarationParameters[i])))) return call.Node;
             // Closing the method cannot convert an already-created invariant
             // construction into the captured construction. Do not replace that
