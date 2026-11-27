@@ -39,3 +39,11 @@ class ProducedNumeric(gate: IntGate) : NumericBody<String>("producer", gate), Nu
 interface MethodFactory { suspend fun <T> echo(value: T): Any? }
 open class MethodBody { open suspend fun <T> echo(value: T): T = value }
 class ProducedMethod : MethodBody(), MethodFactory
+
+interface WideResult<T> { suspend fun next(value: T): Any? }
+open class GenericResult<T> : WideResult<T> {
+    override suspend fun next(value: T): T = value
+}
+class ProducedIntResult(private val gate: IntGate) : GenericResult<Int>() {
+    override suspend fun next(value: Int): Int = value + gate.await()
+}

@@ -84,7 +84,11 @@ static partial class KotlinOverrideSlotBridge
                 var slotParams = rawSlotParams
                     .Select(t => t == null ? null : SupertypeGraph.SubstOwnerTvs(
                         DeclaredSlot(t, isValue, physical: phase == Phase.PhysicalBridges), supArgs)).ToArray();
-                var slotRet0 = slot.Return;
+                // A base declaration can keep its Kotlin return T but complete Task<object>
+                // to implement an ancestor. Build the adapter before the Task body is emitted.
+                var slotRet0 = phase == Phase.SuspendValueBridges
+                    && !IsVoid(slot.Return) && !IsUnitValueSlot(slot.Return)
+                    ? slot.Source?.SuspendTaskResult.OrDefault() ?? slot.Return : slot.Return;
                 if (slotParams.Any(p => p == null) || slotRet0 == null) continue;
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
                     DeclaredSlot(slotRet0, isValue, physical: phase == Phase.PhysicalBridges), supArgs);
@@ -382,13 +386,19 @@ static partial class KotlinOverrideSlotBridge
                     continue;
                 if (suspendValues)
                 {
-                    if (accessorKind != null || !refs.TrySelectedOverrideDeclarationByShape(
+                    var suspendDeclaration = selectedClassDeclaration;
+                    if (accessorKind != null || suspendDeclaration == null && !refs.TrySelectedOverrideDeclarationByShape(
                         spec.Name, member, null, methodArity, implementationSignature, supArgs,
-                        MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out var suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
+                        MethodTypeParameterShapeKey(impl.TypeParameters, ownArgs, refs.PhysicalConstraintType), selectedSuspend: true, out suspendDeclaration, semanticConstraints: false, selectedDeclarationId: null))
                         continue;
-                    // The selected suspend declaration supplies its logical open return independently from its
-                    // already-emitted Task signature. Decide value-ness before closing the owner's type arguments.
+                    // The hot MethodDef states the completion type. Retain the logical result
+                    // when it already has that representation (notably nullable Unit).
                     slotRet0 = suspendDeclaration.Return;
+                    if (suspendDeclaration.PhysicalReturn is TypeNode.Fqn { Args: [var completion] } task
+                        && ReferenceMetadataReader.StripGenericArity(task.Name) == "System.Threading.Tasks.Task"
+                        && !BirTypeLowering.SamePhysicalSlotType(slotRet0, completion, refs.Aliases, isValue,
+                            refs.PhysicalTypeNames, returnPosition: false, nullableFrames: refs.NullableTypeFrames))
+                        slotRet0 = completion;
                     slotParams0 = suspendDeclaration.PhysicalParameters;
                     signatureParameters = suspendDeclaration.SignatureParameters;
                     refused = null;
