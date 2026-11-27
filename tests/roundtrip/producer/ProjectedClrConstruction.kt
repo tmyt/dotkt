@@ -25,6 +25,11 @@ fun consumeCovariant(values: System.Collections.Generic.List<List<String>>): Str
 fun nonNullProjectedArgument(value: MutableList<*>): MutableList<*> =
     ProjectedConstructionInterop.NonNullBox<MutableList<*>>(value).Value
 
+open class BoundValue<X>
+
+fun <A : BoundValue<*>> referenceBound(value: A): A =
+    ProjectedConstructionInterop.NonNullBox<A>(value).Value
+
 fun obliviousProjectedArgument(value: MutableList<*>): MutableList<*> =
     ProjectedConstructionInterop.ObliviousBox<MutableList<*>>(value).Value
 

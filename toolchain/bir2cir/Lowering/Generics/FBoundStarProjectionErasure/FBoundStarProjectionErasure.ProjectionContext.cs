@@ -245,6 +245,11 @@ static partial class FBoundStarProjectionErasure
             return native?.IsInterface == true ? "interface" : native?.IsClass == true ? "class" : null;
         }
 
+        internal bool LosesClassConstraint(TypeNode bound, TypeNode projected) =>
+            bound is TypeNode.Fqn { Args.Length: > 0 } f && BoundKind(f) == "class"
+            && TryExistentialCarrier(f.Name, out var carrier)
+            && projected is TypeNode.Fqn p && p.Name == carrier;
+
         internal sealed record FixedSupertypeConstraint(int Index, TypeNode.Fqn Bound, string Owner);
 
         readonly Dictionary<string, ProjectedClassStorageFrame> constructorFrames = new(StringComparer.Ordinal);

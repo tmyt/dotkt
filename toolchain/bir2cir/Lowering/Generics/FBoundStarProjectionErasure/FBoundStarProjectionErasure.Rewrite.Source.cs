@@ -190,13 +190,19 @@ static partial class FBoundStarProjectionErasure
             }
             if (field == "constraints" && scope.ParameterOwner != null
                 && state.Demand.NativeProofs.IsPhysicalConstraint(scope.ParameterOwner, scope.ParameterIndex, type)) bound = true;
-            return state.Projection.Rewrite(type, bound, preserveConstructedHead:
+            var projectedType = state.Projection.Rewrite(type, bound, preserveConstructedHead:
                 ConstructionHeadSlot(facts, field)
                 || (ArrayComponentTypeSlot(facts, field) || NativeLocationTypeSlot(facts, field)) && PreservesNativeWitnessHead(type, state.Projection)
                 || ExactLexicalTypeSlot(facts, field) && !(facts.ExactOuter && sharedOuter && field != "ownerType")
                 || facts.TypeDefinition && field is "base" or "interfaces"
                 || facts.DeclarationDescriptor && field == "owner", preserveArrayShape: shape,
                 sourceOverrideOwner: node is BirOverride);
+            // The carrier interface preserves Kotlin membership but no longer
+            // tells the CLR that this parameter ranges over reference types.
+            if (node is BirTypeParameter row && field == "constraints" && state.Projection.LosesClassConstraint(type, projectedType)
+                && !row.SpecialConstraints.OrEmpty().Contains("class"))
+                row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("class").ToArray();
+            return projectedType;
         }, (field, role, child) => {
             // A use-site override edge selects a source declaration, not an
             // application of its physical frame. The expression's owner is

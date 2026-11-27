@@ -5,6 +5,9 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.projectedclrconstruction.*
 
 class ProjectedClrConstructionTests {
+    private fun <A : BoundValue<String>> exactBound(value: A): A =
+        ProjectedConstructionInterop.NonNullBox<A>(referenceBound(value)).Value
+
     @TestAttribute
     fun redundantProjectionConstructsTheClosedClrType() {
         val local = System.Collections.Generic.List<Comparable<in String>>()
@@ -35,6 +38,10 @@ class ProjectedClrConstructionTests {
         val strings = mutableListOf("argument")
         check(nonNullProjectedArgument(integers) === integers)
         check(nonNullProjectedArgument(strings) === strings)
+        val bound = BoundValue<String>()
+        check(exactBound(bound) === bound)
+        val hidden: BoundValue<*> = BoundValue<Int>()
+        check(referenceBound(hidden) === hidden)
         check(obliviousProjectedArgument(integers) === integers)
         check(obliviousProjectedArgument(strings) === strings)
         val marker = ProjectedConstructionInterop.MarkerValue<Int>()
