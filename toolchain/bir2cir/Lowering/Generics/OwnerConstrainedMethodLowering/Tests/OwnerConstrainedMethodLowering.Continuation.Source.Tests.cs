@@ -96,7 +96,7 @@ static partial class OwnerConstrainedMethodLowering
             Parameter("P", value), Parameter("Y", other), Parameter("X", ownerVariable, value),
         }, NullableRepresentationFrame = new NullableRepresentationFrame(2, Array.Empty<int>(), new[] { 2, 1, 0 }, storageIndices: new[] { 0 }) };
         RecordOverride(implementation, new[] { Parameter("X", ownerVariable), Parameter("Y") }, new TypeNode[] { ownerVariable },
-            new[] { Parameter("T") }, new[] { Parameter("B", value) }, type => type, sourceParameters: true);
+            new[] { Parameter("T") }, new[] { Parameter("B", value) }, sourceParameters: true);
         var plans = PlanConstraintRewrite(implementation.TypeParams.Value.Select(parameter => parameter.Constraints.Value).ToArray(),
             new TypeNode[][] { new[] { value } }, implementation.NullableRepresentationFrame.Value,
             implementation._ownerConstraintOverrideBounds.Value, refs, _ => false, type => type, _ => null, _ => Array.Empty<TypeNode>());
