@@ -10118,6 +10118,7 @@ internal sealed record BirAttribute : BirGraphValue
     public OptionalField<TypeNode[]> ArgTypes { get; set; }
     public OptionalField<IBirAttributeValue[]> Args { get; set; }
     public OptionalField<BirAttributeNamedArgument[]> NamedArgs { get; set; }
+    public OptionalField<string> ConstructorNativeKey { get; set; }
     public OptionalField<bool> AttrExternal { get; set; }
     public OptionalField<string> AttrAssembly { get; set; }
     public OptionalField<BirMemberReference> MemberRef { get; set; }
@@ -10157,6 +10158,7 @@ internal sealed record BirAttribute : BirGraphValue
     {
         if (Attr.HasValue) { BirGraphNameFields.VisitTypeStrings((TypeNode)Attr.Value, visit); }
         if (ArgTypes.HasValue) { foreach (var item0 in ArgTypes.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
+        if (ConstructorNativeKey.HasValue) { visit((string)ConstructorNativeKey.Value); }
         if (AttrAssembly.HasValue) { visit((string)AttrAssembly.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
@@ -10277,6 +10279,7 @@ internal sealed record BirAttribute : BirGraphValue
             && EqualField(ArgTypes, value.ArgTypes, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(Args, value.Args, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(NamedArgs, value.NamedArgs, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
+            && EqualField(ConstructorNativeKey, value.ConstructorNativeKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(AttrExternal, value.AttrExternal, (left, right) => EqualityComparer<bool>.Default.Equals(left, right))
             && EqualField(AttrAssembly, value.AttrAssembly, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(MemberRef, value.MemberRef, (left, right) => ((BirGraphValue)left).StructurallyEquals((BirGraphValue)right));
@@ -10288,6 +10291,7 @@ internal sealed record BirAttribute : BirGraphValue
         WriteOptional(writer, "argTypes", ArgTypes, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "args", Args, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "namedArgs", NamedArgs, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
+        WriteOptional(writer, "constructorNativeKey", ConstructorNativeKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "attrExternal", AttrExternal, (writer, value) => { writer.WriteBooleanValue(value); });
         WriteOptional(writer, "attrAssembly", AttrAssembly, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "memberRef", MemberRef, (writer, value) => { ((BirGraphValue)value).WriteJson(writer); });
@@ -10301,6 +10305,7 @@ internal sealed record BirAttribute : BirGraphValue
         if (ArgTypes.IsPresent) result["argTypes"] = ArgTypes.IsNull ? null : new JsonArray(ArgTypes.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (Args.IsPresent) result["args"] = Args.IsNull ? null : new JsonArray(Args.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (NamedArgs.IsPresent) result["namedArgs"] = NamedArgs.IsNull ? null : new JsonArray(NamedArgs.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
+        if (ConstructorNativeKey.IsPresent) result["constructorNativeKey"] = ConstructorNativeKey.IsNull ? null : JsonValue.Create(ConstructorNativeKey.Value);
         if (AttrExternal.IsPresent) result["attrExternal"] = AttrExternal.IsNull ? null : JsonValue.Create(AttrExternal.Value);
         if (AttrAssembly.IsPresent) result["attrAssembly"] = AttrAssembly.IsNull ? null : JsonValue.Create(AttrAssembly.Value);
         if (MemberRef.IsPresent) result["memberRef"] = MemberRef.IsNull ? null : ((BirGraphValue)MemberRef.Value).ToDom(projected);

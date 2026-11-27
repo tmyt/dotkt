@@ -456,8 +456,17 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 			BirFieldGet(ownerType = ownerSpec(ownerClass, node.receiver?.type), recv = recvJson, name = fldName,
 				dataClassCopyDefault = copyDefault, generatedEqualsFieldRead = generatedEquals)
 	}
-	is IrConstructorCall -> {
+	is IrConstructorCall -> run {
 		val klass = node.symbol.owner.parent as? IrClass
+		val parameters = node.symbol.owner.parameters
+		// dll2klib appends annotation assignments after the actual constructor parameters.
+		// They are not CLR optional parameters, even when the annotation is constructed as a value.
+		val namedStart = if (klass?.kind == ClassKind.ANNOTATION_CLASS)
+			parameters.indexOfFirst { p -> p.annotations.any { it.isClrAttributeNamedArgument() } } else -1
+		val constructorParameters = if (namedStart < 0) parameters else parameters.take(namedStart)
+		if (namedStart >= 0 && node.arguments.drop(namedStart).any { it != null })
+			return@run unsupported(node, "CLR attribute member assignment in a constructor call",
+				"use an annotation application or assign the member to the constructed object with apply")
 		val innerOuterSlot = innerConstructorOuterSlot(node, klass)
 		// The generic Kotlin array constructor `Array<E>(size) { init }` is semantic BIR array construction. Carry the
 		// frontend element type exactly as supplied, whether concrete or a scoped `tv`; bir2cir owns its physical CLR
@@ -475,7 +484,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 		// this call needs an evaluation plan `filledArgs` binds it as a recv-phase binding and the reader below renders
 		// that ONE binding's `bindRef` through the ordinary `expr()`, instead of a second emission of the expression
 		// (which would append a second copy of any lifted lambda in it).
-		val ctorArgs: List<BirExpression> = filledArgs(node)
+		val ctorArgs: List<BirExpression> = filledArgs(node, constructorParameters.size)
 		val outerArg: BirExpression? =
 			if ((node.symbol.owner.parent as? IrClass)?.isInner == true) dispatchReceiver(node)?.let { expr(it) } else null
 		val arrArgs = if (arrElem != null) ctorArgs else emptyList()
@@ -502,13 +511,13 @@ internal fun BirEmitter.exprInner(node: IrExpression): BirExpression = when (nod
 			// declared constructor vector.
 			val externalArgs = listOfNotNull(outerArg) + ctorArgs
 			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
-			val externalTypes = (listOfNotNull(innerOuterSlot) + node.symbol.owner.parameters
+			val externalTypes = (listOfNotNull(innerOuterSlot) + constructorParameters
 				.filter { it.kind == IrParameterKind.Regular }
 				.map { birType(ctorSubst?.substitute(it.type) ?: it.type) })
 			val externalSignature = inMemberDeclarationFrame(node.symbol.owner) {
 				val outer = node.symbol.owner.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
 					?.let { birType(it.type) }
-				val regular = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+				val regular = constructorParameters.filter { it.kind == IrParameterKind.Regular }
 					.map { birType(it.type) }
 				listOfNotNull(outer) + regular
 			}
