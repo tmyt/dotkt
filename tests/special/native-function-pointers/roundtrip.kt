@@ -10,7 +10,7 @@ private interface NamedCallback {
 
 private class CallbackCollision : PointerCallbackBase(), NamedCallback
 
-private class PointerChild : SuspendPointerBase<Int>() {
+class PointerChild : SuspendPointerBase<Int>() {
     override suspend fun consume(value: Int, pointer: ClrFunctionPointer<Managed, (Int) -> Int>): Int =
         Api.Call(pointer, value)
 }
