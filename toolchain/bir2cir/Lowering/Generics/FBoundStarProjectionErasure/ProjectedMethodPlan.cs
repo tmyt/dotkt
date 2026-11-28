@@ -7,8 +7,22 @@ using DotKt.Cir;
 sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassStorageFrame.WitnessSlot[] Facets, int[] AddressOperands)
 {
     internal int[] NativeIndices { get; init; } = [];
+    internal int[] ReferenceIndices { get; init; } = [];
     internal string RepresentationDeclaration { get; init; }
-    internal int PrimaryArity => Parameters.Length - Facets.Length - NativeIndices.Length - AddressOperands.Length;
+    // Each value-capable slot carries a reference-only choice and independent
+    // upper witnesses for its nominal and material inputs. Those inputs need
+    // not denote the same CLR type for star-projected Kotlin arguments.
+    internal const int WeakWitnessWidth = 3;
+    internal int PrimaryArity => Parameters.Length - Facets.Length - NativeIndices.Length - AddressOperands.Length - WeakWitnessWidth * ReferenceIndices.Length;
+
+    internal int ReferencePosition(int primary) => Array.IndexOf(ReferenceIndices, primary) is var i && i >= 0
+        ? Parameters.Length - WeakWitnessWidth * ReferenceIndices.Length + i : -1;
+
+    internal int UpperPosition(int primary, bool material) => ReferencePosition(primary) is var i && i >= 0
+        ? i + ReferenceIndices.Length * (material ? 2 : 1) : -1;
+
+    internal IEnumerable<T> UpperArguments<T>(Func<int, bool, T> select) =>
+        ReferenceIndices.Select(i => select(i, false)).Concat(ReferenceIndices.Select(i => select(i, true)));
 
     internal TypeNode NativeArgument(TypeNode argument) =>
         argument is TypeNode.Tv { Scope: "method" } tv && Array.IndexOf(NativeIndices, tv.I) is var i && i >= 0
@@ -52,7 +66,8 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         operands.Select(p => p.DelegateRestorationType ?? p.Type.OrDefault()).Append(result).Where(t => t != null);
 
     internal static ProjectedMethodPlan Declare(ProjectedClassStorageFrame frame, BirParameter[] operands,
-        ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result, Func<int, bool> nominal)
+        ReferenceMetadataIndex references, NullableRepresentationFrame representations, TypeNode result, Func<BirTypeParameter, bool> nominal,
+        GenericRepresentationPolicy values, IEnumerable<int> independent)
     {
         var formals = frame.Declare().ToList();
         // Only the projected entry separates the nominal class witness from the
@@ -74,10 +89,57 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         foreach (var type in MaterialSignature(operands, result))
             NativeUses(type, references, (v, row, args, invariant) => {
                 if (v.Scope != "method") return null;
-                if (invariant && (facets.Any(f => f.OwnerIndex == v.I) || nominal(v.I))) native.Add(v.I);
+                if (invariant && (facets.Any(f => f.OwnerIndex == v.I) || nominal(formals[v.I]))) native.Add(v.I);
                 requirements.Add((v.I, row, args));
                 return null;
             });
+        // The storage slot may represent several concrete types by one Kotlin
+        // carrier. A native construction needs a distinct material argument;
+        // its joint interface bounds are already part of the published frame.
+        var materialBounds = new Dictionary<int, TypeNode[]>();
+        var independentIndices = independent.Distinct().ToArray();
+        IEnumerable<TypeNode> DeclaredProofs(int origin)
+        {
+            // A : K, K : I conveys the same storage-safe interface proof as
+            // A : I. Carry that proof, not the nominal K chosen for a star.
+            var pending = new Stack<int>();
+            var seen = new HashSet<int>();
+            pending.Push(origin);
+            while (pending.TryPop(out var i))
+            {
+                if (!seen.Add(i)) continue;
+                foreach (var facet in facets.Where(f => f.OwnerIndex == i)) yield return facet.Bound;
+                foreach (var bound in formals[i].Constraints.OrEmpty())
+                    if (bound is TypeNode.Tv { Scope: "method" } v) pending.Push(v.I);
+                    else if (bound is TypeNode.Fqn named)
+                        foreach (var proof in values.StorageBoundRows(named))
+                            if (!proof.Erased) yield return proof.Bound;
+            }
+        }
+        foreach (var ordinary in independentIndices)
+        {
+            native.Add(ordinary);
+            IEnumerable<TypeNode> proofs = DeclaredProofs(ordinary);
+            if (representations?.SourceIndex(ordinary) is int source &&
+                representations.StorageIndices.Contains(source))
+            {
+                // The selected native slot can require storage-safe interfaces
+                // supplied by either a nominal base or a Kotlin interface.
+                var storage = representations.Variable(new TypeNode.Tv("method", source), NullableRepresentationFrame.Role.Storage);
+                proofs = proofs.Concat(formals[storage.I].Constraints.OrEmpty());
+            }
+            materialBounds[ordinary] = proofs.Distinct().ToArray();
+        }
+        foreach (var group in facets.GroupBy(f => f.OwnerIndex))
+        {
+            var ordinary = group.Key;
+            var bounds = group.Select(f => f.Bound).Distinct().ToArray();
+            // The selected frame may join independently inherited slots. Its
+            // constraints, not the implementation's substituted spelling, define the entry.
+            if (!values.NeedsVirtualStorageWitness(formals[ordinary].Constraints.OrEmpty().Concat(bounds).OfType<TypeNode.Fqn>())) continue;
+            native.Add(ordinary);
+            materialBounds[ordinary] = (materialBounds.GetValueOrDefault(ordinary) ?? []).Concat(bounds).Distinct().ToArray();
+        }
         // A dependent native row B : A must stay in the same frame as A.
         // The nominal B : A edge remains on the original Kotlin formals.
         bool changed;
@@ -103,9 +165,16 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             var uses = requirements.Where(r => r.Source == index).ToArray();
             var row = new BirTypeParameter { Name = "$native$" + index };
             var bounds = uses.SelectMany(r => r.Row.Constraints.OrEmpty().Select(c =>
-                SupertypeGraph.SubstOwnerTvs(c, r.Arguments.Select(InNativeFrame).ToArray()))).Where(c =>
+                SupertypeGraph.SubstOwnerTvs(c, r.Arguments.Select(InNativeFrame).ToArray()))).Concat(
+                    (materialBounds.GetValueOrDefault(index) ?? []).Select(InNativeFrame)).Where(c =>
                     c != new TypeNode.Tv("method", formals.Count)).Distinct().ToArray();
-            var special = uses.SelectMany(r => r.Row.SpecialConstraints.OrEmpty())
+            var ordinary = formals[index];
+            // Splitting a nominal class witness from the material argument
+            // does not turn a reference-only source parameter into a value type.
+            var referenceOnly = materialBounds.ContainsKey(index) && (ordinary.SpecialConstraints.OrEmpty().Contains("class")
+                || nominal(ordinary) && ordinary.Constraints.OrEmpty().OfType<TypeNode.Fqn>().All(bound =>
+                    references.PhysicalConstraintType(bound) is not TypeNode.Fqn { Name: "System.ValueType" or "System.Enum" }));
+            var special = uses.SelectMany(r => r.Row.SpecialConstraints.OrEmpty()).Concat(referenceOnly ? ["class"] : Array.Empty<string>())
                 .Where(s => s != "allowsRefStruct").Distinct().ToArray();
             if (bounds.Length != 0) row.Constraints = bounds;
             if (special.Length != 0) row.SpecialConstraints = special;
@@ -118,7 +187,17 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             addresses.Add(i);
             formals.Add(new BirTypeParameter { Name = "$location$" + i });
         }
-        return new(formals.ToArray(), facets, addresses.ToArray()) { NativeIndices = indices };
+        // A weak virtual slot can be implemented by either a value or a
+        // reference-constrained receiver. Only the latter needs a separate
+        // class proof when the material row itself does not already supply it.
+        var referenceIndices = independentIndices.Where(i =>
+            !formals[firstNative + Array.IndexOf(indices, i)].SpecialConstraints.OrEmpty().Contains("class")).ToArray();
+        foreach (var i in referenceIndices)
+            formals.Add(new BirTypeParameter { Name = "$referenceMaterial$" + i, SpecialConstraints = new[] { "class" } });
+        foreach (var prefix in new[] { "$primaryUpper$", "$materialUpper$" })
+            foreach (var i in referenceIndices)
+                formals.Add(new BirTypeParameter { Name = prefix + i });
+        return new(formals.ToArray(), facets, addresses.ToArray()) { NativeIndices = indices, ReferenceIndices = referenceIndices };
     }
 
     internal void ApplyAddressFormals(BirParameter[] parameters)
@@ -140,7 +219,19 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         AddressOperands.Select(i => FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(
             ((TypeNode.ByRef)SignatureValueTypes.Of(exact[i])).Of, owner, actual)).ToArray();
 
-    internal BirTypeParameter[] CloneParameters() => Parameters.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+    BirTypeParameter[] CopyRows() => Parameters.Select(p => (BirTypeParameter)p.DeepClone()).ToArray();
+
+    internal BirTypeParameter[] CloneParameters()
+    {
+        var rows = CopyRows();
+        foreach (var i in ReferenceIndices)
+        {
+            var material = ((TypeNode.Tv)NativeArgument(new TypeNode.Tv("method", i))).I;
+            foreach (var (input, isMaterial) in new[] { (i, false), (material, true) })
+                rows[input].Constraints = rows[input].Constraints.OrEmpty().Append(new TypeNode.Tv("method", UpperPosition(i, isMaterial))).ToArray();
+        }
+        return rows;
+    }
 
     internal TypeNode[] ForwardTo(ProjectedMethodPlan target, Func<TypeNode,TypeNode> physicalKey)
     {
@@ -152,17 +243,20 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         var locations = target.AddressOperands.Select(i => Array.IndexOf(AddressOperands, i)).ToArray();
         if (locations.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks an inherited address");
         if (slots.Length == Facets.Length && slots.Select((s, i) => s == i).All(s => s)
-            && NativeIndices.SequenceEqual(target.NativeIndices) && target.AddressOperands.SequenceEqual(AddressOperands)) return null;
+            && NativeIndices.SequenceEqual(target.NativeIndices) && target.AddressOperands.SequenceEqual(AddressOperands)
+            && ReferenceIndices.SequenceEqual(target.ReferenceIndices)) return null;
         var natives = target.NativeIndices.Select(i => Array.IndexOf(NativeIndices, i)).ToArray();
         if (natives.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks an invariant CLR argument");
+        var references = target.ReferenceIndices.Select(ReferencePosition).ToArray();
+        if (references.Any(i => i < 0)) throw new InvalidOperationException("Projected override lacks a reference-material proof");
         return Enumerable.Range(0, primary).Concat(slots.Select(s => primary + s)).Concat(natives.Select(i => primary + Facets.Length + i))
             .Concat(locations.Select(i => primary + Facets.Length + NativeIndices.Length + i))
-            .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
+            .Concat(references).Concat(target.UpperArguments(UpperPosition)).Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray();
     }
 
     internal ProjectedMethodPlan OnOwner(TypeNode[] arguments)
     {
-        var parameters = CloneParameters();
+        var parameters = CopyRows();
         foreach (var p in parameters)
             if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(c => SupertypeGraph.SubstOwnerTvs(c, arguments)).ToArray();
         return this with { Parameters = parameters, Facets = Facets.Select((f, i) => f with {

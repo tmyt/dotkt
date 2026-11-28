@@ -125,6 +125,8 @@ static partial class InheritedClassInterfaceBridge
                 var identity = target.Value.Method.DeclarationId.OrDefault()
                     ?? throw new InvalidOperationException("Selected inherited implementation has no declaration identity");
                 bridge.DeclarationId = DeclarationIdentityBinding.InheritedProjectionId(owner.Name, new[] { identity });
+                if (bridge.MaterialFrameOrigin != null)
+                    bridge.LocalBodyEntry = (bridge.DeclarationId.Value, slot.NullableRepresentationFrame.OrDefault());
                 bridge.DeclarationSourceName = bridge.Name;
                 bridge.Generated = true;
                 owner.Declaration.Methods = owner.Methods.Append(bridge).ToArray();
@@ -218,6 +220,13 @@ static partial class InheritedClassInterfaceBridge
             var descriptor = new BirMethodImpl { Owner = BirGraphValue.CopyType(application), Member = slot.Name, Arity = arity,
                 Params = slot.Params.Value.Select(parameter => SubstOwnerTvs(FunctionSignatureIdentity.SignatureType(parameter), ownerArguments)).ToArray(),
                 Ret = BirGraphValue.CopyType(result) };
+            if (arity != 0 && slot.DeclarationId.OrDefault() is string selected)
+            {
+                bridge.MaterialFrameOrigin = selected;
+                // Keep the directive tied to the selected slot so that replacing
+                // that virtual slot also retires its old MethodImpl.
+                descriptor.LocalOverrideTargets = new[] { selected };
+            }
             if (bridge.TypeParams.HasValue && bridge.TypeParams.Value.Length > 0)
                 descriptor.TypeParams = bridge.TypeParams.Value.Select(parameter => (BirTypeParameter)parameter.DeepClone()).ToArray();
             bridge.ClrInterfaceImpls = new[] { descriptor };

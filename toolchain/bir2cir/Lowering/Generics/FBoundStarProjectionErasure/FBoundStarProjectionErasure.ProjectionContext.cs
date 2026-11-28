@@ -407,6 +407,9 @@ static partial class FBoundStarProjectionErasure
                     Preparation.SourceSupertypes, References);
             if (nativeArguments.Count != 0) frame = frame.WithNativeArguments(s => nativeArguments.Contains(s.OwnerIndex));
             frame = frame.WithDeclaredProofs(Values);
+            frame = frame.WithMaterialReferences(i => Values.NeedsVirtualStorageWitness(parameters[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>())
+                && parameters[i].Constraints.OrEmpty().OfType<TypeNode.Fqn>().All(b =>
+                    References.PhysicalConstraintType(b) is not TypeNode.Fqn { Name: "System.ValueType" or "System.Enum" }));
             return required.Length == 0 ? frame : frame.ForBase(s => required.Where(r => Required(s, r))
                 .Select(r => PrimaryConstraint(s, r.Bound)).Distinct().ToArray());
         }

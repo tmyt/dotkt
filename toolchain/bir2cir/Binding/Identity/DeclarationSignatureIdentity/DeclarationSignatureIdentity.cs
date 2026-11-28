@@ -32,6 +32,39 @@ static partial class DeclarationSignatureIdentity
             slots.Add(((BirMethodImpl)descriptor.DeepClone(), isInterface));
     }
 
+    internal static IReadOnlyDictionary<int, int[]> OwnerDependentSlots(BirTypeParameter[] parameters)
+    {
+        if (parameters.Length == 0) return null;
+        var owners = new Dictionary<int, SortedSet<int>>();
+        var edges = new List<(int Source, int Upper, bool Direct)>();
+        for (int i = 0; i < parameters.Length; i++)
+            foreach (var bound in parameters[i].Constraints.OrEmpty())
+                BirGraphNameFields.VisitTypeNodes(bound, t => {
+                    if (t is not TypeNode.Tv v) return;
+                    if (v.Scope == "method") edges.Add((i, v.I, bound == v));
+                    else if (v.Scope == "type")
+                    {
+                        if (!owners.TryGetValue(i, out var slots)) owners.Add(i, slots = new());
+                        if (bound == v) slots.Add(v.I);
+                    }
+                });
+        if (owners.Count == 0) return null;
+        bool changed;
+        do {
+            changed = false;
+            foreach (var (source, upper, direct) in edges)
+            {
+                if (!owners.TryGetValue(upper, out var inherited)) continue;
+                if (!owners.TryGetValue(source, out var slots)) { owners.Add(source, slots = new()); changed = true; }
+                // A : B, B : V proves A : V. A : Container<V>
+                // depends on V, but does not prove that subtype edge.
+                if (direct && source != upper)
+                    foreach (var index in inherited) changed |= slots.Add(index);
+            }
+        } while (changed);
+        return owners.ToDictionary(p => p.Key, p => p.Value.ToArray());
+    }
+
     public static BirFileDeclaration[] Capture(IEnumerable<BirFileDeclaration> roots)
     {
         Markers.Clear();
@@ -53,6 +86,7 @@ static partial class DeclarationSignatureIdentity
                     Params = CaptureParameters(method.Params, method.TypeParams),
                     HasNativeOverrideSlot = method.Overrides.OrEmpty().Any(edge => !edge.DeclarationId.HasValue),
                     SourceCallableVirtual = method.Virtual.OrDefault() || method.Override.OrDefault() || method.Abstract.OrDefault(),
+                    OwnerDependentSourceSlots = OwnerDependentSlots(method.TypeParams.OrEmpty()),
                     SignatureOverrideDeclarations = method.Params.HasValue && method.Overrides.HasValue
                         ? OverrideIds(method.Overrides.Value) : method.SignatureOverrideDeclarations,
                 },
@@ -203,7 +237,9 @@ static partial class DeclarationSignatureIdentity
             new BirAttribute { Args = new IBirAttributeValue[] { new BirOpaqueBytes { Bytes = bytes } } },
         } };
         var lambdaParameter = new BirLambdaParameter { Name = "value", Type = methodFrame };
-        var variables = new[] { new BirTypeParameter { Name = "M", Constraints = new TypeNode[] { ownerFrame } } };
+        var variables = new[] { new BirTypeParameter { Name = "M", Constraints = new TypeNode[] { ownerFrame } },
+            new BirTypeParameter { Name = "Derived", Constraints = new TypeNode[] { methodFrame } },
+            new BirTypeParameter { Name = "Bounded", Constraints = new TypeNode[] { new TypeNode.Fqn("Container", [methodFrame]) } } };
         var inline = new BirInlineLambda { Params = new[] { lambdaParameter } };
         var suspend = new BirNewSuspendLambda { Params = new[] { lambdaParameter }, TypeParams = variables };
         var closure = new BirNewClosure { SynthClass = new BirClosureDefinition {
@@ -238,6 +274,8 @@ static partial class DeclarationSignatureIdentity
         var slot = capturedMethod.Params.Value[0];
         if (slot.NominalParameterSignatureIdentity.Value is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
             || slot.GenericParameterSignatureBounds.Value[0] is not TypeNode.Fqn { Args: [TypeNode.Tv { Scope: "type", I: 0 }] }
+            || capturedMethod.OwnerDependentSourceSlots[0] is not [0] || capturedMethod.OwnerDependentSourceSlots[1] is not [0]
+            || capturedMethod.OwnerDependentSourceSlots[2] is not []
             || capturedMethod.DeclarationId.Value != "selected"
             || !capturedMethod.SignatureOverrideDeclarations.Value.SequenceEqual(new[] { "first", "second" })
             || ((TypeNode.Fqn)fileMethod.Params.Value[0].NominalParameterSignatureIdentity.Value).Name

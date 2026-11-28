@@ -9,7 +9,7 @@ readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, Proje
     ProjectedMethodPlan NativePlan = null, IReadOnlyDictionary<int, CallableWitnessScope.MaterialWitness> CapturedNative = null,
     IReadOnlyDictionary<int, TypeNode.Tv> CapturedStorage = null)
 {
-    internal sealed record MaterialWitness(TypeNode.Tv Variable, BirTypeParameter Formal);
+    internal sealed record MaterialWitness(TypeNode.Tv Variable, BirTypeParameter Formal, TypeNode.Tv Reference = null);
     internal static TypeNode.Tv Storage(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
     {
         if (argument is not TypeNode.Tv v) return null;
@@ -22,9 +22,16 @@ readonly record struct CallableWitnessScope(BirTypeParameter[] Parameters, Proje
     internal static MaterialWitness MaterialFact(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method)
     {
         if (argument is not TypeNode.Tv v) return null;
-        if (v.Scope == "type") return owner.CapturedNative?.GetValueOrDefault(v.I);
+        if (v.Scope == "type")
+        {
+            if (owner.CapturedNative?.GetValueOrDefault(v.I) is { } captured) return captured;
+            foreach (var (slot, variable) in For(v, owner, method))
+                if (slot.MaterialFormal is { } formal) return new(variable, formal);
+            return null;
+        }
         return method.NativePlan?.NativeArgument(v) is TypeNode.Tv n && n != v
-            ? new(n, method.NativePlan.Parameters[n.I]) : null;
+            ? new(n, method.NativePlan.Parameters[n.I], method.NativePlan.ReferencePosition(v.I) is var p && p >= 0
+                ? new TypeNode.Tv("method", p) : null) : null;
     }
     internal static TypeNode Material(TypeNode argument, CallableWitnessScope owner, CallableWitnessScope method) =>
         MaterialFact(argument, owner, method)?.Variable ?? argument;

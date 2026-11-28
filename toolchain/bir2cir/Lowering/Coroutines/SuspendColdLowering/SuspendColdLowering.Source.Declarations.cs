@@ -93,6 +93,7 @@ static partial class SuspendColdLowering
         void CarryOverrideMarkers(BirFunctionDeclaration method, bool coldEntry = false)
         {
             method.SourceCallableVirtual = _m.SourceCallableVirtual;
+            method.OwnerDependentSourceSlots = _m.OwnerDependentSourceSlots;
             method.HasNativeOverrideSlot = _m.HasNativeOverrideSlot;
             // Implementing a Kotlin interface requires a CLR slot even for a
             // final override. Neither suspend entry is a second override point.
@@ -160,6 +161,7 @@ static partial class SuspendColdLowering
         void CarryPhysicalSlotFacts(BirFunctionDeclaration method, bool coldEntry)
         {
             method.ExistentialCallable = _m.ExistentialCallable;
+            if (_m.MaterialFrameOrigin is { } origin) method.MaterialFrameOrigin = coldEntry ? origin + "|cold" : origin;
             // Generated forwarding methods carry physical slot IDs rather than FIR
             // override markers. Both entries must implement their corresponding slots.
             if (_m.ExistentialCallable == ExistentialCallableRole.Forwarder && _m.SignatureOverrideDeclarations.HasValue)

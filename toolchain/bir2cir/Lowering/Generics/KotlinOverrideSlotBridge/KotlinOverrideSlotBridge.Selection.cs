@@ -384,8 +384,8 @@ static partial class KotlinOverrideSlotBridge
                 // identity metadata. A derived interface can expose the method without
                 // declaring it, even when it declares a different overload with that name.
                 // Reachable visits the actual declaring interface in its own argument frame.
-                if (supIsInterface && methodArity > 0 && accessorKind == null && !impl.Suspend
-                    && physicalProjection == null && refs.TryDeclarationSignatureSlot(o.DeclarationId, out var identified)
+                if (supIsInterface && methodArity > 0 && accessorKind == null
+                    && refs.TryDeclarationSignatureSlot(o.PhysicalDeclarationId ?? o.DeclarationId, out var identified)
                     && identified.IsInterface && !SupertypeGraph.SameDeclaration(spec,
                         new TypeNode.Fqn(identified.Owner, spec.Args), refs.PhysicalTypeNames)) continue;
                 ReferencedMethodDeclaration selectedClassDeclaration = null;

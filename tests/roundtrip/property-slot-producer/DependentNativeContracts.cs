@@ -7,6 +7,8 @@ public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
 public interface ILeft { }
 public interface IRight { }
+public interface IJointProof : ILeft, IRight { }
+public readonly struct JointValue : IJointProof { }
 public static class NullableListWriter
 {
     public static void Append<X,Y>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);
@@ -17,8 +19,17 @@ public sealed class NullableListSink<T,Y> where T : Y
     public void Append<X>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);
 }
 public interface IJoinedValue<T> where T : ILeft, IRight { }
+public sealed class ReferenceProduct<T> where T : class, ILeft, IRight { }
+public sealed class NativeProduct<T> : IJoinedValue<T> where T : ILeft, IRight
+{
+    public NativeProduct() { }
+    public NativeProduct(T value) { Value = value; }
+    public T Value { get; }
+}
 public static class JoinedSlot
 {
+    public static bool HasActualArgument(object product, object value) =>
+        product.GetType().GetGenericArguments()[0] == value.GetType();
     public static bool IsValue<T>(object value) where T : ILeft, IRight => value is IJoinedValue<T>;
     public static bool Holds<T>(IJoinedValue<T> owner, object item) where T : ILeft, IRight =>
         owner != null && item is T;
