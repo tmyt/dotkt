@@ -22,16 +22,20 @@ static partial class OwnerConstrainedMethodLowering
             var removed = new List<TypeNode>();
             foreach (var bound in parameters[index])
             {
-                var slot = inherited.FirstOrDefault(row => row.Index == index && row.Bound.Equals(bound));
-                if (slot != null)
+                bool fromOverride = false;
+                foreach (var slot in inherited)
                 {
+                    if (slot.Index != index || !slot.Bound.Equals(bound)) continue;
+                    fromOverride = true;
                     removed.Add(SupertypeGraph.SubstOwnerTvs(projectedBound(slot.Template), slot.OwnerArgs));
-                    // The CLR slot is declared on the open owner, before its arguments are substituted.
+                    // Several selected open slots can close to the same source
+                    // bound. Each contributes evidence to the implementation.
                     if (physicalClassifier(slot.Template) is { } classifier) retained.Add(classifier);
                     foreach (var consequence in slot.Consequences)
                         if (!retained.Any(row => TypeNodeDataEquality.Equal(row, consequence))) retained.Add(consequence);
                 }
-                else if (ProjectsBound(index, bound, frame, overrides, references, dependsOnOwner))
+                if (fromOverride) continue;
+                if (ProjectsBound(index, bound, frame, overrides, references, dependsOnOwner))
                 {
                     removed.Add(projectedBound(ProjectMethodVariables(bound, index, frame)));
                     if (physicalClassifier(bound) is { } classifier) retained.Add(classifier);
@@ -45,7 +49,7 @@ static partial class OwnerConstrainedMethodLowering
             foreach (var proof in nativeProofs(index))
                 if (!retained.Any(row => row.Equals(proof))) retained.Add(proof);
             result[index] = new(retained.Distinct().Select(BirGraphValue.CopyType).ToArray(),
-                removed.Select(BirGraphValue.CopyType).ToArray());
+                removed.Distinct().Select(BirGraphValue.CopyType).ToArray());
         }
         return result;
     }

@@ -138,6 +138,12 @@ static partial class NullableRepresentationMaterialization
                 {
                     var methodFrame = methodFrames[method.Declaration];
                     var methodMapping = Mapping(frame, methodFrame, view.Name);
+                    // The method positions still identify source arguments. Its
+                    // owner-variable bounds now refer to the expanded CLR binder.
+                    if (frame.RequiresMetadata && method.View.Function is {} original &&
+                        original.OwnerDependentSourceSlots is {} upperSlots)
+                        original.OwnerDependentSourceSlots = upperSlots.ToDictionary(p => p.Key,
+                            p => p.Value.Select(frame.SourcePosition).ToArray());
                     if (methodFrame.RequiresMetadata && method.View.Function is { } function
                         && function.FakeOverride.OrDefault() && !function.DeclarationId.HasValue)
                     {
@@ -179,6 +185,7 @@ static partial class NullableRepresentationMaterialization
                     Rewrite(entry, methodMapping, methods, DeclarationMapping, captureStorage: CaptureIn(entry));
                     AppendParameters(entry, methodFrame, policy: policy, enclosingParameters: view.Parameters.OrDefault(), enclosingFrame: frame);
                     if (methodFrame.RequiresMetadata) entry.NullableRepresentationFrame = methodFrame;
+                    if (entry.LocalBodyEntry is { } local) entry.LocalBodyEntry = (local.Id, methodFrame);
                     if (split) NullableBodyDispatch.Build(view, source, entry, frame, methodFrame, method.Body, (helper, helperFrame) => {
                         PreserveCompanionSourceBounds(helper, helperFrame, owner: false);
                         Rewrite(helper, Mapping(frame, helperFrame, view.Name), methods, DeclarationMapping, captureStorage: CaptureIn(helper));

@@ -40,7 +40,7 @@ static partial class InheritedClassInterfaceBridge
             new BirInterfaceDefinition { Name = "Contract", Kind = "interface", Methods = Array.Empty<BirFunctionDeclaration>() },
             derived,
         } };
-        MaterializeSuspendDeclarations(new[] { file }, null);
+        MaterializeEarlyDeclarations(new[] { file }, null);
         var bridge = derived.Methods.Value.Single();
         if (bridge.Name.Value != "read" || !bridge.Virtual.Value || bridge.Static.Value || bridge.Override.Value
             || bridge.Abstract.Value || bridge.Vis.Value != "public" || bridge.SuspendRet.Value != text
@@ -62,7 +62,7 @@ static partial class InheritedClassInterfaceBridge
 
         original.Virtual = true;
         derived.Methods = Array.Empty<BirFunctionDeclaration>();
-        MaterializeSuspendDeclarations(new[] { file }, null);
+        MaterializeEarlyDeclarations(new[] { file }, null);
         if (derived.Methods.Value.Length != 0)
             throw new InvalidOperationException("An already-virtual inherited target acquired an unnecessary suspend bridge");
 

@@ -56,6 +56,21 @@ interface Tagged { val tag: Int }
 class TaggedLeaf<T>(override val tag: Int) : Tagged
 interface TaggedIdentity<B : Tagged> { fun <A : B> keep(value: A): A }
 class Product<T> : IJoinedValue<T> where T : Base, T : ILeft, T : IRight
+interface DeferredNativeFactory {
+    fun <A> later(): (A?) -> Any where A : Base, A : roundtrip.constrainedbound.JointProof
+}
+class DeferredOwner<A> where A : Base, A : roundtrip.constrainedbound.JointProof {
+    fun make(factory: DeferredNativeFactory): Any = factory.later<A>()(null)
+}
+class NativeFactory : JointFactory<Concrete>, DeferredNativeFactory {
+    override fun <A> later(): (A?) -> Any where A : Base, A : roundtrip.constrainedbound.JointProof =
+        { RoundtripDependentNative.ReferenceProduct<A>() }
+    override fun <A : Concrete> make(): Any = RoundtripDependentNative.NativeProduct<A>()
+    override fun <A : Concrete> select(value: A): A {
+        val deferred = { RoundtripDependentNative.NativeProduct<A>(value) }
+        return deferred().Value
+    }
+}
 interface LocalDefault : NominalFactory<Concrete>, JointFactory<Concrete> {
     override fun <A : Concrete> make(): Any = Product<A>()
     override fun <A : Concrete> select(value: A): A = value
@@ -74,3 +89,11 @@ open class GenericParent<C> : JointFactory<Concrete>, NullableFactory<Concrete> 
 interface LeftFactory<K> where K : Base, K : ILeft { fun <A : K> make(): Any }
 interface RightFactory<K> where K : Base, K : IRight { fun <A : K> make(): Any }
 interface DefaultFactory<K : ILeft> { fun <A : K> make(): Any = "default" }
+fun <K : ILeft, A : K> makeThrough(factory: DefaultFactory<K>): Any = factory.make<A>()
+
+interface LeftValueFactory<K,V> where K : Base, K : ILeft, V : ILeft { fun <A : K, B : V> product(): Any }
+interface RightValueFactory<K,V> where K : Base, K : IRight, V : IRight { fun <A : K, B : V> product(): Any }
+class JointValueFactory<K,V> : LeftValueFactory<K,V>, RightValueFactory<K,V>
+    where K : Base, K : ILeft, K : IRight, V : ILeft, V : IRight {
+    override fun <A : K, B : V> product(): Any = RoundtripDependentNative.NativeProduct<B>()
+}

@@ -422,7 +422,7 @@ sealed class Pipeline
         var sourceIndex = new SourceModuleIndex(captured, refs.Aliases);
         // New physical-only forwarders are not source declarations. Keep the
         // original declaration membership while extending the owning prefix.
-        InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(captured, refs);
+        InheritedClassInterfaceBridge.MaterializeEarlyDeclarations(captured, refs);
         // Resolve alias constructor expressions while source bodies are still
         // owning values. Signatures and declaration membership were captured
         // above; these rewrites change uses/bodies, not that source inventory.
@@ -1025,7 +1025,7 @@ sealed class Pipeline
                 .ToHashSet(StringComparer.Ordinal),
             ExternalGenericConstraintValidation.Prepare(captured, refs, isValueFqn, enums.Basic),
             MemberCallSubstitution.CollectLocalPropertyAccessors(captured),
-            new SourceModuleIndex(captured, refs.Aliases));
+            new SourceModuleIndex(captured, refs.Aliases), ProjectedCallableEntries.CaptureMaterialRelays(captured));
         var existentialReceiverMembers = ExistentialReceiverBinding.Collect(captured,
             carrierRealization.Declarations.PhysicalDeclarationSources, sourceHierarchy);
         if (!referenceBuild) CollectionBclSlotSynthesis.RecordContracts(captured, refs);
@@ -1336,7 +1336,7 @@ sealed class Pipeline
         foreach (var root in physicalDocuments)
             externalGenericConstraintValidation.ApplyResolvedMembers(root);
         FBoundStarProjectionErasure.MaterializeProjectedStorage(physicalDocuments, module.Preparation.Carriers,
-            emittedLocalTypes, refs, _options.RefBuild, physicalCapturedInvocations);
+            emittedLocalTypes, refs, _options.RefBuild, physicalCapturedInvocations, module.Preparation.PhysicalAbi.MaterialRelays);
         if (physicalCapturedInvocations.HasDeferredFixedCalls)
             foreach (var root in physicalDocuments)
                 physicalCapturedInvocations.Apply(root, refs, emittedLocalTypes, finishFixedCalls: true);
@@ -1628,7 +1628,7 @@ sealed record PhysicalAbiPreparation(HashSet<string> EmittedLocalTypes,
     ExternalGenericConstraintValidation.Prepared GenericConstraints,
     IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
         IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> PropertyAccessors,
-    SourceModuleIndex Declarations);
+    SourceModuleIndex Declarations, ProjectedCallableEntries.Relay[] MaterialRelays);
 sealed record EnumPreparation(HashSet<string> Rich, HashSet<string> Basic, bool RuntimeLookup);
 sealed record CirFile(string OutputName, DotKt.Cir.CirFileDeclaration Model);
 

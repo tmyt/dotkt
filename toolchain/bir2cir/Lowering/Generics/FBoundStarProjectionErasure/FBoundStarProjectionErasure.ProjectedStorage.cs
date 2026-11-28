@@ -72,10 +72,10 @@ static partial class FBoundStarProjectionErasure
 
     internal static void MaterializeProjectedStorage(BirFileDeclaration[] documents, CarrierRealizationContinuation carriers,
         HashSet<string> emittedTypes, ReferenceMetadataIndex references, bool referenceBuild,
-        CapturedGenericInvocation.PreparedInvocation invocations)
+        CapturedGenericInvocation.PreparedInvocation invocations, ProjectedCallableEntries.Relay[] relays)
     {
         var storageOwners = new Dictionary<string, ProjectedStorageOwner>(StringComparer.Ordinal);
-        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners, carriers.Values);
+        var callables = new ProjectedCallableEntries(documents, references, referenceBuild, invocations, storageOwners, carriers.Values, relays);
         callables.RetireReplacedOverrides(documents, emittedTypes);
         if (carriers.ProjectedStorage.Count == 0) { callables.Finish(documents, emittedTypes); return; }
         var declarations = documents.SelectMany(file => file.Types.OrEmpty().Select(type => (file, type)))
@@ -138,6 +138,7 @@ static partial class FBoundStarProjectionErasure
                 return type;
             }
             storage.Interfaces = storage.Interfaces.OrEmpty().Select(ProjectInterface).DistinctBy(SupertypeGraph.TypeKey).ToArray();
+            callables.CloseUpperOperations(storage, plan);
             callables.BindStorageOverrides(exact, storage, plan, carriers.LocalOwners);
             ProjectNativeInterfaceStorage(storage, plan, references);
             storage.Attrs = storage.Attrs.OrEmpty().Where(a =>
@@ -159,10 +160,14 @@ static partial class FBoundStarProjectionErasure
                     do name = plan.Implementation + "$" + role + ordinal++; while (!emittedTypes.Add(name));
                     return name;
                 }
+                // Capture the selected formal itself. Nested closures need its
+                // full declaration, not a reconstruction from interface proofs.
+                var bodySlots = plan.Slots.Select((slot, i) => slot.MaterialReference
+                    ? slot with { MaterialFormal = fullFrame[exactParameters.Length + i] } : slot).ToArray();
                 void CaptureBody(BirClassDefinition lexical)
                 {
                     var helpers = new List<BirFunctionDeclaration>();
-                    callables.RewriteBody(lexical, lexical, exactParameters, plan.Slots, Allocate, generated, helpers);
+                    callables.RewriteBody(lexical, lexical, exactParameters, bodySlots, Allocate, generated, helpers);
                     if (helpers.Count != 0) lexical.Methods = lexical.Methods.OrEmpty().Concat(helpers).ToArray();
                 }
                 ProjectLexicalClosures(storage, plan.Exact, plan.Slots.Length, fullFrame, name => declarations[name].SingleOrDefault().type as BirClassDefinition,

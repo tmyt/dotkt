@@ -116,7 +116,9 @@ static class SupertypeGraph
     {
         // The selected MethodDef identifies the TypeDef across reference spellings;
         // the Kotlin override edge distinguishes applications of that declaration.
-        var definition = referencedId == null ? null : refs.SelectedPhysicalMethod(referencedId)?.DeclaringType
+        // Reachable edges resolve in the reference universe. The shipped twin
+        // owns the physical proof rows, not the identity of this metadata edge.
+        var definition = referencedId == null ? null : refs.SelectedReferenceMethod(referencedId)?.DeclaringType
             ?? throw new InvalidOperationException("Selected override has no declaring CLR type");
         bool Declares(TypeNode.Fqn s) => definition == null ? s.Name == declaringOwner :
             !hierarchy.ContainsKey(s.Name) && ClrMemberResolution.ResolveOwnerType(s, refs) == definition;

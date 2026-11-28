@@ -415,7 +415,8 @@ def outputs(root, definitions):
         if name == "BirParameter":
             model += ["    internal TypeNode? DelegateRestorationType { get; set; }"]
         if name == "BirCallInstance":
-            model += ["    internal bool TaskBridgeColdInvocation { get; set; }"]
+            model += ["    internal bool TaskBridgeColdInvocation { get; set; }",
+                      "    internal IReadOnlyDictionary<int, TypeNode[]>? SelectedOwnerUppers { get; set; }"]
         if name == "BirIsInstance":
             model += ["    internal bool ExactDispatchOwner { get; set; }"]
         if name == "BirNew":
@@ -435,6 +436,8 @@ def outputs(root, definitions):
                       "    internal string? ImplicitExistentialImplementationId { get; set; }",
                       "    internal bool HasNativeOverrideSlot { get; set; }",
                       "    internal bool SourceCallableVirtual { get; set; }",
+                      "    internal IReadOnlyDictionary<int, int[]>? OwnerDependentSourceSlots { get; set; }",
+                      "    internal string? MaterialFrameOrigin { get; set; }",
                       "    internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }",
                       "    internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }",
                       "    internal IReadOnlyDictionary<string, string>? OverrideRepresentationDeclarations { get; set; }",

@@ -52,15 +52,30 @@ for owner_name, source_bound in (
 
 owner = types["OwnerSuspendSink"]
 cold = next(m for m in owner["methods"] if m["name"] == "render$dotkt_suspend")
-constructions = [n for n in objects(cold["body"]) if n.get("k") == "new"
-                 and n.get("type", {}).get("name") == "OwnerSuspendSink_render$sm"]
-assert len(constructions) == 1, constructions
-assert constructions[0]["type"]["args"] == [
-    {"t": "tv", "scope": "type", "i": 0},
-    {"t": "tv", "scope": "method", "i": 0},
-    {"t": "tv", "scope": "method", "i": 1},
-], constructions[0]["type"]
 assert len(cold["typeParams"]) == 2 and cold["params"][0]["type"] == {"t": "fqn", "name": "object"}, cold
+
+
+def method_arg(index):
+    return {"t": "tv", "scope": "method", "i": index}
+
+
+# The ordinary cold slot forwards to the selected projected implementation.
+# Verify both frame edges; the generated state's incidental name is not an ABI.
+forward, = [n for n in objects(cold["body"]) if n.get("k") == "callInstance"]
+owner_arg = {"t": "tv", "scope": "type", "i": 0}
+assert forward["virtual"] and forward["recv"] == {"k": "this"}
+assert forward["ownerType"] == {"t": "fqn", "name": owner["name"], "args": [owner_arg]}
+assert forward["typeArgs"] == [method_arg(0), method_arg(1), method_arg(0),
+                               {"t": "fqn", "name": "System.Object"}, method_arg(0), method_arg(0)]
+assert forward["args"] == [{"k": "local", "name": p["name"]} for p in cold["params"]]
+implementation, = [m for m in owner["methods"] if m["name"] == forward["method"]]
+resume, = [n for n in objects(implementation["body"])
+           if n.get("k") == "callInstance" and n["method"] == "invokeSuspend"]
+state = resume["ownerType"]
+construction, = [n for n in objects(implementation["body"]) if n.get("k") == "new" and n["type"] == state]
+assert state["args"] == [owner_arg, *(method_arg(i) for i in range(4))], state
+assert types[state["name"]]["base"]["name"] == "kotlin.coroutines.clr.internal.ContinuationImpl"
+assert construction["args"] == [{"k": "this"}, *forward["args"]]
 
 slots = types["OwnerSuspendSink$star"]["methods"]
 for name in ("render", "echo"):

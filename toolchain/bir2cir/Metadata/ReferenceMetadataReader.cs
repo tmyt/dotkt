@@ -1568,15 +1568,26 @@ static class ReferenceMetadataReader
             RoundtripMetadata.AKProjectedMethod) ?? throw new InvalidDataException($"Missing projected method mapping on {declaration}");
         var addresses = ((JsonArray)payload["addresses"]).Select(row => (int)row).ToArray();
         var native = ((JsonArray)payload["nativeArguments"]).Select(row => (int)row).ToArray();
+        var reference = payload["referenceArguments"] is JsonArray proof ? proof.Select(row => (int)row).ToArray() : [];
         var rows = (JsonArray)payload["facets"];
-        var primary = physical.Length - rows.Count - addresses.Length - native.Length;
+        var primary = physical.Length - rows.Count - addresses.Length - native.Length - ProjectedMethodPlan.WeakWitnessWidth * reference.Length;
         var facets = rows.Select((row, i) => {
             var key = physicalKey(TypeNode.Read(row[1]));
             var bound = physical[primary + i].Constraints.OrEmpty().Single(c => physicalKey(c) == key);
             return new ProjectedClassStorageFrame.WitnessSlot((int)row[0], bound, (bool)row[2]) {
                 Evidence = physical[primary + i].Constraints.OrEmpty() };
         }).ToArray();
-        return new(physical, facets, addresses) { NativeIndices = native, RepresentationDeclaration = (string)payload["representationDeclaration"] };
+        var logical = physical.ToArray();
+        var plan = new ProjectedMethodPlan(logical, facets, addresses) { NativeIndices = native, ReferenceIndices = reference,
+            RepresentationDeclaration = (string)payload["representationDeclaration"] };
+        foreach (var i in reference)
+            foreach (bool material in new[] { false, true })
+            {
+                int slot = material ? ((TypeNode.Tv)plan.NativeArgument(new TypeNode.Tv("method", i))).I : i;
+                var upper = new TypeNode.Tv("method", plan.UpperPosition(i, material));
+                logical[slot] = logical[slot] with { Constraints = logical[slot].Constraints.OrEmpty().Where(c => c != upper).ToArray() };
+            }
+        return plan;
     }
 
     internal static ProjectedConstructorPlan ReadConstructorPlan(MethodBase declaration, MethodBase factory,

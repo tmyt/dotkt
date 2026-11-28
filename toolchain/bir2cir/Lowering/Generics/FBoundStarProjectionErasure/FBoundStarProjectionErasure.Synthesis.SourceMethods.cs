@@ -9,6 +9,7 @@ static partial class FBoundStarProjectionErasure
     {
         var slot = new BirFunctionDeclaration {
             ExistentialCallable = ExistentialCallableRole.Slot,
+            MaterialFrameOrigin = method.OwnerDependentSourceSlots is { Count: > 0 } ? method.DeclarationId.OrDefault() : null,
             HasNativeOverrideSlot = method.HasNativeOverrideSlot || method.RequiresClrOverride.OrDefault(),
             Name = replacement ?? method.Name.OrDefault(), Static = false, Override = false,
             Virtual = true, Abstract = true, ObjectOverride = false, Vis = "public",
