@@ -127,15 +127,12 @@ sealed partial class ProjectedCallableEntries
                     }
                     if (slot.IsInterface)
                     {
-                        if (owner.Kind.OrDefault() == "interface")
-                        {
-                            if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
-                                RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
-                                    source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
-                                    source.Method.Ret.Value, true, false), id);
-                            else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
-                                references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade, id);
-                        }
+                        if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
+                            RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
+                                source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
+                                source.Method.Ret.Value, true, false), id);
+                        else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
+                            references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade, id);
                     }
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
                     if (slot.IsInterface && entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
