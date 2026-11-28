@@ -28,6 +28,8 @@ namespace DotKt.Bir;
 
 public static class NodeType
 {
+    public static TypeNode? ConstructedSamType(TypeNode? head, TypeNode[]? arguments) =>
+        head is TypeNode.Fqn named && arguments is { Length: > 0 } ? named with { Args = arguments } : head;
     static readonly TypeNode IntTn = new TypeNode.Fqn("kotlin.Int");
     static readonly TypeNode BoolTn = new TypeNode.Fqn("kotlin.Boolean");
     static readonly TypeNode StringTn = new TypeNode.Fqn("kotlin.String");
@@ -221,7 +223,8 @@ public static class NodeType
                 // (`samType`), the others the closure class (`closureType`). The value IS an instance of that
                 // class, so it is the node's type even though the reader usually sees it as the interface.
                 if (TypeJson.Read(o["funcType"]) is TypeNode ft) return ft;
-                if (TypeJson.Read(o["samType"]) is TypeNode st) return st;
+                if (TypeJson.Read(o["samType"]) is TypeNode st)
+                    return ConstructedSamType(st, (o["typeArgs"] as JsonArray)?.Select(item => TypeJson.Read(item)!).ToArray());
                 return TypeJson.OwnerName(o["closureType"]) is string cn ? new TypeNode.Fqn(cn) : null;
             case "delegateInvoke":
                 // The RESULT of invoking the delegate, not the delegate itself.
