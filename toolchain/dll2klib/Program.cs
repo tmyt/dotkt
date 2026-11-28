@@ -6732,13 +6732,12 @@ internal sealed partial class AssemblyScanner : IDisposable
         var overridableClassMethod = (definition.Attributes & TypeAttributes.Interface) == 0 &&
             definition.GetGenericParameters().Count != 0 &&
             (flags & (MethodAttributes.Virtual | MethodAttributes.Final)) == MethodAttributes.Virtual;
-        // Inherited Kotlin implementations must check the selected interface slot's
-        // admission, even when owner substitution makes two overloads look identical.
-        bool StackAdmittingInterfaceSlot() => (definition.Attributes & TypeAttributes.Interface) != 0
-            && (flags & (MethodAttributes.Virtual | MethodAttributes.Static | MethodAttributes.Final)) == MethodAttributes.Virtual
+        // Both ends of an inherited implementation edge need the exact declaration:
+        // the interface requiring admission and the native base capable of providing it.
+        bool AdmitsStackArguments() => (flags & MethodAttributes.Static) == 0
             && declaration.GetGenericParameters().Any(p =>
                 (_md.GetGenericParameter(p).Attributes & GenericParameterAttributes.AllowByRefLike) != 0);
-        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || StackAdmittingInterfaceSlot() || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
+        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || AdmitsStackArguments() || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
             || function.ValueParameter.Any(p => ContainsFunction(p.Type, names))))
             AddStringAnnotationArgument(ExternalMethodBinding(function, names, owner), names,
                 "methodKey", RawSignatureTypeProvider.MethodKey(_md, method));

@@ -314,7 +314,7 @@ private fun BirEmitter.inheritedImplementation(fn: IrSimpleFunction): BirInherit
 	}
 	return BirInheritedImplementation(TypeNode.Fqn(owner), member, kind, target.typeParameters.size,
 		typeParams = typeParameterDeclarations(target.typeParameters), sig = overloadSignature(target),
-		declarationId = declarationIdForPhysicalAllocation(target))
+		declarationId = declarationIdForPhysicalAllocation(target), nativeMethodKey = nativeDeclarationKey(target, "methodKey"))
 }
 
 /**

@@ -1606,7 +1606,8 @@ data class BirInheritedImplementation(
     val arity: Int,
     val typeParams: List<TypeParameterDeclaration>,
     val sig: List<TypeNode>? = null,
-    val declarationId: String? = null
+    val declarationId: String? = null,
+    val nativeMethodKey: String? = null
 ) : BirValue {
     override fun writeJson(output: StringBuilder) {
         output.append("{")
@@ -1637,6 +1638,10 @@ data class BirInheritedImplementation(
         }
         declarationId?.let { value ->
             if (hasField) output.append(','); hasField = true; output.append("\"declarationId\":")
+            TypeNodeJson.writeString(value, output)
+        }
+        nativeMethodKey?.let { value ->
+            if (hasField) output.append(','); hasField = true; output.append("\"nativeMethodKey\":")
             TypeNodeJson.writeString(value, output)
         }
         output.append('}')

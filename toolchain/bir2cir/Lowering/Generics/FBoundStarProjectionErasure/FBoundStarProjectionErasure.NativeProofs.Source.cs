@@ -157,8 +157,11 @@ static partial class FBoundStarProjectionErasure
             {
                 if (fact.InheritedImplementation.OrDefault() is not { } parent
                     || parent.Owner.OrDefault() is not TypeNode.Fqn baseType
-                    || parent.DeclarationId.OrDefault() is not string id
-                    || parent.TypeParams.OrEmpty().Length == 0 || !values.OwnsValueSlots(baseType.Name)) return;
+                    || parent.TypeParams.OrEmpty().Length == 0) return;
+                var id = parent.DeclarationId.OrDefault();
+                var kotlinParent = values.OwnsValueSlots(baseType.Name);
+                if (kotlinParent && id == null || values.IsBindingAlias(baseType.Name)) return;
+                System.Type[] nativeRows = null;
                 foreach (var edge in fact.Overrides.OrEmpty())
                 {
                     if (edge.NativeMethodKey.OrDefault() is not string key || edge.Owner.OrDefault() is not TypeNode.Fqn slot
@@ -168,7 +171,8 @@ static partial class FBoundStarProjectionErasure
                     for (int i = 0; i < required.Length; i++)
                     {
                         if ((required[i].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.AllowByRefLike) == 0) continue;
-                        bool admits = declarations.SourceLocalDeclarations.TryGetValue((baseType.Name, id), out var local)
+                        bool admits = !kotlinParent ? NativeAdmits(i)
+                            : declarations.SourceLocalDeclarations.TryGetValue((baseType.Name, id), out var local)
                             && local.Source is BirFunctionDeclaration method
                             ? LocalAdmits(method, i)
                             : references.InheritedParameterAdmitsRefLike(id, i);
@@ -177,6 +181,15 @@ static partial class FBoundStarProjectionErasure
                                 $"'{owner.Name.Value}' must explicitly implement '{slot.Name}.{edge.Member.Value}': " +
                                 $"inherited '{baseType.Name}.{parent.Member.Value}' does not admit stack-only types for type parameter {i + 1}.");
                     }
+                }
+                bool NativeAdmits(int position)
+                {
+                    // dll2klib supplies a declaration key for every stack-admitting native method.
+                    if (parent.NativeMethodKey.OrDefault() is not string key) return false;
+                    nativeRows ??= ClrDeclarationMatching.MethodForNativeKey(references,
+                        ClrMemberResolution.ResolveOwnerType(baseType, references), parent.Member.Value,
+                        parent.Arity.Value, true, key).GetGenericArguments();
+                    return (nativeRows[position].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.AllowByRefLike) != 0;
                 }
                 bool LocalAdmits(BirFunctionDeclaration method, int sourceIndex)
                 {

@@ -3,6 +3,8 @@ import ByRefLikeInterop.IRelayValue
 import ByRefLikeInterop.IValueRelay
 import ByRefLikeInterop.IStackFactory
 import ByRefLikeInterop.KeyedRelay
+import ByRefLikeInterop.NativeHeapFactory
+import ByRefLikeInterop.NativeStackFactory
 import ByRefLikeInterop.RelayResult
 import ByRefLikeInterop.SpecificRelayResult
 import ByRefLikeInterop.StackFactoryBase
@@ -26,6 +28,10 @@ private open class KotlinStackFactory : StackFactoryBase() {
     override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 17 }
 }
 private class InheritsStackFactory : KotlinStackFactory(), IStackFactory
+private class InheritsNativeFactory : NativeStackFactory(), IStackFactory
+private class ExplicitNativeFactory : NativeHeapFactory(), IStackFactory {
+    override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 31 }
+}
 
 private class IntKeyRelay : KeyedRelay<Int>() {
     override fun <T : IRelayValue> Read(value: T, key: Int): Int = value.Read() + key
@@ -37,6 +43,8 @@ class RefLikeGenericOverrideTests {
         val factory: IStackFactory = InheritsStackFactory()
         check(factory.Make<String>().Tag == 17)
         check(ByRefLikeApi.MakeStack(factory).Tag == 17)
+        check(ByRefLikeApi.MakeStack(InheritsNativeFactory()).Tag == 23)
+        check(ByRefLikeApi.MakeStack(ExplicitNativeFactory()).Tag == 31)
     }
 
     @TestAttribute fun preservesTheSelectedNativeGenericSlot() {
