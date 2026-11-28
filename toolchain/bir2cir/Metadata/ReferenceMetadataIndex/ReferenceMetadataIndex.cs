@@ -253,6 +253,13 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    internal bool InheritedParameterAdmitsRefLike(string id, int sourcePosition)
+    {
+        var binding = _declarationById[id];
+        int position = binding.NullableFrame?.SourcePosition(sourcePosition) ?? sourcePosition;
+        return binding.MethodTypeParams[position].SpecialConstraints.OrEmpty().Contains("allowsRefStruct");
+    }
+
     internal IReadOnlyDictionary<int,int[]> SelectedOwnerUpperSlots(string id, string owner) =>
         _declarationById.TryGetValue(id, out var binding) && binding.SemanticMethodTypeParams is {} rows &&
         BareOwnerFqn(binding.DeclarationPhysicalOwner ?? binding.Owner) == BareOwnerFqn(owner)

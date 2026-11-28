@@ -66,6 +66,12 @@ static partial class FBoundStarProjectionErasure
                     RegisterNativeOverrides(method, binding);
                 }
             }
+            // A fake override has no MethodDef on which to widen admission. Check
+            // the inherited declaration after collecting every local override row.
+            foreach (var definition in definitions.Values)
+                if (definition.Source is BirClassDefinition owner)
+                    foreach (var fact in owner.InheritedClassMethods.OrEmpty())
+                        CheckInheritedAdmission(owner, fact);
             bool changed, captureEdges = true;
             do
             {
@@ -140,6 +146,36 @@ static partial class FBoundStarProjectionErasure
                                 closed = SupertypeGraph.SubstOwnerTvs(closed, ownerArguments);
                             changed |= Add(context, actual.I, closed);
                         }
+                    }
+                }
+            }
+
+            void CheckInheritedAdmission(BirClassDefinition owner, BirInheritedClassMethod fact)
+            {
+                if (fact.InheritedImplementation.OrDefault() is not { } parent
+                    || parent.Owner.OrDefault() is not TypeNode.Fqn baseType
+                    || parent.DeclarationId.OrDefault() is not string id
+                    || parent.TypeParams.OrEmpty().Length == 0 || !values.OwnsValueSlots(baseType.Name)) return;
+                foreach (var edge in fact.Overrides.OrEmpty())
+                {
+                    if (edge.Owner.OrDefault() is not TypeNode.Fqn slot || values.IsBindingAlias(slot.Name)
+                        || values.OwnsValueSlots(slot.Name) || !references.IsInterfaceType(slot)) continue;
+                    var required = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, slot,
+                        edge.Member.Value, parent.TypeParams.Value.Length, true,
+                        fact.Params.OrEmpty().Select(p => p.Type.Value).ToArray(), references,
+                        parameterOwnerArguments: slot.Args ?? [], nativeMethodKey: edge.NativeMethodKey.OrDefault());
+                    for (int i = 0; i < required.Length; i++)
+                    {
+                        if (!required[i].SpecialConstraints.OrEmpty().Contains("allowsRefStruct")) continue;
+                        bool admits = declarations.SourceLocalDeclarations.TryGetValue((baseType.Name, id), out var local)
+                            && local.Source is BirFunctionDeclaration method
+                            ? method.TypeParams.Value[i].SpecialConstraints.OrEmpty().Contains("allowsRefStruct")
+                                || refLikeOverrideRows.Any(r => ReferenceEquals(r.Method, method) && r.Position == i)
+                            : references.InheritedParameterAdmitsRefLike(id, i);
+                        if (!admits)
+                            throw new InvalidOperationException(
+                                $"'{owner.Name.Value}' must explicitly implement '{slot.Name}.{edge.Member.Value}': " +
+                                $"inherited '{baseType.Name}.{parent.Member.Value}' does not admit stack-only types for type parameter {i + 1}.");
                     }
                 }
             }
