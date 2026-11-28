@@ -3440,8 +3440,25 @@ sealed partial class ReferenceMetadataIndex : IDisposable
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();
         if (matches.Count != 1) return false;
-        var match = matches[0];
-        declaration = new ReferencedMethodDeclaration(
+        declaration = DescribeSelectedMethod(matches[0], ownerFqn);
+        return true;
+    }
+
+    internal bool TrySelectedInheritedNativeDeclaration(TypeNode.Fqn owner, string member, string key,
+        out ReferencedMethodDeclaration declaration)
+    {
+        declaration = null;
+        if (!TryMembersByBirOwner(owner.Name, out var list)) return false;
+        var open = ClrMemberResolution.ResolveOwnerType(owner, this);
+        var flags = BindingFlags.DeclaredOnly | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var selected = open.GetMethods(flags).SingleOrDefault(m => m.Name == member && MatchesNativeMethod(m, key));
+        if (selected == null) return false; // An inherited interface completion is not a MethodDef on the class.
+        var match = list.Single(m => m.MetadataToken == selected.MetadataToken);
+        declaration = DescribeSelectedMethod(match, owner.Name);
+        return true;
+    }
+
+    ReferencedMethodDeclaration DescribeSelectedMethod(MemberBinding match, string ownerFqn) => new(
             match.Name,
             match.ParamTypeNodes.Select((type, index) =>
                 match.NullableGenericParams is { } carriers && index < carriers.Length && carriers[index] != null
@@ -3452,8 +3469,6 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             match.IsVirtual, match.ParamTypeNodes, match.ReturnTypeNode, match.NullableFrame,
             PhysicalDeclarationSignature(match).Parameters, match.DeclarationId)
         { MetadataToken = match.MetadataToken, ParameterNullableFlags = match.ParameterNullableFlags, QueryParameterBound = index => QueryParameterBound(match, ownerFqn, index) };
-        return true;
-    }
 
     readonly Dictionary<Type, NativeImplementationDeclaration[]> nativeImplementations = new();
 

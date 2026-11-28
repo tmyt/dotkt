@@ -27,7 +27,7 @@ internal sealed record Dll2KlibProjectionInput(
 
 internal static class Program
 {
-    private const int ProjectionStateVersion = 5;
+    private const int ProjectionStateVersion = 6;
 
     public static async Task<int> Main(string[] args)
     {
@@ -3198,6 +3198,9 @@ internal sealed partial class AssemblyScanner : IDisposable
         foreach (var inherited in surfacedImplementations.Where(item => item.AccessorKind == 0))
         {
             var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names, valueOwnerParameters: ValueOwnerParameters(typeContext));
+            if (!_attrs.IsDotKtAssembly && AdmitsStackArguments(inherited.Reader, inherited.Declaration))
+                AddStringAnnotationArgument(ExternalMethodBinding(function, names, handle), names,
+                    "methodKey", RawSignatureTypeProvider.MethodKey(inherited.Reader, inherited.Declaration));
             if (inherited.IsExplicit)
             {
                 var shape = FunctionShapeKey(function, names);
@@ -6734,13 +6737,17 @@ internal sealed partial class AssemblyScanner : IDisposable
             (flags & (MethodAttributes.Virtual | MethodAttributes.Final)) == MethodAttributes.Virtual;
         // Both ends of an inherited implementation edge need the exact declaration:
         // the interface requiring admission and the native base capable of providing it.
-        bool AdmitsStackArguments() => (flags & MethodAttributes.Static) == 0
-            && declaration.GetGenericParameters().Any(p =>
-                (_md.GetGenericParameter(p).Attributes & GenericParameterAttributes.AllowByRefLike) != 0);
-        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || AdmitsStackArguments() || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
+        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || AdmitsStackArguments(_md, method) || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
             || function.ValueParameter.Any(p => ContainsFunction(p.Type, names))))
             AddStringAnnotationArgument(ExternalMethodBinding(function, names, owner), names,
                 "methodKey", RawSignatureTypeProvider.MethodKey(_md, method));
+    }
+
+    private static bool AdmitsStackArguments(MetadataReader reader, MethodDefinitionHandle method)
+    {
+        var declaration = reader.GetMethodDefinition(method);
+        return (declaration.Attributes & MethodAttributes.Static) == 0 && declaration.GetGenericParameters()
+            .Any(p => (reader.GetGenericParameter(p).Attributes & GenericParameterAttributes.AllowByRefLike) != 0);
     }
 
     private static bool ContainsFunction(KType type, NameTable names) =>

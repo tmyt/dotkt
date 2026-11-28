@@ -83,8 +83,13 @@ public abstract class StackFactoryBase
 }
 public class NativeStackFactory
 {
-    public virtual SpecificRelayResult Make<T>() where T : allows ref struct => new() { Tag = 23 };
+    public SpecificRelayResult Make<T>() where T : allows ref struct => new() { Tag = 23 };
 }
+internal interface IHiddenStackDefault : IStackFactory
+{
+    SpecificRelayResult IStackFactory.Make<T>() => new() { Tag = 37 };
+}
+public class NativeHiddenStackFactory : IHiddenStackDefault { }
 public class NativeHeapFactory
 {
     public virtual SpecificRelayResult Make<T>() => new() { Tag = 29 };

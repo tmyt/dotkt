@@ -4,6 +4,7 @@ import ByRefLikeInterop.IValueRelay
 import ByRefLikeInterop.IStackFactory
 import ByRefLikeInterop.KeyedRelay
 import ByRefLikeInterop.NativeHeapFactory
+import ByRefLikeInterop.NativeHiddenStackFactory
 import ByRefLikeInterop.NativeStackFactory
 import ByRefLikeInterop.RelayResult
 import ByRefLikeInterop.SpecificRelayResult
@@ -29,6 +30,7 @@ private open class KotlinStackFactory : StackFactoryBase() {
 }
 private class InheritsStackFactory : KotlinStackFactory(), IStackFactory
 private class InheritsNativeFactory : NativeStackFactory(), IStackFactory
+private class InheritsHiddenFactory : NativeHiddenStackFactory(), IStackFactory
 private class ExplicitNativeFactory : NativeHeapFactory(), IStackFactory {
     override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 31 }
 }
@@ -44,6 +46,7 @@ class RefLikeGenericOverrideTests {
         check(factory.Make<String>().Tag == 17)
         check(ByRefLikeApi.MakeStack(factory).Tag == 17)
         check(ByRefLikeApi.MakeStack(InheritsNativeFactory()).Tag == 23)
+        check(ByRefLikeApi.MakeStack(InheritsHiddenFactory()).Tag == 37)
         check(ByRefLikeApi.MakeStack(ExplicitNativeFactory()).Tag == 31)
     }
 
