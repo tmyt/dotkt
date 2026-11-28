@@ -22,6 +22,11 @@ public class NativeHashList : List<int>
 }
 public sealed class InheritsNativeHash : NativeHashList {}
 
+public sealed class NativeEqualsList : List<int>
+{
+    public override bool Equals(object? other) => false;
+}
+
 public sealed class LookupKey(int id)
 {
     public static int Calls { get; set; }

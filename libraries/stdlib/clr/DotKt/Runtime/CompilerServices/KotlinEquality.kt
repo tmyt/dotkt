@@ -47,7 +47,7 @@ internal fun kotlinHashCode(value: Any?): Int {
     if (value is String || value.starProjectionRuntimeType().isValueType)
         return (value as NativeEqualityObject).nativeHashCode()
     val plan = equalityTypePlan(value, value.starProjectionRuntimeType())
-    return if (plan.family < 0 || plan.nativeHashOverride) (value as NativeEqualityObject).nativeHashCode()
+    return if (plan.nativeHash) (value as NativeEqualityObject).nativeHashCode()
         else structuralHash(value, plan.family, plan.storage)
 }
 
@@ -107,7 +107,7 @@ internal fun kotlinInstanceEquals(left: Any?, right: Any?): Boolean {
     val type = receiver.starProjectionRuntimeType()
     if (type.isValueType) return receiver.nativeObjectEquals(right)
     val plan = equalityTypePlan(receiver, type)
-    return if (plan.family < 0) receiver.nativeObjectEquals(right)
+    return if (plan.nativeEquals) receiver.nativeObjectEquals(right)
         else structuralEquals(receiver, right, plan.family, plan.storage)
 }
 
@@ -121,14 +121,12 @@ internal fun classifyEqualityType(value: Any, type: StarProjectionType): Equalit
             mapEqualityStorage.any { definition.nativeObjectEquals(it) } -> 2
             else -> -1
         }
-        if (family >= 0) {
-            if (objectEqualsSlot.isOverriddenOn(value, equalsDelegateType))
-                return EqualityTypePlan(-1, null, true)
-            return EqualityTypePlan(family, storage, objectHashSlot.isOverriddenOn(value, hashDelegateType))
-        }
+        if (family >= 0) return EqualityTypePlan(family, storage,
+            objectEqualsSlot.isOverriddenOn(value, equalsDelegateType),
+            objectHashSlot.isOverriddenOn(value, hashDelegateType))
         storage = storage.baseType
     }
-    return EqualityTypePlan(-1, null, true)
+    return EqualityTypePlan(-1, null, true, true)
 }
 
 private fun equalityView(value: Any, family: Int, storage: StarProjectionType?): StarProjectionType? {

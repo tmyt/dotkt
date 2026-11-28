@@ -9,7 +9,7 @@ internal class RuntimeTypeCache<K : Any, V : Any> {
     fun get(key: K): V = error("CLR binding")
 }
 
-internal class EqualityTypePlan(val family: Int, val storage: StarProjectionType?, val nativeHashOverride: Boolean)
+internal class EqualityTypePlan(val family: Int, val storage: StarProjectionType?, val nativeEquals: Boolean, val nativeHash: Boolean)
 internal class EqualityEntryAccess(val key: StarProjectionMethod, val value: StarProjectionMethod)
 
 private class EqualityCacheCell public constructor() {
