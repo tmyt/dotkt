@@ -19,6 +19,12 @@ open class GenericPairReader<K>(val saved: K) : NativePairReader(), PairReader<I
 }
 open class KotlinPairReader : GenericPairReader<Concrete>(Concrete())
 
+open class SelfKey : Base(), RoundtripDependentNative.IKey<SelfKey>
+open class KotlinSelfReader : NativePairReader(), roundtrip.selectedbounds.SelfReader {
+    override fun <T> PickSelf(item: T): T where T : Base, T : RoundtripDependentNative.IKey<T> = item
+}
+fun readSelf(reader: roundtrip.selectedbounds.SelfReader, key: SelfKey): SelfKey = reader.PickSelf<SelfKey>(key)
+
 fun readQueue(reader: QueueReader): Char = reader.Describe(System.Collections.Generic.Queue<Concrete>())[0]
 
 fun readPair(reader: PairReader<ILeft>, first: Concrete, second: JointValue): Any = reader.Read(first, second)

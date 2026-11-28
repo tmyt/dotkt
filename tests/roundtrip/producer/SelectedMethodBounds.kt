@@ -13,6 +13,9 @@ interface SlotWriter {
     fun <A : ILeft> Replace(slot: ClrRef<A>, next: A): A
     fun <A> Pick(item: A): A where A : Base, A : ILeft
 }
+interface SelfReader {
+    fun <T> PickSelf(item: T): T where T : Base, T : RoundtripDependentNative.IKey<T>
+}
 
 interface NominalFactory<K : Base> {
     fun <A : K> make(): Any

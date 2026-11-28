@@ -18,6 +18,7 @@ sealed partial class ProjectedCallableEntries
     readonly Dictionary<string, Entry> emittedEntries = new(StringComparer.Ordinal);
     readonly Dictionary<string, ReferencedDeclarationSlot> localSlots = new(StringComparer.Ordinal);
     readonly HashSet<string> exactFacades = new(StringComparer.Ordinal);
+    readonly Dictionary<string, BirFunctionDeclaration> constrainedSlots = new(StringComparer.Ordinal);
     readonly Dictionary<string, BirTypeParameter[]> ownerConstraints = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> kinds;
     readonly Dictionary<string, BirClassDefinition> classes;
@@ -28,6 +29,7 @@ sealed partial class ProjectedCallableEntries
     readonly CapturedGenericInvocation.PreparedInvocation invocations;
 
     internal static string EntryId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-call");
+    static string ConstrainedSlotId(string id) => DeclarationIdentityBinding.PhysicalOnlyId(id, "constraint-dispatch");
     readonly GenericRepresentationPolicy values;
 
     internal static bool HasFixedAbi(BirFunctionDeclaration local, string id, ReferenceMetadataIndex references) =>
@@ -135,6 +137,8 @@ sealed partial class ProjectedCallableEntries
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
                     if (entry == null)
                     {
+                        ImplementConstrainedSlot(owner, method, constructed, id, local ? entries[id].Representations :
+                            references.NullableMethodFrame(contract.RepresentationDeclaration ?? id));
                         DeclareFixedSlotForwarder(files, owner, method, descriptor, contract, local ? entries[id].Representations :
                             references.NullableMethodFrame(contract.RepresentationDeclaration ?? id), id);
                         continue;
@@ -621,6 +625,8 @@ sealed partial class ProjectedCallableEntries
                 {
                     exactFacades.Add(id);
                     MakeExactFacade(owner, m, copy, entry.Plan);
+                    if (owner.Kind.OrDefault() == "interface" && entry.Plan.Facets.Any(f => f.Evidence.Any(HasMethodVariable)))
+                        result.Add(DeclareConstrainedSlot(owner, m, names, id));
                 }
                 else if (m.Virtual.OrDefault())
                 {
@@ -639,6 +645,68 @@ sealed partial class ProjectedCallableEntries
                     owner.Kind.OrDefault() == "interface", false));
         }
         return result.ToArray();
+    }
+
+    static bool HasMethodVariable(TypeNode type)
+    {
+        bool found = false;
+        BirGraphNameFields.VisitTypeNodes(type, t => found |= t is TypeNode.Tv { Scope: "method" });
+        return found;
+    }
+
+    // The exact entry still owns the joint constraints. Dispatch before the
+    // default body splits them into independently constrained projected rows.
+    BirFunctionDeclaration DeclareConstrainedSlot(IBirTypeDeclaration owner, BirFunctionDeclaration exact,
+        HashSet<string> names, string id)
+    {
+        var stem = exact.Name.Value + "$constraintDispatch";
+        var name = stem;
+        for (int n = 0; !names.Add(name); ++n) name = stem + n;
+        var slot = new BirFunctionDeclaration {
+            Name = name, Params = exact.Params.Value.Select(p => (BirParameter)p.DeepClone()).ToArray(),
+            Ret = exact.Ret, TypeParams = ReferenceMetadataIndex.CloneReferencedTypeParameters(exact.TypeParams.Value),
+            Body = exact.Body, Generated = true, Abstract = false, Virtual = true, Vis = "public", RoundtripMetadataPending = true,
+            RoundtripDeclarationIdentity = new BirRoundtripDeclarationIdentity {
+                DeclarationId = ConstrainedSlotId(id), DeclarationSourceName = name },
+        };
+        constrainedSlots.Add(id, slot);
+        if (!referenceBuild)
+            exact.Body = ForwardBody(owner, exact, slot, Enumerable.Range(0, slot.TypeParams.Value.Length)
+                .Select(i => (TypeNode)new TypeNode.Tv("method", i)).ToArray());
+        return slot;
+    }
+
+    void ImplementConstrainedSlot(IBirTypeDeclaration owner, BirFunctionDeclaration target, TypeNode.Fqn construction,
+        string id, NullableRepresentationFrame frame)
+    {
+        var selected = ConstrainedSlotId(id);
+        string name;
+        TypeNode[] signature;
+        TypeNode result;
+        BirTypeParameter[] parameters;
+        if (constrainedSlots.TryGetValue(id, out var local))
+        {
+            name = local.Name.Value;
+            signature = local.Params.Value.Select(FunctionSignatureIdentity.SignatureType).ToArray();
+            result = local.Ret.Value;
+            parameters = ReferenceMetadataIndex.CloneReferencedTypeParameters(local.TypeParams.Value);
+        }
+        else
+        {
+            if (!references.TryDeclarationSignatureSlot(selected, out var slot)) return;
+            name = slot.Name; signature = slot.Parameters; result = slot.Return;
+            parameters = references.SelectedPhysicalMethod(selected).GetGenericArguments()
+                .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
+        }
+        TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, construction.Args ?? []);
+        foreach (var p in parameters)
+            if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(Close).ToArray();
+        var descriptor = new BirMethodImpl { Owner = construction, Member = name, Arity = parameters.Length,
+            Params = signature.Select(Close).ToArray(), Ret = Close(result) };
+        var body = NewSlotForwarder(owner, target, descriptor, parameters, true);
+        var arguments = Enumerable.Range(0, target.TypeParams.Value.Length)
+            .Select(i => (TypeNode)new TypeNode.Tv("method", frame?.SourcePosition(i) ?? i)).ToArray();
+        body.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, body, target, arguments);
     }
 
     void ApplyNativeSignature(BirFunctionDeclaration method, ProjectedMethodPlan plan)
