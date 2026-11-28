@@ -15,6 +15,7 @@ internal interface ProjectedArrayVector {
 private class ProjectedArrayTable<K : Any, V : Any> {
     constructor()
     @kotlin.clr.ClrIntrinsic("Add") fun add(key: K, value: V): Unit = error("CLR binding")
+    @kotlin.clr.ClrIntrinsic("GetOrCreateValue") fun cell(key: K): V = error("CLR binding")
     @kotlin.clr.ClrIntrinsic("TryGetValue") fun find(key: K, value: ClrRef<V?>): Boolean = error("CLR binding")
 }
 
@@ -37,6 +38,37 @@ private val kotlinCallableTag = Any()
 @PublishedApi
 internal open class KotlinClosureTarget {
     internal var publishedCallable: Any? = null
+}
+
+/** Implemented on compiler-authored CLR result views, not on the user's callable. */
+@PublishedApi
+internal interface KotlinCallbackEntry {
+    fun dotktKotlinEntry(): Any
+}
+
+@kotlin.clr.ClrIntrinsic("System.Delegate.Combine")
+private fun combineCallbackEntries(first: FunctionDelegate?, next: FunctionDelegate): FunctionDelegate = error("CLR binding")
+
+// Only Kotlin Invoke can select this entry. A clone still has the same target;
+// a multicast must preserve the complete ordered list, not just its last target.
+@PublishedApi
+internal fun kotlinCallbackEntry(value: Any?, slot: StarProjectionType): Any? {
+    val delegate = value as? FunctionDelegate ?: return value
+    if (delegate.hasSingleTarget()) {
+        val raw = (delegate.boundTarget() as? KotlinCallbackEntry)?.dotktKotlinEntry() ?: return value
+        return if (slot.isAssignableFrom(raw.starProjectionRuntimeType())) raw else value
+    }
+    val members = delegate.invocationList()
+    var changed = false
+    val type = delegate.starProjectionRuntimeType()
+    for (i in members.indices) {
+        val raw = (members[i].boundTarget() as? KotlinCallbackEntry)?.dotktKotlinEntry() as? FunctionDelegate ?: continue
+        if (raw.starProjectionRuntimeType() == type) { members[i] = raw; changed = true }
+    }
+    if (!changed) return value
+    var result: FunctionDelegate? = null
+    for (member in members) result = combineCallbackEntries(result, member)
+    return result
 }
 
 @PublishedApi
@@ -69,6 +101,43 @@ private fun isKotlinCallable(value: FunctionDelegate): Boolean {
     if (target?.publishedCallable === value) return true
     var tag: Any? = null
     return kotlinCallables.find(value, byref(tag))
+}
+
+private class ResultExports public constructor() {
+    var byType: MutableMap<StarProjectionType, Any>? = null
+}
+private val resultExports = ProjectedArrayTable<Any, ResultExports>()
+
+// For arguments every multicast target matters; only the last supplies the result.
+@PublishedApi
+internal fun existingNativeResultView(original: Any, type: StarProjectionType): Any? {
+    val value = original as FunctionDelegate
+    val last = if (value.hasSingleTarget()) value else {
+        val targets = value.invocationList()
+        targets[targets.size - 1]
+    }
+    if (!isKotlinCallable(last)) return original
+    return cachedNativeDelegateView(original, type)
+}
+
+@PublishedApi
+internal fun cachedNativeDelegateView(original: Any, type: StarProjectionType): Any? {
+    var existing: ResultExports? = null
+    resultExports.find(original, byref(existing))
+    val cell = existing ?: return null
+    enterArrayState(cell)
+    try { return cell.byType?.get(type) } finally { exitArrayState(cell) }
+}
+
+@PublishedApi
+internal fun publishNativeResultView(original: Any, candidate: Any): Any {
+    val cell = resultExports.cell(original)
+    val type = candidate.starProjectionRuntimeType()
+    enterArrayState(cell)
+    try {
+        val views = cell.byType ?: mutableMapOf<StarProjectionType, Any>().also { cell.byType = it }
+        return views[type] ?: candidate.also { views[type] = it }
+    } finally { exitArrayState(cell) }
 }
 
 @kotlin.clr.ClrTypeAlias("System.ArrayTypeMismatchException")

@@ -12,6 +12,8 @@ class NominalFunctionDelegateTests {
     fun nativeDelegateVarianceAcrossBoxedInputs() {
         check(Callbacks.Apply(Callbacks.BoxedInput(), 2) == 3)
         check(Callbacks.ApplyFactory(Callbacks.Factory()) == 42)
+        Callbacks.FactoryField = Callbacks.Factory()
+        check(Callbacks.ApplyFactory(Callbacks.FactoryField) == 42)
         check(Callbacks.ApplyConsumer(Callbacks.Consumer()) == 9)
         check(callTyped(41) == 42)
         check(Callbacks.ApplySink(Callbacks.NativeSink()) == 6)

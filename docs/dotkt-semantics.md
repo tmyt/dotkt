@@ -2449,9 +2449,11 @@ DLL boundaries. Metadata retains the source signature. Metadata-proven byref-lik
 their exact physical slots. A nominal CLR delegate crossing uses its own declared signature instead of this carrier.
 
 A C# slot can also use a wide `KFunc` or `KAction` with native value-type parameters. Passing a Kotlin
-function to that slot leaves the original Kotlin value unchanged. If the delegate is already assignable,
-the CLR receives the same reference (including null); otherwise it receives a delegate that converts the
-arguments and result. Separate conversions need not give C# reference-identical delegates.
+function to that slot leaves the original Kotlin value unchanged. CLR code can receive a separate
+delegate to convert arguments or check the result, even when the delegate types are assignable.
+Passing the same function to the same closed CLR delegate type preserves event registration identity:
+adding a handler and later removing it with the same function removes that registration.
+An already compatible CLR-origin delegate passes through unchanged; null stays null.
 
 In the other direction, a Kotlin function can return a wide callback read from a CLR property. The getter runs once.
 If the native delegate's value-type slots differ from ordinary Kotlin storage, the callable view converts the
@@ -2461,9 +2463,16 @@ Calling a native callback exposes array arguments to CLR code even when the dele
 Kotlin carrier signature. Compatible arrays keep their identity; an incompatible unchecked array
 is rejected before the native body runs. Calling an ordinary Kotlin function through the same
 carrier does not expose its arguments merely because the carrier is a CLR delegate.
+If CLR code retains a Kotlin callback, an array it returns is checked when the callback
+returns to CLR, even when the delegate signatures already match. A compatible return
+is the same array, not a copy. Calling the original Kotlin function does not publish its result.
+For a multicast invoked by CLR, each handler checks its own return before the next handler
+runs. An incompatible array throws even if a later handler would have supplied the final
+return value. No later handler runs after that exception.
 If the result is itself a Kotlin function, compatibility includes that function's invocation signature, recursively.
 An outer delegate can be CLR-assignable by covariance while its inner result still requires boxing. When the whole
-chain is compatible the original delegate is used; a nominal CLR delegate result stays nominal.
+chain is compatible no signature conversion is needed; result publication at the CLR boundary still applies.
+A nominal CLR delegate result stays nominal.
 
 A Kotlin class may implement a function type directly or through an interface. At a function-typed
 boundary its delegate calls the selected `invoke` implementation. Converting the same instance

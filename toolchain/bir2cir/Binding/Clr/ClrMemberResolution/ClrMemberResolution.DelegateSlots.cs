@@ -173,7 +173,7 @@ static partial class ClrMemberResolution
 
     // This is representation policy over immutable TypeNodes, shared by the
     // owning construction and final value-flow consumers.
-    static DelegateAdapterPlan BoxedDelegateAdapterPlan(TypeNode.Fn natural, TypeNode.Fn target)
+    internal static DelegateAdapterPlan BoxedDelegateAdapterPlan(TypeNode.Fn natural, TypeNode.Fn target)
     {
         var sourceParameters = natural.DelegateParams;
         var targetParameters = target.DelegateParams;
