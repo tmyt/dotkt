@@ -91,7 +91,7 @@ sealed class TypedPhysicalDelegateAdapter
                 external, Read(), (BirNewClosure)adapted.DeepClone());
             return new BirValueBlock { Type = slot, Stmts = new IBirStatement[] { new BirVariable { Name = cached, Type = obj, Init = lookup } },
                 Result = new BirConditional { Type = slot,
-                    Cond = new BirBinaryOperation { Op = "===", Lhs = new BirLocal { Name = cached }, Rhs = Null() },
+                    Cond = new BirBinaryOperation { Op = "==", Lhs = new BirLocal { Name = cached }, Rhs = Null() },
                     Then = new BirCast { Type = slot, E = publish }, Else = new BirCast { Type = slot, E = new BirLocal { Name = cached } } } };
         }
 
