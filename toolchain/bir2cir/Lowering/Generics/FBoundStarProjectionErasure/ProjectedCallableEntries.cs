@@ -397,7 +397,13 @@ sealed partial class ProjectedCallableEntries
             ? local.Owner.Kind.OrDefault() == "interface" :
                 references.TryDeclarationSignatureSlot(EntryId(id), out var slot) && slot.IsInterface;
         var interfaces = new List<ProjectedMethodPlan>();
-        foreach (var id in (method.SelectedGenericOverrides ?? []).OrderBy(IsInterface))
+        IEnumerable<string> contracts = method.SelectedGenericOverrides ?? [];
+        // An inherited forwarding body calls the selected base MethodDef;
+        // it must meet that entry's constraints without overriding its slot.
+        if (method.LocalBodyEntry.HasValue && method.MaterialFrameOrigin is { } body &&
+            references.TryDeclarationSignatureSlot(EntryId(body), out var selectedBody) && !selectedBody.IsInterface)
+            contracts = contracts.Prepend(body);
+        foreach (var id in contracts.OrderBy(IsInterface))
         {
             string declaringOwner;
             if (originalSlots.TryGetValue(id, out var local))

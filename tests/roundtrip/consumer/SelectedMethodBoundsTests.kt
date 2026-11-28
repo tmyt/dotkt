@@ -24,6 +24,13 @@ class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFacto
 
 private fun <A : Concrete> takeNullable(parent: GenericParent<*>, queue: Queue<A?>): Any = parent.take<A>(queue)
 
+private interface AdditionalSelection<K> { fun <A : K> select(value: A): A }
+private open class InheritedSelection : GenericParent<String>(), AdditionalSelection<Concrete>
+private class SelectionOverride : InheritedSelection() {
+    var calls = 0
+    override fun <A : Concrete> select(value: A): A { calls++; return value }
+}
+
 private class OrdinarySuspendFactory<K, P> : SuspendFactory<K>, ReverseStorageFactory<K, P>
     where K : Base, K : IRight, K : ILeft {
     override suspend fun <A : K> make(): Any = Product<A>()
@@ -265,6 +272,10 @@ class SelectedMethodBoundsTests {
         check(JoinedSlot.IsValue<Item>(joint.make<Item>()) && JoinedSlot.IsValue<Item>(parent.make<Item>()))
         val item = Item()
         check(joint.select(item) === item && parent.select(item) === item)
+        val child = SelectionOverride()
+        for (view: AdditionalSelection<Concrete> in listOf(InheritedSelection(), child))
+            check(view.select(item) === item)
+        check(child.calls == 1)
         val queue = Queue<Item?>()
         check(takeNullable<Item>(parent, queue) === queue)
         val factory = FacetFactory()

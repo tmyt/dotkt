@@ -17,10 +17,11 @@ using DotKt.Cir;
 // hierarchy-driven and contains no library/type/member special cases.
 static partial class InheritedClassInterfaceBridge
 {
-    public static void MaterializeSuspendDeclarations(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
+    public static void MaterializeEarlyDeclarations(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         // Source-known suspend forwarders must exist before inline carriers, signature ownership and hot/cold
-        // lowering snapshot declarations. The later exact bridge pass also handles types materialized afterwards.
+        // lowering snapshot declarations. Imported generic bodies also need the
+        // declaration's lexical frame to adapt a newly introduced interface slot.
         var defs = SupertypeGraph.CollectSource(roots);
         var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
         foreach (var declaration in roots.SelectMany(root => root.Types.OrEmpty()))
@@ -40,14 +41,17 @@ static partial class InheritedClassInterfaceBridge
         foreach (var cls in defs.Values.Where(d => d.Kind == "class"))
         {
             if (declarations[cls.Name] is not BirClassDefinition { InheritedClassMethods.HasValue: true } owner) continue;
+            HashSet<TypeNode.Fqn> declaredFaces = null;
             foreach (var fact in owner.InheritedClassMethods.Value)
             {
-                if (fact.Mods.OrDefault()?.Suspend.OrDefault() != true) continue;
+                bool suspend = fact.Mods.OrDefault()?.Suspend.OrDefault() == true;
                 if (fact.InheritedImplementation.OrDefault() is not { } selected
                     || selected.Owner.OrDefault() is not TypeNode.Fqn selectedOwner
                     || selected.Member.OrDefault() is not { } member
                     || !fact.Params.HasValue || !fact.Overrides.HasValue) continue;
                 var ownerName = selectedOwner.Name;
+                if (!suspend && (cls.Interfaces.Length == 0 || selected.TypeParams.OrEmpty().Length == 0 ||
+                    declarations.ContainsKey(ownerName) || !selected.DeclarationId.HasValue)) continue;
                 var parameters = fact.Params.Value;
                 var overrides = fact.Overrides.Value;
                 var owners = SupertypeGraph.Reachable(cls, defs, refs)
@@ -61,10 +65,25 @@ static partial class InheritedClassInterfaceBridge
                     .ToList();
                 if (interfaceEdges.Count == 0) continue;
                 var declarationId = selected.DeclarationId.OrDefault();
+                bool NeedsProjectedEntry(BirOverride edge)
+                {
+                    if (edge.DeclarationId.OrDefault() is not string id || edge.Owner.OrDefault() is not TypeNode.Fqn type)
+                        return false;
+                    return declarations.TryGetValue(type.Name, out var local)
+                        ? Methods(local).Any(m => m.DeclarationId.OrDefault() == id && m.OwnerDependentSourceSlots is { Count: > 0 })
+                        : refs.ProjectedMethod(ProjectedCallableEntries.EntryId(id)) != null;
+                }
+                if (!suspend)
+                {
+                    declaredFaces ??= SupertypeGraph.Reachable(new SupertypeGraph.Def { Interfaces = cls.Interfaces }, defs, refs, sourceFrames: true)
+                        .Where(edge => edge.isInterface).Select(edge => edge.spec).ToHashSet();
+                    interfaceEdges.RemoveAll(edge => !declaredFaces.Contains((TypeNode.Fqn)edge.Owner.Value) || !NeedsProjectedEntry(edge));
+                    if (interfaceEdges.Count == 0) continue;
+                }
                 var selectedSignature = selected.Sig.OrDefault()
                     ?? throw new InvalidOperationException("selected inherited suspend implementation has no signature");
                 var methodArity = selected.TypeParams.OrEmpty().Length;
-                var targetIsVirtual = declarations.TryGetValue(ownerName, out var localOwner)
+                var inheritsSuspendSlot = suspend && (declarations.TryGetValue(ownerName, out var localOwner)
                     ? Methods(localOwner).Where(method =>
                             !method.Static.OrDefault() && method.Name.OrDefault() == member
                             && method.TypeParams.OrEmpty().Length == methodArity
@@ -80,17 +99,18 @@ static partial class InheritedClassInterfaceBridge
                         owners[0].Args ?? Array.Empty<TypeNode>(), true, out var target,
                         selectedDeclarationId: declarationId)
                         ? target.IsVirtual
-                        : throw new InvalidOperationException($"selected inherited suspend declaration '{ownerName}.{member}' is unresolved");
-                if (targetIsVirtual) continue;
+                        : throw new InvalidOperationException($"selected inherited suspend declaration '{ownerName}.{member}' is unresolved"));
+                if (inheritsSuspendSlot) continue;
                 var call = new BirCallInstance
                 {
-                    OwnerType = owners[0], Virtual = true, ClrOwnerResolved = true, SuspendCall = true,
+                    OwnerType = owners[0], Virtual = true, ClrOwnerResolved = true,
                     Recv = new BirThis(), Method = member, Sig = selectedSignature.ToArray(),
                     Args = parameters.Select(p => (IBirExpression)new BirLocal {
                         Name = p.Name.HasValue ? p.Name : OptionalField<string>.Null,
                     }).ToArray(),
                     Ret = fact.Ret, DynRet = fact.Ret, Sty = fact.Ret,
                 };
+                if (suspend) call.SuspendCall = true;
                 if (declarationId != null) call.DeclarationId = declarationId;
                 if (fact.TypeParams.OrEmpty().Length > 0)
                     call.TypeArgs = Enumerable.Range(0, fact.TypeParams.Value.Length)
@@ -107,17 +127,24 @@ static partial class InheritedClassInterfaceBridge
                     MethodTypeParameterBoundsPre = copy.MethodTypeParameterBoundsPre,
                     SignatureOverrideDeclarations = copy.SignatureOverrideDeclarations,
                     Static = false, Override = false, Abstract = false, Virtual = true, Vis = "public",
-                    SuspendRet = copy.Ret, Attrs = Array.Empty<BirAttribute>(),
+                    Attrs = Array.Empty<BirAttribute>(),
                     Overrides = interfaceEdges.Select(edge => (BirOverride)edge.Rewrite(node => node)).ToArray(),
                     Body = new IBirStatement[] { new BirReturn {
                         Value = OptionalField<IBirExpression>.Of(MaterializedExecutable.ReturnedCall(call)),
                     } },
                 };
+                if (suspend) bridge.SuspendRet = copy.Ret;
                 if (declarationId != null)
                 {
                     bridge.DeclarationId = DeclarationIdentityBinding.InheritedProjectionId(cls.Name, new[] { declarationId });
                     bridge.DeclarationSourceName = bridge.Name;
                     bridge.Generated = true;
+                    if (!suspend)
+                    {
+                        bridge.MaterialFrameOrigin = declarationId;
+                        bridge.LocalBodyEntry = (bridge.DeclarationId.Value, null);
+                        bridge.SignatureOverrideDeclarations = interfaceEdges.Select(edge => edge.DeclarationId.Value).Distinct().ToArray();
+                    }
                 }
                 owner.Methods = owner.Methods.OrEmpty().Append(bridge).ToArray();
             }

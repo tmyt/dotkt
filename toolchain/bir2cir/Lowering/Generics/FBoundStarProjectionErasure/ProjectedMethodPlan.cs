@@ -91,7 +91,16 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
         foreach (var ordinary in independentIndices)
         {
             native.Add(ordinary);
-            materialBounds[ordinary] = facets.Where(f => f.OwnerIndex == ordinary).Select(f => f.Bound).Distinct().ToArray();
+            IEnumerable<TypeNode> proofs = facets.Where(f => f.OwnerIndex == ordinary).Select(f => f.Bound);
+            if (nominal(formals[ordinary]) && representations?.SourceIndex(ordinary) is int source &&
+                representations.StorageIndices.Contains(source))
+            {
+                // A nominal relay may spell only Concrete, while the selected
+                // native slot requires the interfaces already proven for its storage.
+                var storage = representations.Variable(new TypeNode.Tv("method", source), NullableRepresentationFrame.Role.Storage);
+                proofs = proofs.Concat(formals[storage.I].Constraints.OrEmpty());
+            }
+            materialBounds[ordinary] = proofs.Distinct().ToArray();
         }
         foreach (var group in facets.GroupBy(f => f.OwnerIndex))
         {
@@ -101,7 +110,7 @@ sealed record ProjectedMethodPlan(BirTypeParameter[] Parameters, ProjectedClassS
             // constraints, not the implementation's substituted spelling, define the entry.
             if (!needsMaterial(formals[ordinary].Constraints.OrEmpty().Concat(bounds).OfType<TypeNode.Fqn>())) continue;
             native.Add(ordinary);
-            materialBounds[ordinary] = bounds;
+            materialBounds[ordinary] = (materialBounds.GetValueOrDefault(ordinary) ?? []).Concat(bounds).Distinct().ToArray();
         }
         // A dependent native row B : A must stay in the same frame as A.
         // The nominal B : A edge remains on the original Kotlin formals.

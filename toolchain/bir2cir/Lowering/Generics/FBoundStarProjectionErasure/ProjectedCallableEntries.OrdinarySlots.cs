@@ -82,7 +82,8 @@ sealed partial class ProjectedCallableEntries
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, physicalOwner);
         var selected = selectedFrame;
         var destination = entry.Representations ?? new NullableRepresentationFrame(entry.Original.Length, []);
-        if (selected.SourceArity != destination.SourceArity) throw new InvalidOperationException("Selected override source arities disagree");
+        if (selected.SourceArity != destination.SourceArity)
+            throw new InvalidOperationException($"Selected override source arities disagree: {slot.Owner}.{slot.Name} ({selected.SourceArity}), {owner.Name.Value}.{target.Name.Value} ({destination.SourceArity})");
         var weakRows = contract?.CloneParameters() ?? rows.Select(p => CapturedGenericInvocation.CloneParameter(p, Close)).ToArray();
         if (projectedSlot != null) slot = projectedSlot;
         RetireInterfaceForwarder(owner, selectedOwner, slot, projectedSlot == null ? id : EntryId(id));

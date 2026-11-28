@@ -422,7 +422,7 @@ sealed class Pipeline
         var sourceIndex = new SourceModuleIndex(captured, refs.Aliases);
         // New physical-only forwarders are not source declarations. Keep the
         // original declaration membership while extending the owning prefix.
-        InheritedClassInterfaceBridge.MaterializeSuspendDeclarations(captured, refs);
+        InheritedClassInterfaceBridge.MaterializeEarlyDeclarations(captured, refs);
         // Resolve alias constructor expressions while source bodies are still
         // owning values. Signatures and declaration membership were captured
         // above; these rewrites change uses/bodies, not that source inventory.
