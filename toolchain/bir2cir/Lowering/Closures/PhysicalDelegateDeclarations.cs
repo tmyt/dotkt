@@ -8,6 +8,8 @@ sealed class PhysicalDelegateDeclarations
 {
     int nextAdapter;
     int nextValue;
+    readonly HashSet<string> nativeResultTargets = new(StringComparer.Ordinal);
+    internal bool PublishesResult(string name) => nativeResultTargets.Contains(name);
 
     internal string FreshValueTemporary() => $"dotkt$unitDelegateValue{nextValue++}";
     internal string FreshAdapterName(string scope, string role) => $"dotkt${scope}${role}{nextAdapter++}";
@@ -82,6 +84,16 @@ sealed class PhysicalDelegateDeclarations
             Methods = new[] { invoke },
         };
         var arity = plan.GenericArity ?? plan.Arity;
+        if (plan.PublishReturn)
+        {
+            nativeResultTargets.Add(name);
+            declaration.Interfaces = new TypeNode[] { new TypeNode.Fqn("DotKt.Runtime.CompilerServices.KotlinCallbackEntry") };
+            declaration.Methods = new[] { invoke, new BirFunctionDeclaration {
+                Name = "dotktKotlinEntry", Vis = "public", Virtual = true, ClrFinal = true,
+                Params = Array.Empty<BirParameter>(), Ret = new TypeNode.Fqn("System.Object"),
+                Body = new IBirStatement[] { new BirReturn { Value = (BirFieldGet)receiver.DeepClone() } }, BodyTerminates = true,
+            } };
+        }
         if (arity != 0)
             declaration.TypeParams = plan.LexicalFrame ?? Enumerable.Range(0, arity).Select(i => new BirTypeParameter {
                 Name = "T" + i, SpecialConstraints = new[] { "allowsRefStruct" },

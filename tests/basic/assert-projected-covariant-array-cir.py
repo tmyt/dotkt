@@ -250,9 +250,13 @@ if not any(node.get("k") == "callInstance"
 
 regular_reader = next(item for item in type_def("VariantLexicalOwner").get("methods", [])
                       if item.get("name") == "regularReader")
-regular_closures = [node for node in objects(regular_reader.get("body", [])) if node.get("k") == "newClosure"]
+# The returned delegate can wrap the source lambda. Only the source lambda
+# captures the lexical receiver; the publication adapter captures the delegate.
+regular_closures = [node for node in objects(regular_reader.get("body", []))
+                    if node.get("k") == "newClosure"
+                    and any(capture.get("k") == "this" for capture in node.get("captures", []))]
 if len(regular_closures) != 1:
-    raise SystemExit(f"variant lexical regular reader produced {len(regular_closures)} closures")
+    raise SystemExit(f"variant lexical regular reader produced {len(regular_closures)} receiver-capturing closures")
 regular_closure = type_def(regular_closures[0].get("closureType", {}).get("name"))
 regular_outer_fields = [field for field in regular_closure.get("fields", []) if field.get("name") == "__outer"]
 if len(regular_outer_fields) != 1 or regular_outer_fields[0].get("type") != owner_tv:

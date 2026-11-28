@@ -37,6 +37,8 @@ internal abstract record BirGraphValue
     // A callable construction can return another Kotlin function. Its Invoke
     // result in ordinary delegate storage may have already been erased to object.
     internal TypeNode.Fn? SourceFunctionResult { get; set; }
+    // A closed classifier survives delegate signature erasure without capturing a generic frame.
+    internal TypeNode.Fqn? ClosedCallbackResult { get; set; }
     // For a native producer, keep the Kotlin callable contract before value
     // erasure. The closed CLR return slot still comes from the selected member.
     internal TypeNode.Fn? ProjectedFunctionResult { get; set; }

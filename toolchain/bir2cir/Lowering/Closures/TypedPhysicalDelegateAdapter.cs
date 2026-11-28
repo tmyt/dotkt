@@ -36,11 +36,11 @@ sealed class TypedPhysicalDelegateAdapter
     }
 
     internal IBirExpression AdaptFunctionView(BirFileDeclaration document, IBirExpression view, TypeNode.Fn selected,
-        TypeNode.Fqn slot, TypeNode.Fn knownView = null, bool nativeSource = false)
+        TypeNode.Fqn slot, TypeNode.Fn knownView = null, bool nativeSource = false, bool nativeExport = false)
     {
-        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural, out var compatible, nativeSource);
+        var plan = ClrMemberResolution.FunctionViewPlan(references, localTypes, selected, slot, knownView, out var natural, out var compatible, nativeSource, nativeExport);
         if (plan == null) return new BirCast { Type = slot, E = OptionalField<IBirExpression>.Of(view) };
-        return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural, compatible);
+        return AdaptValue(document, view, new TypeNode.Fqn("System.Object"), slot, slot, plan, natural, compatible, nativeExport);
     }
 
     internal IBirExpression ImportNestedFunction(BirFileDeclaration document, IBirExpression operand,
@@ -54,6 +54,20 @@ sealed class TypedPhysicalDelegateAdapter
         return AdaptFunctionView(document, operand, selected, ordinary, native, nativeSource: true);
     }
 
+    // An ordinary function can leave Kotlin through an erased object, an event or
+    // a ref store. Give the delegate itself the CLR-facing Invoke at construction.
+    internal BirNewClosure WithNativeResult(BirFileDeclaration document, TypeNode.Fn natural, IBirExpression raw)
+    {
+        var slot = BirTypeLowering.DelegateFqnOf(natural);
+        var plan = ClrMemberResolution.BoxedDelegateAdapterPlan(natural, natural) with { PublishReturn = true };
+        return new BirNewClosure { ClosureType = new TypeNode.Fqn(AdapterClass(document, plan)), Method = "invoke",
+            Captures = new[] { raw }, FuncType = natural, TypeArgs = plan.Arguments,
+            DelegateCtorRef = BirMemberReference.FromPhysical(ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)) };
+    }
+
+    internal bool PublishesResult(BirGraphValue node) => node is BirNewClosure closure &&
+        closure.ClosureType.OrDefault() is TypeNode.Fqn type && declarations.PublishesResult(type.Name);
+
     internal IBirExpression AdaptNominalValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
         TypeNode target, ValueTypeOracle isValue, BirTypeParameter[] owners, BirTypeParameter[] methods)
     {
@@ -65,7 +79,8 @@ sealed class TypedPhysicalDelegateAdapter
     }
 
     IBirExpression AdaptValue(BirFileDeclaration document, IBirExpression expression, TypeNode source,
-        TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view, TypeNode.Fqn compatible = null)
+        TypeNode target, TypeNode.Fqn slot, ClrMemberResolution.DelegateAdapterPlan plan, TypeNode.Fn view, TypeNode.Fqn compatible = null,
+        bool nativeExport = false)
     {
         var temporary = declarations.FreshValueTemporary();
         BirLocal Read() => new BirLocal { Name = temporary };
@@ -78,6 +93,22 @@ sealed class TypedPhysicalDelegateAdapter
                     : ClrMemberResolution.DelegateConstructorReference(localTypes, references, slot)),
         };
         if (plan.Parameters != null || plan.Arguments.Length != 0) adapted.TypeArgs = plan.Arguments.ToArray();
+        var obj = new TypeNode.Fqn("System.Object");
+        IBirExpression NativeView(bool assignable)
+        {
+            if (!nativeExport || assignable && !plan.PublishReturn)
+                return assignable ? new BirCast { Type = slot, E = Read() } : adapted;
+            bool external = !localTypes.Contains(TypedGenericArrayStorageLowering.RuntimeOwner);
+            var cached = declarations.FreshValueTemporary();
+            var lookup = TypedGenericArrayStorageLowering.Runtime(assignable ? "existingNativeResultView" : "cachedNativeDelegateView", obj, [obj, new TypeNode.Fqn("System.Type")],
+                external, Read(), new BirClassReference { Type = slot });
+            var publish = TypedGenericArrayStorageLowering.Runtime("publishNativeResultView", obj, [obj, obj],
+                external, Read(), (BirNewClosure)adapted.DeepClone());
+            return new BirValueBlock { Type = slot, Stmts = new IBirStatement[] { new BirVariable { Name = cached, Type = obj, Init = lookup } },
+                Result = new BirConditional { Type = slot,
+                    Cond = new BirBinaryOperation { Op = "==", Lhs = new BirLocal { Name = cached }, Rhs = Null() },
+                    Then = new BirCast { Type = slot, E = publish }, Else = new BirCast { Type = slot, E = new BirLocal { Name = cached } } } };
+        }
 
         // The source is transferred to exactly one initializer. Testing and
         // capturing separate temporary reads preserves effects and nullable values.
@@ -95,7 +126,7 @@ sealed class TypedPhysicalDelegateAdapter
                 // its Invoke still returns a native rather than a Kotlin callable.
                 Then = Null(), Else = view == null && plan.NominalSource == null ? adapted : OptionalField<IBirExpression>.Of(new BirConditional {
                     Type = target, Cond = new BirIsInstance { Type = compatible ?? slot, E = Read() },
-                    Then = new BirCast { Type = slot, E = Read() }, Else = adapted }),
+                    Then = OptionalField<IBirExpression>.Of(NativeView(true)), Else = OptionalField<IBirExpression>.Of(NativeView(false)) }),
             },
         };
     }

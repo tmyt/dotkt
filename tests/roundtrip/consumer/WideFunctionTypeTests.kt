@@ -17,6 +17,9 @@ private class NativeCallbackDerived(op: LastArgument) : GenericValueInterop.Nati
 private typealias WideCallback<R> = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> R
 private typealias WideIntCallback = WideCallback<Int>
 private typealias BoxedCallback = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> Any?
+private class RetainedCallback(val saved: BoxedCallback) : GenericValueInterop.NativeCallbackBase(saved) {
+    override fun MakeCallback(): BoxedCallback = saved
+}
 private typealias WideFactory = (Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any) -> WideIntCallback
 private fun nativeFactory(): WideFactory = GenericValueInterop.NativeWideCallbacks.Factory
 private suspend fun <T : GenericValueInterop.ILeftMark> stagedFactory(tag: T, pause: suspend () -> Unit): Int {
@@ -59,6 +62,70 @@ private fun stagedCallback(source: GenericValueInterop.NativeIntCallbackBase, ta
 private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
 
 class WideFunctionTypeTests {
+    @TestAttribute
+    fun sameFunctionRemovesOneRegistrationAcrossSeparateClrConversions() {
+        var calls = 0
+        val f: WideIntCallback = { a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q -> calls++; a + q }
+        val owner = GenericValueInterop.NativeIntCallbackBase(f)
+        owner.Register(f)
+        owner.Register(f)
+        check(owner.Raise() == 18 && calls == 2)
+        owner.Unregister(f)
+        check(owner.Raise() == 18 && calls == 3)
+        owner.Unregister(f)
+        check(owner.Raise() == -1 && calls == 3)
+    }
+
+    @TestAttribute
+    fun retainedCallbackPublishesItsResultOnlyAtNativeInvocation() {
+        val initial = CallbackBox("initial")
+        var result = arrayOf(initial)
+        var visits = 0
+        val callback: BoxedCallback = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> visits++; result }
+        val native = GenericValueInterop.NativeCallbackBase(callback)
+        val derived = RetainedCallback(callback)
+        val fromNative: BoxedCallback = GenericValueInterop.CallbackArrayProbe().Inspect
+        check(GenericValueInterop.NativeCallbackBase(fromNative).CallbackIdentity === fromNative)
+        check(native.CallbackIdentity === derived.CallbackIdentity)
+        check(visits == 0 && native.Read() === result && native.ReadFirstElement() === initial)
+        result = arrayOf(CallbackBox("next"))
+        @Suppress("UNCHECKED_CAST")
+        val incompatible = CallbackBox(7) as CallbackBox<String>
+        result[0] = incompatible
+        try { native.ReadFirstElement(); error("C# received an incompatible array") }
+        catch (_: System.InvalidCastException) {}
+        try { derived.ReadFirstElement(); error("C# base received an incompatible array") }
+        catch (_: System.InvalidCastException) {}
+        derived.Stored = callback
+        derived.Field = callback
+        for (slot in 0..2) {
+            try { derived.InvokeStored(slot); error("C# received an incompatible callback result from slot $slot") }
+            catch (_: System.InvalidCastException) {}
+        }
+        val local = callback(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17) as Array<*>
+        check(visits == 8 && local === result && local[0] === incompatible)
+        val token = derived.Changed.subscribe(callback)
+        try {
+            try { derived.Raise(); error("event received a stale result") } catch (_: System.InvalidCastException) {}
+            try { GenericValueInterop.NativeCallbackBase.ReadErased(callback); error("erased delegate received a stale result") }
+            catch (_: System.InvalidCastException) {}
+        } finally { token.close() }
+        var laterCalls = 0
+        val later: BoxedCallback = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> laterCalls++; result }
+        val multicast = GenericValueInterop.CallbackArrayProbe.Combine(callback, later)
+        try { GenericValueInterop.NativeCallbackBase.ReadErased(multicast); error("first invalid return was ignored") }
+        catch (_: System.InvalidCastException) {}
+        check(laterCalls == 0)
+        @Suppress("UNCHECKED_CAST")
+        val kotlinChain = multicast as BoxedCallback
+        val last = kotlinChain(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17) as Array<*>
+        check(laterCalls == 1 && last === result && last[0] === incompatible)
+        for (restored in listOf(derived.MakeCallback(), derived.Stored)) {
+            val value = restored!!(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17) as Array<*>
+            check(value === result && value[0] === incompatible)
+        }
+    }
+
     @TestAttribute
     fun onlyNativeCallbacksPublishArrayArguments() {
         fun call(f: BoxedCallback, x: Any) =
