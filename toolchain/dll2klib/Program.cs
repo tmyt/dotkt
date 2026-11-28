@@ -3198,7 +3198,7 @@ internal sealed partial class AssemblyScanner : IDisposable
         foreach (var inherited in surfacedImplementations.Where(item => item.AccessorKind == 0))
         {
             var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names, valueOwnerParameters: ValueOwnerParameters(typeContext));
-            if (!_attrs.IsDotKtAssembly && HasGenericContractFlags(inherited.Reader, inherited.Declaration))
+            if (!_attrs.IsDotKtAssembly && NeedsInheritedGenericKey(inherited.Reader, inherited.Declaration))
                 AddStringAnnotationArgument(ExternalMethodBinding(function, names, handle), names,
                     "methodKey", RawSignatureTypeProvider.MethodKey(inherited.Reader, inherited.Declaration));
             if (inherited.IsExplicit)
@@ -6737,17 +6737,21 @@ internal sealed partial class AssemblyScanner : IDisposable
             (flags & (MethodAttributes.Virtual | MethodAttributes.Final)) == MethodAttributes.Virtual;
         // Both ends of an inherited implementation edge need the exact declaration:
         // the interface requiring admission and the native base capable of providing it.
-        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || HasGenericContractFlags(_md, method) || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
+        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || NeedsInheritedGenericKey(_md, method) || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
             || function.ValueParameter.Any(p => ContainsFunction(p.Type, names))))
             AddStringAnnotationArgument(ExternalMethodBinding(function, names, owner), names,
                 "methodKey", RawSignatureTypeProvider.MethodKey(_md, method));
     }
 
-    private static bool HasGenericContractFlags(MetadataReader reader, MethodDefinitionHandle method)
+    private static bool NeedsInheritedGenericKey(MetadataReader reader, MethodDefinitionHandle method)
     {
         var declaration = reader.GetMethodDefinition(method);
-        return (declaration.Attributes & MethodAttributes.Static) == 0 && declaration.GetGenericParameters()
-            .Any(p => (reader.GetGenericParameter(p).Attributes &
+        var parameters = declaration.GetGenericParameters();
+        if ((declaration.Attributes & MethodAttributes.Static) != 0 || parameters.Count == 0) return false;
+        // An unconstrained interface declaration is a real slot too. An inherited
+        // view on a derived interface has no new MethodDef or constraint rows.
+        return (reader.GetTypeDefinition(declaration.GetDeclaringType()).Attributes & TypeAttributes.Interface) != 0
+            || parameters.Any(p => (reader.GetGenericParameter(p).Attributes &
                 (GenericParameterAttributes.SpecialConstraintMask | GenericParameterAttributes.AllowByRefLike)) != 0);
     }
 

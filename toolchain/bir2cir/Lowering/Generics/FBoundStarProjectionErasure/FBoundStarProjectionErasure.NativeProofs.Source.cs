@@ -166,19 +166,18 @@ static partial class FBoundStarProjectionErasure
                 var parentKey = parent.NativeMethodKey.OrDefault();
                 foreach (var edge in fact.Overrides.OrEmpty())
                 {
-                    var key = edge.NativeMethodKey.OrDefault();
-                    if ((key == null && (kotlinParent || parentKey == null)) ||
+                    if (edge.NativeMethodKey.OrDefault() is not string key ||
                         edge.Owner.OrDefault() is not TypeNode.Fqn slot || values.IsBindingAlias(slot.Name) ||
                         values.OwnsValueSlots(slot.Name) || !references.IsInterfaceType(slot)) continue;
-                    var required = key == null ? null : references.SelectProjectedNativeBase(
-                        ClrMemberResolution.ResolveOwnerType(slot, references), edge.Member.Value, key).GetGenericArguments();
+                    var required = ClrDeclarationMatching.GenericRowsForNativeKey(references,
+                        ClrMemberResolution.ResolveOwnerType(slot, references), edge.Member.Value, key);
                     if (!kotlinParent && parentKey != null)
-                        nativeRows ??= ClrDeclarationMatching.MethodForNativeKey(references,
+                        nativeRows ??= ClrDeclarationMatching.GenericRowsForNativeKey(references,
                             ClrMemberResolution.ResolveOwnerType(baseType, references), parent.Member.Value,
-                            parent.Arity.Value, true, parentKey).GetGenericArguments();
-                    for (int i = 0; i < (required?.Length ?? nativeRows.Length); i++)
+                            parentKey);
+                    for (int i = 0; i < required.Length; i++)
                     {
-                        var slotFlags = required?[i].GenericParameterAttributes ?? 0;
+                        var slotFlags = required[i].GenericParameterAttributes;
                         var baseFlags = nativeRows?[i].GenericParameterAttributes ?? 0;
                         if (AdditionalConstraint(baseFlags, slotFlags) is string extra)
                             throw new InvalidOperationException($"'{owner.Name.Value}' must explicitly implement '{slot.Name}.{edge.Member.Value}': " +
