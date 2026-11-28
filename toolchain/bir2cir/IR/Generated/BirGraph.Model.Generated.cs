@@ -10936,6 +10936,7 @@ internal sealed record BirInheritedImplementation : BirGraphValue
     public OptionalField<BirTypeParameter[]> TypeParams { get; set; }
     public OptionalField<TypeNode[]> Sig { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public OptionalField<SourceTypeFacts> KotlinSupertypesPre { get; set; }
     public OptionalField<SourceBoundsSnapshot> MethodTypeParameterBoundsPre { get; set; }
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
@@ -10974,6 +10975,7 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (Sig.HasValue) { foreach (var item0 in Sig.Value) { BirGraphNameFields.VisitTypeStrings((TypeNode)item0, visit); } }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
     {
@@ -11073,6 +11075,7 @@ internal sealed record BirInheritedImplementation : BirGraphValue
             && EqualField(TypeParams, value.TypeParams, (left, right) => EqualItems(left, right, (left0, right0) => ((BirGraphValue)left0).StructurallyEquals((BirGraphValue)right0)))
             && EqualField(Sig, value.Sig, (left, right) => EqualItems(left, right, (left0, right0) => TypeNodeDataEquality.Equal(left0, right0)))
             && EqualField(DeclarationId, value.DeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(KotlinSupertypesPre, value.KotlinSupertypesPre, (left, right) => left.FrozenText == right.FrozenText)
             && EqualField(MethodTypeParameterBoundsPre, value.MethodTypeParameterBoundsPre, (left, right) => left.FrozenText == right.FrozenText);
     public override void WriteJson(Utf8JsonWriter writer)
@@ -11085,6 +11088,7 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         WriteOptional(writer, "typeParams", TypeParams, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { ((BirGraphValue)item0).WriteJson(writer); } writer.WriteEndArray(); });
         WriteOptional(writer, "sig", Sig, (writer, value) => { writer.WriteStartArray(); foreach (var item0 in value) { TypeNode.WriteJson(writer, item0); } writer.WriteEndArray(); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "kotlinSupertypesPre", KotlinSupertypesPre, (writer, value) => { SourceTypeFacts.Write(writer, value); });
         WriteOptional(writer, "methodTypeParameterBoundsPre", MethodTypeParameterBoundsPre, (writer, value) => { SourceBoundsSnapshot.Write(writer, value); });
         writer.WriteEndObject();
@@ -11099,6 +11103,7 @@ internal sealed record BirInheritedImplementation : BirGraphValue
         if (TypeParams.IsPresent) result["typeParams"] = TypeParams.IsNull ? null : new JsonArray(TypeParams.Value.Select(item0 => (JsonNode?)(((BirGraphValue)item0).ToDom(projected))).ToArray());
         if (Sig.IsPresent) result["sig"] = Sig.IsNull ? null : new JsonArray(Sig.Value.Select(item0 => (JsonNode?)(TypeNode.Write(item0))).ToArray());
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         if (KotlinSupertypesPre.IsPresent) result["kotlinSupertypesPre"] = KotlinSupertypesPre.IsNull ? null : SourceTypeFacts.ToDom(KotlinSupertypesPre.Value);
         if (MethodTypeParameterBoundsPre.IsPresent) result["methodTypeParameterBoundsPre"] = MethodTypeParameterBoundsPre.IsNull ? null : SourceBoundsSnapshot.ToDom(MethodTypeParameterBoundsPre.Value);
         projected?.Invoke(this, result);

@@ -8763,8 +8763,9 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
         OptionalField<BirTypeParameter[]> field4 = default;
         OptionalField<TypeNode[]> field5 = default;
         OptionalField<string> field6 = default;
-        OptionalField<SourceTypeFacts> field7 = default;
-        OptionalField<SourceBoundsSnapshot> field8 = default;
+        OptionalField<string> field7 = default;
+        OptionalField<SourceTypeFacts> field8 = default;
+        OptionalField<SourceBoundsSnapshot> field9 = default;
         for (var index = 0; index < count; index++)
         {
             switch (IrMessagePack.ReadString(ref reader))
@@ -8797,13 +8798,17 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
                     Seen(ref seen, 1UL << 6);
                     field6 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
                     break;
-                case "kotlinSupertypesPre":
+                case "nativeMethodKey":
                     Seen(ref seen, 1UL << 7);
-                    field7 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
+                    field7 = reader.TryReadNil() ? OptionalField<string>.Null : OptionalField<string>.Of(IrMessagePack.ReadString(ref reader));
+                    break;
+                case "kotlinSupertypesPre":
+                    Seen(ref seen, 1UL << 8);
+                    field8 = reader.TryReadNil() ? OptionalField<SourceTypeFacts>.Null : OptionalField<SourceTypeFacts>.Of(SourceTypeFacts.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 case "methodTypeParameterBoundsPre":
-                    Seen(ref seen, 1UL << 8);
-                    field8 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
+                    Seen(ref seen, 1UL << 9);
+                    field9 = reader.TryReadNil() ? OptionalField<SourceBoundsSnapshot>.Null : OptionalField<SourceBoundsSnapshot>.Of(SourceBoundsSnapshot.ReadFrozenText(TLayout.ReadRecord(ref reader)));
                     break;
                 default: throw new FormatException();
             }
@@ -8818,15 +8823,16 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             TypeParams = field4,
             Sig = field5,
             DeclarationId = field6,
-            KotlinSupertypesPre = field7,
-            MethodTypeParameterBoundsPre = field8,
+            NativeMethodKey = field7,
+            KotlinSupertypesPre = field8,
+            MethodTypeParameterBoundsPre = field9,
         };
     }
 
     internal static void WriteBirInheritedImplementation(ref MessagePackWriter writer, BirInheritedImplementation value, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(0 + (value.Owner.IsPresent ? 1 : 0) + (value.Member.IsPresent ? 1 : 0) + (value.Kind.IsPresent ? 1 : 0) + (value.Arity.IsPresent ? 1 : 0) + (value.TypeParams.IsPresent ? 1 : 0) + (value.Sig.IsPresent ? 1 : 0) + (value.DeclarationId.IsPresent ? 1 : 0) + (value.NativeMethodKey.IsPresent ? 1 : 0) + (value.KotlinSupertypesPre.IsPresent ? 1 : 0) + (value.MethodTypeParameterBoundsPre.IsPresent ? 1 : 0));
         if (value.Owner.IsPresent)
         {
             writer.Write("owner");
@@ -8898,6 +8904,15 @@ internal static class BirGraphMessagePack<TLayout> where TLayout : IBirLeafLayou
             else
             {
                 IrMessagePack.WriteString(ref writer, value.DeclarationId.Value);
+            }
+        }
+        if (value.NativeMethodKey.IsPresent)
+        {
+            writer.Write("nativeMethodKey");
+            if (value.NativeMethodKey.IsNull) writer.WriteNil();
+            else
+            {
+                IrMessagePack.WriteString(ref writer, value.NativeMethodKey.Value);
             }
         }
         if (value.KotlinSupertypesPre.IsPresent)

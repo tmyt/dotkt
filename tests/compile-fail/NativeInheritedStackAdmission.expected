@@ -1,0 +1,3 @@
+DerivedFactory
+must explicitly implement 'NativeInheritedStackAdmission.IFactory.Make'
+inherited 'NativeInheritedStackAdmission.BaseFactory.Make' does not admit stack-only types for type parameter 2

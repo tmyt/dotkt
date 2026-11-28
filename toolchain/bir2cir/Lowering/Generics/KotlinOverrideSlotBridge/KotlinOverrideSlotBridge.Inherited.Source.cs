@@ -97,7 +97,7 @@ static partial class KotlinOverrideSlotBridge
 
     sealed record InheritedFact(SelectedMethodHeader Header, TypeNode ImplementationOwner, string ImplementationMember,
         int ImplementationArity, BirTypeParameter[] ImplementationParameters, SourceBoundsSnapshot ImplementationBounds,
-        BirGraphValue Source, string DeclarationId);
+        BirGraphValue Source, string DeclarationId, string NativeMethodKey);
 
     static InheritedFact InheritedSourceFact(BirGraphValue fact)
     {
@@ -126,7 +126,8 @@ static partial class KotlinOverrideSlotBridge
         }
         return implementation == null ? null : new(header, implementation.Owner.OrDefault(), implementation.Member.OrDefault(),
             implementation.Arity.HasValue ? implementation.Arity.Value : -1, implementation.TypeParams.OrDefault(),
-            implementation.MethodTypeParameterBoundsPre.OrDefault(), fact, implementation.DeclarationId.OrDefault());
+            implementation.MethodTypeParameterBoundsPre.OrDefault(), fact, implementation.DeclarationId.OrDefault(),
+            implementation.NativeMethodKey.OrDefault());
         static SelectedParameterHeader[] DefaultParameters(TypeNode[] types) => types.Select((type, index) =>
             new SelectedParameterHeader { Name = "p" + index, Type = type }).ToArray();
     }
@@ -256,6 +257,8 @@ static partial class KotlinOverrideSlotBridge
                         var found = accessor != null
                             ? refs.TrySelectedSourceOverrideDeclaration(spec.Name, member, selectedArity,
                                 declarationParams, args, semanticParameters, selectedArgs, false, out source, accessor, fact.DeclarationId)
+                            : !defaults && fact.NativeMethodKey is string key
+                            ? refs.TrySelectedInheritedNativeDeclaration(spec, member, key, out source)
                             : refs.TrySelectedSourceMethodDeclaration(spec.Name, member, selectedArity,
                                 declarationParams, factReturn, args, semanticParameters, selectedArgs, out source,
                                 selectedDeclarationId: fact.DeclarationId);
