@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
 from carrier_inspection import metadata_record, type_payloads
+from cir_operands import operand
 
 
 def objects(node):
@@ -67,7 +68,8 @@ assert forward["virtual"] and forward["recv"] == {"k": "this"}
 assert forward["ownerType"] == {"t": "fqn", "name": owner["name"], "args": [owner_arg]}
 assert forward["typeArgs"] == [method_arg(0), method_arg(1), method_arg(0),
                                {"t": "fqn", "name": "System.Object"}, method_arg(0), method_arg(0)]
-assert forward["args"] == [{"k": "local", "name": p["name"]} for p in cold["params"]]
+forwarded = [operand(cold["body"], forward, arg) for arg in forward["args"]]
+assert forwarded == [{"k": "local", "name": p["name"]} for p in cold["params"]]
 implementation, = [m for m in owner["methods"] if m["name"] == forward["method"]]
 resume, = [n for n in objects(implementation["body"])
            if n.get("k") == "callInstance" and n["method"] == "invokeSuspend"]
@@ -75,7 +77,7 @@ state = resume["ownerType"]
 construction, = [n for n in objects(implementation["body"]) if n.get("k") == "new" and n["type"] == state]
 assert state["args"] == [owner_arg, *(method_arg(i) for i in range(4))], state
 assert types[state["name"]]["base"]["name"] == "kotlin.coroutines.clr.internal.ContinuationImpl"
-assert construction["args"] == [{"k": "this"}, *forward["args"]]
+assert construction["args"] == [{"k": "this"}, *forwarded]
 
 slots = types["OwnerSuspendSink$star"]["methods"]
 for name in ("render", "echo"):

@@ -2,6 +2,10 @@
 """Check the physical array ABI and concrete projections on legal direct family edges."""
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from cir_operands import result_value
 
 def objects(node):
     if isinstance(node, dict):
@@ -46,7 +50,8 @@ method_call, = [node for node in objects(closure["methods"]) if node.get("k") ==
 assert method_call["ownerType"] == {"t": "fqn", "name": "NgProtectedMethodBase"}
 assert method_call["sig"] == [storage] and method_call["typeArgs"] == [string, string]
 assert method_call["ret"] == method_call["calleeRet"] == storage
-assert any(node.get("k") == "setField" and node.get("name") == "v"
-           and node.get("value", {}).get("k") == "cast" and node["value"].get("type") == array
-           and node["value"].get("e") is method_call for node in objects(closure["methods"]))
+stores = [result_value(node["value"]) for node in objects(closure["methods"])
+          if node.get("k") == "setField" and node.get("name") == "v"]
+assert any(value.get("k") == "cast" and value["type"] == array and value["e"] is method_call
+           for value in stores)
 print("direct nullable-array family calls retain storage ABI, complete frames and concrete result casts")

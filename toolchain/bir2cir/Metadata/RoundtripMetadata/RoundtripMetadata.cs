@@ -222,6 +222,16 @@ static partial class RoundtripMetadata
         };
         CirTypeDeclaration AssemblySourceAttribute(string name) =>
             SourceAttributeDefinition(name, refs, Ctor(Param("System.String"), Param(ByteArrayType())));
+        // The runtime checks assignability to the emitted classifier interface
+        // for erased array stores. The declaration token must retain its actual
+        // interface implementations even if no static cast demands them.
+        var interfaces = ClrMemberResolution.ResolveAttributeCtor(null, new AttributeApplication(
+            new TypeNode.Fqn("System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembersAttribute"),
+            [new TypeNode.Fqn("System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes")],
+            [new AttributeArgument.Int32Value((int)System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.Interfaces)],
+            AttrExternal: true, AttrAssembly: "System.Runtime"), refs);
+        var classifier = AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"),
+            Param("System.Type") with { Attrs = new[] { interfaces } }, Param("System.String"), Param("System.Boolean")));
         var types = new CirTypeDeclaration[]
         {
             AssemblySourceAttribute(AKTypeAlias),
@@ -229,7 +239,7 @@ static partial class RoundtripMetadata
             AssemblySourceAttribute(AKDslScope),
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
             AttrClass(AKFileClass, Ctor()),
-            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
+            classifier,
             AttrClass(RuntimeCompanionAttribute, Ctor(Param("System.Type"))),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(DefaultBirCarrier.AttributeName, Ctor(Param("System.Int32"), Param("System.String"), Param(ByteArrayType()))),
@@ -277,7 +287,7 @@ static partial class RoundtripMetadata
         };
         if (runtimeOnly) types = new[] { AssemblySourceAttribute(AKTypeAlias), AssemblySourceAttribute(AKDslScope),
             SourceAttributeDefinition(RuntimeAliasedCompanionAttribute, refs, Ctor(Param("System.Type"), Param("System.Type"))),
-            AttrClass(RuntimeClassifierAttribute, Ctor(Param("System.Type"), Param("System.Type"), Param("System.String"), Param("System.Boolean"))),
+            classifier,
             AttrClass(RuntimeCompanionAttribute, Ctor(Param("System.Type"))),
             AssemblySourceAttribute(AKSourceCallable),
             AttrClass(AKData, Ctor()),

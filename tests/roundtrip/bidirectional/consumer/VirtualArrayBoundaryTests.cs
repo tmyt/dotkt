@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using NUnit.Framework;
 
 namespace DotKt.Tests.Bidirectional;
@@ -43,6 +45,17 @@ public class VirtualArrayBoundaryTests
     {
         public int Calls;
         object ArrayInspection.inspect(object value) { Calls++; return value; }
+    }
+
+    [Test]
+    public void ClassifierDeclarationTokenRetainsInterfacesForTrimmedArrayStores()
+    {
+        var attribute = typeof(KotlinArrayInspection).Assembly.GetType(
+            "DotKt.Runtime.CompilerServices.KotlinClassifierIdentityAttribute", throwOnError: true)!;
+        var declaration = attribute.GetConstructors().Single().GetParameters()[1];
+        Assert.That(declaration.ParameterType, Is.EqualTo(typeof(Type)));
+        Assert.That(declaration.GetCustomAttribute<DynamicallyAccessedMembersAttribute>()?.MemberTypes,
+            Is.EqualTo(DynamicallyAccessedMemberTypes.Interfaces));
     }
 
     [Test]
