@@ -1345,11 +1345,7 @@ internal fun projectedCollectionCountErased(receiver: Any): Int {
     if (view == null && receiver is StarProjectionRawCollection) return receiver.count
     val selected = view
         ?: throw UnsupportedOperationException("Projected receiver has no " + preferred + " or " + fallback + " surface")
-    return try {
-        erasedProjectedMethod(selected, "get_Count", 0).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
-    } catch (failure: StarProjectionInvocationException) {
-        throw (failure.innerException ?: failure)
-    }
+    return projectedParentCollectionCount(receiver, selected, selected.getGenericTypeDefinition().fullName!!)
 }
 
 @PublishedApi
@@ -1555,9 +1551,9 @@ internal fun projectedMutableSetCountErased(receiver: Any): Int {
 // implementations on the original receiver cannot change that family's size.
 @DynamicDependencyAttribute(DynamicallyAccessedMemberTypes.PublicProperties, "System.Collections.Generic.IReadOnlyCollection`1", "System.Runtime")
 private fun projectedParentCountGetter(view: StarProjectionType, collectionName: String): StarProjectionMethod {
-    var getter: StarProjectionMethod? = if (view.isGenericType
-        && view.getGenericTypeDefinition().fullName == collectionName)
-        erasedProjectedMethod(view, "get_Count", 0) else null
+    if (view.isGenericType && view.getGenericTypeDefinition().fullName == collectionName)
+        return erasedProjectedMethod(view, "get_Count", 0)
+    var getter: StarProjectionMethod? = null
     for (parent in view.getInterfaces()) {
         if (!parent.isGenericType || parent.getGenericTypeDefinition().fullName != collectionName) continue
         for (method in parent.getMethods()) {
@@ -1604,11 +1600,7 @@ internal fun projectedMutableCollectionCountErased(receiver: Any): Int {
     val view = findErasedProjectedView(receiver, name, name, excludeDictionaryStorage = true)
     if (view == null && receiver is StarProjectionRawCollection) return receiver.count
     val selected = view ?: throw UnsupportedOperationException("Projected receiver has no mutable CLR Collection surface")
-    return try {
-        erasedProjectedMethod(selected, "get_Count", 0).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
-    } catch (failure: StarProjectionInvocationException) {
-        throw (failure.innerException ?: failure)
-    }
+    return projectedParentCollectionCount(receiver, selected, name)
 }
 
 @PublishedApi
