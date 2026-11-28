@@ -77,6 +77,17 @@ private fun <T : ReferencedBoundSink<Int?>> useReferencedNullableValueBound(t: T
 private fun <V : System.IO.Stream> readStream(make: () -> V): Any = StreamFactory(make).read()
 private fun <V : System.IO.Stream> relayStream(make: () -> V): Any = forwardStream(make)
 private fun readProjectedChunk(value: StreamChunk<*>): Any = relayStream { value }
+private class NestedLeaf<T>(val data: T) : GenericValueInterop.NestedBounds.Mid()
+
+private class OpenVisitor : GenericValueInterop.NativeMiddleVisitor<String, StreamChunk<*>>() {
+    override fun Visit(item: StreamChunk<*>): StreamChunk<*> = item
+    override var Current: StreamChunk<*> = StreamChunk(0)
+}
+private class BoundVisitor : GenericValueInterop.NativeBoundVisitor<StreamChunk<*>>() {
+    override fun Visit(item: StreamChunk<*>): Any? = item.data
+    override var Current: StreamChunk<*> = StreamChunk(0)
+    override var Count: Int = 0
+}
 private fun <T> erase(value: T): Any? = value
 private fun <V : System.IO.Stream> eraseFrom(make: () -> V): Any? = erase<V>(make())
 private class UnconstrainedForwarder<A : System.IO.Stream>(val make: () -> A) {
@@ -650,6 +661,30 @@ class ConstrainedNullableBoundTests {
     }
 
     @TestAttribute
+    fun nativeVirtualDispatchAcceptsTheKotlinProjectedValue() {
+        val text = StreamChunk("payload")
+        val number = StreamChunk(42L)
+        val child = OpenVisitor()
+        val open: GenericValueInterop.NativeOpenVisitor<StreamChunk<*>> = child
+        check(open.Dispatch(text) === text && open.Dispatch(number) === number)
+        open.Store(text)
+        check(child.Current === text)
+        child.Current = number
+        check(open.Load() === number)
+        check(child.DispatchOther("other type") == "middle")
+        val boundedChild = BoundVisitor()
+        val bounded: GenericValueInterop.NativeBoundVisitor<StreamChunk<*>> = boundedChild
+        bounded.Store(number)
+        check(boundedChild.Current === number)
+        boundedChild.Current = text
+        check(bounded.Load() === text)
+        boundedChild.Count = 42
+        check(bounded.ReadCount() == 42)
+        check(bounded.Dispatch(text) == "payload" && bounded.Dispatch(number) == 42L)
+        check(bounded.DispatchStream(text) == "other")
+    }
+
+    @TestAttribute
     fun constructedAndStarredSubclassesSatisfyTheClassBound() {
         check(localItemResult() == 17L)
         check(ForeignBoundHolder(VisibleBoundBase()).read() == "base")
@@ -676,6 +711,21 @@ class ConstrainedNullableBoundTests {
         check(queue.get(1) === text && queue.get(1).result == "text")
         val exact = ClrList<StreamChunk<Long>>()
         val chunk = StreamChunk(42L)
+        val starSlot = GenericValueInterop.NativeStreamSlot<StreamChunk<*>>()
+        starSlot.Value = chunk
+        check(starSlot.Value === chunk)
+        val other = StreamChunk("other")
+        starSlot.Value = other
+        check(starSlot.Value === other && starSlot.Value.data == "other")
+        val nested = GenericValueInterop.NestedBounds.Slot<NestedLeaf<*>>()
+        val leaf = NestedLeaf("nested")
+        nested.Value = leaf
+        check(nested.Value === leaf && nested.Value.data == "nested")
+        val joint = GenericValueInterop.NestedBounds.Joint<NestedLeaf<*>, GenericValueInterop.NestedBounds.MidSink>()
+        joint.Value = leaf
+        check(joint.Value === leaf)
+        val exactSlot = GenericValueInterop.NativeStreamSlot<StreamChunk<Long>>()
+        check(exactSlot.UsesExactType(chunk))
         check(readStream { chunk } === chunk)
         check(readProjectedChunk(chunk) === chunk)
         check(deferredStream { chunk }() === chunk)

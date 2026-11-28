@@ -17,6 +17,15 @@ static partial class FBoundStarProjectionErasure
             var method = node as BirFunctionDeclaration;
             var ordinary = method != null && parentField == "methods"
                 && IsOrdinarySourceParameterMethod(method, parent, context);
+            if (method?.Ret.OrDefault() is { } result && ProjectedNativeOverride(method, context))
+            {
+                var value = context.Rewrite(result);
+                if (UsesProjectedValueCarrier(result, value, context))
+                {
+                    if (!method.RetKotlinType.HasValue) method.RetKotlinType = BirGraphValue.CopyType(method.NullableGenericRet.OrDefault() ?? result);
+                    method.Ret = value;
+                }
+            }
             var parameterIndex = 0;
             node.VisitOwnChildSlots((field, _, slot) => {
                 var child = slot.Value;
@@ -83,7 +92,8 @@ static partial class FBoundStarProjectionErasure
             }
             projected = valueSlot;
         }
-        if (!(ordinary || context.IsCapturedInner(type.Value) || SignatureValueTypes.Of(type.Value) is TypeNode.ByRef)
+        var projectedOverride = ProjectedNativeOverride(method, context) && UsesProjectedValueCarrier(type.Value, projected, context);
+        if (!(ordinary || projectedOverride || context.IsCapturedInner(type.Value) || SignatureValueTypes.Of(type.Value) is TypeNode.ByRef)
             || projected == type.Value) return;
 
         // Frozen source facts must not share mutable nested argument vectors
@@ -96,4 +106,17 @@ static partial class FBoundStarProjectionErasure
             case BirLambdaParameter value: value.KotlinType = source; value.Type = projected; break;
         }
     }
+
+    static bool ProjectedNativeOverride(BirFunctionDeclaration method, CarrierProjectionContext context) =>
+        method != null && method.Overrides.OrEmpty().Any(edge =>
+            (edge.NativeMethodKey.HasValue && method.DeclarationId.HasValue && !method.Generated.OrDefault()
+                || KotlinPropertyAccessors.TryIdentity(method, out _, out var kind)
+                    && (kind, edge.Kind.OrDefault()) is ("get", "getter") or ("set", "setter"))
+            && edge.Owner.OrDefault() is TypeNode.Fqn owner && ContainsExistentialProjection(owner)
+            && context.References?.ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is { IsInterface: false });
+
+    static bool UsesProjectedValueCarrier(TypeNode type, TypeNode value, CarrierProjectionContext context) =>
+        StripSourceNullability(type) is TypeNode.Fqn named && ContainsExistentialProjection(named)
+            && context.TryExistentialCarrier(named.Name, out var carrier)
+            && StripSourceNullability(value) is TypeNode.Fqn physical && physical.Name == carrier;
 }

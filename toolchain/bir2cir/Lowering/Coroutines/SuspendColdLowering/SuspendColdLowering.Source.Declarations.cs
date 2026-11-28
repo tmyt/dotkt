@@ -107,9 +107,15 @@ static partial class SuspendColdLowering
             // Each entry implements the corresponding entry of the selected source
             // declaration. A generated carrier forwarder is not another source override.
             if (_m.SourceCallableVirtual && _typeParams.Count != 0)
+            {
                 method.SignatureOverrideDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
                     .Select(edge => edge.PhysicalDeclarationId.OrDefault() ?? edge.DeclarationId.Value)
                     .Distinct(StringComparer.Ordinal).ToArray();
+                if (coldEntry)
+                    method.OverrideRepresentationDeclarations = markers.Where(edge => edge.DeclarationId.HasValue)
+                        .Select(edge => (Slot: edge.PhysicalDeclarationId.Value, Source: edge.DeclarationId.Value))
+                        .Distinct().ToDictionary(edge => edge.Slot, edge => edge.Source);
+            }
         }
 
         void CarrySourceDeclaration(BirFunctionDeclaration method)

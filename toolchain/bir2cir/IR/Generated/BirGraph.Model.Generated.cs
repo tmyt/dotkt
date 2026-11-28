@@ -5392,11 +5392,13 @@ internal sealed record BirDefaultArgument : BirGraphNode, IBirExpression, IBirAt
 
 internal sealed record BirOverride : BirGraphValue
 {
+    internal (bool Selected, System.Reflection.MethodInfo? Method) ProjectedNativeBase { get; set; }
     public OptionalField<TypeNode> Owner { get; set; }
     public OptionalField<string> Member { get; set; }
     public OptionalField<string> Kind { get; set; }
     public OptionalField<int> Arity { get; set; }
     public OptionalField<string> DeclarationId { get; set; }
+    public OptionalField<string> NativeMethodKey { get; set; }
     public OptionalField<string> PhysicalDeclarationId { get; set; }
     public override OptionalField<string> DeclarationIdentityFact => DeclarationId;
     public override void VisitOwnTypeFields(Action<string, TypeNode> visit)
@@ -5427,6 +5429,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Member.HasValue) { visit((string)Member.Value); }
         if (Kind.HasValue) { visit((string)Kind.Value); }
         if (DeclarationId.HasValue) { visit((string)DeclarationId.Value); }
+        if (NativeMethodKey.HasValue) { visit((string)NativeMethodKey.Value); }
         if (PhysicalDeclarationId.HasValue) { visit((string)PhysicalDeclarationId.Value); }
     }
     public override void VisitNameFields(Action<string> visit, bool includeVariableNames = true)
@@ -5504,6 +5507,7 @@ internal sealed record BirOverride : BirGraphValue
             && EqualField(Kind, value.Kind, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(Arity, value.Arity, (left, right) => EqualityComparer<int>.Default.Equals(left, right))
             && EqualField(DeclarationId, value.DeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
+            && EqualField(NativeMethodKey, value.NativeMethodKey, (left, right) => EqualityComparer<string>.Default.Equals(left, right))
             && EqualField(PhysicalDeclarationId, value.PhysicalDeclarationId, (left, right) => EqualityComparer<string>.Default.Equals(left, right));
     public override void WriteJson(Utf8JsonWriter writer)
     {
@@ -5513,6 +5517,7 @@ internal sealed record BirOverride : BirGraphValue
         WriteOptional(writer, "kind", Kind, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "arity", Arity, (writer, value) => { writer.WriteNumberValue(value); });
         WriteOptional(writer, "declarationId", DeclarationId, (writer, value) => { writer.WriteStringValue(value); });
+        WriteOptional(writer, "nativeMethodKey", NativeMethodKey, (writer, value) => { writer.WriteStringValue(value); });
         WriteOptional(writer, "physicalDeclarationId", PhysicalDeclarationId, (writer, value) => { writer.WriteStringValue(value); });
         writer.WriteEndObject();
     }
@@ -5524,6 +5529,7 @@ internal sealed record BirOverride : BirGraphValue
         if (Kind.IsPresent) result["kind"] = Kind.IsNull ? null : JsonValue.Create(Kind.Value);
         if (Arity.IsPresent) result["arity"] = Arity.IsNull ? null : JsonValue.Create(Arity.Value);
         if (DeclarationId.IsPresent) result["declarationId"] = DeclarationId.IsNull ? null : JsonValue.Create(DeclarationId.Value);
+        if (NativeMethodKey.IsPresent) result["nativeMethodKey"] = NativeMethodKey.IsNull ? null : JsonValue.Create(NativeMethodKey.Value);
         if (PhysicalDeclarationId.IsPresent) result["physicalDeclarationId"] = PhysicalDeclarationId.IsNull ? null : JsonValue.Create(PhysicalDeclarationId.Value);
         projected?.Invoke(this, result);
         return result;
@@ -11220,6 +11226,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     internal bool SourceCallableVirtual { get; set; }
     internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }
+    internal IReadOnlyDictionary<string, string>? OverrideRepresentationDeclarations { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? LocalBodyEntry { get; set; }
     internal (string Accessor, string Target)? ProjectedAccessBinding { get; set; }
     internal int FacadeModalityFlags { get; set; }

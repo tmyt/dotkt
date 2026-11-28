@@ -52,6 +52,9 @@ open class SuspendParent : SuspendFactory<Concrete> {
 open class Concrete : Base(), ILeft, IRight
 class Item : Concrete()
 class Leaf<T> : Concrete()
+interface Tagged { val tag: Int }
+class TaggedLeaf<T>(override val tag: Int) : Tagged
+interface TaggedIdentity<B : Tagged> { fun <A : B> keep(value: A): A }
 class Product<T> : IJoinedValue<T> where T : Base, T : ILeft, T : IRight
 interface DeferredNativeFactory {
     fun <A> later(): (A?) -> Any where A : Base, A : roundtrip.constrainedbound.JointProof

@@ -14,7 +14,7 @@ static partial class KotlinOverrideSlotBridge
         Func<TypeNode,TypeNode,bool> CarrierParameterSeam, Func<TypeNode,TypeNode,bool> CanForwardPhysicalValue,
         Func<TypeNode,bool> canPassAsObject, Func<TypeNode,TypeNode,bool> canForwardClassReturn,
         Func<bool> existingAlreadyOwns, Func<bool> covariantAlreadyOwns, Func<TypeNode,bool> hasClassifier = null,
-        BirTypeLowering.PhysicalTypeContext nativeMetadata = null)
+        BirTypeLowering.PhysicalTypeContext nativeMetadata = null, TypeNode[] nativeBaseParameterViews = null)
     {
         var declParams = impl.Parameters;
         var declRet = impl.Return;
@@ -47,6 +47,12 @@ static partial class KotlinOverrideSlotBridge
             var declT = declParams[i].Type;
             if (declT == null) { fit = null; break; }
             fit[i] = Compare(slotParams[i], SupertypeGraph.SubstOwnerTvs(declT, ownArgs), false);
+            // The selected native MethodDef declares this exact bare owner variable.
+            // Its CLR base instantiation supplies the incoming type; the bridge
+            // checks that value against the actual Kotlin override parameter.
+            if (fit[i] == Fit.Foreign && nativeBaseParameterViews?[i] is { } view
+                && Compare(view, SupertypeGraph.SubstOwnerTvs(declT, ownArgs), false) == Fit.Same
+                && canPassAsObject(declT) && canPassAsObject(slotParams[i])) fit[i] = Fit.Bridge;
             if (fit[i] == Fit.Foreign && SameSourceRepresentationVariables(slotParams[i],
                     SupertypeGraph.SubstOwnerTvs(declT, ownArgs), sourceMapping.OwnerFrame))
                 fit[i] = Fit.Bridge;
@@ -187,7 +193,7 @@ static partial class KotlinOverrideSlotBridge
                         definitions.TryGetValue(slot.SemanticSpec.Name, out var declarationOwner)
                             ? views.Owner(declarationOwner).DeclaredParameters
                             : references.OwnerTypeParamDeclarations(slot.SemanticSpec.Name),
-                        owner.DeclaredParameters, representations == null ? null : representations.StorageConstraint, slot.Referenced);
+                        owner.DeclaredParameters, representations, slot.Referenced);
                     var reimplements = slot.IsInterface && definition.Kind == "class"
                         && (ReachesFromDeclaredInterface(definition, slot.SemanticSpec, definitions, references)
                             || slot.Referenced && ReachesFromDeclaredPhysicalInterface(definition, slot.DescriptorSpec, definitions, references, isValue, null));

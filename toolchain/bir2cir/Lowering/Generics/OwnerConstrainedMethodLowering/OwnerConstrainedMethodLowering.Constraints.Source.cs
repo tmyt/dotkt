@@ -26,7 +26,8 @@ static partial class OwnerConstrainedMethodLowering
                 if (slot != null)
                 {
                     removed.Add(SupertypeGraph.SubstOwnerTvs(projectedBound(slot.Template), slot.OwnerArgs));
-                    if (physicalClassifier(bound) is { } classifier) retained.Add(classifier);
+                    // The CLR slot is declared on the open owner, before its arguments are substituted.
+                    if (physicalClassifier(slot.Template) is { } classifier) retained.Add(classifier);
                     foreach (var consequence in slot.Consequences)
                         if (!retained.Any(row => TypeNodeDataEquality.Equal(row, consequence))) retained.Add(consequence);
                 }

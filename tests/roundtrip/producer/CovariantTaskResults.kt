@@ -23,6 +23,9 @@ open class ProducerStringTask<T> : AnyTaskResult<T>, StringTaskResult<T> {
 
 open class TaskResultBase(val text: String)
 class TaskResultDerived(text: String) : TaskResultBase(text)
+interface NominalReader<K : Base> {
+    suspend fun <A : K> read(value: K, gate: Task1<Int>): TaskResultBase
+}
 interface ProjectedResult<K> where K : Base, K : ILeft, K : IRight {
     suspend fun <A : K> read(value: K, gate: Task1<Int>): TaskResultBase
     suspend fun <A : K> boxed(value: K, gate: Task1<Int>): Any

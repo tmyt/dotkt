@@ -25,7 +25,7 @@ static partial class OwnerConstrainedMethodLowering
         };
         var ownerArguments = new TypeNode[] { ownerVariable };
         RecordOverride(implementation, new[] { Parameter("X", ownerVariable), Parameter("Y") }, ownerArguments,
-            new[] { Parameter("T") }, new[] { Parameter("B", value) }, type => type, sourceParameters: true);
+            new[] { Parameter("T") }, new[] { Parameter("B", value) }, sourceParameters: true);
         var plan = implementation._ownerConstraintOverrideBounds.Value;
         if (plan.Rows.Count != 3 || plan.Rows[0].Index != 0 || plan.Rows[0].Bound != value
             || plan.Rows[1].Index != 2 || plan.Rows[1].Bound != ownerVariable
