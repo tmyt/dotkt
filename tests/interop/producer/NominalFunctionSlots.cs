@@ -16,6 +16,7 @@ public static class Callbacks {
     public static Func<object, int> BoxedInput() => boxedInput;
     public static bool SameReference(Func<string, int> compatible) => ReferenceEquals(boxedInput, compatible);
     public static Func<int, Func<object, int>> Factory() => a => b => a + (int)b;
+    public static Func<int, Func<int, int>> FactoryField;
     public static int ApplyFactory(Func<int, Func<int, int>> factory) => factory(40)(2);
     public static Func<Func<int,int>,int> Consumer() => f => f(8);
     public static int ApplyConsumer(Func<Func<object,int>,int> f) => f(boxedInput);

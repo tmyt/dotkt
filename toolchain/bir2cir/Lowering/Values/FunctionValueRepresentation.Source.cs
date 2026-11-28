@@ -18,7 +18,11 @@ static partial class FunctionValueRepresentation
         CaptureCallSignature(node);
         if (node is BirSamConversion or BirNewClosure or BirNewDelegate or BirNewBoundDelegate or BirBoundClrDelegate or BirClrStaticDelegate
             && node.FunctionTypeStamp is TypeNode.Fn functionType)
+        {
             node.SourceFunctionResult = ClrMemberResolution.ReturnedFunctionType(functionType);
+            if (functionType.Ret is TypeNode.Fqn { Args: null } result)
+                node.ClosedCallbackResult ??= result;
+        }
         else if (node is IBirExpression && ClrMemberResolution.FunctionTypeOf(node.ResultTypeStamp) is {} produced
             && ClrMemberResolution.ReturnedFunctionType(produced) is { Suspend: false })
             node.ProjectedFunctionResult = ProjectedCallableShape(produced);
