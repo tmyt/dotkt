@@ -109,7 +109,7 @@ static partial class NullableRepresentationDemand
                     // A final inherited instance method can fill an interface slot introduced by a subclass.
                     // Publish the owner-dependent argument in the same shape on both declarations.
                     if ((method.View.Function?.Static.OrDefault() != true && method.TypeParameters[index].Constraints.OrEmpty().Any(c => c is TypeNode.Tv { Scope: "type" }))
-                        || (!method.View.CanExtendBodyFrame && policy.NeedsVirtualStorageWitness(NullableRepresentationMaterialization.StorageClassifierBounds(
+                        || (!method.View.CanExtendBodyFrame && policy.NeedsOpenMethodStorage(NullableRepresentationMaterialization.StorageClassifierBounds(
                             method.TypeParameters, index, "method", null, owner.View.Parameters.OrEmpty(), null))))
                         method.Signature.Add(new TypeNode.Tv("method", index), RepresentationRole.Storage);
             if (method.View.Id is string id && declaredMethods?.GetValueOrDefault(id) is { } declared)

@@ -161,8 +161,12 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   When the declaration combines a class bound with multiple independent interface bounds,
   the projected entry can carry a separate CLR type argument for native generic uses.
   Constructing a native `Product<A>` for two closed Kotlin types does not produce the same
-  CLR type merely because they share a Kotlin storage interface. A C# override uses the
-  generic parameter list of the projected entry.
+  CLR type merely because they share a Kotlin storage interface. For a method with
+  `B : V`, where `V` belongs to the receiver, this also preserves the distinction
+  between `B` and its upper bound: if `B` is a struct implementing `V`, constructing
+  `Product<B>` uses the struct, not the interface or a boxed substitute. A C# override
+  uses the full generic parameter list of the projected entry, including parameters
+  that establish reference and subtype constraints; they are not Kotlin type parameters.
   Kotlin callers and subclasses keep the original source signature. Imported C# virtual slots are unchanged.
   When two Kotlin interfaces specialize the same source method with different CLR constraint frames,
   calls through either interface dispatch to the same override with the caller's actual method argument.

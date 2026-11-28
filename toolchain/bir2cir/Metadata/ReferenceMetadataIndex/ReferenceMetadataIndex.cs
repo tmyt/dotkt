@@ -253,6 +253,11 @@ sealed partial class ReferenceMetadataIndex : IDisposable
             && binding.MethodArity == methodArity && binding.IsStatic == isStatic
                 ? binding.ReturnTypeNode : null;
 
+    internal IReadOnlyDictionary<int,int[]> SelectedOwnerUpperSlots(string id, string owner) =>
+        _declarationById.TryGetValue(id, out var binding) && binding.SemanticMethodTypeParams is {} rows &&
+        BareOwnerFqn(binding.DeclarationPhysicalOwner ?? binding.Owner) == BareOwnerFqn(owner)
+            ? DeclarationSignatureIdentity.OwnerDependentSlots(rows) : null;
+
     internal bool TryPhysicalInstanceFactory(string id, out (string Owner, string Name, int Arity, TypeNode[] Parameters, TypeNode Result) factory)
     {
         factory = default;
@@ -2379,7 +2384,7 @@ sealed partial class ReferenceMetadataIndex : IDisposable
         return PhysicalProofOwner(type);
     }
 
-    MethodInfo SelectedReferenceMethod(string declarationIdentity)
+    internal MethodInfo SelectedReferenceMethod(string declarationIdentity)
     {
         if (declarationIdentity == null || !_declarationById.TryGetValue(declarationIdentity, out var declaration))
             return null;

@@ -7,6 +7,8 @@ public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
 public interface ILeft { }
 public interface IRight { }
+public interface IJointProof : ILeft, IRight { }
+public readonly struct JointValue : IJointProof { }
 public static class NullableListWriter
 {
     public static void Append<X,Y>(X value, System.Collections.Generic.List<Y> items) where X : Y => items.Add(value);

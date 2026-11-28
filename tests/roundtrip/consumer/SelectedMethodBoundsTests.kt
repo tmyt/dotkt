@@ -5,6 +5,8 @@ import RoundtripDependentNative.JoinedSlot
 import RoundtripDependentNative.Base
 import RoundtripDependentNative.ILeft
 import RoundtripDependentNative.IRight
+import RoundtripDependentNative.IJointProof
+import RoundtripDependentNative.JointValue
 import System.Collections.Generic.Queue
 import GenericValueInterop.InheritedSuspendTaskApi
 import kotlin.clr.ClrRef
@@ -23,6 +25,16 @@ class FacetFactory : LeftFactory<Concrete>, RightFactory<Concrete>, DefaultFacto
 }
 
 private fun <A : Concrete> takeNullable(parent: GenericParent<*>, queue: Queue<A?>): Any = parent.take<A>(queue)
+
+private open class MaterialRelay {
+    open fun <A : Concrete> call(factory: JointFactory<Concrete>): Any = "base"
+}
+private class LambdaMaterialRelay : MaterialRelay() {
+    override fun <A : Concrete> call(factory: JointFactory<Concrete>): Any {
+        val invoke = { factory.make<A>() }
+        return invoke()
+    }
+}
 
 private interface AdditionalSelection<K> { fun <A : K> select(value: A): A }
 private open class InheritedSelection : GenericParent<String>(), AdditionalSelection<Concrete>
@@ -265,6 +277,9 @@ class SelectedMethodBoundsTests {
         }
         val local = LocalFactory()
         val imported = ImportedFactory()
+        val relay: MaterialRelay = LambdaMaterialRelay()
+        check(JoinedSlot.IsValue<Leaf<*>>(relay.call<Leaf<*>>(imported)))
+        check(JoinedSlot.HasActualArgument(relay.call<Leaf<String>>(imported), Leaf<String>()))
         checkViews(local, local)
         checkViews(imported, imported)
         val parent: GenericParent<*> = GenericParent<String>()
@@ -288,5 +303,10 @@ class SelectedMethodBoundsTests {
         check(JoinedSlot.IsValue<Leaf<*>>(fallback.make<Leaf<*>>()))
         check(JoinedSlot.IsValue<Leaf<*>>(roundtrip.selectedbounds.makeThrough<Concrete, Leaf<*>>(fallback)))
         check(JoinedSlot.IsValue<Leaf<String>>(roundtrip.selectedbounds.makeThrough<Concrete, Leaf<String>>(fallback)))
+        val projected = JointValueFactory<SplitLeaf<*>, IJointProof>()
+        val leftValue: LeftValueFactory<SplitLeaf<*>, IJointProof> = projected
+        val rightValue: RightValueFactory<SplitLeaf<*>, IJointProof> = projected
+        check(JoinedSlot.IsValue<JointValue>(leftValue.product<SplitLeaf<*>, JointValue>()))
+        check(JoinedSlot.IsValue<JointValue>(rightValue.product<SplitLeaf<*>, JointValue>()))
     }
 }

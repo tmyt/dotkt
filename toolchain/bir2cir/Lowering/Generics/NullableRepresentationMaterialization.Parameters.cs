@@ -36,7 +36,8 @@ static partial class NullableRepresentationMaterialization
             bool SourceScalar(TypeNode type) => type is TypeNode.Tv scalar && scalar.Scope == scope && scalar.I == sourceIndex;
             var published = !bodyOnlyStorage && (policy.HasJointStorageBounds(projected) || PublishedSlots(declaration).Any(Mentions));
             if (!bodyOnlyStorage && declaration is BirFunctionDeclaration method)
-                published |= method.Ret.OrDefault() is { } result && Contains(result) || SourceScalar(method.RetKotlinType.OrDefault())
+                published |= !new NullableRepresentationViews.Method(method).CanExtendBodyFrame && policy.NeedsOpenMethodStorage(projected.OfType<TypeNode.Fqn>()) ||
+                    method.Ret.OrDefault() is { } result && Contains(result) || SourceScalar(method.RetKotlinType.OrDefault())
                     || method.Params.OrEmpty().Any(parameter => SourceScalar(parameter.KotlinType.OrDefault()));
             if (!bodyOnlyStorage && declaration is IBirTypeDeclaration)
             {

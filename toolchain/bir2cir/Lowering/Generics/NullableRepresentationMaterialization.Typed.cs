@@ -138,6 +138,12 @@ static partial class NullableRepresentationMaterialization
                 {
                     var methodFrame = methodFrames[method.Declaration];
                     var methodMapping = Mapping(frame, methodFrame, view.Name);
+                    // The method positions still identify source arguments. Its
+                    // owner-variable bounds now refer to the expanded CLR binder.
+                    if (frame.RequiresMetadata && method.View.Function is {} original &&
+                        original.OwnerDependentSourceSlots is {} upperSlots)
+                        original.OwnerDependentSourceSlots = upperSlots.ToDictionary(p => p.Key,
+                            p => p.Value.Select(frame.SourcePosition).ToArray());
                     if (methodFrame.RequiresMetadata && method.View.Function is { } function
                         && function.FakeOverride.OrDefault() && !function.DeclarationId.HasValue)
                     {

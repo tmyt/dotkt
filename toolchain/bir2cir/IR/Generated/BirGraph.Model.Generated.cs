@@ -6378,6 +6378,7 @@ internal sealed record BirCallInstance : BirGraphNode, IBirExpression, IBirAttri
     internal override string? SelectedGenericCallable { get; set; }
     internal override IReadOnlyDictionary<int, TypeNode>? MaterialMethodArguments { get; set; }
     internal bool TaskBridgeColdInvocation { get; set; }
+    internal IReadOnlyDictionary<int, TypeNode[]>? SelectedOwnerUppers { get; set; }
     public override string Tag => "callInstance";
     public OptionalField<bool> CompanionCall { get; set; }
     public OptionalField<BirExternalMemberBinding> ExternalMember { get; set; }
@@ -11224,7 +11225,7 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     internal string? ImplicitExistentialImplementationId { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }
     internal bool SourceCallableVirtual { get; set; }
-    internal IReadOnlyList<int>? OwnerDependentSourceSlots { get; set; }
+    internal IReadOnlyDictionary<int, int[]>? OwnerDependentSourceSlots { get; set; }
     internal string? MaterialFrameOrigin { get; set; }
     internal (string Name, int OwnerArity)? ColdEntryMachine { get; set; }
     internal (string Id, NullableRepresentationFrame Frame)? ColdRepresentation { get; set; }

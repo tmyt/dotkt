@@ -38,7 +38,7 @@ sealed partial class ProjectedCallableEntries
     internal ProjectedCallableEntries(BirFileDeclaration[] files, ReferenceMetadataIndex references, bool referenceBuild,
         CapturedGenericInvocation.PreparedInvocation invocations,
         IReadOnlyDictionary<string, FBoundStarProjectionErasure.ProjectedStorageOwner> storageOwners,
-        GenericRepresentationPolicy values)
+        GenericRepresentationPolicy values, Relay[] relays)
     {
         this.references = references;
         this.invocations = invocations;
@@ -57,7 +57,7 @@ sealed partial class ProjectedCallableEntries
             foreach (var method in type.Methods.OrEmpty())
                 if (method.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault() is string identity)
                     originalSlots.Add(identity, (type, method));
-        CollectMaterialRelays(files);
+        CollectMaterialRelays(files, relays);
         foreach (var file in files)
         {
             if (file.Methods.HasValue) file.Methods = Declare(file.Methods.Value, null, bodies, localSlots);
@@ -125,18 +125,14 @@ sealed partial class ProjectedCallableEntries
                         descriptor.MemberRef = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references,
                             selected, "method", selected.DeclaringType, constructed.Args));
                     }
-                    if (slot.IsInterface)
-                    {
-                        if (originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
-                            RetireInterfaceForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
-                                source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
-                                source.Method.Ret.Value, true, false), id);
-                        else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } &&
-                            references.TryDeclarationSignatureSlot(id, out var facade)) RetireInterfaceForwarder(owner, constructed, facade, id);
-                    }
+                    if (slot.IsInterface && originalSlots.TryGetValue(id, out var source) && !source.Method.Virtual.OrDefault())
+                        RetireSlotForwarder(owner, constructed, new(source.Owner.Name.Value, source.Method.Name.Value,
+                            source.Method.TypeParams.OrEmpty().Length, source.Method.Params.OrEmpty().Select(FunctionSignatureIdentity.SignatureType).ToArray(),
+                            source.Method.Ret.Value, true, false), id);
+                    else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } or { IsFinal: true } &&
+                        references.TryDeclarationSignatureSlot(id, out var facade)) RetireSlotForwarder(owner, constructed, facade, id);
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
-                    if (slot.IsInterface && entry.Plan.Facets.Any(t => !contract.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
-                            references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound))))
+                    if (slot.IsInterface && !Supplies(contract, entry.Plan))
                     {
                         DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
                         continue;
@@ -168,6 +164,11 @@ sealed partial class ProjectedCallableEntries
             }
         }
     }
+
+    bool Supplies(ProjectedMethodPlan from, ProjectedMethodPlan to) =>
+        to.NativeIndices.All(from.NativeIndices.Contains) && to.ReferenceIndices.All(from.ReferenceIndices.Contains) &&
+        to.Facets.All(t => from.Facets.Any(s => s.OwnerIndex == t.OwnerIndex &&
+            references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound)));
 
     TypeNode.Fqn[] SelectedConstructions(IReadOnlyDictionary<string, SupertypeGraph.Def> hierarchy,
         IBirTypeDeclaration owner, BirFunctionDeclaration method, string id, string declaringOwner, string referencedId)
@@ -275,59 +276,74 @@ sealed partial class ProjectedCallableEntries
         m.LocalBodyEntry?.Frame ?? m.ColdRepresentation?.Frame ?? m.RoundtripDeclarationIdentity.OrDefault()?.NullableRepresentationFrame.OrDefault()
         ?? (m.MaterialFrameOrigin is { } id && originalSlots.TryGetValue(id, out var origin) ? RepresentationsFor(origin.Method) : null);
 
+    // Future overrides can observe the material type even if the current virtual
+    // body doesn't. Nonvirtual relays need it only on an actual forwarding edge.
     IEnumerable<int> IndependentVirtualArguments(BirFunctionDeclaration method)
     {
-        if (materialRelays.TryGetValue(method, out var relayed))
-            foreach (var i in relayed.Order()) yield return i;
+        if (relayedPositions.TryGetValue(method, out var positions))
+            foreach (var i in positions.Order()) yield return i;
         if (method.MaterialFrameOrigin is { } id && originalSlots.TryGetValue(id, out var origin)) method = origin.Method;
         if (!method.SourceCallableVirtual || RepresentationsFor(method) is not { } frame) yield break;
-        foreach (var source in method.OwnerDependentSourceSlots ?? [])
-            if (frame.StorageIndices.Contains(source))
-                yield return frame.SourcePosition(source);
+        foreach (var source in frame.StorageIndices.Order())
+        {
+            var position = frame.SourcePosition(source);
+            if (method.OwnerDependentSourceSlots?.ContainsKey(source) == true ||
+                values.NeedsOpenMethodStorage(method.TypeParams.Value[position].Constraints.OrEmpty().OfType<TypeNode.Fqn>()))
+                yield return position;
+        }
     }
 
-    readonly Dictionary<BirFunctionDeclaration, HashSet<int>> materialRelays = new(ReferenceEqualityComparer.Instance);
+    internal readonly record struct Relay(string Caller, int Position, string Target, int Argument);
+    readonly Dictionary<BirFunctionDeclaration, HashSet<int>> relayedPositions = new(ReferenceEqualityComparer.Instance);
 
-    // A relay needs the caller's material type precisely when it passes an
-    // open method variable to a slot that consumes it. Follow selected IDs
-    // across calls, including cycles, instead of widening all generic frames.
-    void CollectMaterialRelays(BirFileDeclaration[] files)
+    // Take the selected edges before reference-body retirement. Signatures and
+    // material forwarding must be identical with or without executable bodies.
+    internal static Relay[] CaptureMaterialRelays(BirFileDeclaration[] files)
     {
-        var uses = new Dictionary<(string Id,int Position), List<(BirFunctionDeclaration Method,string Id,int Position)>>();
-        var pending = new Queue<(string Id,int Position)>();
+        var uses = new HashSet<Relay>();
+        foreach (var f in files)
+        foreach (var m in f.Methods.OrEmpty().Concat(f.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty())))
+        {
+            var id = m.LocalBodyEntry?.Id ?? m.DeclarationId.OrDefault();
+            if (id == null || m.TypeParams.OrEmpty().Length == 0) continue;
+            foreach (var statement in m.Body.OrEmpty()) ((BirGraphValue)statement).Visit(n => {
+                if ((n.SelectedGenericCallable ?? n.DeclarationIdentityFact.OrDefault()) is not {} target ||
+                    n.ApplicationTypeArguments.OrDefault() is not {} actual) return;
+                for (int i = 0; i < actual.Length; i++)
+                    if (actual[i] is TypeNode.Tv { Scope: "method" } v) uses.Add(new(id, v.I, target, i));
+            });
+        }
+        return uses.ToArray();
+    }
+
+    void CollectMaterialRelays(BirFileDeclaration[] files, Relay[] relays)
+    {
+        var uses = relays.ToLookup(r => (r.Target, r.Argument));
+        var local = new Dictionary<string,BirFunctionDeclaration>(StringComparer.Ordinal);
+        var pending = new Queue<(string,int)>();
         var known = new HashSet<(string,int)>();
-        var localIds = new HashSet<string>();
-        void Need(string id, int p) { if (known.Add((id,p))) pending.Enqueue((id,p)); }
+        void Need(string id, int i) { if (known.Add((id,i))) pending.Enqueue((id,i)); }
         foreach (var f in files)
         foreach (var m in f.Methods.OrEmpty().Concat(f.Types.OrEmpty().SelectMany(t => t.Methods.OrEmpty())))
         {
             var id = m.LocalBodyEntry?.Id ?? m.RoundtripDeclarationIdentity.OrDefault()?.DeclarationId.OrDefault();
             if (id == null) continue;
-            localIds.Add(id);
-            foreach (var i in IndependentVirtualArguments(m)) Need(id, i);
-            if (RepresentationsFor(m) is not {} layout || layout.StorageIndices.Count == 0 || HasFixedAbi(m, id, references)) continue;
-            foreach (var statement in m.Body.OrEmpty()) ((BirGraphValue)statement).Visit(n => {
-                if (n.SelectedGenericCallable is not {} target || n.ApplicationTypeArguments.OrDefault() is not {} args) return;
-                for (int i = 0; i < args.Length; i++)
-                {
-                    if (args[i] is not TypeNode.Tv { Scope: "method" } v || v.I >= layout.PhysicalArity ||
-                        layout.SourceIndex(v.I) is not int source || layout.SourcePosition(source) != v.I ||
-                        !layout.StorageIndices.Contains(source)) continue;
-                    if (!uses.TryGetValue((target,i), out var edges)) uses[(target,i)] = edges = new();
-                    edges.Add((m,id,v.I));
-                }
-            });
+            local[id] = m;
+            foreach (var i in IndependentVirtualArguments(m)) Need(id,i);
         }
-        foreach (var id in uses.Keys.Select(k => k.Id).Distinct().Where(s => !localIds.Contains(s)))
-            if (references.ProjectedMethod(EntryId(id)) is {} imported)
-                foreach (var i in imported.NativeIndices) Need(id, i);
+        foreach (var id in relays.Select(r => r.Target).Distinct().Where(id => !local.ContainsKey(id)))
+            if (references.ProjectedMethod(EntryId(id)) is {} target)
+                foreach (var i in target.NativeIndices) Need(id,i);
         while (pending.TryDequeue(out var key))
-            if (uses.TryGetValue(key, out var edges))
-                foreach (var (m,id,i) in edges)
-                {
-                    if (!materialRelays.TryGetValue(m, out var positions)) materialRelays[m] = positions = [];
-                    if (positions.Add(i)) Need(id, i);
-                }
+            foreach (var r in uses[key])
+            {
+                if (!local.TryGetValue(r.Caller, out var m) || HasFixedAbi(m,r.Caller,references) ||
+                    RepresentationsFor(m) is not {} frame || r.Position >= frame.PhysicalArity ||
+                    frame.SourceIndex(r.Position) is not int source || frame.SourcePosition(source) != r.Position ||
+                    !frame.StorageIndices.Contains(source)) continue;
+                if (!relayedPositions.TryGetValue(m, out var positions)) relayedPositions[m] = positions = [];
+                if (positions.Add(r.Position)) Need(r.Caller,r.Position);
+            }
     }
 
     ProjectedClassStorageFrame MethodFrame(BirFunctionDeclaration m)
@@ -429,9 +445,7 @@ sealed partial class ProjectedCallableEntries
         }
         if (interfaces.Count != 0)
         {
-            bool Covers(ProjectedMethodPlan p, ProjectedMethodPlan q) => q.Facets.All(t => p.Facets.Any(s =>
-                s.OwnerIndex == t.OwnerIndex && references.WitnessConstraintKey(s.Bound) == references.WitnessConstraintKey(t.Bound)));
-            if (interfaces.FirstOrDefault(p => interfaces.All(q => Covers(p, q))) is { } covering)
+            if (interfaces.FirstOrDefault(p => interfaces.All(q => Supplies(p, q))) is { } covering)
                 return declarationPlans[method] = covering;
             // Independent interfaces may each publish only part of the evidence
             // available to the implementing body. Split the combined requirements
@@ -445,7 +459,8 @@ sealed partial class ProjectedCallableEntries
         }
         return declarationPlans[method] = frame == null ? null : ProjectedMethodPlan.Declare(frame, method.Params.OrEmpty(), references,
             RepresentationsFor(method),
-            method.Ret.OrDefault(), Nominal, values.NeedsVirtualStorageWitness, IndependentVirtualArguments(method));
+            method.Ret.OrDefault(), Nominal, values,
+            IndependentVirtualArguments(method).Concat(interfaces.SelectMany(p => p.NativeIndices)));
     }
 
     BirFunctionDeclaration[] Declare(BirFunctionDeclaration[] source, IBirTypeDeclaration owner, List<Body> bodies,
@@ -591,7 +606,8 @@ sealed partial class ProjectedCallableEntries
         var exactLocations = plan.AddressOperands.Select(i => ((TypeNode.ByRef)SignatureValueTypes.Of(exact.Params.Value[i].Type.Value)).Of);
         return original.Concat(plan.Facets.Select(f => original[f.OwnerIndex]))
             .Concat(plan.NativeIndices.Select(i => original[i])).Concat(exactLocations)
-            .Concat(plan.ReferenceIndices.Select(_ => new TypeNode.Fqn("System.Object"))).ToArray();
+            .Concat(plan.ReferenceIndices.Select(_ => new TypeNode.Fqn("System.Object")))
+            .Concat(plan.UpperArguments((i, _) => original[i])).ToArray();
     }
 
     static IBirStatement[] ForwardBody(IBirTypeDeclaration owner, BirFunctionDeclaration exact,
@@ -789,7 +805,9 @@ sealed partial class ProjectedCallableEntries
     internal void Finish(BirFileDeclaration[] files, HashSet<string> emittedTypes)
     {
         emittedTypes.UnionWith(operationTypes);
-        if (referenceBuild || emittedEntries.Count == 0) { BindRemainingApplications(files); return; }
+        // Even a consumer with no locally projected declaration can select an
+        // imported weak slot. Close it in the caller's actual lexical frame.
+        if (referenceBuild) { BindRemainingApplications(files); return; }
         foreach (var file in files)
         {
             var generated = new List<IBirTypeDeclaration>();
@@ -808,6 +826,11 @@ sealed partial class ProjectedCallableEntries
                     else if (method.LocalBodyEntry.HasValue)
                         method.Visit(n => Bind(n, new(owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(), []),
                             new(method.TypeParams.OrEmpty(), [])));
+                    else method.Visit(n => {
+                        if (n.SelectedGenericCallable is {} selected && Find(selected)?.Plan.ReferenceIndices is { Length: > 0 })
+                            Bind(n, new(owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(), []),
+                                new(method.TypeParams.OrEmpty(), []));
+                    });
                 if (helpers.Count != 0) owner.Methods = owner.Methods.OrEmpty().Concat(helpers).ToArray();
             }
             Process(file.Methods.OrEmpty(), null);
@@ -911,7 +934,8 @@ sealed partial class ProjectedCallableEntries
         List<IBirTypeDeclaration> generated)
     {
         if (method.Slots is not { Length: > 0 } && owner.Slots is not { Length: > 0 } &&
-            method.Representations?.NullableIndices.Count is not > 0 && owner.CapturedNullable == null && owner.CapturedNative == null) return;
+            method.Representations?.NullableIndices.Count is not > 0 && method.NativePlan?.NativeIndices.Length is not > 0 &&
+            owner.CapturedNullable == null && owner.CapturedNative == null) return;
         var target = node is BirNewClosure c ? c.ClosureType.OrDefault() : ((BirNewSam)node).SamType.OrDefault();
         if (target is not TypeNode.Fqn named || node.ApplicationTypeArguments.OrDefault() is not { } args) return;
         if (ProjectLexicalType(named, args, owner, method, allocate, generated) is not { } projected) return;
@@ -1011,11 +1035,32 @@ sealed partial class ProjectedCallableEntries
         var application = target.Plan.Close(actual, ownerArgs, node.MethodWitnessFacts.OrEmpty(),
             target.Original, target.Representations, node is BirCallInstance super && super.Super.OrDefault() ||
                 locationBody && target.Plan.AddressOperands.Length != 0 || RequiresNullableSplit() ||
-                target.Plan.NativeIndices.Any(i => Material(i) != actual[i]),
+                target.Plan.NativeIndices.Any(i => Material(i) != actual[i]) ||
+                target.Plan.ReferenceIndices.Any(i => Upper(i, false, actual[i]) != actual[i] || Upper(i, true, Material(i)) != Material(i)),
             (t, b, rows) => Proof(t, b, ownerScope, methodScope, rows), Declares,
             Proves);
         TypeNode Material(int i) => node.MaterialMethodArguments?.GetValueOrDefault(i) ??
             Scope.Material(actual[i], ownerScope, methodScope);
+        TypeNode Upper(int i, bool material, TypeNode arg)
+        {
+            if (actual[i] is TypeNode.Tv { Scope: "method" } input && methodScope.NativePlan is {} plan &&
+                plan.UpperPosition(input.I, material) is >= 0 and var p &&
+                arg == (material ? plan.NativeArgument(input) : input)) return new TypeNode.Tv("method", p);
+            var sourceIndex = target.Representations?.PhysicalSlot(i).SourceIndex ?? i;
+            foreach (var candidate in (node as BirCallInstance)?.SelectedOwnerUppers?.GetValueOrDefault(sourceIndex) ?? [])
+            {
+                var upper = references.PhysicalConstraintType(candidate);
+                if (arg == upper || Declares(arg, upper) || Proves(arg, upper)) return upper;
+            }
+            foreach (var edge in target.Original[i].Constraints.OrEmpty().OfType<TypeNode.Tv>())
+            {
+                var upper = (edge.Scope == "method" ? actual : ownerArgs).ElementAtOrDefault(edge.I);
+                if (upper != null && (arg == upper || Declares(arg, upper) || Proves(arg, upper))) return upper;
+            }
+            if (arg is TypeNode.Tv v && (v.Scope == "method" ? methodScope : ownerScope).Parameters?.ElementAtOrDefault(v.I)
+                ?.Constraints.OrEmpty().OfType<TypeNode.Tv>().FirstOrDefault() is { } lexical) return lexical;
+            return arg;
+        }
         TypeNode ReferenceMaterial(int i)
         {
             var m = Material(i);
@@ -1056,7 +1101,8 @@ sealed partial class ProjectedCallableEntries
             // local's CLR storage has been bound. Operand evaluation is unchanged.
             var locationTypes = target.Plan.AddressArguments(target.Signature, ownerArgs, actual);
             node.ApplicationTypeArguments = application.Arguments.Concat(target.Plan.NativeIndices.Select(Material)).Concat(locationTypes)
-                .Concat(target.Plan.ReferenceIndices.Select(ReferenceMaterial)).ToArray();
+                .Concat(target.Plan.ReferenceIndices.Select(ReferenceMaterial))
+                .Concat(target.Plan.UpperArguments((i, material) => Upper(i, material, material ? Material(i) : application.Arguments[i]))).ToArray();
             // The selected MethodDef has an open location variable here, even
             // when the exact entry used the primary method variable instead.
             TypeNode[] Open(OptionalField<TypeNode[]> sig) => target.Plan.SelectedSignature(sig.OrDefault() ?? target.Signature, references);

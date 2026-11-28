@@ -133,6 +133,20 @@ static partial class FBoundStarProjectionErasure
             node = BindStarFieldThroughCanonicalGetterSource(node, state);
             node = BindProjectedFieldStorageSource(node, state);
             BindProjectedConstraintMemberSource(node, scope.TypeParameters, scope.MethodParameters, state);
+            if (node is BirCallInstance { OwnerType.HasValue: true, DeclarationId.HasValue: true, TypeArgs.HasValue: true } use &&
+                use.OwnerType.Value is TypeNode.Fqn { Args.Length: > 0 } receiverOwner && use.SelectedOwnerUppers == null)
+            {
+                var id = use.DeclarationId.Value;
+                var local = state.Demand.Preparation.Bindings.SourceLocalDeclarations.GetValueOrDefault((receiverOwner.Name, id));
+                var mapping = local?.Source is BirFunctionDeclaration sourceMethod ? sourceMethod.OwnerDependentSourceSlots
+                    : state.References.SelectedOwnerUpperSlots(id, receiverOwner.Name);
+                if (mapping?.Any(p => p.Value.Length != 0) == true)
+                {
+                    var layout = local == null ? state.Projection.ClassApplicationLayout(receiverOwner.Name) : null;
+                    use.SelectedOwnerUppers = mapping.Where(p => p.Value.Length != 0).ToDictionary(p => p.Key, p => p.Value
+                        .Select(o => receiverOwner.Args[layout?.SourcePosition(o) ?? o]).Select(t => state.Projection.Rewrite(t)).ToArray());
+                }
+            }
             var exactDispatch = PrepareConstructedDispatch(node, state);
             node = BindInheritedStarMemberSource(node, state);
             if (exactDispatch != null) node = exactDispatch(node, names);

@@ -20,7 +20,7 @@ static partial class InheritedClassInterfaceBridge
     public static void MaterializeEarlyDeclarations(IReadOnlyList<BirFileDeclaration> roots, ReferenceMetadataIndex refs)
     {
         // Source-known suspend forwarders must exist before inline carriers, signature ownership and hot/cold
-        // lowering snapshot declarations. Imported generic bodies also need the
+        // lowering snapshot declarations. Inherited generic bodies also need the
         // declaration's lexical frame to adapt a newly introduced interface slot.
         var defs = SupertypeGraph.CollectSource(roots);
         var declarations = new Dictionary<string, IBirTypeDeclaration>(StringComparer.Ordinal);
@@ -51,7 +51,7 @@ static partial class InheritedClassInterfaceBridge
                     || !fact.Params.HasValue || !fact.Overrides.HasValue) continue;
                 var ownerName = selectedOwner.Name;
                 if (!suspend && (cls.Interfaces.Length == 0 || selected.TypeParams.OrEmpty().Length == 0 ||
-                    declarations.ContainsKey(ownerName) || !selected.DeclarationId.HasValue)) continue;
+                    !selected.DeclarationId.HasValue)) continue;
                 var parameters = fact.Params.Value;
                 var overrides = fact.Overrides.Value;
                 var owners = SupertypeGraph.Reachable(cls, defs, refs)

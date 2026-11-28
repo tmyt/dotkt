@@ -90,3 +90,10 @@ interface LeftFactory<K> where K : Base, K : ILeft { fun <A : K> make(): Any }
 interface RightFactory<K> where K : Base, K : IRight { fun <A : K> make(): Any }
 interface DefaultFactory<K : ILeft> { fun <A : K> make(): Any = "default" }
 fun <K : ILeft, A : K> makeThrough(factory: DefaultFactory<K>): Any = factory.make<A>()
+
+interface LeftValueFactory<K,V> where K : Base, K : ILeft, V : ILeft { fun <A : K, B : V> product(): Any }
+interface RightValueFactory<K,V> where K : Base, K : IRight, V : IRight { fun <A : K, B : V> product(): Any }
+class JointValueFactory<K,V> : LeftValueFactory<K,V>, RightValueFactory<K,V>
+    where K : Base, K : ILeft, K : IRight, V : ILeft, V : IRight {
+    override fun <A : K, B : V> product(): Any = RoundtripDependentNative.NativeProduct<B>()
+}

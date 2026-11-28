@@ -147,6 +147,24 @@ sealed partial class GenericRepresentationPolicy
             .Distinct().Take(2).Count() == 2;
     }
 
+    // A Kotlin virtual method cannot know which native generic its future
+    // override will construct. A single class or interface bound may already
+    // entail the joint storage proofs without spelling those interfaces here.
+    internal bool NeedsOpenMethodStorage(IEnumerable<TypeNode.Fqn> constraints)
+    {
+        var proofs = new HashSet<TypeNode>();
+        foreach (var constraint in constraints)
+        {
+            if (StorageConstraint(constraint) is not TypeNode.Fqn bound) continue;
+            var nominal = IsNominalStorageBound(bound);
+            var root = nominal ? new SupertypeGraph.Def { Base = bound } : new SupertypeGraph.Def { Interfaces = [bound] };
+            foreach (var (parent, isInterface) in SupertypeGraph.Reachable(root, _sourceHierarchy, _references, sourceFrames: true))
+                if (isInterface && StorageConstraint(parent) is {} proof && !NeedsNativeWitness(proof) &&
+                    CanReferenceStorageProof(proof) && proofs.Add(proof) && proofs.Count == 2) return true;
+        }
+        return false;
+    }
+
     // Closed native interfaces (and invariant native applications even when open)
     // are proven by the native argument, not by the Kotlin value's storage type.
     internal bool NeedsNativeWitness(TypeNode proof)
