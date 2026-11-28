@@ -1,0 +1,2 @@
+must explicitly implement 'InheritedNativeSpecialConstraint.IFactory.Make'
+inherited 'InheritedNativeSpecialConstraint.NativeBase.Make' additionally requires 'class' for type parameter 1

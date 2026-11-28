@@ -94,6 +94,9 @@ public class NativeHeapFactory
 {
     public virtual SpecificRelayResult Make<T>() => new() { Tag = 29 };
 }
+public interface IReferenceFactory { SpecificRelayResult Make<T>() where T : class; }
+public interface IPlainFactory { SpecificRelayResult Make<T>(); }
+public class ReferenceFactoryBase { public virtual SpecificRelayResult Make<T>() where T : class => new() { Tag = 41 }; }
 public abstract class KeyedRelay<K>
 {
     public abstract int Read<T>(T value, K key) where T : IRelayValue, allows ref struct;
