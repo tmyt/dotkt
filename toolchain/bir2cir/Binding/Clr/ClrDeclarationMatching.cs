@@ -79,13 +79,21 @@ static class ClrDeclarationMatching
     }
 
     internal static MethodInfo MethodForNativeKey(ReferenceMetadataIndex refs, Type owner, string name, int arity,
+        bool instance, string key) => ResolveNativeKey(refs, owner, name, arity, instance, key);
+
+    // Constraints belong to the open MethodDef. Neither a constructed interface
+    // view nor companion parameters in a lowered Kotlin application add CLR rows.
+    internal static Type[] GenericRowsForNativeKey(ReferenceMetadataIndex refs, Type owner, string name, string key) =>
+        ResolveNativeKey(refs, owner, name, null, true, key).GetGenericArguments();
+
+    static MethodInfo ResolveNativeKey(ReferenceMetadataIndex refs, Type owner, string name, int? applicationArity,
         bool instance, string key)
     {
         if (owner == null) throw new InvalidOperationException($"bir2cir: selected native method '{name}' has no resolved declaring owner");
         var flags = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic |
             (instance ? BindingFlags.Instance : BindingFlags.Static);
-        MethodInfo Find(Type scope) => scope.GetMethods(flags).SingleOrDefault(m => m.Name == name &&
-            ClrMemberResolution.IsPublicOrProtected(m) && m.GetGenericArguments().Length == arity &&
+        MethodInfo Find(Type scope) => (applicationArity.HasValue ? scope : SafeDef(scope)).GetMethods(flags).SingleOrDefault(m => m.Name == name &&
+            ClrMemberResolution.IsPublicOrProtected(m) && (applicationArity is not int arity || m.GetGenericArguments().Length == arity) &&
             refs.MatchesNativeMethod(m, key));
         for (var scope = owner; scope != null; scope = scope.BaseType)
             if (Find(scope) is { } member) return member;

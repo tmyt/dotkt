@@ -2,6 +2,12 @@ import ByRefLikeInterop.ByRefLikeApi
 import ByRefLikeInterop.IRelayValue
 import ByRefLikeInterop.IValueRelay
 import ByRefLikeInterop.IStackFactory
+import ByRefLikeInterop.IReferenceFactory
+import ByRefLikeInterop.IDerivedReferenceFactory
+import ByRefLikeInterop.IBoxFactory
+import ByRefLikeInterop.BoxFactoryBase
+import ByRefLikeInterop.IPlainFactory
+import ByRefLikeInterop.ReferenceFactoryBase
 import ByRefLikeInterop.KeyedRelay
 import ByRefLikeInterop.NativeHeapFactory
 import ByRefLikeInterop.NativeHiddenStackFactory
@@ -31,6 +37,12 @@ private open class KotlinStackFactory : StackFactoryBase() {
 private class InheritsStackFactory : KotlinStackFactory(), IStackFactory
 private class InheritsNativeFactory : NativeStackFactory(), IStackFactory
 private class InheritsHiddenFactory : NativeHiddenStackFactory(), IStackFactory
+private class WiderInheritedFactory : NativeHeapFactory(), IReferenceFactory
+private class MatchingInheritedFactory : ReferenceFactoryBase(), IDerivedReferenceFactory
+private class InheritsBoxFactory : BoxFactoryBase(), IBoxFactory
+private class ExplicitReferenceFactory : ReferenceFactoryBase(), IPlainFactory {
+    override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 43 }
+}
 private class ExplicitNativeFactory : NativeHeapFactory(), IStackFactory {
     override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 31 }
 }
@@ -47,6 +59,13 @@ class RefLikeGenericOverrideTests {
         check(ByRefLikeApi.MakeStack(factory).Tag == 17)
         check(ByRefLikeApi.MakeStack(InheritsNativeFactory()).Tag == 23)
         check(ByRefLikeApi.MakeStack(InheritsHiddenFactory()).Tag == 37)
+        val wider: IReferenceFactory = WiderInheritedFactory()
+        val matching: IReferenceFactory = MatchingInheritedFactory()
+        check(wider.Make<String>().Tag == 29 && matching.Make<String>().Tag == 41)
+        val boxed: IBoxFactory = InheritsBoxFactory()
+        check(boxed.Box<String>().Tag == 47)
+        val explicit: IPlainFactory = ExplicitReferenceFactory()
+        check(explicit.Make<Int>().Tag == 43)
         check(ByRefLikeApi.MakeStack(ExplicitNativeFactory()).Tag == 31)
     }
 

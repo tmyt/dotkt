@@ -5,7 +5,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-- Implementing a CLR interface through an inherited Kotlin or CLR generic method now requires an explicit implementation only if the base cannot accept the slot's stack-only type arguments (#2081, #2087).
+- Inherited generic methods can implement CLR interface slots when they admit the slot's type arguments. A base that disallows a supported stack-only argument, or a CLR base that imposes an additional special constraint, now requires an explicit implementation rather than emitting an unloadable class (#2081, #2087, #2089).
 - Kotlin overrides of CLR generic methods that accept stack-only type arguments now load and dispatch when called with a ref struct (#2077).
 - Kotlin generic overrides can construct a CLR generic class that requires multiple interfaces, retaining the caller's concrete type argument (#1966).
 - Generic Kotlin interface calls with a `ClrRef<A>` argument keep the original location without overwriting unrelated generic constraints (#2082).

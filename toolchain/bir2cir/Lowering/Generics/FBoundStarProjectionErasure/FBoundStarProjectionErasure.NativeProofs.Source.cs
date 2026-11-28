@@ -1,6 +1,7 @@
 using DotKt.Bir;
 using DotKt.Bir.Lowering;
 using DotKt.Cir;
+using System.Reflection;
 using DeclarationBinding = CurrentDeclarationBindings.DeclarationBinding;
 
 static partial class FBoundStarProjectionErasure
@@ -162,16 +163,27 @@ static partial class FBoundStarProjectionErasure
                 var kotlinParent = values.OwnsValueSlots(baseType.Name);
                 if (kotlinParent && id == null || values.IsBindingAlias(baseType.Name)) return;
                 System.Type[] nativeRows = null;
+                var parentKey = parent.NativeMethodKey.OrDefault();
                 foreach (var edge in fact.Overrides.OrEmpty())
                 {
-                    if (edge.NativeMethodKey.OrDefault() is not string key || edge.Owner.OrDefault() is not TypeNode.Fqn slot
-                        || !references.IsInterfaceType(slot)) continue;
-                    var open = ClrMemberResolution.ResolveOwnerType(slot, references);
-                    var required = references.SelectProjectedNativeBase(open, edge.Member.Value, key).GetGenericArguments();
+                    if (edge.NativeMethodKey.OrDefault() is not string key ||
+                        edge.Owner.OrDefault() is not TypeNode.Fqn slot || values.IsBindingAlias(slot.Name) ||
+                        values.OwnsValueSlots(slot.Name) || !references.IsInterfaceType(slot)) continue;
+                    var required = ClrDeclarationMatching.GenericRowsForNativeKey(references,
+                        ClrMemberResolution.ResolveOwnerType(slot, references), edge.Member.Value, key);
+                    if (!kotlinParent && parentKey != null)
+                        nativeRows ??= ClrDeclarationMatching.GenericRowsForNativeKey(references,
+                            ClrMemberResolution.ResolveOwnerType(baseType, references), parent.Member.Value,
+                            parentKey);
                     for (int i = 0; i < required.Length; i++)
                     {
-                        if ((required[i].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.AllowByRefLike) == 0) continue;
-                        bool admits = !kotlinParent ? NativeAdmits(i)
+                        var slotFlags = required[i].GenericParameterAttributes;
+                        var baseFlags = nativeRows?[i].GenericParameterAttributes ?? 0;
+                        if (AdditionalConstraint(baseFlags, slotFlags) is string extra)
+                            throw new InvalidOperationException($"'{owner.Name.Value}' must explicitly implement '{slot.Name}.{edge.Member.Value}': " +
+                                $"inherited '{baseType.Name}.{parent.Member.Value}' additionally requires '{extra}' for type parameter {i + 1}.");
+                        if ((slotFlags & GenericParameterAttributes.AllowByRefLike) == 0) continue;
+                        bool admits = !kotlinParent ? (baseFlags & GenericParameterAttributes.AllowByRefLike) != 0
                             : declarations.SourceLocalDeclarations.TryGetValue((baseType.Name, id), out var local)
                             && local.Source is BirFunctionDeclaration method
                             ? LocalAdmits(method, i)
@@ -182,14 +194,16 @@ static partial class FBoundStarProjectionErasure
                                 $"inherited '{baseType.Name}.{parent.Member.Value}' does not admit stack-only types for type parameter {i + 1}.");
                     }
                 }
-                bool NativeAdmits(int position)
+                static string AdditionalConstraint(GenericParameterAttributes body, GenericParameterAttributes slot)
                 {
-                    // dll2klib supplies a declaration key for every stack-admitting native method.
-                    if (parent.NativeMethodKey.OrDefault() is not string key) return false;
-                    nativeRows ??= ClrDeclarationMatching.MethodForNativeKey(references,
-                        ClrMemberResolution.ResolveOwnerType(baseType, references), parent.Member.Value,
-                        parent.Arity.Value, true, key).GetGenericArguments();
-                    return (nativeRows[position].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.AllowByRefLike) != 0;
+                    // Unlike allows-ref-struct, these flags *restrict* the method's domain.
+                    // A non-nullable value type also guarantees a default constructor.
+                    if ((slot & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0)
+                        slot |= GenericParameterAttributes.DefaultConstructorConstraint;
+                    var extra = body & ~slot;
+                    if ((extra & GenericParameterAttributes.ReferenceTypeConstraint) != 0) return "class";
+                    if ((extra & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) return "struct";
+                    return (extra & GenericParameterAttributes.DefaultConstructorConstraint) != 0 ? "new()" : null;
                 }
                 bool LocalAdmits(BirFunctionDeclaration method, int sourceIndex)
                 {

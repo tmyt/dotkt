@@ -94,6 +94,16 @@ public class NativeHeapFactory
 {
     public virtual SpecificRelayResult Make<T>() => new() { Tag = 29 };
 }
+public interface IReferenceFactory { SpecificRelayResult Make<T>() where T : class; }
+public interface IReabstractReferenceFactory : IReferenceFactory { abstract SpecificRelayResult IReferenceFactory.Make<T>(); }
+public interface IDerivedReferenceFactory : IReabstractReferenceFactory { }
+public interface IPlainFactory { SpecificRelayResult Make<T>(); }
+public class ReferenceFactoryBase { public virtual SpecificRelayResult Make<T>() where T : class => new() { Tag = 41 }; }
+#nullable enable
+public class FactoryBox<T> { public int Tag; }
+public interface IBoxFactory { FactoryBox<T?> Box<T>() where T : class; }
+public class BoxFactoryBase { public virtual FactoryBox<T?> Box<T>() where T : class => new() { Tag = 47 }; }
+#nullable restore
 public abstract class KeyedRelay<K>
 {
     public abstract int Read<T>(T value, K key) where T : IRelayValue, allows ref struct;
