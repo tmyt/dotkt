@@ -278,7 +278,7 @@ static partial class KotlinOverrideSlotBridge
                     && !o.Row.ProjectedNativeBase.Selected && (accessorKind != null || FBoundStarProjectionErasure.ContainsExistentialProjection(owner))
                     && refs.ResolveNetType(owner.Name, owner.Args?.Length ?? 0) is { IsInterface: false } open)
                     o.Row.ProjectedNativeBase = (true, accessorKind == null
-                        ? refs.SelectProjectedNativeBase(open, o.Row.NativeMethodKey.OrDefault())
+                        ? refs.SelectProjectedNativeBase(open, member, o.Row.NativeMethodKey.OrDefault())
                         : refs.SelectNativePropertyOverride(open, owner, member, accessorKind, ps.Select(p => p.Type).ToArray()));
                 var nativeSelection = o.Row?.ProjectedNativeBase ?? default;
                 if (nativeSelection.Selected && (supIsInterface || nativeSelection.Method == null

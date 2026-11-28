@@ -6727,11 +6727,18 @@ internal sealed partial class AssemblyScanner : IDisposable
     private void AttachMethodKey(Function function, NameTable names, TypeDefinitionHandle owner, MethodDefinitionHandle method)
     {
         var definition = _md.GetTypeDefinition(owner);
-        var flags = _md.GetMethodDefinition(method).Attributes;
+        var declaration = _md.GetMethodDefinition(method);
+        var flags = declaration.Attributes;
         var overridableClassMethod = (definition.Attributes & TypeAttributes.Interface) == 0 &&
             definition.GetGenericParameters().Count != 0 &&
             (flags & (MethodAttributes.Virtual | MethodAttributes.Final)) == MethodAttributes.Virtual;
-        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
+        // Inherited Kotlin implementations must check the selected interface slot's
+        // admission, even when owner substitution makes two overloads look identical.
+        bool StackAdmittingInterfaceSlot() => (definition.Attributes & TypeAttributes.Interface) != 0
+            && (flags & (MethodAttributes.Virtual | MethodAttributes.Static | MethodAttributes.Final)) == MethodAttributes.Virtual
+            && declaration.GetGenericParameters().Any(p =>
+                (_md.GetGenericParameter(p).Attributes & GenericParameterAttributes.AllowByRefLike) != 0);
+        if (!_attrs.IsDotKtAssembly && (overridableClassMethod || StackAdmittingInterfaceSlot() || function.ReceiverType is { } receiver && ContainsFunction(receiver, names)
             || function.ValueParameter.Any(p => ContainsFunction(p.Type, names))))
             AddStringAnnotationArgument(ExternalMethodBinding(function, names, owner), names,
                 "methodKey", RawSignatureTypeProvider.MethodKey(_md, method));

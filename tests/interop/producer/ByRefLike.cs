@@ -77,6 +77,10 @@ sealed class HeapValue(int value) : IRelayValue { public int Read() => value; }
 public class RelayResult { public int Tag; }
 public sealed class SpecificRelayResult : RelayResult {}
 public interface IStackFactory { SpecificRelayResult Make<T>() where T : allows ref struct; }
+public abstract class StackFactoryBase
+{
+    public abstract SpecificRelayResult Make<T>() where T : allows ref struct;
+}
 public abstract class KeyedRelay<K>
 {
     public abstract int Read<T>(T value, K key) where T : IRelayValue, allows ref struct;
