@@ -1,2 +1,2 @@
 namespace InheritedStackAdmission;
-public interface IFactory { string Make<T>() where T : allows ref struct; }
+public interface IFactory { object Make<S, U>() where S : allows ref struct; }
