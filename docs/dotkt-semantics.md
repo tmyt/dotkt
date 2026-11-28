@@ -2452,6 +2452,9 @@ Calling a native callback exposes array arguments to CLR code even when the dele
 Kotlin carrier signature. Compatible arrays keep their identity; an incompatible unchecked array
 is rejected before the native body runs. Calling an ordinary Kotlin function through the same
 carrier does not expose its arguments merely because the carrier is a CLR delegate.
+If CLR code retains a Kotlin callback, an array it returns is checked when the callback
+returns to CLR, even when the delegate signatures already match. A compatible return
+is the same array, not a copy. Calling the original Kotlin function does not publish its result.
 If the result is itself a Kotlin function, compatibility includes that function's invocation signature, recursively.
 An outer delegate can be CLR-assignable by covariance while its inner result still requires boxing. When the whole
 chain is compatible the original delegate is used; a nominal CLR delegate result stays nominal.

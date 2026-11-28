@@ -235,6 +235,7 @@ static class TypedPhysicalValueCoercion
         internal readonly Dictionary<string, TypeNode> Locals;
         internal readonly TypeNode Return, Owner;
         internal bool NativeArrayReturn, ProjectedCallable;
+        internal TypeNode.Fn NativeCallbackReturn;
         internal BirTypeParameter[] OwnerFrame, MethodFrame;
         internal HashSet<string> ManagedAddresses = new(StringComparer.Ordinal);
         internal readonly Dictionary<string, TypeNode> TemporaryFields, TemporaryLocals;
@@ -247,7 +248,7 @@ static class TypedPhysicalValueCoercion
             TemporaryLocals = temporaryLocals ?? new(StringComparer.Ordinal);
         }
         internal Scope Copy() => new(Owner, Return, new(Locals, StringComparer.Ordinal), TemporaryFields, TemporaryLocals)
-            { NativeArrayReturn = NativeArrayReturn, ProjectedCallable = ProjectedCallable, OwnerFrame = OwnerFrame, MethodFrame = MethodFrame, ManagedAddresses = new(ManagedAddresses, StringComparer.Ordinal) };
+            { NativeArrayReturn = NativeArrayReturn, NativeCallbackReturn = NativeCallbackReturn, ProjectedCallable = ProjectedCallable, OwnerFrame = OwnerFrame, MethodFrame = MethodFrame, ManagedAddresses = new(ManagedAddresses, StringComparer.Ordinal) };
         internal static Scope Frame(BirParameter[] parameters, IEnumerable<BirGraphValue> parts, TypeNode owner, TypeNode ret,
             BirTypeParameter[] owners = null, BirTypeParameter[] methods = null)
         {
@@ -301,9 +302,10 @@ static class TypedPhysicalValueCoercion
             if (!index.ReferenceBuild)
             {
                 var signature = ConstructorParameterTypes(constructor);
-                CoerceVector(arguments, signature, scope, index, constructor.DelegationSig.OrDefault());
                 var selected = constructor.BaseCtorRef.OrDefault();
-                if (IsForeignOwner(selected?.DeclaringType.OrDefault(), index) &&
+                bool foreign = IsForeignOwner(selected?.DeclaringType.OrDefault(), index);
+                CoerceVector(arguments, signature, scope, index, constructor.DelegationSig.OrDefault(), nativeExport: foreign);
+                if (foreign &&
                     StageNativeArrayOperands(constructor, selected, arguments, signature, scope, index, foreign: true) is { } preamble)
                     constructor.PreStmts = constructor.PreStmts.OrEmpty().Concat(preamble).ToArray();
             }
@@ -314,10 +316,16 @@ static class TypedPhysicalValueCoercion
             var scope = Scope.Frame(method.Params.OrEmpty(), method.Body.OrEmpty().Cast<BirGraphValue>(), owner, method.Ret.OrDefault(),
                 ownerFrame, method.TypeParams.OrEmpty());
             scope.ProjectedCallable = method.Attrs.OrEmpty().Any(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.AKProjectedMethod });
-            scope.NativeArrayReturn = MayHoldArray(scope.Return, index) &&
+            var arrayResult = MayHoldArray(scope.Return, index);
+            var callbackResult = Underlying(scope.Return) as TypeNode.Fn;
+            if ((arrayResult || callbackResult is { Suspend: false } && MayHoldArray(callbackResult.Ret, index)) &&
                 (method.SourceClrBoundary || method.Overrides.OrEmpty().Select(o => o.Owner.OrDefault())
                     .Concat(method.ClrInterfaceImpls.OrEmpty().Concat(method.ClrBaseImpls.OrEmpty()).Select(o => o.Owner.OrDefault()))
-                    .Any(o => IsForeignOwner(o, index)));
+                    .Any(o => IsForeignOwner(o, index))))
+            {
+                scope.NativeArrayReturn = arrayResult;
+                scope.NativeCallbackReturn = callbackResult;
+            }
             if (method.Body.HasValue)
             {
                 if (!index.ReferenceBuild)
@@ -347,7 +355,8 @@ static class TypedPhysicalValueCoercion
     }
 
     static BirCast Cast(BirGraphValue expression, TypeNode type) => new() { Type = type, E = Field(Expression(expression)) };
-    static IBirExpression CoerceExpression(IBirExpression value, TypeNode target, Scope scope, Index index, TypeNode selected = null)
+    static IBirExpression CoerceExpression(IBirExpression value, TypeNode target, Scope scope, Index index, TypeNode selected = null,
+        bool nativeExport = false)
     {
         if (value == null) return null;
         if (target is TypeNode.ByRef or TypeNode.Mod && SignatureValueTypes.Of(target) is TypeNode.ByRef to)
@@ -366,16 +375,16 @@ static class TypedPhysicalValueCoercion
         {
             var operand = Graph(value);
             var physical = PhysicalResult(operand, scope, index) ?? ExprType(operand, scope, index);
-            if (physical is TypeNode.Fqn exact && ClrMemberResolution.SameInterfaceSlotType(exact, slot)) return value;
+            if (!nativeExport && physical is TypeNode.Fqn exact && ClrMemberResolution.SameInterfaceSlotType(exact, slot)) return value;
             if (index.DelegateAdapters?.ImportNestedFunction(index.Document, value, SelectedFunctionResult(operand), physical, slot) is {} imported)
                 return imported;
             var source = physical is TypeNode.Fqn && ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } native
                 ? native : ExprType(operand, scope, index);
             if (Underlying(source) is TypeNode.Fn { Suspend: false } function
                 && function.DelegateParams.Length == selectedFunction.DelegateParams.Length)
-                return index.DelegateAdapters.AdaptFunctionView(index.Document, value, selectedFunction, slot, function);
+                return index.DelegateAdapters.AdaptFunctionView(index.Document, value, selectedFunction, slot, function, nativeExport: nativeExport);
             if (FunctionViewOperand(Graph(value), source, selected, index) is IBirExpression view)
-                return index.DelegateAdapters.AdaptFunctionView(index.Document, view, selectedFunction, slot);
+                return index.DelegateAdapters.AdaptFunctionView(index.Document, view, selectedFunction, slot, nativeExport: nativeExport);
         }
         return Expression(Coerce(Graph(value), target, scope, index));
     }
@@ -405,13 +414,15 @@ static class TypedPhysicalValueCoercion
             Result = view };
     }
     static void CoerceVector(IBirExpression[] values, TypeNode[] targets, Scope scope, Index index,
-        TypeNode[] selected = null, BirGraphValue nativeCall = null)
+        TypeNode[] selected = null, BirGraphValue nativeCall = null, bool nativeExport = false)
     {
         if (values == null || targets == null || values.Length != targets.Length) return;
+        nativeExport |= nativeCall != null && (nativeCall.SourceClrBoundary || IsForeignOwner(Member(nativeCall)?.DeclaringType.OrDefault(), index));
         for (var i = 0; i < values.Length; i++) values[i] = CoerceExpression(values[i], targets[i], scope, index,
             nativeCall?.NativeFunctionParameters?[i] is {} function
                 ? Close(function, OwnerArgs(Member(nativeCall)), MethodArgs(nativeCall))
-                : selected?.Length == values.Length ? selected[i] : null);
+                : selected?.Length == values.Length ? selected[i] : null,
+            nativeExport);
     }
     static void CoerceArray(IBirExpression[] values, TypeNode target, Scope scope, Index index)
     {
@@ -1208,12 +1219,21 @@ static class TypedPhysicalValueCoercion
         OptionalField<IBirExpression> FieldWrite(OptionalField<IBirExpression> value)
         {
             var target = FieldTarget(node, scope, index);
-            return Cross(value, target, MayHoldArray(target, index) && IsForeignOwner(Member(node)?.DeclaringType.OrDefault(), index),
-                Signature(node)?.LastOrDefault());
+            var selected = Signature(node)?.LastOrDefault();
+            var foreign = IsForeignOwner(Member(node)?.DeclaringType.OrDefault(), index);
+            if (foreign && value.HasValue && Underlying(target) is TypeNode.Fqn physical &&
+                ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } function)
+                return Field(CoerceExpression(value.Value, target, scope, index,
+                    Underlying(selected) is TypeNode.Fn ? selected : function, nativeExport: true));
+            return Cross(value, target, foreign && MayHoldArray(target, index), selected);
         }
         OptionalField<IBirExpression> AsKotlinObject(OptionalField<IBirExpression> value) =>
             value.HasValue && FunctionViewOperand(Graph(value.Value), ExprType(Graph(value.Value), scope, index), Object, index)
                 is { } original ? Field(Expression(original)) : value;
+        OptionalField<IBirExpression> ReturnValue(OptionalField<IBirExpression> value) =>
+            scope.NativeCallbackReturn is { } fn && value.HasValue
+                ? Field(CoerceExpression(value.Value, BirTypeLowering.DelegateFqnOf(fn), scope, index, fn, nativeExport: true))
+                : Cross(value, scope.Return, scope.NativeArrayReturn);
         switch (node)
         {
             case BirObjectMethod value:
@@ -1246,8 +1266,8 @@ static class TypedPhysicalValueCoercion
             case BirSetField value: value.Value = FieldWrite(value.Value); break;
             case BirFieldSetExpression value: value.Value = FieldWrite(value.Value); break;
             case BirStaticFieldSet value: value.Value = FieldWrite(value.Value); break;
-            case BirReturn value: value.Value = Cross(value.Value, scope.Return, scope.NativeArrayReturn); break;
-            case BirReturnExpression value: value.Value = Cross(value.Value, scope.Return, scope.NativeArrayReturn); break;
+            case BirReturn value: value.Value = ReturnValue(value.Value); break;
+            case BirReturnExpression value: value.Value = ReturnValue(value.Value); break;
             case BirValueBlock value: value.Result = C(value.Result, value.Type.OrDefault()); break;
             case BirCallStatic or BirCallInstance or BirConstrainedCall or BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance:
                 CoerceVector(Arguments(node), ParameterTypes(node), scope, index, Signature(node), node); break;

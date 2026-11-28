@@ -15,6 +15,7 @@ internal interface ProjectedArrayVector {
 private class ProjectedArrayTable<K : Any, V : Any> {
     constructor()
     @kotlin.clr.ClrIntrinsic("Add") fun add(key: K, value: V): Unit = error("CLR binding")
+    @kotlin.clr.ClrIntrinsic("GetOrCreateValue") fun cell(key: K): V = error("CLR binding")
     @kotlin.clr.ClrIntrinsic("TryGetValue") fun find(key: K, value: ClrRef<V?>): Boolean = error("CLR binding")
 }
 
@@ -69,6 +70,38 @@ private fun isKotlinCallable(value: FunctionDelegate): Boolean {
     if (target?.publishedCallable === value) return true
     var tag: Any? = null
     return kotlinCallables.find(value, byref(tag))
+}
+
+private class ResultExports public constructor() {
+    var byType: MutableMap<StarProjectionType, Any>? = null
+}
+private val resultExports = ProjectedArrayTable<Any, ResultExports>()
+
+// For arguments every multicast target matters; only the last supplies the result.
+@PublishedApi
+internal fun existingNativeResultView(original: Any, type: StarProjectionType): Any? {
+    val value = original as FunctionDelegate
+    val last = if (value.hasSingleTarget()) value else {
+        val targets = value.invocationList()
+        targets[targets.size - 1]
+    }
+    if (!isKotlinCallable(last)) return original
+    var existing: ResultExports? = null
+    resultExports.find(original, byref(existing))
+    val cell = existing ?: return null
+    enterArrayState(cell)
+    try { return cell.byType?.get(type) } finally { exitArrayState(cell) }
+}
+
+@PublishedApi
+internal fun publishNativeResultView(original: Any, candidate: Any): Any {
+    val cell = resultExports.cell(original)
+    val type = candidate.starProjectionRuntimeType()
+    enterArrayState(cell)
+    try {
+        val views = cell.byType ?: mutableMapOf<StarProjectionType, Any>().also { cell.byType = it }
+        return views[type] ?: candidate.also { views[type] = it }
+    } finally { exitArrayState(cell) }
 }
 
 @kotlin.clr.ClrTypeAlias("System.ArrayTypeMismatchException")

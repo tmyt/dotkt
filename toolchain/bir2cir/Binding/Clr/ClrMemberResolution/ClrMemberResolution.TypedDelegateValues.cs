@@ -18,13 +18,16 @@ static partial class ClrMemberResolution
         => test(ReferenceMetadataIndex.Build(new[] { typeof(object).Assembly.Location }));
 
     internal static DelegateAdapterPlan FunctionViewPlan(ReferenceMetadataIndex references, IReadOnlySet<string> localTypes,
-        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural, out TypeNode.Fqn compatible, bool nativeSource = false)
+        TypeNode.Fn selected, TypeNode.Fqn slot, TypeNode.Fn knownView, out TypeNode.Fn natural, out TypeNode.Fqn compatible,
+        bool nativeSource = false, bool nativeExport = false)
     {
         var view = knownView ?? FunctionValueRepresentation.OrdinaryView(selected, references.IsByRefLikeFqn);
         natural = (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(view, DelegatePhysicalContext(localTypes, references), false);
         compatible = slot;
-        if (SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot)) return null;
+        var same = SameInterfaceSlotType(BirTypeLowering.DelegateFqnOf(natural), slot);
+        if (same && !nativeExport) return null;
         var target = PhysicalFunctionShape(references, slot, includeNominal: true);
+        if (same && (target == null || !TypedPhysicalValueCoercion.MayHoldArray(target.Ret, references))) return null;
         var result = ReturnedFunctionType(selected);
         TypeNode.Fqn ordinaryResult = null;
         if (nativeSource && result is { Suspend: false } && PhysicalFunctionShape(references, DelegateSlotCore(natural.Ret)) is {} nested)

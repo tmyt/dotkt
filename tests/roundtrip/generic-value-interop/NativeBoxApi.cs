@@ -1,5 +1,7 @@
 using roundtrip.genericvalueinterop;
 using roundtrip.invariantstorage;
+using WideObjectCallback = DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
+    object, object, object, object, object, object, object, object, object, object, object, object>;
 using WideIntCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
     int, int, int, int, int, int, int, int, int>;
 using WideUnitCallback = DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int, int, int, int,
@@ -138,10 +140,16 @@ public class NativeBoxArrayLease(Box<string, string>[] values)
     public Box<string, string> First { get => values[0]; set => values[0] = value; }
 }
 public class NativeVectorBase(Derived<string>[] values) { public int Count => values.Length; }
-public class NativeCallbackBase(DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object,
-    object, object, object, object, object, object, object, object, object, object, object, object> callback)
+public class NativeCallbackBase(WideObjectCallback callback)
 {
     public object Read() => callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+    public object ReadFirstElement() => ((System.Array)Read()).GetValue(0);
+    public object CallbackIdentity => callback;
+    public WideObjectCallback Stored { get; set; }
+    public WideObjectCallback Field;
+    public virtual WideObjectCallback MakeCallback() => callback;
+    public object InvokeStored(int slot) =>
+        (slot == 0 ? Stored : slot == 1 ? Field : MakeCallback())(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
 }
 public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int,
     int, int, int, int, int, int, int, int, int, int, int, int> callback)
