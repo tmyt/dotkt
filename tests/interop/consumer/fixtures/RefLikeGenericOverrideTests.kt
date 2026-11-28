@@ -5,6 +5,7 @@ import ByRefLikeInterop.IStackFactory
 import ByRefLikeInterop.KeyedRelay
 import ByRefLikeInterop.RelayResult
 import ByRefLikeInterop.SpecificRelayResult
+import ByRefLikeInterop.StackFactoryBase
 import NUnit.Framework.TestAttribute
 
 private open class KotlinValueRelay : IValueRelay {
@@ -21,12 +22,23 @@ private class MixedFactory : KotlinFactory, IStackFactory {
     override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 42 }
 }
 
+private open class KotlinStackFactory : StackFactoryBase() {
+    override fun <T> Make(): SpecificRelayResult = SpecificRelayResult().also { it.Tag = 17 }
+}
+private class InheritsStackFactory : KotlinStackFactory(), IStackFactory
+
 private class IntKeyRelay : KeyedRelay<Int>() {
     override fun <T : IRelayValue> Read(value: T, key: Int): Int = value.Read() + key
     override fun <T : IRelayValue> Read(value: T, key: String): Int = value.Read() + key.length
 }
 
 class RefLikeGenericOverrideTests {
+    @TestAttribute fun inheritedMethodAdmitsTheFullNativeInterfaceDomain() {
+        val factory: IStackFactory = InheritsStackFactory()
+        check(factory.Make<String>().Tag == 17)
+        check(ByRefLikeApi.MakeStack(factory).Tag == 17)
+    }
+
     @TestAttribute fun preservesTheSelectedNativeGenericSlot() {
         check(ByRefLikeApi.ReadStack(KotlinValueRelay()) == 11)
         check(ByRefLikeApi.ReadStack(DerivedValueRelay()) == 12)

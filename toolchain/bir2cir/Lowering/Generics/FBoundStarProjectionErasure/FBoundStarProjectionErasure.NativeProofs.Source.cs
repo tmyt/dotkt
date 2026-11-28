@@ -12,21 +12,24 @@ static partial class FBoundStarProjectionErasure
     {
         internal sealed record ConstructorEdge(string Id, TypeNode.Fqn Application);
         readonly Dictionary<DeclarationBinding, List<ConstructorEdge>> forwardedConstructors = new();
-        readonly List<(BirFunctionDeclaration Method, int Arity, int Position)> refLikeOverrideRows = new();
+        readonly Dictionary<BirFunctionDeclaration, (int Arity, HashSet<int> Positions)> refLikeOverrideRows = new(ReferenceEqualityComparer.Instance);
 
         // Admission of a stack-only argument is a property of the selected CLR
         // slot, not a Kotlin type bound. Do not change the signature used to
         // select Kotlin overrides or copied to their covariant bridges.
         internal void ApplyRefLikeOverrideRows()
         {
-            foreach (var (method, arity, position) in refLikeOverrideRows)
+            foreach (var (method, admission) in refLikeOverrideRows)
             {
                 var parameters = method.TypeParams.Value;
-                if (parameters.Length != arity)
+                if (parameters.Length != admission.Arity)
                     throw new InvalidOperationException($"Native override frame changed for '{method.Name.Value}'.");
-                var row = parameters[position];
-                if (!row.SpecialConstraints.OrEmpty().Contains("allowsRefStruct"))
-                    row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("allowsRefStruct").ToArray();
+                foreach (var position in admission.Positions)
+                {
+                    var row = parameters[position];
+                    if (!row.SpecialConstraints.OrEmpty().Contains("allowsRefStruct"))
+                        row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("allowsRefStruct").ToArray();
+                }
             }
         }
         internal IEnumerable<ConstructorEdge> ForwardedConstructors(DeclarationBinding owner) =>
@@ -66,6 +69,12 @@ static partial class FBoundStarProjectionErasure
                     RegisterNativeOverrides(method, binding);
                 }
             }
+            // A fake override has no MethodDef on which to widen admission. Check
+            // the inherited declaration after collecting every local override row.
+            foreach (var definition in definitions.Values)
+                if (definition.Source is BirClassDefinition owner)
+                    foreach (var fact in owner.InheritedClassMethods.OrEmpty())
+                        CheckInheritedAdmission(owner, fact);
             bool changed, captureEdges = true;
             do
             {
@@ -144,6 +153,39 @@ static partial class FBoundStarProjectionErasure
                 }
             }
 
+            void CheckInheritedAdmission(BirClassDefinition owner, BirInheritedClassMethod fact)
+            {
+                if (fact.InheritedImplementation.OrDefault() is not { } parent
+                    || parent.Owner.OrDefault() is not TypeNode.Fqn baseType
+                    || parent.DeclarationId.OrDefault() is not string id
+                    || parent.TypeParams.OrEmpty().Length == 0 || !values.OwnsValueSlots(baseType.Name)) return;
+                foreach (var edge in fact.Overrides.OrEmpty())
+                {
+                    if (edge.NativeMethodKey.OrDefault() is not string key || edge.Owner.OrDefault() is not TypeNode.Fqn slot
+                        || !references.IsInterfaceType(slot)) continue;
+                    var open = ClrMemberResolution.ResolveOwnerType(slot, references);
+                    var required = references.SelectProjectedNativeBase(open, edge.Member.Value, key).GetGenericArguments();
+                    for (int i = 0; i < required.Length; i++)
+                    {
+                        if ((required[i].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.AllowByRefLike) == 0) continue;
+                        bool admits = declarations.SourceLocalDeclarations.TryGetValue((baseType.Name, id), out var local)
+                            && local.Source is BirFunctionDeclaration method
+                            ? LocalAdmits(method, i)
+                            : references.InheritedParameterAdmitsRefLike(id, i);
+                        if (!admits)
+                            throw new InvalidOperationException(
+                                $"'{owner.Name.Value}' must explicitly implement '{slot.Name}.{edge.Member.Value}': " +
+                                $"inherited '{baseType.Name}.{parent.Member.Value}' does not admit stack-only types for type parameter {i + 1}.");
+                    }
+                }
+                bool LocalAdmits(BirFunctionDeclaration method, int sourceIndex)
+                {
+                    int position = method.NullableRepresentationFrame.OrDefault()?.SourcePosition(sourceIndex) ?? sourceIndex;
+                    return method.TypeParams.Value[position].SpecialConstraints.OrEmpty().Contains("allowsRefStruct")
+                        || refLikeOverrideRows.TryGetValue(method, out var admission) && admission.Positions.Contains(position);
+                }
+            }
+
             void RegisterNativeOverrides(BirFunctionDeclaration method, DeclarationBinding binding)
             {
                 var parameters = method.TypeParams.OrEmpty();
@@ -158,7 +200,11 @@ static partial class FBoundStarProjectionErasure
                         parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>(), nativeMethodKey: edge.NativeMethodKey.OrDefault());
                     for (int i = 0; i < selected.Length; i++)
                         if (selected[i].SpecialConstraints.OrEmpty().Contains("allowsRefStruct"))
-                            refLikeOverrideRows.Add((method, selected.Length, i));
+                        {
+                            if (!refLikeOverrideRows.TryGetValue(method, out var admission))
+                                refLikeOverrideRows[method] = admission = (selected.Length, new());
+                            admission.Positions.Add(i);
+                        }
                     foreach (var (index, bounds) in ReadRows(selected, false, physicalDeclaration: true))
                         foreach (var bound in bounds)
                             Add(binding, index, SupertypeGraph.SubstOwnerTvs(bound, selectedOwner.Args ?? Array.Empty<TypeNode>()));
