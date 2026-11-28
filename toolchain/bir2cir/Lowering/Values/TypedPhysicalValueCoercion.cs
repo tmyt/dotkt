@@ -825,12 +825,15 @@ static partial class TypedPhysicalValueCoercion
         {
             var operands = Arguments(node);
             var actual = node.ApplicationTypeArguments.Value;
-            for (int i = 0; i < positions.Length; i++)
+            var signature = Signature(node);
+            foreach (var position in positions)
             {
-                var operand = operands[positions[i]];
+                var operand = operands[position];
                 var value = operand is BirByRefOf pointer ? pointer.Inner.Value : operand;
                 var type = (value as BirArrayGet)?.Elem.OrDefault() ?? ManagedAddress(operand, scope, index)?.Of ?? ExprType(Graph(value), scope, index);
-                actual[actual.Length - positions.Length + i] = type is TypeNode.ByRef p ? p.Of :
+                if (SignatureValueTypes.Of(signature[position]) is not TypeNode.ByRef { Of: TypeNode.Tv { Scope: "method" } formal })
+                    throw new InvalidOperationException("Projected address operand lacks its selected location formal");
+                actual[formal.I] = type is TypeNode.ByRef p ? p.Of :
                     type ?? throw new InvalidOperationException("Projected argument has no physical location type");
             }
             node.LocationOperandFacts = default;

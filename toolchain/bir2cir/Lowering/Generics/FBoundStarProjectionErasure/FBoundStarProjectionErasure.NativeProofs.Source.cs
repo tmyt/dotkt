@@ -12,6 +12,23 @@ static partial class FBoundStarProjectionErasure
     {
         internal sealed record ConstructorEdge(string Id, TypeNode.Fqn Application);
         readonly Dictionary<DeclarationBinding, List<ConstructorEdge>> forwardedConstructors = new();
+        readonly List<(BirFunctionDeclaration Method, int Arity, int Position)> refLikeOverrideRows = new();
+
+        // Admission of a stack-only argument is a property of the selected CLR
+        // slot, not a Kotlin type bound. Do not change the signature used to
+        // select Kotlin overrides or copied to their covariant bridges.
+        internal void ApplyRefLikeOverrideRows()
+        {
+            foreach (var (method, arity, position) in refLikeOverrideRows)
+            {
+                var parameters = method.TypeParams.Value;
+                if (parameters.Length != arity)
+                    throw new InvalidOperationException($"Native override frame changed for '{method.Name.Value}'.");
+                var row = parameters[position];
+                if (!row.SpecialConstraints.OrEmpty().Contains("allowsRefStruct"))
+                    row.SpecialConstraints = row.SpecialConstraints.OrEmpty().Append("allowsRefStruct").ToArray();
+            }
+        }
         internal IEnumerable<ConstructorEdge> ForwardedConstructors(DeclarationBinding owner) =>
             owner != null && forwardedConstructors.TryGetValue(owner, out var uses) ? uses : [];
 
@@ -138,7 +155,10 @@ static partial class FBoundStarProjectionErasure
                     var selected = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, selectedOwner,
                         edge.Member.OrDefault(), parameters.Length, true,
                         method.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray(), references,
-                        parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>());
+                        parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>(), nativeMethodKey: edge.NativeMethodKey.OrDefault());
+                    for (int i = 0; i < selected.Length; i++)
+                        if (selected[i].SpecialConstraints.OrEmpty().Contains("allowsRefStruct"))
+                            refLikeOverrideRows.Add((method, selected.Length, i));
                     foreach (var (index, bounds) in ReadRows(selected, false, physicalDeclaration: true))
                         foreach (var bound in bounds)
                             Add(binding, index, SupertypeGraph.SubstOwnerTvs(bound, selectedOwner.Args ?? Array.Empty<TypeNode>()));

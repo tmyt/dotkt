@@ -45,6 +45,12 @@ public sealed class SegmentStorageOuter
 
 public static class ByRefLikeApi
 {
+    public static int ReadStack(IValueRelay relay) => relay.Read(new StackValue(11));
+    public static int ReadHeap(IValueRelay relay) => relay.Read(new HeapValue(7), 3);
+    public static RelayResult MakeStack(IStackFactory factory) => factory.Make<StackValue>();
+    public static int ReadKeyed(KeyedRelay<int> relay) =>
+        relay.Read(new StackValue(7), 2) + relay.Read(new HeapValue(11), "abc");
+
     public static Tally MakeTally(int v) => new Tally(v);
     public static int ReadTally(Tally t) => t.V;
 
@@ -57,4 +63,22 @@ public static class ByRefLikeApi
     // projected metadata record — the one byref-like spelling that cannot come from the metadata flag.
     public static Span<int> MakeSpan(int[] a) => a.AsSpan();
     public static int SpanLength(Span<int> s) => s.Length;
+}
+
+public interface IRelayValue { int Read(); }
+public interface IValueRelay
+{
+    int Read<T>(T value) where T : IRelayValue, allows ref struct;
+    int Read<T>(T value, int offset) where T : IRelayValue;
+}
+readonly ref struct StackValue(int value) : IRelayValue { public int Read() => value; }
+sealed class HeapValue(int value) : IRelayValue { public int Read() => value; }
+
+public class RelayResult { public int Tag; }
+public sealed class SpecificRelayResult : RelayResult {}
+public interface IStackFactory { SpecificRelayResult Make<T>() where T : allows ref struct; }
+public abstract class KeyedRelay<K>
+{
+    public abstract int Read<T>(T value, K key) where T : IRelayValue, allows ref struct;
+    public abstract int Read<T>(T value, string key) where T : IRelayValue;
 }

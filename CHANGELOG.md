@@ -6,7 +6,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ## Unreleased
 
 - A Kotlin implementation of a CLR virtual generic method can also satisfy a Kotlin interface with a different CLR signature; calls through either view reach the most-derived override (#2074).
+- Kotlin overrides of CLR generic methods that accept stack-only type arguments now load and dispatch when called with a ref struct (#2077).
 - Kotlin generic overrides can construct a CLR generic class that requires multiple interfaces, retaining the caller's concrete type argument (#1966).
+- Generic Kotlin interface calls with a `ClrRef<A>` argument keep the original location without overwriting unrelated generic constraints (#2082).
 - A stored Kotlin callback returning an array to CLR code now publishes its contents at invocation, even when its delegate signature already matches (#2072).
 - Calling an already-compatible CLR callback from Kotlin now checks array arguments before entering native code, without copying them (#1999).
 - Implementing a generic Kotlin interface with a star-projected owner argument no longer adds an invalid CLR constraint to its overriding method (#2067).
@@ -23,6 +25,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - Overriding a CLR base's projected `iterator()` in Kotlin also supplies its non-generic `IEnumerable.GetEnumerator()` implementation (#2004).
 - Passing a smart-cast local such as an `Any` narrowed to `String` as a writable reference to the narrower type is now diagnosed instead of silently writing to a copy (#1965).
 - A writable reference can no longer widen a Kotlin local's declared type. Passing a non-null local to a nullable CLR `ref`, including `Array.Resize`, now requires declaring the local nullable (#2028).
+- NativeAOT preserves the CLR interface members used for star-projected list size and structural list equality (#2079).
 - Overriding one inherited CLR default interface member in Kotlin preserves the native base's explicit implementation of its other members (#2013).
 - Kotlin overrides of an overloaded CLR interface default now dispatch through the constructed interface without redirecting its other overloads (#2021).
 - Kotlin generic suspend overrides retain their dispatch slots across assemblies when a method's type parameter is bounded by its owner's type parameter (#1994).
