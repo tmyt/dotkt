@@ -139,7 +139,29 @@ private inline fun <T : System.IO.Stream> defaultNativeCapture(
 ): () -> Any = read
 private fun <V : System.IO.Stream> forwardDefaultCapture(factory: () -> V) = defaultNativeCapture<V>(factory)
 
+private interface CarrierAddressMark
+private class CarrierAddressItem : CarrierAddressMark
+private interface CarrierStore<K : CarrierAddressMark> {
+    fun <A : K> replace(target: ClrRef<A>, next: A): A
+}
+private class ConcreteCarrierStore : CarrierStore<CarrierAddressMark> {
+    override fun <A : CarrierAddressMark> replace(target: ClrRef<A>, next: A): A {
+        val old = target.value
+        target.value = next
+        return old
+    }
+}
+
 class ConstrainedCarrierTests {
+    @TestAttribute
+    fun projectedAddressUsesItsOwnMethodRow() {
+        val view: CarrierStore<CarrierAddressMark> = ConcreteCarrierStore()
+        val old = CarrierAddressItem()
+        val next = CarrierAddressItem()
+        var cell = old
+        assertEquals(true, view.replace(byref(cell), next) === old)
+        assertEquals(true, cell === next)
+    }
     @TestAttribute
     fun ownerBoundsKeepIndependentProofsAndValueConversions() {
         val payload = CarrierPayload(3)

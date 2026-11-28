@@ -7,6 +7,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - Kotlin overrides of CLR generic methods that accept stack-only type arguments now load and dispatch when called with a ref struct (#2077).
 - Kotlin generic overrides can construct a CLR generic class that requires multiple interfaces, retaining the caller's concrete type argument (#1966).
+- Generic Kotlin interface calls with a `ClrRef<A>` argument keep the original location without overwriting unrelated generic constraints (#2082).
 - A stored Kotlin callback returning an array to CLR code now publishes its contents at invocation, even when its delegate signature already matches (#2072).
 - Calling an already-compatible CLR callback from Kotlin now checks array arguments before entering native code, without copying them (#1999).
 - Implementing a generic Kotlin interface with a star-projected owner argument no longer adds an invalid CLR constraint to its overriding method (#2067).
