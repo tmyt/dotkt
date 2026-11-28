@@ -2453,6 +2453,10 @@ In the other direction, a Kotlin function can return a wide callback read from a
 If the native delegate's value-type slots differ from ordinary Kotlin storage, the callable view converts the
 arguments on invocation and converts the result back to Kotlin. A nullable read preserves null; public non-null
 return checks still apply (§9c).
+Calling a native callback exposes array arguments to CLR code even when the delegate already has the
+Kotlin carrier signature. Compatible arrays keep their identity; an incompatible unchecked array
+is rejected before the native body runs. Calling an ordinary Kotlin function through the same
+carrier does not expose its arguments merely because the carrier is a CLR delegate.
 If the result is itself a Kotlin function, compatibility includes that function's invocation signature, recursively.
 An outer delegate can be CLR-assignable by covariance while its inner result still requires boxing. When the whole
 chain is compatible the original delegate is used; a nominal CLR delegate result stays nominal.

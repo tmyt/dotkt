@@ -25,6 +25,52 @@ private class ProjectedArrayState(val element: StarProjectionType) {
 }
 private val projectedArrays = ProjectedArrayTable<ProjectedArrayVector, ProjectedArrayState>()
 
+// A Kotlin function and a CLR callback can have the very same delegate type.
+// Record the newly constructed Kotlin callable by identity, without changing
+// what is stored in Kotlin, returned to C#, or used for delegate invocation.
+private val kotlinCallables = ProjectedArrayTable<Any, Any>()
+private val kotlinCallableTag = Any()
+
+// The compiler constructs a fresh target and exactly one delegate together.
+// Match the delegate, not just its target: another delegate (including a
+// multicast delegate) can have the same last target.
+@PublishedApi
+internal open class KotlinClosureTarget {
+    internal var publishedCallable: Any? = null
+}
+
+@PublishedApi
+internal fun recordKotlinClosure(value: Any): Any {
+    val target = (value as? FunctionDelegate)?.boundTarget() as? KotlinClosureTarget
+        ?: return recordKotlinCallable(value)
+    target.publishedCallable = value
+    return value
+}
+
+@PublishedApi
+internal fun recordKotlinCallable(value: Any): Any {
+    kotlinCallables.add(value, kotlinCallableTag)
+    return value
+}
+
+@PublishedApi
+internal fun callablePublishesArrays(value: Any?): Boolean {
+    if (value == null) return false
+    val delegate = value as? FunctionDelegate ?: return true
+    if (delegate.hasSingleTarget()) return !isKotlinCallable(delegate)
+    // Combine creates a new delegate identity. Publication is a property of
+    // every target that will run, not just the last target exposed by Target.
+    for (member in delegate.invocationList()) if (!isKotlinCallable(member)) return true
+    return false
+}
+
+private fun isKotlinCallable(value: FunctionDelegate): Boolean {
+    val target = value.boundTarget() as? KotlinClosureTarget
+    if (target?.publishedCallable === value) return true
+    var tag: Any? = null
+    return kotlinCallables.find(value, byref(tag))
+}
+
 @kotlin.clr.ClrTypeAlias("System.ArrayTypeMismatchException")
 private class ArrayComponentMismatch : Throwable()
 

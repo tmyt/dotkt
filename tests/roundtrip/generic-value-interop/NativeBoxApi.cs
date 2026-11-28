@@ -17,6 +17,18 @@ public interface IProjectedMark : ILeftMark, IRightMark { }
 public interface IRichProjectedMark : IProjectedMark { }
 public interface IJointTag<T> where T : ILeftMark, IRightMark { }
 public class SharedNativeStream<T> : System.IO.MemoryStream, IProjectedMark { }
+public sealed class CallbackArrayProbe
+{
+    public int Calls { get; private set; }
+    public static object Combine(object first, object second) =>
+        System.Delegate.Combine((System.Delegate)first, (System.Delegate)second);
+    public DotKt.Runtime.CompilerServices.KFunc<object, object, object, object, object, object, object, object,
+        object, object, object, object, object, object, object, object, object, object> Inspect =>
+        (first, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => {
+            Calls++;
+            return ((System.Array)first).GetValue(0) is null ? null : first;
+        };
+}
 public class NativeOpenVisitor<T>
 {
     public virtual T Visit(T item) => throw new System.NotImplementedException();
