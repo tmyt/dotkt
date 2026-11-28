@@ -2,6 +2,9 @@
 
 package DotKt.Runtime.CompilerServices
 
+import System.Diagnostics.CodeAnalysis.DynamicDependencyAttribute
+import System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes
+
 // Minimal CLR reflection vocabulary for the runtime implementation below. These internal bindings follow the same
 // @ClrTypeAlias pattern as the array runtime helpers. They are erased to
 // the named BCL types and never become DotKt runtime classifiers of their own.
@@ -1459,6 +1462,7 @@ internal fun projectedMembershipContainsErased(receiver: Any, sourceWitness: Any
     }
 }
 
+@DynamicDependencyAttribute(DynamicallyAccessedMemberTypes.PublicMethods, "System.Collections.Generic.IEnumerable`1", "System.Runtime")
 internal fun projectedFamilyEnumeratorMethod(family: StarProjectionType): StarProjectionMethod {
     var enumerable: StarProjectionType? = null
     for (parent in family.getInterfaces()) {
@@ -1549,21 +1553,26 @@ internal fun projectedMutableSetCountErased(receiver: Any): Int {
 
 // Follow the selected family to its actual parent Count declaration. Unrelated Collection
 // implementations on the original receiver cannot change that family's size.
+@DynamicDependencyAttribute(DynamicallyAccessedMemberTypes.PublicProperties, "System.Collections.Generic.IReadOnlyCollection`1", "System.Runtime")
+private fun projectedParentCountGetter(view: StarProjectionType, collectionName: String): StarProjectionMethod {
+    var getter: StarProjectionMethod? = if (view.isGenericType
+        && view.getGenericTypeDefinition().fullName == collectionName)
+        erasedProjectedMethod(view, "get_Count", 0) else null
+    for (parent in view.getInterfaces()) {
+        if (!parent.isGenericType || parent.getGenericTypeDefinition().fullName != collectionName) continue
+        for (method in parent.getMethods()) {
+            if (method.name != "get_Count" || method.getParameters().size != 0) continue
+            if (getter != null) throw IllegalStateException("Ambiguous parent Count slot")
+            getter = method
+        }
+    }
+    return getter ?: throw IllegalStateException("Missing parent Count slot")
+}
+
+@DynamicDependencyAttribute(DynamicallyAccessedMemberTypes.PublicProperties, "System.Collections.Generic.ICollection`1", "System.Runtime")
 internal fun projectedParentCollectionCount(receiver: Any, view: StarProjectionType, collectionName: String): Int {
     return try {
-        var getter: StarProjectionMethod? = if (view.isGenericType
-            && view.getGenericTypeDefinition().fullName == collectionName)
-            erasedProjectedMethod(view, "get_Count", 0) else null
-        for (parent in view.getInterfaces()) {
-            if (!parent.isGenericType || parent.getGenericTypeDefinition().fullName != collectionName) continue
-            for (method in parent.getMethods()) {
-                if (method.name != "get_Count" || method.getParameters().size != 0) continue
-                if (getter != null) throw IllegalStateException("Ambiguous parent Count slot")
-                getter = method
-            }
-        }
-        val selected = getter ?: throw IllegalStateException("Missing parent Count slot")
-        selected.invoke(receiver, arrayOfNulls<Any?>(0)) as Int
+        projectedParentCountGetter(view, collectionName).invoke(receiver, arrayOfNulls<Any?>(0)) as Int
     } catch (failure: StarProjectionInvocationException) {
         throw (failure.innerException ?: failure)
     }

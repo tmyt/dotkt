@@ -9,6 +9,15 @@ if (EqualityKt.opaqueEquals(overridden, overridden) || overridden.Calls != 1
     throw new Exception("Collection override dispatch");
 Console.WriteLine("Kotlin equality and hashing passed");
 
+if (EqualityKt.projectedSize(new List<int> { 11, 12 }) != 2 ||
+    !EqualityKt.opaqueEquals(new List<int> { 2, 3 }, new List<int> { 2, 3 }) ||
+    EqualityKt.opaqueEquals(new List<int> { 2, 3 }, new List<int> { 3, 2 }))
+    throw new Exception("Projected list size and structural equality");
+var split = new ExplicitCounts();
+if (EqualityKt.projectedSize(split) != 17 || EqualityKt.projectedMutableSize(split) != 23)
+    throw new Exception("Read-only and mutable explicit Count slots were conflated");
+Console.WriteLine("Projected CLR collection slots passed");
+
 class Overrides : List<int>
 {
     public int Calls;
@@ -17,3 +26,8 @@ class Overrides : List<int>
 }
 sealed class InheritsEquals : Overrides {}
 sealed class HashOnly : List<int> { public override int GetHashCode() => 73; }
+sealed class ExplicitCounts : List<int>, IReadOnlyList<int>, IList<int>
+{
+    int IReadOnlyCollection<int>.Count => 17;
+    int ICollection<int>.Count => 23;
+}
