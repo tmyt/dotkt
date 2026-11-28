@@ -1239,15 +1239,18 @@ class V:
                     implementation = o["inheritedImplementation"]
                     required = {"owner", "member", "kind", "arity", "typeParams"}
                     if (not isinstance(implementation, dict) or not required <= set(implementation)
-                            or not set(implementation) <= required | {"sig", "declarationId"}):
+                            or not set(implementation) <= required | {"sig", "declarationId", "nativeMethodKey"}):
                         self.err(
                             f, path + "/inheritedImplementation",
-                            "inheritedImplementation must contain the selected owner/member/kind/arity/typeParams and optional sig/declarationId"
+                            "inheritedImplementation must contain the selected owner/member/kind/arity/typeParams and optional sig/declarationId/nativeMethodKey"
                         )
                     else:
                         if "declarationId" in implementation and not (
                                 isinstance(implementation["declarationId"], str) and implementation["declarationId"]):
                             self.err(f, path + "/inheritedImplementation/declarationId", "expected a non-empty declaration ID")
+                        if "nativeMethodKey" in implementation and not (
+                                isinstance(implementation["nativeMethodKey"], str) and implementation["nativeMethodKey"]):
+                            self.err(f, path + "/inheritedImplementation/nativeMethodKey", "expected a non-empty native method key")
                         if (not isinstance(implementation.get("owner"), dict)
                                 or implementation["owner"].get("t") != "fqn"):
                             self.err(f, path + "/inheritedImplementation/owner", "inheritedImplementation owner must be an fqn Type node")
