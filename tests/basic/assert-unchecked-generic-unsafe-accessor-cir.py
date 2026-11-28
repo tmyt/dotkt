@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
 from carrier_inspection import type_payloads
+from cir_operands import result_value
 
 
 def objects(node):
@@ -63,9 +64,10 @@ for method in methods.values():
     operand = operator.get("lhs") if method["name"] == "add" else operator.get("e")
     # The selected primitive operand boundary can enclose the independent
     # object-return restoration. Both must remain before the operator.
+    operand = result_value(operand)
     while (operand is not casts[0] and operand.get("k") == "cast"
            and operand.get("type") == int_type):
-        operand = operand.get("e", {})
+        operand = result_value(operand.get("e", {}))
     if operand is not casts[0]:
         raise SystemExit(f"{method['name']} extracts the concrete value after rather than before its operator")
     calls.append(matches[0])

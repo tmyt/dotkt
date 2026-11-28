@@ -13,7 +13,7 @@
 # Scalar transport is erased, but the inherited bridge retains the already-closed native Tuple witness on its
 # owner. Neither sweep may reinterpret its K/V arguments in the selected base declaration's frame.
 +"name":"DerivedPasser","kind":"class"
-+"params":[{"name":"value","type":{"t":"fqn","name":"object"}}],"ret":{"t":"fqn","name":"object"},"body":[{"k":"return","value":{"k":"callInstance"
+?any(.[] | .types[] | select(.name=="DerivedPasser") | .methods[] | select(ir_matches({"params":[{"name":"value","type":{"t":"fqn","name":"object"}}],"ret":{"t":"fqn","name":"object"}})) | .body[] | select(.k=="return") | .value | ir_call_operands; .method=="pass" and .args[0].name=="value")
 ?any(.[] | .. | objects; ir_matches({"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]}]},"virtual":true,"recv":{"k":"this"},"method":"pass"}))
-?any(.[] | .. | objects; ir_matches({"dynRet":{"t":"fqn","name":"object"},"ret":{"t":"fqn","name":"object"},"args":[{"k":"local","name":"value"}]}))
+?any(.[] | .. | objects | ir_call_operands; ir_matches({"dynRet":{"t":"fqn","name":"object"},"ret":{"t":"fqn","name":"object"},"args":[{"k":"local","name":"value"}]}))
 -"ret":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"System.Tuple"

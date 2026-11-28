@@ -281,6 +281,22 @@ internal fun exposeProjectedValue(value: Any?) {
     if (value is ProjectedArrayVector) exposeProjectedArray(value)
 }
 
+// Only attached state or a jagged row can change on publication.
+@PublishedApi
+internal fun mayNeedArrayPublication(value: Any?): Boolean =
+    value is ProjectedArrayVector && (stateOf(value) != null || value.hasArrayRows())
+
+// A virtual delegate selects the actual MethodDef, including explicit CLR
+// implementations and inherited Kotlin bodies on a C# receiver. bir2cir
+// roots eligible Kotlin virtual MethodDefs for metadata-trimmed execution.
+@PublishedApi
+internal fun virtualTargetPublishesArrays(target: Any): Boolean {
+    val method = try { (target as FunctionDelegate).dispatchMethod() }
+        catch (_: UnsupportedOperationException) { return true }
+    val owner = method.declaringType ?: return true
+    return !isCompilerType(owner)
+}
+
 // Multiple operands are published by one call. Keep all participating states
 // locked from validation through commit. Only a batch acquires more than one
 // state; serializing that acquisition also handles reversed and aliased inputs.

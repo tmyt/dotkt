@@ -62,7 +62,7 @@ static class BirNodeType
             BirStackAllocation => new TypeNode.Fqn("dotkt$stackptr"),
             BirNewClosure value => value.FuncType.OrDefault() ?? ClosureHead(value.ClosureType.OrDefault()),
             BirNewDelegate value => value.FuncType.OrDefault(),
-            BirNewSam value => value.SamType.OrDefault(),
+            BirNewSam value => NodeType.ConstructedSamType(value.SamType.OrDefault(), value.TypeArgs.OrDefault()),
             BirNewSuspendLambda value => value.FuncType.OrDefault(),
             BirNewBoundDelegate value => value.FuncType.OrDefault(),
             BirBoundClrDelegate value => value.FuncType.OrDefault(),

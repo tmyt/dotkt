@@ -9404,7 +9404,7 @@ public static class CirMessagePack
         ICirExpression field_recv = default!;
         OptionalField<bool> field_virtual = default!;
         OptionalField<TypeNode[]> field_typeArgs = default!;
-        MemberRefNode field_delegateCtorRef = default!;
+        OptionalField<MemberRefNode> field_delegateCtorRef = default!;
         OptionalField<MemberRefNode> field_memberRef = default!;
         OptionalField<TypeNode> field_calleeRet = default!;
         OptionalField<TypeNode[]> field_sig = default!;
@@ -9447,7 +9447,7 @@ public static class CirMessagePack
                     break;
                 case "delegateCtorRef":
                     Seen(ref seen, 256UL);
-                    field_delegateCtorRef = Read_memberRef(ref reader);
+                    field_delegateCtorRef = OptionalField<MemberRefNode>.Of(Read_memberRef(ref reader));
                     break;
                 case "memberRef":
                     Seen(ref seen, 512UL);
@@ -9468,7 +9468,7 @@ public static class CirMessagePack
                 default: throw new FormatException();
             }
         }
-        if ((seen & 319UL) != 319UL) throw new FormatException();
+        if ((seen & 63UL) != 63UL) throw new FormatException();
         reader.Depth--;
         var value = new CirBoundDelegate { FuncType = field_funcType, OwnerType = field_ownerType, CalleeOwner = field_calleeOwner, Method = field_method, Recv = field_recv, Virtual = field_virtual, TypeArgs = field_typeArgs, DelegateCtorRef = field_delegateCtorRef, MemberRef = field_memberRef, CalleeRet = field_calleeRet, Sig = field_sig, CalleeParams = field_calleeParams };
         return value;
@@ -9477,7 +9477,7 @@ public static class CirMessagePack
     private static void Write_cirBoundDelegateNode(ref MessagePackWriter writer, CirBoundDelegate node, int depth)
     {
         CheckDepth(depth);
-        writer.WriteMapHeader(7 + (node.Virtual.IsPresent ? 1 : 0) + (node.TypeArgs.IsPresent ? 1 : 0) + (node.MemberRef.IsPresent ? 1 : 0) + (node.CalleeRet.IsPresent ? 1 : 0) + (node.Sig.IsPresent ? 1 : 0) + (node.CalleeParams.IsPresent ? 1 : 0));
+        writer.WriteMapHeader(6 + (node.Virtual.IsPresent ? 1 : 0) + (node.TypeArgs.IsPresent ? 1 : 0) + (node.DelegateCtorRef.IsPresent ? 1 : 0) + (node.MemberRef.IsPresent ? 1 : 0) + (node.CalleeRet.IsPresent ? 1 : 0) + (node.Sig.IsPresent ? 1 : 0) + (node.CalleeParams.IsPresent ? 1 : 0));
         writer.Write("k");
         writer.Write("newBoundDelegate");
         writer.Write("funcType");
@@ -9500,8 +9500,11 @@ public static class CirMessagePack
             writer.Write("typeArgs");
             Write_value33(ref writer, node.TypeArgs.Value, depth + 1);
         }
-        writer.Write("delegateCtorRef");
-        Write_memberRef(ref writer, node.DelegateCtorRef, depth + 1);
+        if (node.DelegateCtorRef.IsPresent)
+        {
+            writer.Write("delegateCtorRef");
+            Write_memberRef(ref writer, node.DelegateCtorRef.Value, depth + 1);
+        }
         if (node.MemberRef.IsPresent)
         {
             writer.Write("memberRef");

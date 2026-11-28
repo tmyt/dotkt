@@ -2,6 +2,7 @@
 from carrier_inspection import metadata_record
 import json
 import sys
+from cir_operands import result_value
 from collections import Counter
 from carrier_inspection import type_payloads
 
@@ -34,7 +35,7 @@ for call in calls:
         "declaringType": call["ownerType"], "name": call["method"], "genericArity": 0,
         "returnType": storage, "callingConvention": "instance", "parameterTypes": [storage]}
     concrete = {"t": "array", "elem": call["ownerType"]["args"][1]}
-    assert any(node.get("k") == "cast" and node.get("type") == concrete and node.get("e") is call
+    assert any(node.get("k") == "cast" and node.get("type") == concrete and result_value(node["e"]) is call
                for node in objects(root))
 assert not any(owner.get("name", "").startswith("dotkt$unsafe$holder$") for owner in root["types"])
 
@@ -65,5 +66,5 @@ assert selected["memberRef"]["declaringType"] == {"t": "fqn", "name": carrier["n
 assert selected["memberRef"]["parameterTypes"] == [storage]
 assert selected["memberRef"]["returnType"] == slot["ret"]
 assert any(node.get("k") == "cast" and node.get("type") == {"t": "array", "elem": {"t": "fqn", "name": "System.String"}}
-           and node.get("e") is selected for node in objects(root))
+           and result_value(node["e"]) is selected for node in objects(root))
 print("referenced family direct/open/callable/value paths retain exact ABI, full owner frames and array projections")

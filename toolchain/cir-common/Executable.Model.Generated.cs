@@ -2498,8 +2498,8 @@ public sealed partial record CirBoundDelegate : CirNode, ICirExpression
     public OptionalField<bool> Virtual { get; init; }
     [JsonPropertyName("typeArgs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<TypeNode[]> TypeArgs { get; init; }
-    [JsonPropertyName("delegateCtorRef"), JsonRequired]
-    public required MemberRefNode DelegateCtorRef { get; init; }
+    [JsonPropertyName("delegateCtorRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
+    public OptionalField<MemberRefNode> DelegateCtorRef { get; init; }
     [JsonPropertyName("memberRef"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
     public OptionalField<MemberRefNode> MemberRef { get; init; }
     [JsonPropertyName("calleeRet"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault), JsonConverter(typeof(NonNullOptionalFieldConverterFactory))]
