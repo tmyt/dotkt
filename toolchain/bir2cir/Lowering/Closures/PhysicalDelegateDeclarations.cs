@@ -4,7 +4,7 @@ using DotKt.Cir;
 
 // One compilation owns declaration/temporary identities across construction and value-flow consumers.
 // Consumers retain their own per-file caches and publish the returned declaration as before.
-sealed class PhysicalDelegateDeclarations
+sealed partial class PhysicalDelegateDeclarations
 {
     int nextAdapter;
     int nextValue;

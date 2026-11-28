@@ -1436,6 +1436,9 @@ class V:
                     child_role = "property"
                 elif role == "property" and key in ("getSig", "setSig"):
                     child_role = "signature"
+                elif is_type_decl and o.get("kind") == "delegate" and key in ("params", "ret"):
+                    # The delegate TypeDef carries its Invoke MethodDef signature here.
+                    child_role = "parameter" if key == "params" else "signature"
                 elif role in ("declaration", "constructor") and key == "params":
                     child_role = "parameter"
                 elif role == "constructor" and key == "delegationSig":
@@ -1448,7 +1451,7 @@ class V:
                     child_role = "signature"
                 elif "k" in o and key in ("calleeParams", "calleeRet"):
                     child_role = "signature"
-                elif o.get("k") in ("callStatic", "callInstance", "constrainedCall", "newDelegate") and key == "sig":
+                elif o.get("k") in ("callStatic", "callInstance", "constrainedCall", "newDelegate", "newBoundDelegate") and key == "sig":
                     child_role = "signature"
                 elif o.get("k") == "new" and key == "argTypes":
                     child_role = "signature"

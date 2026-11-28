@@ -746,7 +746,8 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
                 if (e.Virtual.OrDefault()) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, boundTarget); }
                 else EmitMethod(_il, OpCodes.Ldftn, boundTarget);
-                EmitDelegateCtor(_il, e.DelegateCtorRef);
+                if (e.DelegateCtorRef.HasValue) EmitDelegateCtor(_il, e.DelegateCtorRef.Value);
+                else EmitConstructor(_il, OpCodes.Newobj, LocalDelegateConstructor(ft));
                 return ft;
             }
             case CirBoundClrDelegate e:

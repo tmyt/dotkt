@@ -1602,7 +1602,7 @@ sealed partial class TypedCirProjection
             Recv = ProjectExpression(Require(value.Recv)),
             Virtual = ProjectOptional(value.Virtual, item => item, allowNull: false),
             TypeArgs = ProjectOptional(value.TypeArgs, item => item.Select(item0 => item0).ToArray(), allowNull: false),
-            DelegateCtorRef = ProjectMemberReference(Require(value.DelegateCtorRef)),
+            DelegateCtorRef = ProjectOptional(value.DelegateCtorRef, item => ProjectMemberReference(item), allowNull: false),
             MemberRef = ProjectOptional(value.MemberRef, item => ProjectMemberReference(item), allowNull: false),
             CalleeRet = ProjectOptional(value.CalleeRet, item => item, allowNull: false),
             Sig = ProjectOptional(value.Sig, item => item.Select(item0 => item0).ToArray(), allowNull: false),

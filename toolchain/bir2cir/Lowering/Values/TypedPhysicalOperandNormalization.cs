@@ -6,17 +6,29 @@ using DotKt.Cir;
 // without inspecting (or boxing) the value of T.
 static class PhysicalTypeKindTest
 {
-    internal static BirMemberReference Bind(ReferenceMetadataIndex references)
+    internal static BirMemberReference Bind(ReferenceMetadataIndex references, string property = nameof(System.Type.IsValueType))
     {
         var owner = references.ResolveRefType("System.Type");
         return BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, references,
-            owner.GetProperty(nameof(System.Type.IsValueType)).GetMethod, MemberRefNode.Kinds.Method, owner, null));
+            owner.GetProperty(property).GetMethod, MemberRefNode.Kinds.Method, owner, null));
     }
 
-    internal static BirNativeInstance IsValueType(TypeNode type, BirMemberReference getter) => new() {
+    internal static BirNativeInstance Read(TypeNode type, BirMemberReference getter) => new() {
         Type = getter.DeclaringType, Method = getter.Name, Recv = new BirClassReference { Type = type },
         Args = Array.Empty<IBirExpression>(), ArgTypes = Array.Empty<TypeNode>(), Ret = getter.ReturnType,
         Dispatch = "callvirt", MemberRef = getter,
+    };
+
+    // For a constrained call, evaluation snapshots a reference receiver but
+    // preserves the original location of a value receiver across later arguments.
+    internal static IBirExpression ReceiverAddress(TypeNode type, IBirExpression isValue, IBirExpression location,
+        IBirExpression read, string snapshot) => new BirConditional {
+        Type = new TypeNode.ByRef(type), Cond = OptionalField<IBirExpression>.Of(isValue),
+        Then = OptionalField<IBirExpression>.Of(location),
+        Else = new BirValueBlock {
+            Stmts = new IBirStatement[] { new BirSetLocal { Name = snapshot, Value = OptionalField<IBirExpression>.Of(read) } },
+            Result = new BirByRefOf { Inner = new BirLocal { Name = snapshot } },
+        },
     };
 }
 
@@ -395,18 +407,8 @@ static partial class TypedPhysicalOperandNormalization
             {
                 var snapshot = Temporary("receiver");
                 prefix.Add(new BirVariable { Name = snapshot, Type = type });
-                address = new BirConditional
-                {
-                    Type = reference,
-                    Cond = PhysicalTypeKindTest.IsValueType(type, isValueType),
-                    Then = OptionalField<IBirExpression>.Of(address),
-                    Else = new BirValueBlock
-                    {
-                        Stmts = new IBirStatement[] { new BirSetLocal { Name = snapshot,
-                            Value = OptionalField<IBirExpression>.Of(Copy(resolved)) } },
-                        Result = new BirByRefOf { Inner = new BirLocal { Name = snapshot } },
-                    },
-                };
+                address = PhysicalTypeKindTest.ReceiverAddress(type, PhysicalTypeKindTest.Read(type, isValueType),
+                    address, Copy(resolved), snapshot);
             }
             var name = Temporary("address");
             prefix.Add(new BirVariable { Name = name, Type = reference, Init = OptionalField<IBirExpression>.Of(address) });

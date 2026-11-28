@@ -436,6 +436,9 @@ private fun EnumRuntimeAssembly.isCompilerAssembly(): Boolean {
     return false
 }
 
+internal fun isCompilerType(type: StarProjectionType): Boolean =
+    (type as EnumRuntimeType).assembly.isCompilerAssembly()
+
 // A slot-stable virtual entry only has the caller's ordinary CLR type.
 // Native arrays, delegates and foreign generic classes keep that witness;
 // a constructed Kotlin reference can carry a different instantiation.

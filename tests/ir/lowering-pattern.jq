@@ -16,3 +16,15 @@ def ir_matches($pattern):
     and all(range(0; $pattern | length); . as $i | $actual[$i] | ir_matches($pattern[$i]))
   else $actual == $pattern
   end;
+
+# Inspect the selected call with its actual staged operand initializers. Limit
+# substitution to immutable temporaries declared in this very value block.
+def ir_call_operands:
+  if .k == "callInstance" then .
+  elif .k == "valueBlock" and .result.k == "callInstance" then
+    . as $block | INDEX(.stmts[] | select(.k=="var" and has("init")); .name) as $locals |
+    def operand: if .k=="local" and $locals[.name] != null and
+      (.name as $n | all($block.stmts[] | .. | objects; .k!="setLocal" or .name!=$n))
+      then $locals[.name].init else . end;
+    .result | .recv |= operand | .args |= map(operand)
+  else empty end;

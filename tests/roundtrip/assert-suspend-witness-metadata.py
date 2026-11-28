@@ -80,6 +80,8 @@ def objects(node):
 cold_names = {name + "$dotkt_suspend": name for name in expected}
 called = set()
 for call in objects(consumer):
+    if call.get("k") not in ("callStatic", "callInstance"):
+        continue
     name = cold_names.get(call.get("method"))
     if name is None:
         continue

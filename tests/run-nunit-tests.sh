@@ -63,8 +63,8 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=277
 	["tests/roundtrip/consumer"]=828
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=4
-	["tests/roundtrip/bidirectional/consumer"]=62
-	["tests/interop/consumer"]=536
+	["tests/roundtrip/bidirectional/consumer"]=65
+	["tests/interop/consumer"]=538
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a

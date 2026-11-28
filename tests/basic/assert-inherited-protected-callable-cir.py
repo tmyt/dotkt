@@ -2,6 +2,10 @@
 import json
 import sys
 from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roundtrip"))
+from cir_operands import operand
 
 
 def objects(node):
@@ -31,7 +35,7 @@ if (call.get("ownerType") != {"t": "fqn", "name": "ProtectedNullableCallable", "
         or call.get("sig") != [physical_object] or call.get("ret") != physical_object
         or call.get("calleeRet") != physical_object or call.get("virtual") is not True):
     raise SystemExit(f"direct callable lost selected constructed owner/physical ABI: {call!r}")
-arguments = call.get("args", [])
+arguments = [operand(root, call, arg) for arg in call["args"]]
 if len(arguments) != 1 or arguments[0].get("k") != "cast" or arguments[0].get("type") != physical_object:
     raise SystemExit(f"nullable-generic argument was not projected to the physical object slot: {call!r}")
 for call in closure_calls:

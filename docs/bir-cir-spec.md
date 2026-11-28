@@ -313,6 +313,11 @@ Notes:
   bir2cir copies the exact CLR constraint flags of a referenced classifier onto a C# 14 static-extension grouping
   and its implementation wrapper. These are physical CLR facts; kotc does not author them, and ilemit stamps them
   one-to-one alongside the descriptor's structured `constraints`.
+  In CIR, `newBoundDelegate` names its delegate type in `funcType`.
+  Its `delegateCtorRef` identifies an external constructor; without that
+  reference, the type must be a delegate declared in this compilation and
+  its own runtime-provided constructor is used. There is no external lookup
+  on this local path.
   **STATUS (#49): the `funcType` slot is FOLDED.** The delegate-view function type on
   `newClosure`/`newDelegate`/`newSam`/`newSuspendLambda`/`newBoundDelegate`/`delegateInvoke` was the LAST
   string-typed type slot (`func:<ret>:<args>` / `sfunc:<ret>:<args>`); kotc now emits it as the structured
