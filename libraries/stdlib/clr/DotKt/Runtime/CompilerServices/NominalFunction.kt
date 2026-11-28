@@ -73,7 +73,14 @@ internal abstract class FunctionDelegate {
 // callable reference, even to the very same receiver, remains a distinct value.
 @PublishedApi
 internal fun kotlinFunctionObject(value: Any?): Any? {
-    val target = (value as? FunctionDelegate)?.boundTarget() as? KotlinFunctionSource ?: return value
+    var entry = value as? FunctionDelegate ?: return value
+    var receiver = entry.boundTarget()
+    while (receiver is KotlinCallbackEntry) {
+        if (!entry.hasSingleTarget()) return value
+        entry = receiver.dotktKotlinEntry() as? FunctionDelegate ?: return value
+        receiver = entry.boundTarget()
+    }
+    val target = receiver as? KotlinFunctionSource ?: return value
     val cell = functionViews.cell(target)
     enterFunctionViews(cell)
     try {

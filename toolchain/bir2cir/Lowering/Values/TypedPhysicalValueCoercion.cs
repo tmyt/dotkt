@@ -891,8 +891,16 @@ static class TypedPhysicalValueCoercion
             (node is BirNewClosure { DelegateCtorRef.HasValue: true } ||
              node is BirNewDelegate direct && !IsForeignOwner(direct.MemberRef.OrDefault()?.DeclaringType.OrDefault() ?? direct.CalleeOwner.OrDefault(), index) ||
              node is BirNewBoundDelegate bound && !IsForeignOwner(bound.MemberRef.OrDefault()?.DeclaringType.OrDefault() ?? bound.CalleeOwner.OrDefault(), index)))
-            return Cast(ArrayRuntimeCall(node is BirNewClosure ? "recordKotlinClosure" : "recordKotlinCallable",
+        {
+            if (index.DelegateAdapters.PublishesResult(node)) return result;
+            var raw = Cast(ArrayRuntimeCall(node is BirNewClosure ? "recordKotlinClosure" : "recordKotlinCallable",
                 Object, [Object], index, Expression(result)), callable);
+            if (!node.SourceClrBoundary && !(node.ClosedCallbackResult is {} scalar && index.References.IsValueType(scalar)) &&
+                ClrMemberResolution.PhysicalFunctionShape(index.References, callable) is {} fn &&
+                MayHoldArray(fn.Ret, index))
+                return Cast(index.DelegateAdapters.WithNativeResult(index.Document, fn, raw), callable);
+            return raw;
+        }
         if (node is BirFieldGet field && TemporaryFieldKey(field) is { } fieldKey
             && scope.TemporaryFields.TryGetValue(fieldKey, out var retained)
             && ExprType(field, scope, index) is TypeNode.Fqn { Args: null, Name: "object" or "System.Object" })
@@ -916,6 +924,11 @@ static class TypedPhysicalValueCoercion
         if (call is BirDelegateInvoke invoke)
         {
             var target = invoke.InvokeRef.Value;
+            if (!invoke.SourceClrBoundary && index.References != null && invoke.FuncType.OrDefault() is {} view &&
+                MayHoldArray(Close(target.ReturnType.Value, OwnerArgs(target), []), index) &&
+                target.DeclaringType.OrDefault() is TypeNode.Fqn slot)
+                invoke.Recv = Field(Cast(ArrayRuntimeCall("kotlinCallbackEntry", Object, [Object, new TypeNode.Fqn("System.Type")],
+                    index, invoke.Recv.Value, new BirClassReference { Type = slot }), view));
             var signature = target.ParameterTypes.Value.Select(t => Close(t, OwnerArgs(target), [])).ToArray();
             var preamble = StageNativeArrayOperands(invoke, target, invoke.Args.Value, signature, scope, index, foreign: true,
                 conditionalDelegate: !invoke.SourceClrBoundary);
@@ -1223,8 +1236,16 @@ static class TypedPhysicalValueCoercion
             var foreign = IsForeignOwner(Member(node)?.DeclaringType.OrDefault(), index);
             if (foreign && value.HasValue && Underlying(target) is TypeNode.Fqn physical &&
                 ClrMemberResolution.PhysicalFunctionShape(index.References, physical) is { } function)
+            {
+                // Two nominal delegate instantiations use CLR variance, including
+                // nested boxing conversions. Do not invent a Kotlin function slot.
+                if (Underlying(selected) is not TypeNode.Fn &&
+                    Underlying(ExprType(Graph(value.Value), scope, index)) is TypeNode.Fqn from &&
+                    index.References.IsClrDelegate(from))
+                    return C(value, target);
                 return Field(CoerceExpression(value.Value, target, scope, index,
                     Underlying(selected) is TypeNode.Fn ? selected : function, nativeExport: true));
+            }
             return Cross(value, target, foreign && MayHoldArray(target, index), selected);
         }
         OptionalField<IBirExpression> AsKotlinObject(OptionalField<IBirExpression> value) =>

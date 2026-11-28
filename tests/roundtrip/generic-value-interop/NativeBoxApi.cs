@@ -144,6 +144,10 @@ public class NativeCallbackBase(WideObjectCallback callback)
 {
     public object Read() => callback(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
     public object ReadFirstElement() => ((System.Array)Read()).GetValue(0);
+    public static object ReadErased(object handler) =>
+        ((System.Array)((WideObjectCallback)handler)(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17)).GetValue(0);
+    public event WideObjectCallback Changed;
+    public object Raise() => ReadErased(Changed);
     public object CallbackIdentity => callback;
     public WideObjectCallback Stored { get; set; }
     public WideObjectCallback Field;
@@ -154,6 +158,10 @@ public class NativeCallbackBase(WideObjectCallback callback)
 public class NativeIntCallbackBase(DotKt.Runtime.CompilerServices.KFunc<int, int, int, int, int, int,
     int, int, int, int, int, int, int, int, int, int, int, int> callback)
 {
+    private event WideIntCallback Changed;
+    public void Register(WideIntCallback f) => Changed += f;
+    public void Unregister(WideIntCallback f) => Changed -= f;
+    public int Raise() => Changed?.Invoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) ?? -1;
     public int CallbackReads { get; private set; }
     public WideIntCallback Callback { get { CallbackReads++; return callback; } set => callback = value; }
     public WideIntCallback ReadCallback(object tag) => Callback;

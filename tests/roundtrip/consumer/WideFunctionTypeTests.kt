@@ -63,6 +63,20 @@ private fun invokeWithRange(f: WideIntCallback) = f(1, 2, 3, 4, 5, 6, 7, 8, 9, 1
 
 class WideFunctionTypeTests {
     @TestAttribute
+    fun sameFunctionRemovesOneRegistrationAcrossSeparateClrConversions() {
+        var calls = 0
+        val f: WideIntCallback = { a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, q -> calls++; a + q }
+        val owner = GenericValueInterop.NativeIntCallbackBase(f)
+        owner.Register(f)
+        owner.Register(f)
+        check(owner.Raise() == 18 && calls == 2)
+        owner.Unregister(f)
+        check(owner.Raise() == 18 && calls == 3)
+        owner.Unregister(f)
+        check(owner.Raise() == -1 && calls == 3)
+    }
+
+    @TestAttribute
     fun retainedCallbackPublishesItsResultOnlyAtNativeInvocation() {
         val initial = CallbackBox("initial")
         var result = arrayOf(initial)
@@ -90,6 +104,26 @@ class WideFunctionTypeTests {
         }
         val local = callback(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17) as Array<*>
         check(visits == 8 && local === result && local[0] === incompatible)
+        val token = derived.Changed.subscribe(callback)
+        try {
+            try { derived.Raise(); error("event received a stale result") } catch (_: System.InvalidCastException) {}
+            try { GenericValueInterop.NativeCallbackBase.ReadErased(callback); error("erased delegate received a stale result") }
+            catch (_: System.InvalidCastException) {}
+        } finally { token.close() }
+        var laterCalls = 0
+        val later: BoxedCallback = { _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _ -> laterCalls++; result }
+        val multicast = GenericValueInterop.CallbackArrayProbe.Combine(callback, later)
+        try { GenericValueInterop.NativeCallbackBase.ReadErased(multicast); error("first invalid return was ignored") }
+        catch (_: System.InvalidCastException) {}
+        check(laterCalls == 0)
+        @Suppress("UNCHECKED_CAST")
+        val kotlinChain = multicast as BoxedCallback
+        val last = kotlinChain(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17) as Array<*>
+        check(laterCalls == 1 && last === result && last[0] === incompatible)
+        for (restored in listOf(derived.MakeCallback(), derived.Stored)) {
+            val value = restored!!(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17) as Array<*>
+            check(value === result && value[0] === incompatible)
+        }
     }
 
     @TestAttribute

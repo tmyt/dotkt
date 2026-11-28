@@ -40,6 +40,37 @@ internal open class KotlinClosureTarget {
     internal var publishedCallable: Any? = null
 }
 
+/** Implemented on compiler-authored CLR result views, not on the user's callable. */
+@PublishedApi
+internal interface KotlinCallbackEntry {
+    fun dotktKotlinEntry(): Any
+}
+
+@kotlin.clr.ClrIntrinsic("System.Delegate.Combine")
+private fun combineCallbackEntries(first: FunctionDelegate?, next: FunctionDelegate): FunctionDelegate = error("CLR binding")
+
+// Only Kotlin Invoke can select this entry. A clone still has the same target;
+// a multicast must preserve the complete ordered list, not just its last target.
+@PublishedApi
+internal fun kotlinCallbackEntry(value: Any?, slot: StarProjectionType): Any? {
+    val delegate = value as? FunctionDelegate ?: return value
+    if (delegate.hasSingleTarget()) {
+        val raw = (delegate.boundTarget() as? KotlinCallbackEntry)?.dotktKotlinEntry() ?: return value
+        return if (slot.isAssignableFrom(raw.starProjectionRuntimeType())) raw else value
+    }
+    val members = delegate.invocationList()
+    var changed = false
+    val type = delegate.starProjectionRuntimeType()
+    for (i in members.indices) {
+        val raw = (members[i].boundTarget() as? KotlinCallbackEntry)?.dotktKotlinEntry() as? FunctionDelegate ?: continue
+        if (raw.starProjectionRuntimeType() == type) { members[i] = raw; changed = true }
+    }
+    if (!changed) return value
+    var result: FunctionDelegate? = null
+    for (member in members) result = combineCallbackEntries(result, member)
+    return result
+}
+
 @PublishedApi
 internal fun recordKotlinClosure(value: Any): Any {
     val target = (value as? FunctionDelegate)?.boundTarget() as? KotlinClosureTarget
@@ -86,6 +117,11 @@ internal fun existingNativeResultView(original: Any, type: StarProjectionType): 
         targets[targets.size - 1]
     }
     if (!isKotlinCallable(last)) return original
+    return cachedNativeDelegateView(original, type)
+}
+
+@PublishedApi
+internal fun cachedNativeDelegateView(original: Any, type: StarProjectionType): Any? {
     var existing: ResultExports? = null
     resultExports.find(original, byref(existing))
     val cell = existing ?: return null
