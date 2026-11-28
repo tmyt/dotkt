@@ -1035,7 +1035,8 @@ static partial class TypedPhysicalValueCoercion
         }
         for (var i = 0; i < args.Length; i++)
         {
-            if (SignatureValueTypes.Of(signature[i]) is TypeNode.ByRef pointer)
+            var valueType = SignatureValueTypes.Of(signature[i]);
+            if (valueType is TypeNode.ByRef pointer)
             {
                 if (Indexed(i) is { } location && ReferenceElement(pointer.Of))
                 {
@@ -1057,12 +1058,12 @@ static partial class TypedPhysicalValueCoercion
             }
             else
             {
-                var saved = Retain(args[i], signature[i]);
+                var saved = Retain(args[i], valueType);
                 args[i] = saved;
-                if (Publishes(signature[i]))
+                if (Publishes(valueType))
                 {
-                    dynamicValue |= signature[i] is not TypeNode.Array;
-                    exports.Add(ExposureCandidate(saved.DeepClone(), signature[i]));
+                    dynamicValue |= valueType is not TypeNode.Array;
+                    exports.Add(ExposureCandidate(saved.DeepClone(), valueType));
                 }
             }
         }
