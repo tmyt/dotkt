@@ -46,7 +46,7 @@ internal fun kotlinHashCode(value: Any?): Int {
     if (value === null) return 0
     if (value is String || value.starProjectionRuntimeType().isValueType)
         return (value as NativeEqualityObject).nativeHashCode()
-    val plan = equalityTypePlan(value.starProjectionRuntimeType())
+    val plan = equalityTypePlan(value, value.starProjectionRuntimeType())
     return if (plan.family < 0 || plan.nativeHashOverride) (value as NativeEqualityObject).nativeHashCode()
         else structuralHash(value, plan.family, plan.storage)
 }
@@ -76,40 +76,18 @@ internal fun structuralHash(value: Any, family: Int, storage: StarProjectionType
     } finally { disposeEnumerator(elements) }
 }
 
-private val objectType = Any().starProjectionRuntimeType()
-private val objectEqualsSlot = findObjectEqualsSlot()
-private val objectHashSlot = findObjectHashSlot()
+private val objectType = Any::class as System.Type
+private val objectEqualsSlot = (Any::class as System.Type).GetMethod("Equals", 0, arrayOf(objectType))!!
+private val objectHashSlot = (Any::class as System.Type).GetMethod("GetHashCode", 0, System.Type.EmptyTypes)!!
+private val equalsDelegateType = (System.Func2<Any?, Boolean> { false } as System.Object).GetType()
+private val hashDelegateType = (System.Func1<Int> { 0 } as System.Object).GetType()
 
-private fun findObjectHashSlot(): StarProjectionMethod {
-    for (method in objectType.getMethods()) {
-        if (!method.isStatic && method.isVirtual && method.name.nativeObjectEquals("GetHashCode")
-            && method.getParameters().size == 0) return method
-    }
-    error("Missing System.Object.GetHashCode slot")
-}
-
-private fun findObjectEqualsSlot(): StarProjectionMethod {
-    for (method in objectType.getMethods()) {
-        if (!method.isStatic && method.isVirtual && method.name.nativeObjectEquals("Equals")
-            && method.getParameters().size == 1
-            && method.getParameters()[0].parameterType.nativeObjectEquals(objectType)) return method
-    }
-    error("Missing System.Object.Equals slot")
-}
-
-private fun hasNativeEqualsOverride(type: StarProjectionType): Boolean {
-    return hasNativeObjectOverride(type, objectEqualsSlot)
-}
-
-private fun hasNativeObjectOverride(type: StarProjectionType, slot: StarProjectionMethod): Boolean {
-    for (method in type.getMethods()) {
-        if (!method.isVirtual) continue
-        val root = method.getBaseDefinition()
-        if (root.metadataToken == slot.metadataToken
-            && root.module.nativeObjectEquals(slot.module)
-            && !method.declaringType!!.nativeObjectEquals(objectType)) return true
-    }
-    return false
+private fun System.Reflection.MethodInfo.isOverriddenOn(value: Any, delegateType: System.Type): Boolean {
+    // Both Object MethodDefs are explicitly retained by the exact lookups.
+    // The selected override can be callable but lack reflection metadata under AOT.
+    val target = CreateDelegate(delegateType, value)
+    val selected = try { target.Method } catch (_: UnsupportedOperationException) { return true }
+    return !objectType.nativeObjectEquals(selected.DeclaringType)
 }
 
 /** Null-safe Kotlin structural equality. Arguments are evaluated once by the caller. */
@@ -128,22 +106,26 @@ internal fun kotlinInstanceEquals(left: Any?, right: Any?): Boolean {
     if (receiver is Float) return right is Float && kotlin.clrFloatEquals(receiver, right)
     val type = receiver.starProjectionRuntimeType()
     if (type.isValueType) return receiver.nativeObjectEquals(right)
-    val plan = equalityTypePlan(type)
+    val plan = equalityTypePlan(receiver, type)
     return if (plan.family < 0) receiver.nativeObjectEquals(right)
         else structuralEquals(receiver, right, plan.family, plan.storage)
 }
 
-internal fun classifyEqualityType(type: StarProjectionType): EqualityTypePlan {
-    if (hasNativeEqualsOverride(type)) return EqualityTypePlan(-1, null, true)
+internal fun classifyEqualityType(value: Any, type: StarProjectionType): EqualityTypePlan {
     var storage: StarProjectionType? = type
     while (storage != null) {
         val definition = if (storage.isGenericType) storage.getGenericTypeDefinition() else storage
-        for (candidate in listEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(0, storage, hasNativeObjectOverride(type, objectHashSlot))
-        for (candidate in setEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(1, storage, hasNativeObjectOverride(type, objectHashSlot))
-        for (candidate in mapEqualityStorage)
-            if (definition.nativeObjectEquals(candidate)) return EqualityTypePlan(2, storage, hasNativeObjectOverride(type, objectHashSlot))
+        val family = when {
+            listEqualityStorage.any { definition.nativeObjectEquals(it) } -> 0
+            setEqualityStorage.any { definition.nativeObjectEquals(it) } -> 1
+            mapEqualityStorage.any { definition.nativeObjectEquals(it) } -> 2
+            else -> -1
+        }
+        if (family >= 0) {
+            if (objectEqualsSlot.isOverriddenOn(value, equalsDelegateType))
+                return EqualityTypePlan(-1, null, true)
+            return EqualityTypePlan(family, storage, objectHashSlot.isOverriddenOn(value, hashDelegateType))
+        }
         storage = storage.baseType
     }
     return EqualityTypePlan(-1, null, true)

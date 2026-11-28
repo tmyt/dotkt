@@ -16,6 +16,12 @@ public sealed class HiddenList : List<int>
     public new bool Equals(object? other) => throw new InvalidOperationException("not the Object slot");
 }
 
+public class NativeHashList : List<int>
+{
+    public override int GetHashCode() => 73;
+}
+public sealed class InheritsNativeHash : NativeHashList {}
+
 public sealed class LookupKey(int id)
 {
     public static int Calls { get; set; }

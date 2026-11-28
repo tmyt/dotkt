@@ -66,6 +66,8 @@ class CollectionEqualityTests {
         check(!opaque.equals(null) && overridden.Calls == 3)
         val hidden: Any = HiddenList()
         check(hidden == listOf(7, 9))
+        val hashOnly: Any = InheritsNativeHash()
+        check(hashOnly == emptyList<Int>() && hashOnly.hashCode() == 73)
     }
 
     @TestAttribute

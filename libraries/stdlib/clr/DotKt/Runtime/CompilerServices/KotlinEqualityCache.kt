@@ -24,13 +24,13 @@ private fun enterEqualityCell(cell: Any): Unit = error("CLR binding")
 @kotlin.clr.ClrIntrinsic("System.Threading.Monitor.Exit")
 private fun exitEqualityCell(cell: Any): Unit = error("CLR binding")
 
-internal fun equalityTypePlan(type: StarProjectionType): EqualityTypePlan {
+internal fun equalityTypePlan(value: Any, type: StarProjectionType): EqualityTypePlan {
     val cell = equalityTypeCache.get(type)
     enterEqualityCell(cell)
     try {
         val cached = cell.plan
         if (cached !== null) return cached
-        val created = classifyEqualityType(type)
+        val created = classifyEqualityType(value, type)
         cell.plan = created
         return created
     } finally { exitEqualityCell(cell) }
