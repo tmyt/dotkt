@@ -127,7 +127,7 @@ sealed partial class Emitter
 
                 if (type.Kind == CirTypeKind.Delegate)
                 {
-                    var builder = _mod.DefineType(name, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
+                    var builder = _mod.DefineType(name, TypeAccess(type.Vis.OrDefault("public"), false) | TypeAttributes.Sealed | TypeAttributes.Class,
                         Bcl("System.MulticastDelegate"));
                     if (generated) StampCompilerGenerated(builder);
                     var declaration = new TypeInfo { TB = builder, Def = type, IsDelegate = true };

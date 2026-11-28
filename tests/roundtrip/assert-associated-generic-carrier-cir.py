@@ -3,6 +3,7 @@
 from carrier_inspection import metadata_record
 import json
 import sys
+from cir_operands import operand
 from carrier_inspection import type_payloads
 
 
@@ -66,7 +67,7 @@ assert call["memberRef"]["parameterTypes"][-1].get("name") in ("object", "System
 selected_descriptor = {key: call.get(key) for key in
                        ("ownerType", "memberRef", "sig", "calleeParams", "typeArgs", "ret", "dynRet", "sty")}
 assert not any(node.get("t") == "tv" and node.get("scope") == "type" for node in nodes(selected_descriptor))
-construction = call["recv"]
+construction = operand(consumer, call, call["recv"])
 assert construction["k"] == "new" and construction["type"] == {
     "t": "fqn", "name": owner + "`2", "args": [{"t": "fqn", "name": "System.Int32"}] * 2}
 assert construction["memberRef"]["declaringType"] == construction["type"]

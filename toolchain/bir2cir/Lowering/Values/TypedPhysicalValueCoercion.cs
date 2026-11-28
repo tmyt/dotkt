@@ -5,7 +5,7 @@ using static PhysicalValueCoercion;
 
 // Final physical value edges over owning occurrences. Earlier DOM owners still
 // share the scalar conversion policy; this path never materializes a DOM graph.
-static class TypedPhysicalValueCoercion
+static partial class TypedPhysicalValueCoercion
 {
     static readonly TypeNode Void = new TypeNode.Fqn("void");
     static readonly TypeNode Object = new TypeNode.Fqn("System.Object");
@@ -22,7 +22,7 @@ static class TypedPhysicalValueCoercion
         Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
     {
         var index = new Index(roots, unitValue) {
-            IsValue = isValue, ReferenceBuild = referenceBuild,
+            IsValue = isValue, ReferenceBuild = referenceBuild, Declarations = declarations,
             IsReferenceOwner = isReferenceOwner ?? (_ => false),
             IsExistentialOwner = isExistentialOwner ?? (_ => false),
             IsNativeReference = isNativeReference ?? (_ => false),
@@ -93,7 +93,7 @@ static class TypedPhysicalValueCoercion
         internal ReferenceMetadataIndex References;
         BirMemberReference isValueType;
         internal BirNativeInstance IsValueType(TypeNode variable) =>
-            PhysicalTypeKindTest.IsValueType(variable, isValueType ??= PhysicalTypeKindTest.Bind(References));
+            PhysicalTypeKindTest.Read(variable, isValueType ??= PhysicalTypeKindTest.Bind(References));
         BirMemberReference asReference;
         internal BirGenericStatic ReferenceView(TypeNode from, TypeNode to, IBirExpression address)
         {
@@ -162,6 +162,7 @@ static class TypedPhysicalValueCoercion
         internal bool PlainLocalClass(TypeNode component) => component is TypeNode.Fqn { Args: null } owner
             && nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
         internal readonly Dictionary<string, string> CarrierClasses = new(StringComparer.Ordinal);
+        internal PhysicalDelegateDeclarations Declarations;
         readonly Dictionary<(TypeNode, TypeNode), bool> classBases = new();
         internal bool CarrierTarget(TypeNode.Fqn target, TypeNode.Fqn carrier) =>
             HasDeclaredCarrier(target, carrier) || CarrierClassBase(target, carrier);
@@ -942,8 +943,10 @@ static class TypedPhysicalValueCoercion
         var kotlin = !foreign && call is BirCallStatic or BirCallInstance or BirConstrainedCall;
         if (!kotlin && !foreign && call is not (BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance or BirNewClr)) return result;
         var operands = Arguments(call);
-        if (kotlin && operands?.Any(a => a is BirArrayGet || a is BirByRefOf ptr && ptr.Inner.OrDefault() is BirArrayGet) != true) return result;
-        var statements = StageNativeArrayOperands(call, member, operands, ParameterTypes(call), scope, index, foreign, kotlin);
+        var virtualBoundary = kotlin ? VirtualArrayTarget(call, scope, index) : null;
+        if (kotlin && virtualBoundary == null && operands?.Any(a => a is BirArrayGet || a is BirByRefOf ptr && ptr.Inner.OrDefault() is BirArrayGet) != true) return result;
+        var statements = StageNativeArrayOperands(call, member, operands, ParameterTypes(call), scope, index, foreign,
+            kotlin && virtualBoundary == null, virtualBoundary: virtualBoundary);
         return statements == null ? result : new BirValueBlock { Type = ExprType(result, scope, index) ?? Void,
             Stmts = statements, Result = Field(Expression(result)) };
     }
@@ -955,15 +958,16 @@ static class TypedPhysicalValueCoercion
         type != null && SignatureValueTypes.Of(type) is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } };
 
     static bool MayHoldArray(TypeNode type, Index index) => MayHoldArray(type, index.References);
-    internal static bool MayHoldArray(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Array or TypeNode.Tv ||
+    internal static bool MayHoldArray(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Mod modifier
+        ? MayHoldArray(modifier.Of, refs) : type is TypeNode.Array or TypeNode.Tv ||
         type is TypeNode.Fqn f && (f.Name is "object" or "System.Object" or "System.Array" ||
             refs?.IsInterfaceType(f) == true);
 
     static IBirStatement[] StageNativeArrayOperands(BirGraphValue call, BirMemberReference member,
         IBirExpression[] args, TypeNode[] signature, Scope scope, Index index, bool foreign, bool locationsOnly = false,
-        bool conditionalDelegate = false)
+        bool conditionalDelegate = false, Func<IBirExpression, IBirExpression> virtualBoundary = null)
     {
-        bool Publishes(TypeNode type) => !locationsOnly && (ProjectedArrayOperand(type) || foreign && MayHoldArray(type, index));
+        bool Publishes(TypeNode type) => !locationsOnly && (ProjectedArrayOperand(type) || (foreign || virtualBoundary != null) && MayHoldArray(type, index));
         var receiver = call is BirDelegateInvoke invocation ? invocation.Recv.Value : Receiver(call);
         var receiverType = receiver == null ? null : ExprType(Graph(receiver), scope, index);
         var publishesReceiver = call is not BirDelegateInvoke && foreign && MayHoldArray(receiverType, index);
@@ -1008,8 +1012,16 @@ static class TypedPhysicalValueCoercion
             bool location = receiver is BirLocal or BirByRefLoad or BirArrayGet or BirStackGet or BirStaticFieldGet ||
                 receiver is BirFieldGet field && field.Member.OrDefault() != "accessor" ||
                 receiver is BirPropertyGet property && property.Member.OrDefault() == "field";
-            IBirExpression saved = receiver is BirThis ? receiver : location &&
-                (receiverType is TypeNode.Fqn named && index.IsValue(named) || receiverType is TypeNode.Tv && call is BirConstrainedCall)
+            IBirExpression saved;
+            if (receiver is not BirThis && location && receiverType is TypeNode.Tv && call is BirConstrainedCall)
+            {
+                var snapshot = index.ArrayNames.Next("$virtualReceiver$");
+                statements.Add(new BirVariable { Name = snapshot, Type = receiverType });
+                var address = PhysicalTypeKindTest.ReceiverAddress(receiverType, index.IsValueType(receiverType),
+                    new BirByRefOf { Inner = Field(receiver) }, Expression(Graph(receiver).DeepClone()), snapshot);
+                saved = new BirByRefLoad { Local = Retain(address, new TypeNode.ByRef(receiverType)).Name, Elem = receiverType };
+            }
+            else saved = receiver is BirThis ? receiver : location && receiverType is TypeNode.Fqn named && index.IsValue(named)
                 ? new BirByRefLoad { Local = Address(receiver, new TypeNode.ByRef(receiverType)).Name, Elem = receiverType }
                 : Retain(receiver, receiverType);
             if (call is BirDelegateInvoke callback) callback.Recv = Field(saved);
@@ -1022,7 +1034,8 @@ static class TypedPhysicalValueCoercion
         }
         for (var i = 0; i < args.Length; i++)
         {
-            if (SignatureValueTypes.Of(signature[i]) is TypeNode.ByRef pointer)
+            var valueType = SignatureValueTypes.Of(signature[i]);
+            if (valueType is TypeNode.ByRef pointer)
             {
                 if (Indexed(i) is { } location && ReferenceElement(pointer.Of))
                 {
@@ -1044,17 +1057,20 @@ static class TypedPhysicalValueCoercion
             }
             else
             {
-                var saved = Retain(args[i], signature[i]);
+                var saved = Retain(args[i], valueType);
                 args[i] = saved;
-                if (Publishes(signature[i]))
+                if (Publishes(valueType))
                 {
-                    dynamicValue |= signature[i] is not TypeNode.Array;
-                    exports.Add(ExposureCandidate(saved.DeepClone(), signature[i]));
+                    dynamicValue |= valueType is not TypeNode.Array;
+                    exports.Add(ExposureCandidate(saved.DeepClone(), valueType));
                 }
             }
         }
         if (exports.Count != 0 || vectors.Count != 0)
         {
+            if (virtualBoundary != null)
+                for (int i = 0; i < exports.Count; i++)
+                    if (exports[i] is not BirLocal) exports[i] = Retain(exports[i], Object);
             var batch = new TypeNode.Array(Object);
             var publish = vectors.Count != 0 ? ArrayRuntimeCall("exposeProjectedArguments", Void, [batch, batch, new TypeNode.Array(NativeIndex)], index,
                     new BirNewArray { Elem = Object, Elems = exports.ToArray() },
@@ -1068,9 +1084,33 @@ static class TypedPhysicalValueCoercion
                 Cond = ArrayRuntimeCall("callablePublishesArrays", new TypeNode.Fqn("System.Boolean"), [Object], index,
                     Expression(Graph(((BirDelegateInvoke)call).Recv.Value).DeepClone())),
                 Body = new[] { publication } }} };
+            if (virtualBoundary != null && exports.Count != 0)
+            {
+                var boolean = new TypeNode.Fqn("System.Boolean");
+                IBirExpression check = null;
+                foreach (var value in exports.AsEnumerable().Reverse())
+                {
+                    var mayPublish = ArrayRuntimeCall("mayNeedArrayPublication", boolean, [Object], index, Expression(Graph(value).DeepClone()));
+                    check = check == null ? mayPublish : new BirConditional { Type = boolean, Cond = mayPublish,
+                        Then = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) }, Else = Field(check) };
+                }
+                var native = new BirBranch { Cond = new BirConditional { Type = boolean, Cond = Field(check),
+                    Then = Field(virtualBoundary(Expression(Graph(Receiver(call)).DeepClone()))),
+                    Else = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(false) } },
+                    Body = new[] { publication } };
+                // The managed address escapes even into a Kotlin body. Only
+                // whole-value publication depends on the selected implementation.
+                publication = new BirIf { Branches = vectors.Count == 0 ? [native] : new[] { native,
+                    new BirBranch { Else = true, Body = new IBirStatement[] { new BirExpressionStatement {
+                        Expr = ArrayRuntimeCall("exposeProjectedArguments", Void, [batch, batch, new TypeNode.Array(NativeIndex)], index,
+                            new BirNewArray { Elem = Object, Elems = Array.Empty<IBirExpression>() },
+                            new BirNewArray { Elem = Object, Elems = vectors.Select(v => Expression(Graph(v).DeepClone())).ToArray() },
+                            new BirNewArray { Elem = NativeIndex, Elems = indices.Select(v => Expression(Graph(v).DeepClone())).ToArray() }) } } } } };
+            }
             // For already staged by-value callback operands, avoid allocating a
             // publication batch or entering the global array lock for scalar calls.
-            if (call is BirDelegateInvoke && dynamicValue && exports.Count > 1 && vectors.Count == 0 && exports.All(e => e is BirLocal))
+            if ((virtualBoundary != null && exports.Count != 0 || call is BirDelegateInvoke && exports.Count > 1) &&
+                dynamicValue && vectors.Count == 0 && exports.All(e => e is BirLocal))
             {
                 var boolean = new TypeNode.Fqn("System.Boolean");
                 IBirExpression test = null;
