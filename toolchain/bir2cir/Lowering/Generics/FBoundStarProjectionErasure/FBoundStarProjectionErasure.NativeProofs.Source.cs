@@ -164,7 +164,8 @@ static partial class FBoundStarProjectionErasure
                     if (edge.NativeMethodKey.OrDefault() is not string key || edge.Owner.OrDefault() is not TypeNode.Fqn slot
                         || !references.IsInterfaceType(slot)) continue;
                     var open = ClrMemberResolution.ResolveOwnerType(slot, references);
-                    var required = references.SelectProjectedNativeBase(open, key).GetGenericArguments();
+                    var required = ClrDeclarationMatching.MethodForNativeKey(references, open,
+                        edge.Member.Value, parent.Arity.Value, true, key).GetGenericArguments();
                     for (int i = 0; i < required.Length; i++)
                     {
                         if ((required[i].GenericParameterAttributes & System.Reflection.GenericParameterAttributes.AllowByRefLike) == 0) continue;
