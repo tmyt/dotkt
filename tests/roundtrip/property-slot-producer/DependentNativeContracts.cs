@@ -11,6 +11,7 @@ public class NativePairReader
     public virtual string Read<A,B>(A first, B second) where A : ILeft where B : ILeft => "native base";
     public virtual T Replace<T>(ref T slot, T next) where T : ILeft { var old = slot; slot = next; return old; }
     public virtual T Pick<T>(T item) where T : Base, ILeft => item;
+    public virtual string Describe<T>(System.Collections.Generic.Queue<T> items) where T : Base => "native base";
 }
 public interface IRight { }
 public interface IJointProof : ILeft, IRight { }

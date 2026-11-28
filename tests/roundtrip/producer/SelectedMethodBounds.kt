@@ -8,6 +8,7 @@ import System.Collections.Generic.Queue
 import kotlin.clr.ClrRef
 
 interface PairReader<K : ILeft> { fun <A : K, B : K> Read(first: A, second: B): Any }
+interface QueueReader { fun <T : Base> Describe(items: System.Collections.Generic.Queue<T>): CharSequence }
 interface SlotWriter {
     fun <A : ILeft> Replace(slot: ClrRef<A>, next: A): A
     fun <A> Pick(item: A): A where A : Base, A : ILeft

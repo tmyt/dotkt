@@ -176,7 +176,6 @@ static partial class FBoundStarProjectionErasure
                 CaptureBody(storage);
                 file.Types = file.Types.Value.Concat(generated).ToArray();
             }
-            foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             storage.Visit(node => {
                 // A self-receiver now belongs to the private implementation, not to
                 // an exact instantiation of the original Kotlin class. Other
@@ -188,6 +187,10 @@ static partial class FBoundStarProjectionErasure
                 if (receiver is BirThis) node.RewriteOwnTypeFieldsInPlace((field, _, t) =>
                     field == "ownerType" && t is TypeNode.Fqn owner && owner.Name == plan.Exact ? Instance("type") : t);
             });
+            var slotAdapters = new List<IBirTypeDeclaration>();
+            foreach (var method in storage.Methods.Value) callables.FinishFixedSlot(storage, method, emittedTypes, slotAdapters);
+            if (slotAdapters.Count != 0) file.Types = file.Types.Value.Concat(slotAdapters).ToArray();
+            foreach (var method in storage.Methods.Value) method.RoundtripDeclarationIdentity = default;
             var ctors = storage.Ctors.OrEmpty();
             for (int index = 0; index < ctors.Length; index++)
             {

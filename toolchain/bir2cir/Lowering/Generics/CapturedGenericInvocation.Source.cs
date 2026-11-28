@@ -311,7 +311,8 @@ static partial class CapturedGenericInvocation
             HashSet<string> emitted, List<IBirTypeDeclaration> generated, bool deferVariableArguments = false,
             CallableWitnessScope classScope = default, CallableWitnessScope methodScope = default,
             Func<string,string> allocate = null, IBirTypeDeclaration lexicalDefinition = null, LiveResultUse resultUse = null,
-            bool projectingBody = false, IReadOnlyDictionary<string, TypeNode> locations = null, bool splitDependency = false)
+            bool projectingBody = false, IReadOnlyDictionary<string, TypeNode> locations = null, bool splitDependency = false,
+            BirFunctionDeclaration physicalTarget = null)
         {
             var occurrence = call.Node;
             call = SelectedInvocation(call, out var access);
@@ -319,7 +320,7 @@ static partial class CapturedGenericInvocation
             var owner = (TypeNode.Fqn)(call.Member?.DeclaringType.OrDefault() ?? call.Owner);
             var binding = id != null && declarations.TryGetValue(id, out var bindings)
                 ? bindings.SingleOrDefault(b => b.Owner == owner.Name && b.Method.Name.OrDefault() == call.Method) : null;
-            var local = binding?.Method;
+            var local = physicalTarget ?? binding?.Method;
             if (!splitDependency && !(id == null && call.Member != null) && call.Node is not (BirGenericInstance or BirGenericStatic) &&
                 !ProjectedCallableEntries.HasFixedAbi(local, id, refs)) return null;
             if (projectingBody && LiveResultUse.InCurrentPass(occurrence, true) &&
@@ -353,7 +354,7 @@ static partial class CapturedGenericInvocation
             }
             else
             {
-                var definition = binding.Container.Type;
+                var definition = physicalTarget == null ? binding.Container.Type : lexicalDefinition;
                 var ownerParameters = definition == null ? [] : TypeParameterFrame.Declarations(definition).ToArray();
                 var methodParameters = local.TypeParams.OrEmpty();
                 bool Typed(TypeNode type) => SignatureValueTypes.Of(type) is TypeNode.Tv v
