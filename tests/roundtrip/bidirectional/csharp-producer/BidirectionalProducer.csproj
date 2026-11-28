@@ -3,6 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../producer/RoundtripProducer.ktproj" />
     <Compile Include="../../../interop/producer/VirtualIndexers.cs" Link="VirtualIndexers.cs" />
   </ItemGroup>
 </Project>

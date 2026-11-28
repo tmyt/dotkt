@@ -7,7 +7,16 @@ static partial class TypedPhysicalValueCoercion
 {
     internal static void PreserveVirtualTargets(CirFileDeclaration file, ReferenceMetadataIndex refs)
     {
-        AttributeApplication dependency = null;
+        var text = new TypeNode.Fqn("System.String");
+        var access = new TypeNode.Fqn("System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes");
+        AttributeApplication dependency = null, methodGroup = null;
+        AttributeApplication Bind(params TypeNode[] args)
+        {
+            var attribute = ClrMemberResolution.ResolveAttributeCtor(null,
+                new AttributeApplication(new TypeNode.Fqn("System.Diagnostics.CodeAnalysis.DynamicDependencyAttribute"),
+                    args, [], true, "System.Runtime"), refs);
+            return attribute.MemberRef != null ? attribute : throw new InvalidOperationException("Cannot bind the virtual-target metadata dependency.");
+        }
         foreach (var owner in file.Types)
         {
             var methods = owner.Methods.OrEmpty();
@@ -20,10 +29,14 @@ static partial class TypedPhysicalValueCoercion
                     !method.Params.Any(p => MayHoldArray(SignatureValueTypes.Of(p.Type) is TypeNode.ByRef by ? by.Of : p.Type, refs))) continue;
                 var arity = method.TypeParams.OrEmpty().Length;
                 var signature = method.Name + (arity == 0 ? "" : "``" + arity);
-                dependency ??= ClrMemberResolution.ResolveAttributeCtor(null,
-                    new AttributeApplication(new TypeNode.Fqn("System.Diagnostics.CodeAnalysis.DynamicDependencyAttribute"),
-                        [new TypeNode.Fqn("System.String")], [], true, "System.Runtime"), refs);
-                var root = dependency with { Args = [new AttributeArgument.TextValue(signature)] };
+                // Linker member signatures are parsed, not literal metadata names.
+                // A backtick-quoted Kotlin identifier may contain their delimiters.
+                var root = method.Name.All(c => char.IsLetterOrDigit(c) || c is '_' or '$')
+                    ? (dependency ??= Bind(text)) with { Args = [new AttributeArgument.TextValue(signature)] }
+                    : (methodGroup ??= Bind(access, new TypeNode.Fqn("System.Type"))) with { Args = [
+                        new AttributeArgument.Int32Value((int)(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods |
+                            System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.NonPublicMethods)),
+                        new AttributeArgument.TypeValue(new TypeNode.Fqn(owner.Name))] };
                 methods[i] = method with { Attrs = method.Attrs.OrEmpty().Append(root).ToArray() };
             }
         }
@@ -52,11 +65,38 @@ static partial class TypedPhysicalValueCoercion
         var signature = IsVoid(result) ? args : args.Append(result).ToArray();
         var slot = local ? index.Declarations.DispatchDelegate(index.Document, args, result)
             : new TypeNode.Fqn(IsVoid(result) ? "System.Action" : "System.Func", signature.Length == 0 ? null : signature);
-        return saved => ArrayRuntimeCall("virtualTargetPublishesArrays", new TypeNode.Fqn("System.Boolean"), [Object], index,
+        var boolean = new TypeNode.Fqn("System.Boolean");
+        IBirExpression Inspects(IBirExpression receiver) => ArrayRuntimeCall("virtualTargetPublishesArrays", boolean, [Object], index,
             bound with {
-                OwnerType = owner, CalleeOwner = owner, Virtual = true, Recv = Field(saved), FuncType = slot,
+                OwnerType = owner, CalleeOwner = owner, Virtual = true, Recv = Field(receiver), FuncType = slot,
                 DelegateCtorRef = local ? default(OptionalField<BirMemberReference>) :
                     BirMemberReference.FromPhysical(ClrMemberResolution.DelegateConstructorReference(null, index.References, slot)),
             });
+        if (call is not BirConstrainedCall cc || cc.RecvType.OrDefault() is not TypeNode.Tv tv) return Inspects;
+        return saved => {
+            // Never emit box !!T: the JIT rejects it for a ref-like T even in
+            // a dead branch. Stack-only native structs must supply their own
+            // interface implementation. Other structs may inherit a Kotlin DIM;
+            // classify the real slot on a boxed copy, leaving the call on its address.
+            var byteType = new TypeNode.Fqn("System.Byte");
+            var handle = new TypeNode.Fqn("System.RuntimeTypeHandle");
+            TypeNode[] parameters = [new TypeNode.ByRef(byteType), handle];
+            const string runtime = "System.Runtime.CompilerServices.RuntimeHelpers";
+            if (!index.References.TryResolveStaticMemberSignature(runtime, "Box", 0, true, parameters, null,
+                    out _, out var method, out var declaring))
+                throw new InvalidOperationException("bir2cir: missing RuntimeHelpers.Box(ref byte, RuntimeTypeHandle)");
+            var box = BirMemberReference.FromPhysical(ClrMemberResolution.MemberRefOf(null, index.References, method, "method", declaring, null));
+            IBirExpression Location() => saved is BirByRefLoad load ? load.Ptr.OrDefault() ?? new BirLocal { Name = load.Local }
+                : Expression(Graph(saved).DeepClone());
+            var boxed = new BirNativeStatic { Type = box.DeclaringType, Method = box.Name, Ret = Object, MemberRef = box,
+                Args = new IBirExpression[] { index.ReferenceView(tv, byteType, Location()), PhysicalTypeKindTest.Read(tv,
+                    PhysicalTypeKindTest.Bind(index.References, nameof(Type.TypeHandle))) } };
+            var reference = new BirByRefLoad { Elem = Object, Ptr = index.ReferenceView(tv, Object, Location()) };
+            var receiver = new BirConditional { Type = Object, Cond = index.IsValueType(tv), Then = boxed, Else = reference };
+            return new BirConditional { Type = boolean, Cond = PhysicalTypeKindTest.Read(tv,
+                PhysicalTypeKindTest.Bind(index.References, nameof(Type.IsByRefLike))),
+                Then = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) },
+                Else = Field(Inspects(Cast(receiver, owner))) };
+        };
     }
 }

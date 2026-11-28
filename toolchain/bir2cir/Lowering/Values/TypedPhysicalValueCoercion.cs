@@ -93,7 +93,7 @@ static partial class TypedPhysicalValueCoercion
         internal ReferenceMetadataIndex References;
         BirMemberReference isValueType;
         internal BirNativeInstance IsValueType(TypeNode variable) =>
-            PhysicalTypeKindTest.IsValueType(variable, isValueType ??= PhysicalTypeKindTest.Bind(References));
+            PhysicalTypeKindTest.Read(variable, isValueType ??= PhysicalTypeKindTest.Bind(References));
         BirMemberReference asReference;
         internal BirGenericStatic ReferenceView(TypeNode from, TypeNode to, IBirExpression address)
         {
@@ -958,7 +958,8 @@ static partial class TypedPhysicalValueCoercion
         type != null && SignatureValueTypes.Of(type) is TypeNode.Array { Elem: TypeNode.Fqn { Args.Length: > 0 } };
 
     static bool MayHoldArray(TypeNode type, Index index) => MayHoldArray(type, index.References);
-    internal static bool MayHoldArray(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Array or TypeNode.Tv ||
+    internal static bool MayHoldArray(TypeNode type, ReferenceMetadataIndex refs) => type is TypeNode.Mod modifier
+        ? MayHoldArray(modifier.Of, refs) : type is TypeNode.Array or TypeNode.Tv ||
         type is TypeNode.Fqn f && (f.Name is "object" or "System.Object" or "System.Array" ||
             refs?.IsInterfaceType(f) == true);
 
@@ -1011,8 +1012,16 @@ static partial class TypedPhysicalValueCoercion
             bool location = receiver is BirLocal or BirByRefLoad or BirArrayGet or BirStackGet or BirStaticFieldGet ||
                 receiver is BirFieldGet field && field.Member.OrDefault() != "accessor" ||
                 receiver is BirPropertyGet property && property.Member.OrDefault() == "field";
-            IBirExpression saved = receiver is BirThis ? receiver : location &&
-                (receiverType is TypeNode.Fqn named && index.IsValue(named) || receiverType is TypeNode.Tv && call is BirConstrainedCall)
+            IBirExpression saved;
+            if (receiver is not BirThis && location && receiverType is TypeNode.Tv && call is BirConstrainedCall)
+            {
+                var snapshot = index.ArrayNames.Next("$virtualReceiver$");
+                statements.Add(new BirVariable { Name = snapshot, Type = receiverType });
+                var address = PhysicalTypeKindTest.ReceiverAddress(receiverType, index.IsValueType(receiverType),
+                    new BirByRefOf { Inner = Field(receiver) }, Expression(Graph(receiver).DeepClone()), snapshot);
+                saved = new BirByRefLoad { Local = Retain(address, new TypeNode.ByRef(receiverType)).Name, Elem = receiverType };
+            }
+            else saved = receiver is BirThis ? receiver : location && receiverType is TypeNode.Fqn named && index.IsValue(named)
                 ? new BirByRefLoad { Local = Address(receiver, new TypeNode.ByRef(receiverType)).Name, Elem = receiverType }
                 : Retain(receiver, receiverType);
             if (call is BirDelegateInvoke callback) callback.Recv = Field(saved);
@@ -1058,7 +1067,7 @@ static partial class TypedPhysicalValueCoercion
         }
         if (exports.Count != 0 || vectors.Count != 0)
         {
-            if (virtualBoundary != null && dynamicValue && vectors.Count == 0)
+            if (virtualBoundary != null)
                 for (int i = 0; i < exports.Count; i++)
                     if (exports[i] is not BirLocal) exports[i] = Retain(exports[i], Object);
             var batch = new TypeNode.Array(Object);
@@ -1076,7 +1085,17 @@ static partial class TypedPhysicalValueCoercion
                 Body = new[] { publication } }} };
             if (virtualBoundary != null && exports.Count != 0)
             {
-                var native = new BirBranch { Cond = Field(virtualBoundary(Expression(Graph(Receiver(call)).DeepClone()))),
+                var boolean = new TypeNode.Fqn("System.Boolean");
+                IBirExpression check = null;
+                foreach (var value in exports.AsEnumerable().Reverse())
+                {
+                    var mayPublish = ArrayRuntimeCall("mayNeedArrayPublication", boolean, [Object], index, Expression(Graph(value).DeepClone()));
+                    check = check == null ? mayPublish : new BirConditional { Type = boolean, Cond = mayPublish,
+                        Then = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(true) }, Else = Field(check) };
+                }
+                var native = new BirBranch { Cond = new BirConditional { Type = boolean, Cond = Field(check),
+                    Then = Field(virtualBoundary(Expression(Graph(Receiver(call)).DeepClone()))),
+                    Else = new BirConstant { Type = boolean, Value = new BirLiteral.BooleanLiteral(false) } },
                     Body = new[] { publication } };
                 // The managed address escapes even into a Kotlin body. Only
                 // whole-value publication depends on the selected implementation.

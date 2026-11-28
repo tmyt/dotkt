@@ -4,12 +4,24 @@ namespace DotKt.Tests.Bidirectional;
 
 public class VirtualArrayBoundaryTests
 {
+    sealed class NativeHolder : ArrayHolder { public object item { get; set; } }
+    [Test]
+    public void DoesNotEnterNativeSetterWithIncompatibleContents()
+    {
+        var holder = new NativeHolder();
+        Assert.Throws<InvalidCastException>(() => VirtualArrayBoundaryKt.assignInspected(holder));
+        Assert.That(holder.item, Is.Null);
+    }
     sealed class Native : ArrayInspection
     {
         public int Calls;
         public object inspect(object value) { Calls++; return value; }
     }
     sealed class Inherits : KotlinArrayInspection { }
+    readonly struct ValueSink(string id) : ArrayInspection
+    {
+        public object inspect(object value) => id;
+    }
     struct NativeRef : RefArrayInspection
     {
         public static int Calls;
@@ -42,6 +54,9 @@ public class VirtualArrayBoundaryTests
         Assert.That(VirtualArrayBoundaryKt.inspectRefThroughKotlin(new NativeRef(), true), Is.True);
         Assert.That(NativeRef.Calls, Is.EqualTo(1));
         Assert.That(VirtualArrayBoundaryKt.inspectRefThroughKotlin(new InheritsRef(), false), Is.True);
+        IArrayInspectionRelay relay = new KotlinInspectionRelay();
+        Assert.That(relay.Inspect<ArrayInspection>(new Inherits(), new Native()), Is.EqualTo("original"));
+        Assert.That(relay.Inspect(new ValueSink("before"), new ValueSink("after")), Is.EqualTo("after"));
         foreach (bool bound in new[] { false, true })
         {
             var direct = new Native();

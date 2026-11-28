@@ -3,6 +3,13 @@ import kotlin.clr.byref
 
 private class InspectedBox<T>(val value: T)
 
+@Suppress("UNCHECKED_CAST")
+fun assignInspected(holder: ArrayHolder) {
+    val array = arrayOf(InspectedBox("original"))
+    array[0] = InspectedBox(42) as InspectedBox<String>
+    holder.item = array
+}
+
 interface RefArrayInspection {
     fun inspectRef(value: ClrRef<Any>): Any?
 }
@@ -22,6 +29,13 @@ private fun <S : RefArrayInspection> inspectGenericRef(view: S, compatible: Bool
     var slot: Any = array
     val observed = view.inspectRef(byref(slot))
     return if (observed === array) slot is String else observed === expected && slot === array
+}
+
+class KotlinInspectionRelay : IArrayInspectionRelay {
+    override fun <S : ArrayInspection> Inspect(first: S, replacement: S): Any? {
+        var current = first
+        return current.inspect(ArrayReceiverArgument.Replace(byref(current), replacement, arrayOf("original")))
+    }
 }
 
 @Suppress("UNCHECKED_CAST")

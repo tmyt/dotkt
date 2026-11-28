@@ -22,7 +22,7 @@ sealed partial class PhysicalDelegateDeclarations
         TypeNode Shape(TypeNode value) => value switch {
             TypeNode.ByRef b => new TypeNode.ByRef(Shape(b.Of)),
             TypeNode.Ptr p => new TypeNode.Ptr(Shape(p.Of)),
-            TypeNode.Mod m => m with { Of = Shape(m.Of) },
+            TypeNode.Mod m => m with { M = TypedExecutableFrames.RewriteType(m.M, Leaf), Of = Shape(m.Of) },
             TypeNode.FnPtr f => f with { Ret = Shape(f.Ret), Params = f.Params.Select(Shape).ToArray() },
             TypeNode.Fqn { Name: "void" or "System.Void" } => new TypeNode.Fqn("System.Void"),
             _ => Leaf(value),

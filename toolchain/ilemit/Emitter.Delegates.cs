@@ -174,8 +174,8 @@ sealed partial class Emitter
 
     void DefineDelegateMembers(TypeInfo ti)
     {
-        var invokeParams = ti.TypeDeclaration.Params.Value.Select(p => MapType(p.Type)).ToArray();
-        var invokeRet = MapType(ti.TypeDeclaration.Ret.Value);
+        var parameters = ti.TypeDeclaration.Params.Value.Select(p => MapSignatureSlot(p.Type)).ToArray();
+        var result = MapSignatureSlot(ti.TypeDeclaration.Ret.Value);
         var ctor = ti.TB.DefineConstructor(
             MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.RTSpecialName | MethodAttributes.SpecialName,
             CallingConventions.Standard,
@@ -183,9 +183,11 @@ sealed partial class Emitter
         ctor.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
         var invoke = ti.TB.DefineMethod(
             "Invoke",
-            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual,
-            invokeRet,
-            invokeParams);
+            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual);
+        invoke.SetSignature(result.Type, result.Required, result.Optional, parameters.Select(p => p.Type).ToArray(),
+            parameters.Select(p => p.Required).ToArray(), parameters.Select(p => p.Optional).ToArray());
+        if (result.HasModifiers || parameters.Any(p => p.HasModifiers))
+            _declaredMethodSignatures[invoke] = new(result, parameters);
         invoke.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
         _declaredDelegateCtors[ti.TB] = ctor;
         _declaredDelegateInvokes[ti.TB] = invoke;

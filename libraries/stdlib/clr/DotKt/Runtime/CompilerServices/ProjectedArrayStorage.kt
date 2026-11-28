@@ -281,6 +281,11 @@ internal fun exposeProjectedValue(value: Any?) {
     if (value is ProjectedArrayVector) exposeProjectedArray(value)
 }
 
+// Only attached state or a jagged row can change on publication.
+@PublishedApi
+internal fun mayNeedArrayPublication(value: Any?): Boolean =
+    value is ProjectedArrayVector && (stateOf(value) != null || value.hasArrayRows())
+
 // A virtual delegate selects the actual MethodDef, including explicit CLR
 // implementations and inherited Kotlin bodies on a C# receiver. bir2cir
 // roots eligible Kotlin virtual MethodDefs for metadata-trimmed execution.
