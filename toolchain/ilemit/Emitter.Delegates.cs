@@ -99,6 +99,14 @@ sealed partial class Emitter
     readonly Dictionary<TypeBuilder, ConstructorBuilder> _declaredDelegateCtors = new();
     readonly Dictionary<TypeBuilder, MethodBuilder> _declaredDelegateInvokes = new();
 
+    ConstructorInfo LocalDelegateConstructor(Type type)
+    {
+        var open = IsGenericInst(type) ? type.GetGenericTypeDefinition() : type;
+        if (open is not TypeBuilder builder || !_declaredDelegateCtors.TryGetValue(builder, out var constructor))
+            throw new InvalidOperationException($"ilemit: '{type}' has no locally declared delegate constructor");
+        return type == open ? constructor : AnchorConstructor(type, constructor);
+    }
+
     ConstructorInfo DelegateCtor(Type ft)
     {
         var sig = new[] { Bcl("System.Object"), Bcl("System.IntPtr") };

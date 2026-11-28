@@ -1486,7 +1486,8 @@ sealed class Pipeline
             new TypedCirProjection(emitted, projectionContexts[index], _options.Release).ProjectCirFileDeclaration(file.Root)).ToArray(), refs);
         for (var index = 0; index < pendingOutput.Count; index++)
         {
-            var declaration = declarations[index];
+            var declaration = delegateDeclarations.IncludeDispatchDelegates(pendingOutput[index].Root, declarations[index]);
+            if (!_options.RefBuild) TypedPhysicalValueCoercion.PreserveVirtualTargets(declaration, refs);
             if (_options.RefBuild) declaration = RefBodySquash.LowerLiteralPlaceholders(declaration, projectionContexts[index]);
             files.Add(new CirFile(pendingOutput[index].OutputName, declaration));
         }

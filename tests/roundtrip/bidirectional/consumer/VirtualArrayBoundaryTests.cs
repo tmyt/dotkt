@@ -10,6 +10,18 @@ public class VirtualArrayBoundaryTests
         public object inspect(object value) { Calls++; return value; }
     }
     sealed class Inherits : KotlinArrayInspection { }
+    struct NativeRef : RefArrayInspection
+    {
+        public static int Calls;
+        public object inspectRef(ref object value)
+        {
+            Calls++;
+            var original = value;
+            value = "written";
+            return original;
+        }
+    }
+    sealed class InheritsRef : KotlinRefInspection { }
     sealed class Overrides : KotlinArrayInspection
     {
         public int Calls;
@@ -24,6 +36,12 @@ public class VirtualArrayBoundaryTests
     [Test]
     public void PublishesForActualNativeBodiesButNotInheritedKotlinBodies()
     {
+        NativeRef.Calls = 0;
+        Assert.Throws<InvalidCastException>(() => VirtualArrayBoundaryKt.inspectRefThroughKotlin(new NativeRef(), false));
+        Assert.That(NativeRef.Calls, Is.Zero);
+        Assert.That(VirtualArrayBoundaryKt.inspectRefThroughKotlin(new NativeRef(), true), Is.True);
+        Assert.That(NativeRef.Calls, Is.EqualTo(1));
+        Assert.That(VirtualArrayBoundaryKt.inspectRefThroughKotlin(new InheritsRef(), false), Is.True);
         foreach (bool bound in new[] { false, true })
         {
             var direct = new Native();

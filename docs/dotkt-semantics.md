@@ -2454,6 +2454,11 @@ Calling a native callback exposes array arguments to CLR code even when the dele
 Kotlin carrier signature. Compatible arrays keep their identity; an incompatible unchecked array
 is rejected before the native body runs. Calling an ordinary Kotlin function through the same
 carrier does not expose its arguments merely because the carrier is a CLR delegate.
+For a Kotlin virtual method, the implementation selected at runtime determines
+whether its array arguments cross into CLR code. A C# override or explicit
+interface implementation receives only representable arrays, without a copy.
+A C# subclass that inherits the Kotlin implementation still sees Kotlin's
+original elements. Taking a bound reference to the method does not change this rule.
 If CLR code retains a Kotlin callback, an array it returns is checked when the callback
 returns to CLR, even when the delegate signatures already match. A compatible return
 is the same array, not a copy. Calling the original Kotlin function does not publish its result.

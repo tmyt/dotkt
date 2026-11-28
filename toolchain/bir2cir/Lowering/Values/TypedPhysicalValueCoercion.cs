@@ -5,7 +5,7 @@ using static PhysicalValueCoercion;
 
 // Final physical value edges over owning occurrences. Earlier DOM owners still
 // share the scalar conversion policy; this path never materializes a DOM graph.
-static class TypedPhysicalValueCoercion
+static partial class TypedPhysicalValueCoercion
 {
     static readonly TypeNode Void = new TypeNode.Fqn("void");
     static readonly TypeNode Object = new TypeNode.Fqn("System.Object");
@@ -22,7 +22,7 @@ static class TypedPhysicalValueCoercion
         Func<TypeNode.Fqn, TypeNode.Fqn, bool> referencedCarrier = null, ReferenceMetadataIndex references = null)
     {
         var index = new Index(roots, unitValue) {
-            IsValue = isValue, ReferenceBuild = referenceBuild,
+            IsValue = isValue, ReferenceBuild = referenceBuild, Declarations = declarations,
             IsReferenceOwner = isReferenceOwner ?? (_ => false),
             IsExistentialOwner = isExistentialOwner ?? (_ => false),
             IsNativeReference = isNativeReference ?? (_ => false),
@@ -162,6 +162,7 @@ static class TypedPhysicalValueCoercion
         internal bool PlainLocalClass(TypeNode component) => component is TypeNode.Fqn { Args: null } owner
             && nonGenericClasses.Contains(owner.Name) && !IsValue(owner);
         internal readonly Dictionary<string, string> CarrierClasses = new(StringComparer.Ordinal);
+        internal PhysicalDelegateDeclarations Declarations;
         readonly Dictionary<(TypeNode, TypeNode), bool> classBases = new();
         internal bool CarrierTarget(TypeNode.Fqn target, TypeNode.Fqn carrier) =>
             HasDeclaredCarrier(target, carrier) || CarrierClassBase(target, carrier);
@@ -942,8 +943,10 @@ static class TypedPhysicalValueCoercion
         var kotlin = !foreign && call is BirCallStatic or BirCallInstance or BirConstrainedCall;
         if (!kotlin && !foreign && call is not (BirNativeStatic or BirNativeInstance or BirGenericStatic or BirGenericInstance or BirNewClr)) return result;
         var operands = Arguments(call);
-        if (kotlin && operands?.Any(a => a is BirArrayGet || a is BirByRefOf ptr && ptr.Inner.OrDefault() is BirArrayGet) != true) return result;
-        var statements = StageNativeArrayOperands(call, member, operands, ParameterTypes(call), scope, index, foreign, kotlin);
+        var virtualBoundary = kotlin ? VirtualArrayTarget(call, scope, index) : null;
+        if (kotlin && virtualBoundary == null && operands?.Any(a => a is BirArrayGet || a is BirByRefOf ptr && ptr.Inner.OrDefault() is BirArrayGet) != true) return result;
+        var statements = StageNativeArrayOperands(call, member, operands, ParameterTypes(call), scope, index, foreign,
+            kotlin && virtualBoundary == null, virtualBoundary: virtualBoundary);
         return statements == null ? result : new BirValueBlock { Type = ExprType(result, scope, index) ?? Void,
             Stmts = statements, Result = Field(Expression(result)) };
     }
@@ -961,9 +964,9 @@ static class TypedPhysicalValueCoercion
 
     static IBirStatement[] StageNativeArrayOperands(BirGraphValue call, BirMemberReference member,
         IBirExpression[] args, TypeNode[] signature, Scope scope, Index index, bool foreign, bool locationsOnly = false,
-        bool conditionalDelegate = false)
+        bool conditionalDelegate = false, Func<IBirExpression, IBirExpression> virtualBoundary = null)
     {
-        bool Publishes(TypeNode type) => !locationsOnly && (ProjectedArrayOperand(type) || foreign && MayHoldArray(type, index));
+        bool Publishes(TypeNode type) => !locationsOnly && (ProjectedArrayOperand(type) || (foreign || virtualBoundary != null) && MayHoldArray(type, index));
         var receiver = call is BirDelegateInvoke invocation ? invocation.Recv.Value : Receiver(call);
         var receiverType = receiver == null ? null : ExprType(Graph(receiver), scope, index);
         var publishesReceiver = call is not BirDelegateInvoke && foreign && MayHoldArray(receiverType, index);
@@ -1055,6 +1058,9 @@ static class TypedPhysicalValueCoercion
         }
         if (exports.Count != 0 || vectors.Count != 0)
         {
+            if (virtualBoundary != null && dynamicValue && vectors.Count == 0)
+                for (int i = 0; i < exports.Count; i++)
+                    if (exports[i] is not BirLocal) exports[i] = Retain(exports[i], Object);
             var batch = new TypeNode.Array(Object);
             var publish = vectors.Count != 0 ? ArrayRuntimeCall("exposeProjectedArguments", Void, [batch, batch, new TypeNode.Array(NativeIndex)], index,
                     new BirNewArray { Elem = Object, Elems = exports.ToArray() },
@@ -1068,9 +1074,23 @@ static class TypedPhysicalValueCoercion
                 Cond = ArrayRuntimeCall("callablePublishesArrays", new TypeNode.Fqn("System.Boolean"), [Object], index,
                     Expression(Graph(((BirDelegateInvoke)call).Recv.Value).DeepClone())),
                 Body = new[] { publication } }} };
+            if (virtualBoundary != null && exports.Count != 0)
+            {
+                var native = new BirBranch { Cond = Field(virtualBoundary(Expression(Graph(Receiver(call)).DeepClone()))),
+                    Body = new[] { publication } };
+                // The managed address escapes even into a Kotlin body. Only
+                // whole-value publication depends on the selected implementation.
+                publication = new BirIf { Branches = vectors.Count == 0 ? [native] : new[] { native,
+                    new BirBranch { Else = true, Body = new IBirStatement[] { new BirExpressionStatement {
+                        Expr = ArrayRuntimeCall("exposeProjectedArguments", Void, [batch, batch, new TypeNode.Array(NativeIndex)], index,
+                            new BirNewArray { Elem = Object, Elems = Array.Empty<IBirExpression>() },
+                            new BirNewArray { Elem = Object, Elems = vectors.Select(v => Expression(Graph(v).DeepClone())).ToArray() },
+                            new BirNewArray { Elem = NativeIndex, Elems = indices.Select(v => Expression(Graph(v).DeepClone())).ToArray() }) } } } } };
+            }
             // For already staged by-value callback operands, avoid allocating a
             // publication batch or entering the global array lock for scalar calls.
-            if (call is BirDelegateInvoke && dynamicValue && exports.Count > 1 && vectors.Count == 0 && exports.All(e => e is BirLocal))
+            if ((virtualBoundary != null && exports.Count != 0 || call is BirDelegateInvoke && exports.Count > 1) &&
+                dynamicValue && vectors.Count == 0 && exports.All(e => e is BirLocal))
             {
                 var boolean = new TypeNode.Fqn("System.Boolean");
                 IBirExpression test = null;
