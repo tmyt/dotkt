@@ -45,6 +45,9 @@ public sealed class SegmentStorageOuter
 
 public static class ByRefLikeApi
 {
+    public static int ReadStack(IValueRelay relay) => relay.Read(new StackValue(11));
+    public static int ReadHeap(IValueRelay relay) => relay.Read(new HeapValue(7), 3);
+
     public static Tally MakeTally(int v) => new Tally(v);
     public static int ReadTally(Tally t) => t.V;
 
@@ -58,3 +61,12 @@ public static class ByRefLikeApi
     public static Span<int> MakeSpan(int[] a) => a.AsSpan();
     public static int SpanLength(Span<int> s) => s.Length;
 }
+
+public interface IRelayValue { int Read(); }
+public interface IValueRelay
+{
+    int Read<T>(T value) where T : IRelayValue, allows ref struct;
+    int Read<T>(T value, int offset) where T : IRelayValue;
+}
+readonly ref struct StackValue(int value) : IRelayValue { public int Read() => value; }
+sealed class HeapValue(int value) : IRelayValue { public int Read() => value; }

@@ -138,7 +138,14 @@ static partial class FBoundStarProjectionErasure
                     var selected = ClrMemberResolution.SelectedMethodTypeParametersInPhysicalFrame(null, selectedOwner,
                         edge.Member.OrDefault(), parameters.Length, true,
                         method.Params.OrEmpty().Select(parameter => parameter.Type.OrDefault()).ToArray(), references,
-                        parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>());
+                        parameterOwnerArguments: selectedOwner.Args ?? Array.Empty<TypeNode>(), nativeMethodKey: edge.NativeMethodKey.OrDefault());
+                    // This flag admits stack-only type arguments; it is not a
+                    // nominal Kotlin bound. Keep it on the implementing row,
+                    // not on callers that merely provide a type argument.
+                    for (int i = 0; i < selected.Length; i++)
+                        if (selected[i].SpecialConstraints.OrEmpty().Contains("allowsRefStruct") &&
+                            !parameters[i].SpecialConstraints.OrEmpty().Contains("allowsRefStruct"))
+                            parameters[i].SpecialConstraints = parameters[i].SpecialConstraints.OrEmpty().Append("allowsRefStruct").ToArray();
                     foreach (var (index, bounds) in ReadRows(selected, false, physicalDeclaration: true))
                         foreach (var bound in bounds)
                             Add(binding, index, SupertypeGraph.SubstOwnerTvs(bound, selectedOwner.Args ?? Array.Empty<TypeNode>()));
