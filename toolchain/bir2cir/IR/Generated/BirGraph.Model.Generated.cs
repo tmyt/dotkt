@@ -11224,6 +11224,8 @@ internal sealed record BirFunctionDeclaration : BirGraphValue
     internal ExistentialCallableRole ExistentialCallable { get; set; }
     internal string? ImplicitExistentialImplementationId { get; set; }
     internal bool HasNativeOverrideSlot { get; set; }
+    internal bool HasProjectedAddressFrame { get; set; }
+    internal (int Statement, string Target, BirMethodWitness[] Proofs, int[] Locations)? FixedSlotFallback { get; set; }
     internal bool SourceCallableVirtual { get; set; }
     internal IReadOnlyDictionary<int, int[]>? OwnerDependentSourceSlots { get; set; }
     internal string? MaterialFrameOrigin { get; set; }

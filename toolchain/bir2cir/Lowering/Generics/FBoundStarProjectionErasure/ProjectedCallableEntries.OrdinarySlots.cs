@@ -277,75 +277,8 @@ sealed partial class ProjectedCallableEntries
             foreach (var d in dependent) caller = Step(caller, [d.Anchor], d.Upper, d.Owner);
             return caller;
         }
-        BirFunctionDeclaration Step(BirFunctionDeclaration caller, (int Position, TypeNode Bound)[] anchors, int upper = -1, TypeNode own = null)
-        {
-            var file = files.Single(f => f.Types.OrEmpty().Contains(owner));
-            var stem = owner.Name.Value + "$" + target.Name.Value + "$operation";
-            var opName = stem;
-            for (int n = 0; kinds.ContainsKey(opName) || !operationTypes.Add(opName); ++n) opName = stem + n;
-            // This operation lives outside the owner and may also be used from its
-            // split implementation. Capture the free owner variables of Apply, not
-            // an unrelated exact class constraint its callers cannot prove.
-            var ownerRows = TypeParameterFrame.Declarations(owner).ToArray();
-            var free = new SortedSet<int>();
-            void Capture(TypeNode type) => BirGraphNameFields.VisitTypeNodes(type, t => {
-                if (t is TypeNode.Tv { Scope: "type" } v && free.Add(v.I))
-                    foreach (var bound in ownerRows[v.I].Constraints.OrEmpty()) Capture(bound);
-            });
-            Capture(ret);
-            foreach (var p in formals) Capture(p.Type.Value);
-            foreach (var p in caller.TypeParams.Value) foreach (var bound in p.Constraints.OrEmpty()) Capture(bound);
-            var indices = free.ToArray();
-            TypeNode Rebind(TypeNode t) => TypedExecutableFrames.RewriteType(t, v =>
-                v.Scope == "type" ? new TypeNode.Tv("type", Array.BinarySearch(indices, v.I)) : v);
-            BirTypeParameter RebindRow(BirTypeParameter p) => p with { Constraints = p.Constraints.OrEmpty().Select(Rebind).ToArray() };
-            var context = indices.Select(i => RebindRow(ownerRows[i]) with { Variance = default }).ToArray();
-            TypeNode[] inContext = indices.Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
-            var operationRows = context.Concat(anchors.Select((_, i) => new BirTypeParameter { Name = "$bound" + i, Variance = "in" })).ToArray();
-            var implemented = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => a.Bound)).ToArray());
-            var viewed = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => (TypeNode)new TypeNode.Tv("method", a.Position))).ToArray());
-            BirTypeParameter[] Strengthen(TypeNode[] arguments, bool inOperation = false)
-            {
-                var result = caller.TypeParams.Value.Select(p => inOperation ? RebindRow(p) : (BirTypeParameter)p.DeepClone()).ToArray();
-                for (int i = 0; i < anchors.Length; i++)
-                {
-                    var p = result[anchors[i].Position];
-                    p.Constraints = p.Constraints.OrEmpty().Append(arguments[i]).Distinct().ToArray();
-                }
-                return result;
-            }
-            var invoke = new BirFunctionDeclaration { Name = "Apply", TypeParams = Strengthen(anchors.Select((_, i) => (TypeNode)new TypeNode.Tv("type", context.Length + i)).ToArray(), true),
-                Params = formals.Select(p => p with { Type = Rebind(p.Type.Value) }).ToArray(), Ret = Rebind(ret), Abstract = true, Virtual = true, Static = false, Vis = "public", Generated = true };
-            var op = new BirInterfaceDefinition { Kind = "interface", Name = opName, Vis = "internal", Generated = true,
-                TypeParams = operationRows, Methods = new[] { invoke }, Interfaces = Array.Empty<TypeNode>() };
-            file.Types = file.Types.Value.Append(op).ToArray();
-            owner.Interfaces = owner.Interfaces.OrEmpty().Append(implemented).ToArray();
-            var implementation = Bridge(implemented, invoke.Name.Value, Strengthen(anchors.Select(a => a.Bound).ToArray()));
-            var pass = Enumerable.Range(0, caller.TypeParams.Value.Length).Select(i => (TypeNode)Var(i)).ToArray();
-            IBirStatement[] Through(TypeNode.Fqn view) => ForwardBody(view, new BirCast { Type = view, E = new BirThis(), Sty = view }, caller,
-                invoke with { Params = formals, Ret = ret }, pass);
-            caller.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : Through(viewed);
-            if (upper >= 0)
-            {
-                // Two distinct operation definitions: V may itself be the
-                // fallback interface, so their closed MethodImpls can unify.
-                var upperName = opName + "$upper";
-                for (int n = 0; kinds.ContainsKey(upperName) || !operationTypes.Add(upperName); n++) upperName = opName + "$upper" + n;
-                var viaOwner = new TypeNode.Fqn(upperName, inContext.Append(own).ToArray());
-                var viaUpper = new TypeNode.Fqn(upperName, inContext.Append(Var(upper)).ToArray());
-                file.Types = file.Types.Value.Append((BirInterfaceDefinition)op.DeepClone() with { Name = upperName }).ToArray();
-                owner.Interfaces = owner.Interfaces.Value.Append(viaOwner).ToArray();
-                var proved = Bridge(viaOwner, invoke.Name.Value, Strengthen([own]));
-                proved.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, proved, implementation, pass);
-                if (own is TypeNode.Tv { Scope: "type" } v)
-                    upperOperations.Add(upperName, (v.I, anchors[0].Position, anchors[0].Bound));
-                if (!referenceBuild)
-                    caller.Body = new IBirStatement[] { new BirIf { Branches = new[] { new BirBranch {
-                        Cond = OptionalField<IBirExpression>.Of(new BirIsInstance { Type = viaUpper, E = new BirThis() }),
-                        Body = Through(viaUpper) } } } }.Concat(caller.Body.Value).ToArray();
-            }
-            return implementation;
-        }
+        BirFunctionDeclaration Step(BirFunctionDeclaration caller, (int Position, TypeNode Bound)[] anchors, int upper = -1, TypeNode own = null) =>
+            WithConstraintEvidence(files, owner, target, caller, anchors, Bridge, upper, own);
         BirFunctionDeclaration Bridge(TypeNode.Fqn slotOwner, string member, BirTypeParameter[] parameters)
         {
             var names = owner.Methods.Value.Select(m => m.Name.OrDefault()).ToHashSet(StringComparer.Ordinal);
@@ -360,5 +293,82 @@ sealed partial class ProjectedCallableEntries
             if (slotOwner != null && owner.Kind.OrDefault() == "interface") bridge.ClrInterfaceSlotBridge = true;
             return bridge;
         }
+    }
+
+    BirFunctionDeclaration WithConstraintEvidence(BirFileDeclaration[] files, IBirTypeDeclaration owner, BirFunctionDeclaration target,
+        BirFunctionDeclaration caller, (int Position, TypeNode Bound)[] anchors,
+        Func<TypeNode.Fqn, string, BirTypeParameter[], BirFunctionDeclaration> Bridge,
+        int upper = -1, TypeNode own = null, IBirStatement[] otherwise = null)
+    {
+        var formals = caller.Params.Value;
+        var ret = caller.Ret.Value;
+        static TypeNode.Tv Var(int i) => new("method", i);
+        var file = files.Single(f => f.Types.OrEmpty().Contains(owner));
+        var stem = owner.Name.Value + "$" + target.Name.Value + "$operation";
+        var opName = stem;
+        for (int n = 0; kinds.ContainsKey(opName) || !operationTypes.Add(opName); ++n) opName = stem + n;
+        // This operation lives outside the owner and may also be used from its
+        // split implementation. Capture the free owner variables of Apply, not
+        // an unrelated exact class constraint its callers cannot prove.
+        var ownerRows = TypeParameterFrame.Declarations(owner).ToArray();
+        var free = new SortedSet<int>();
+        void Capture(TypeNode type) => BirGraphNameFields.VisitTypeNodes(type, t => {
+            if (t is TypeNode.Tv { Scope: "type" } v && free.Add(v.I))
+                foreach (var bound in ownerRows[v.I].Constraints.OrEmpty()) Capture(bound);
+        });
+        Capture(ret);
+        foreach (var p in formals) Capture(p.Type.Value);
+        foreach (var p in caller.TypeParams.Value) foreach (var bound in p.Constraints.OrEmpty()) Capture(bound);
+        var indices = free.ToArray();
+        TypeNode Rebind(TypeNode t) => TypedExecutableFrames.RewriteType(t, v =>
+            v.Scope == "type" ? new TypeNode.Tv("type", Array.BinarySearch(indices, v.I)) : v);
+        BirTypeParameter RebindRow(BirTypeParameter p) => p with { Constraints = p.Constraints.OrEmpty().Select(Rebind).ToArray() };
+        var context = indices.Select(i => RebindRow(ownerRows[i]) with { Variance = default }).ToArray();
+        TypeNode[] inContext = indices.Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
+        var operationRows = context.Concat(anchors.Select((_, i) => new BirTypeParameter { Name = "$bound" + i, Variance = "in" })).ToArray();
+        var implemented = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => a.Bound)).ToArray());
+        var viewed = new TypeNode.Fqn(opName, inContext.Concat(anchors.Select(a => (TypeNode)new TypeNode.Tv("method", a.Position))).ToArray());
+        BirTypeParameter[] Strengthen(TypeNode[] arguments, bool inOperation = false)
+        {
+            var result = caller.TypeParams.Value.Select(p => inOperation ? RebindRow(p) : (BirTypeParameter)p.DeepClone()).ToArray();
+            for (int i = 0; i < anchors.Length; i++)
+            {
+                var p = result[anchors[i].Position];
+                p.Constraints = p.Constraints.OrEmpty().Append(arguments[i]).Distinct().ToArray();
+            }
+            return result;
+        }
+        var invoke = new BirFunctionDeclaration { Name = "Apply", TypeParams = Strengthen(anchors.Select((_, i) => (TypeNode)new TypeNode.Tv("type", context.Length + i)).ToArray(), true),
+            Params = formals.Select(p => p with { Type = Rebind(p.Type.Value) }).ToArray(), Ret = Rebind(ret), Abstract = true, Virtual = true, Static = false, Vis = "public", Generated = true };
+        var op = new BirInterfaceDefinition { Kind = "interface", Name = opName, Vis = "internal", Generated = true,
+            TypeParams = operationRows, Methods = new[] { invoke }, Interfaces = Array.Empty<TypeNode>() };
+        file.Types = file.Types.Value.Append(op).ToArray();
+        owner.Interfaces = owner.Interfaces.OrEmpty().Append(implemented).ToArray();
+        var implementation = Bridge(implemented, invoke.Name.Value, Strengthen(anchors.Select(a => a.Bound).ToArray()));
+        var pass = Enumerable.Range(0, caller.TypeParams.Value.Length).Select(i => (TypeNode)Var(i)).ToArray();
+        IBirStatement[] Through(TypeNode.Fqn view) => ForwardBody(view, new BirCast { Type = view, E = new BirThis(), Sty = view }, caller,
+            invoke with { Params = formals, Ret = ret }, pass);
+        caller.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : otherwise == null ? Through(viewed) :
+            [new BirIf { Branches = new[] { new BirBranch { Cond = new BirIsInstance { Type = viewed, E = new BirThis() }, Body = Through(viewed) } } }, ..otherwise];
+        if (upper >= 0)
+        {
+            // Two distinct operation definitions: V may itself be the
+            // fallback interface, so their closed MethodImpls can unify.
+            var upperName = opName + "$upper";
+            for (int n = 0; kinds.ContainsKey(upperName) || !operationTypes.Add(upperName); n++) upperName = opName + "$upper" + n;
+            var viaOwner = new TypeNode.Fqn(upperName, inContext.Append(own).ToArray());
+            var viaUpper = new TypeNode.Fqn(upperName, inContext.Append(Var(upper)).ToArray());
+            file.Types = file.Types.Value.Append((BirInterfaceDefinition)op.DeepClone() with { Name = upperName }).ToArray();
+            owner.Interfaces = owner.Interfaces.Value.Append(viaOwner).ToArray();
+            var proved = Bridge(viaOwner, invoke.Name.Value, Strengthen([own]));
+            proved.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, proved, implementation, pass);
+            if (own is TypeNode.Tv { Scope: "type" } v)
+                upperOperations.Add(upperName, (v.I, anchors[0].Position, anchors[0].Bound));
+            if (!referenceBuild)
+                caller.Body = new IBirStatement[] { new BirIf { Branches = new[] { new BirBranch {
+                    Cond = OptionalField<IBirExpression>.Of(new BirIsInstance { Type = viaUpper, E = new BirThis() }),
+                    Body = Through(viaUpper) } } } }.Concat(caller.Body.Value).ToArray();
+        }
+        return implementation;
     }
 }

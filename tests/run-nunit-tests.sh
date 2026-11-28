@@ -63,7 +63,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=277
 	["tests/roundtrip/consumer"]=828
 	["tests/roundtrip/charsequence-polymorphic-consumer"]=4
-	["tests/roundtrip/bidirectional/consumer"]=65
+	["tests/roundtrip/bidirectional/consumer"]=66
 	["tests/interop/consumer"]=539
 )
 
@@ -994,6 +994,13 @@ for proj in "${PROJECTS[@]}"; do
 	runtime_copy="$(dirname "$emitted")/DotKt.Stdlib.dll"
 	if [[ ! -f "$runtime_copy" ]] || ! cmp -s "$STDLIB_RT_DLL" "$runtime_copy"; then
 		echo "  RUNTIME PROVENANCE FAIL — $runtime_copy differs from the verified stdlib"; rc=1; continue
+	fi
+	if [[ "$proj" == "tests/roundtrip/bidirectional/consumer" ]]; then
+		aot="$ROOT/build/nunit-fixed-slot-aot"
+		if ! dotnet publish "$dir/../aot-fixed-slot/FixedSlot.csproj" -c Release --use-current-runtime \
+			-p:VerifiedInput="$(dirname "$emitted")" -o "$aot" -v:q || ! "$aot/FixedSlot"; then
+			echo "  AOT FAIL — fixed-slot dispatch"; rc=1
+		fi
 	fi
 	[[ "$proj_file" == *.ktproj && -f "$emitted" ]] && EMITTED+=("$emitted")
 	# Also collect any declared EXTRA_EMIT assembly (e.g. a ProjectReference'd producer dll copied into bin).

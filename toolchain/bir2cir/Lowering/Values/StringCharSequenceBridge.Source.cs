@@ -579,6 +579,15 @@ static partial class StringCharSequenceBridge
     internal static IBirExpression TryAdaptSlotReturn(IBirExpression value, TypeNode source, TypeNode target) =>
         AdaptScalarValue(SlotReturnConversion(source, target), value, source);
 
+    // Late physical forwarders cannot introduce an unbound source constructor.
+    // Their adapter belongs to this assembly and was bound with its classifier.
+    const string PhysicalWrap = "FromNativeText";
+    internal static IBirExpression AdaptPhysicalSlotReturn(IBirExpression value, TypeNode source, TypeNode target) =>
+        !CanAdaptSlotReturn(source, target) ? null : new BirCallStatic {
+            Owner = new TypeNode.Fqn(Adapter), Method = PhysicalWrap, Sig = new TypeNode[] { new TypeNode.Fqn("System.Object") },
+            Ret = new TypeNode.Fqn(CharSeq), Args = new[] { value }
+        };
+
     static IBirExpression AdaptScalarValue(CharSequenceConversion conversion, IBirExpression value, TypeNode source) => conversion switch {
         CharSequenceConversion.String => SourceWrapAdapter(value),
         CharSequenceConversion.NullableString => SourceWrapAdapterNullable(value, source),
@@ -655,7 +664,10 @@ static partial class StringCharSequenceBridge
             Ctors = new[] { new BirConstructor { Params = new[] { new BirParameter { Name = "value", Type = T("kotlin.String") } },
                 BaseArgs = OptionalField<IBirExpression[]>.Null, ThisArgs = OptionalField<IBirExpression[]>.Null, Vis = "public",
                 Body = new IBirStatement[] { new BirSetField { OwnerType = T(Adapter), Recv = new BirThis(), Name = "value", Value = Local("value") } } } },
-            Methods = new[] { get, subsequence, value, length, Method("ToString", T("kotlin.String"), Array.Empty<BirParameter>(),
+            Methods = new[] { get, subsequence, value, length,
+                Method(PhysicalWrap, T(CharSeq), [new BirParameter { Name = "text", Type = T("object") }],
+                    SourceRestoreErasedCharSequence(Local("text"), T(CharSeq)), @virtual: false) with { Static = true, Vis = "internal" },
+                Method("ToString", T("kotlin.String"), Array.Empty<BirParameter>(),
                 new BirFieldGet { OwnerType = T(Adapter), Recv = new BirThis(), Name = "value" }, @override: true, objectOverride: true) },
             Properties = new[] {
                 new BirPropertyDeclaration { Name = "value", Type = T("kotlin.String"), KotlinAccessors = new[] { "get" }, PropertyAssociation = "string-value" },

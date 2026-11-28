@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(VerifiedInput)' == ''">
+    <ProjectReference Include="../kotlin-producer/BidirectionalKotlin.ktproj" />
+  </ItemGroup>
+  <!-- The full gate uses the DLLs from its existing test build, without compiling the producer graph twice. -->
+  <ItemGroup Condition="'$(VerifiedInput)' != ''">
+    <Reference Include="$(VerifiedInput)/BidirectionalKotlin.dll" />
+    <Reference Include="$(VerifiedInput)/RoundtripProducer.dll" />
+    <Reference Include="$(VerifiedInput)/BidirectionalProducer.dll" />
+    <Reference Include="$(VerifiedInput)/RoundtripPropertySlot.dll" />
+    <Reference Include="$(VerifiedInput)/DotKt.Stdlib.dll" />
+  </ItemGroup>
+</Project>
