@@ -1114,6 +1114,7 @@ sealed class Pipeline
         DeclarationSignatureIdentity.BindSelectedOverridesSource(captured, declarationSignatures, refs, isValueFqn,
             suspendTransitions.PublishMethods, descriptor => currentDeclarations.GetSource(descriptor),
             descriptor => suspendTransitions.RetireDiscardedSubtree(descriptor));
+        nativeProofs.ApplyRefLikeOverrideRows();
         var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
             declarationCollisionSources, out var declarationSemanticCarrierIds);
         DeclarationIdentityBinding.ApplyLocal(captured, declarationPhysicalNames, declarationSemanticCarrierIds,
