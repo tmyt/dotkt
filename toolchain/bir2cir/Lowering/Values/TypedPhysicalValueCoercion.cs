@@ -316,7 +316,8 @@ static partial class TypedPhysicalValueCoercion
         {
             var scope = Scope.Frame(method.Params.OrEmpty(), method.Body.OrEmpty().Cast<BirGraphValue>(), owner, method.Ret.OrDefault(),
                 ownerFrame, method.TypeParams.OrEmpty());
-            scope.ProjectedCallable = method.Attrs.OrEmpty().Any(a => a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.AKProjectedMethod });
+            scope.ProjectedCallable = method.HasProjectedAddressFrame || method.Attrs.OrEmpty().Any(a =>
+                a.Attr.OrDefault() is TypeNode.Fqn { Name: RoundtripMetadata.AKProjectedMethod });
             var arrayResult = MayHoldArray(scope.Return, index);
             var callbackResult = Underlying(scope.Return) as TypeNode.Fn;
             if ((arrayResult || callbackResult is { Suspend: false } && MayHoldArray(callbackResult.Ret, index)) &&

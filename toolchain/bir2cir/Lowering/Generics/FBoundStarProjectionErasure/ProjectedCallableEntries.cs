@@ -12,6 +12,8 @@ sealed partial class ProjectedCallableEntries
     sealed record Entry(string Name, ProjectedMethodPlan Plan, BirTypeParameter[] Original,
         NullableRepresentationFrame Representations, TypeNode[] Signature);
     sealed record Body(IBirTypeDeclaration Owner, BirFunctionDeclaration Method, Entry Entry);
+    sealed record FixedIntersection(IBirStatement Statement, string Target, BirMethodWitness[] Proofs, ProjectedMethodPlan Contract);
+    readonly Dictionary<BirFunctionDeclaration, FixedIntersection> fixedIntersections = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
     readonly Dictionary<string, (IBirTypeDeclaration Owner, BirFunctionDeclaration Method)> originalSlots = new(StringComparer.Ordinal);
     readonly Dictionary<BirFunctionDeclaration, ProjectedMethodPlan> declarationPlans = new(ReferenceEqualityComparer.Instance);
@@ -110,9 +112,10 @@ sealed partial class ProjectedCallableEntries
                 bool local = localSlots.TryGetValue(id, out var slot);
                 if (!local && !references.TryDeclarationSignatureSlot(EntryId(id), out slot))
                 {
-                    DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id);
+                    if (entry != null) DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id);
                     continue;
                 }
+                if (entry == null && !slot.IsInterface) continue;
                 foreach (var constructed in SelectedConstructions(hierarchy, owner, method, id, slot.Owner, local ? null : EntryId(id)))
                 {
                     TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, constructed.Args ?? []);
@@ -132,6 +135,12 @@ sealed partial class ProjectedCallableEntries
                     else if (!local && references.SelectedPhysicalMethod(id) is { IsVirtual: false } or { IsFinal: true } &&
                         references.TryDeclarationSignatureSlot(id, out var facade)) RetireSlotForwarder(owner, constructed, facade, id);
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
+                    if (entry == null)
+                    {
+                        DeclareFixedSlotForwarder(files, owner, method, descriptor, contract, local ? entries[id].Representations :
+                            references.NullableMethodFrame(contract.RepresentationDeclaration ?? id), id);
+                        continue;
+                    }
                     if (slot.IsInterface && !Supplies(contract, entry.Plan))
                     {
                         DeclareOrdinaryInterfaceBridge(files, hierarchy, owner, method, entry, id, slot, contract, constructed);
@@ -175,12 +184,59 @@ sealed partial class ProjectedCallableEntries
         => SupertypeGraph.SelectedOverrideOwners(hierarchy[owner.Name.Value], hierarchy, references,
             method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
+    void DeclareFixedSlotForwarder(BirFileDeclaration[] files, IBirTypeDeclaration owner, BirFunctionDeclaration method,
+        BirMethodImpl descriptor, ProjectedMethodPlan contract, NullableRepresentationFrame frame, string id)
+    {
+        // The selected interface owns the projected rows. The native virtual method
+        // remains the sole override point and takes one material argument per source parameter.
+        var rows = method.TypeParams.Value;
+        var primary = Enumerable.Range(0, rows.Length).Select(i => new TypeNode.Tv("method", frame?.SourcePosition(i) ?? i)).ToArray();
+        var actual = primary.Select(contract.NativeArgument).ToArray();
+        var proofs = new List<BirMethodWitness>();
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var required = rows[i].Constraints.OrEmpty().Select(t =>
+                FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(t, [], actual)).ToArray();
+            var available = contract.Parameters[((TypeNode.Tv)actual[i]).I].Constraints.OrEmpty();
+            if (required.All(b => available.Any(t => Proves(t, b)))) continue;
+            var facets = required.OfType<TypeNode.Fqn>().Where(b =>
+                kinds.GetValueOrDefault(b.Name) == "interface" || references.IsInterfaceType(b)).Cast<TypeNode>().ToArray();
+            if (facets.Length != 0) proofs.Add(new() { Argument = i, Primary = primary[i], Interfaces = facets });
+        }
+        if (proofs.Count == 0 || NeedsTaskView(method, descriptor.Ret.Value, actual))
+        {
+            AddSlotForwarder(owner, method, descriptor, contract, actual, true, id);
+            return;
+        }
+        var bridge = NewSlotForwarder(owner, method, descriptor, contract.CloneParameters(), true);
+        bridge.HasProjectedAddressFrame = contract.AddressOperands.Length != 0;
+        bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, bridge, method, actual);
+        if (!referenceBuild) fixedIntersections.Add(bridge, new(bridge.Body.Value[0],
+            method.RoundtripDeclarationIdentity.Value.DeclarationId.Value, proofs.ToArray(), contract));
+
+        // A concrete nominal witness can satisfy the whole conjunction even if
+        // its published row cannot express it. Only genuinely split calls need
+        // the same runtime intersection operation as a direct native call.
+        var anchors = proofs.SelectMany(p => p.Interfaces.Value.Select(b => (primary[p.Argument.Value].I, b))).Distinct().ToArray();
+        bool open = false;
+        foreach (var (_, bound) in anchors) BirGraphNameFields.VisitTypeNodes(bound, t => open |= t is TypeNode.Tv { Scope: "method" });
+        if (open) return;
+        BirFunctionDeclaration Operation(TypeNode.Fqn op, string name, BirTypeParameter[] parameters) =>
+            NewSlotForwarder(owner, method, descriptor with { Owner = op, Member = name, Arity = parameters.Length }, parameters, true);
+        var exact = WithConstraintEvidence(files, owner, method, bridge, anchors, Operation, otherwise: bridge.Body.Value);
+        var joint = actual.ToArray();
+        foreach (var proof in proofs) joint[proof.Argument.Value] = proof.Primary.Value;
+        exact.HasProjectedAddressFrame = bridge.HasProjectedAddressFrame;
+        exact.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, exact, method, joint);
+    }
+
     void AddSlotForwarder(IBirTypeDeclaration owner, BirFunctionDeclaration target, BirMethodImpl descriptor,
         ProjectedMethodPlan contract, TypeNode[] arguments, bool isInterface, string id)
     {
         // The MethodImpl keeps the selected declaration's ABI. Dispatch to the
         // Kotlin body with its own value parameters and witness ordering.
         var bridge = NewSlotForwarder(owner, target, descriptor, contract.CloneParameters(), isInterface);
+        bridge.HasProjectedAddressFrame = contract.AddressOperands.Length != 0;
         bridge.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) :
             isInterface && NeedsTaskView(target, descriptor.Ret.Value, arguments)
                 ? ProjectedTaskBody(owner, bridge, target, (TypeNode.Fqn)descriptor.Owner.Value, contract, id)
@@ -476,7 +532,13 @@ sealed partial class ProjectedCallableEntries
             var carrierBridge = m.ExistentialCallable == ExistentialCallableRole.Forwarder;
             if (bodyEntry == null && carrierBridge && m.SelectedGenericOverrides is { Count: > 0 } implemented)
                 bodyEntry = (DeclarationIdentityBinding.InheritedProjectionId(owner.Name.Value, implemented), null);
-            if (HasFixedAbi(m, null, references) || (bodyEntry?.Id ?? identity?.DeclarationId.OrDefault()) is not string id ||
+            if (HasFixedAbi(m, null, references))
+            {
+                if (owner != null && m.TypeParams.OrEmpty().Length != 0 && m.SelectedGenericOverrides is { Count: > 0 })
+                    bodies.Add(new(owner, m, null));
+                continue;
+            }
+            if ((bodyEntry?.Id ?? identity?.DeclarationId.OrDefault()) is not string id ||
                 bodyEntry == null && !carrierSlot && id.Contains(DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal) ||
                 m.TypeParams.OrEmpty() is not { Length: > 0 } parameters) continue;
             var contractSource = m.ImplicitExistentialImplementationId is string origin ? originalSlots[origin].Method : m;
@@ -821,7 +883,20 @@ sealed partial class ProjectedCallableEntries
                     return name;
                 }
                 foreach (var method in methods)
-                    if (MethodEntry(method) != null) RewriteBody(method, owner,
+                    if (fixedIntersections.TryGetValue(method, out var deferred))
+                    {
+                        var rows = TypeParameterFrame.Declarations(owner).ToArray();
+                        var locations = deferred.Contract.AddressOperands.ToDictionary(i => method.Params.Value[i].Name.Value,
+                            i => ((TypeNode.ByRef)SignatureValueTypes.Of(method.Params.Value[i].Type.Value)).Of);
+                        ((BirGraphValue)deferred.Statement).VisitOwnChildSlots((_, _, slot) => {
+                            var call = (BirCallInstance)slot.Value;
+                            call.SelectedGenericCallable = deferred.Target;
+                            call.MethodWitnessFacts = deferred.Proofs;
+                            slot.Replace(invocations.FixedIntersection(new(call), owner.Name.Value, rows, references, emittedTypes,
+                                generated, allocate: Allocate, lexicalDefinition: owner, locations: locations));
+                        });
+                    }
+                    else if (MethodEntry(method) != null) RewriteBody(method, owner,
                         owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(), [], Allocate, generated, helpers);
                     else if (method.LocalBodyEntry.HasValue)
                         method.Visit(n => Bind(n, new(owner == null ? [] : TypeParameterFrame.Declarations(owner).ToArray(), []),

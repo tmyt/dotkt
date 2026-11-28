@@ -6,6 +6,12 @@ public sealed class StringKey : IKey<string> { }
 public static class Family { public interface IMark<Tag> { } }
 public interface IJoined<T> where T : Family.IMark<string>, IMarker<string> { }
 public interface ILeft { }
+public class NativePairReader
+{
+    public virtual string Read<A,B>(A first, B second) where A : ILeft where B : ILeft => "native base";
+    public virtual T Replace<T>(ref T slot, T next) where T : ILeft { var old = slot; slot = next; return old; }
+    public virtual T Pick<T>(T item) where T : Base, ILeft => item;
+}
 public interface IRight { }
 public interface IJointProof : ILeft, IRight { }
 public readonly struct JointValue : IJointProof { }
