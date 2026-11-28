@@ -12,6 +12,9 @@ public class NativePairReader
     public virtual T Replace<T>(ref T slot, T next) where T : ILeft { var old = slot; slot = next; return old; }
     public virtual T Pick<T>(T item) where T : Base, ILeft => item;
     public virtual T PickSelf<T>(T item) where T : Base, IKey<T> => item;
+    public virtual T PickOwner<T,U>(T item, U other) where T : Base, IKey<T> where U : NarrowLeft => item;
+    public virtual B PickFrom<A,B>(System.Collections.Generic.Queue<A> items, B item) where A : Base where B : A => item;
+    public virtual T Peek<T>(System.Collections.Generic.Queue<T> items) where T : RecursiveParent<T> => items.Peek();
     public virtual string Describe<T>(System.Collections.Generic.Queue<T> items) where T : Base => "native base";
 }
 public interface IRight { }
@@ -43,6 +46,9 @@ public static class JoinedSlot
         owner != null && item is T;
 }
 public class Base { }
+public class NarrowLeft : ILeft { }
+public class RecursiveParent<T> where T : RecursiveParent<T> { }
+public class RecursiveLeaf : RecursiveParent<RecursiveLeaf> { }
 public class MarkedBase : Base, IMarker<string> { }
 public class FixedJoint : Base, Family.IMark<string> { }
 public class FixedSlotBase<A> where A : Base, Family.IMark<string>

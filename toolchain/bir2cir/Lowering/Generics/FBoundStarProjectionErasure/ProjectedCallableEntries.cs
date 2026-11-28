@@ -137,7 +137,7 @@ sealed partial class ProjectedCallableEntries
                     var contract = (local ? entries[id].Plan : references.ProjectedMethod(EntryId(id))).OnOwner(constructed.Args ?? []);
                     if (entry == null)
                     {
-                        ImplementConstrainedSlot(owner, method, constructed, id, local ? entries[id].Representations :
+                        ImplementConstrainedSlot(files, owner, method, constructed, id, contract.AddressOperands, local ? entries[id].Representations :
                             references.NullableMethodFrame(contract.RepresentationDeclaration ?? id));
                         DeclareFixedSlotForwarder(files, owner, method, descriptor, contract, local ? entries[id].Representations :
                             references.NullableMethodFrame(contract.RepresentationDeclaration ?? id), id);
@@ -187,7 +187,7 @@ sealed partial class ProjectedCallableEntries
             method.ConstructedOverrideOwners, id, declaringOwner, referencedId);
 
     void DeclareFixedSlotForwarder(BirFileDeclaration[] files, IBirTypeDeclaration owner, BirFunctionDeclaration method,
-        BirMethodImpl descriptor, ProjectedMethodPlan contract, NullableRepresentationFrame frame, string id)
+        BirMethodImpl descriptor, ProjectedMethodPlan contract, NullableRepresentationFrame frame, string id, int[] exactLocations = null)
     {
         // The selected interface owns the projected rows. The native virtual method
         // remains the sole override point and takes one material argument per source parameter.
@@ -202,13 +202,12 @@ sealed partial class ProjectedCallableEntries
                 FBoundStarProjectionErasure.SubstituteDeclarationTypeArguments(t, [], actual)).ToArray();
             var position = ((TypeNode.Tv)actual[i]).I;
             var available = contract.Parameters[position].Constraints.OrEmpty();
-            var bounds = required.Where(b => b is TypeNode.Fqn).ToArray();
-            var unproved = bounds.Where(b => !available.Any(t => Proves(t, b))).ToArray();
+            var unproved = required.Where(b => actual[i] != b && !available.Any(t => Proves(t, b))).ToArray();
             if (unproved.Length == 0) continue;
             missing.AddRange(unproved.Select(b => (position, b)));
             // The dynamic path reopens the nominal argument; it no longer has
             // the constraints that were statically proved on the material row.
-            proofs.Add(new() { Argument = i, Primary = primary[i], Interfaces = bounds });
+            proofs.Add(new() { Argument = i, Primary = primary[i], Interfaces = required });
         }
         if (proofs.Count == 0 || NeedsTaskView(method, descriptor.Ret.Value, actual))
         {
@@ -222,7 +221,7 @@ sealed partial class ProjectedCallableEntries
         void DeferFallback()
         {
             if (!referenceBuild) bridge.FixedSlotFallback = (Array.IndexOf(bridge.Body.Value, fallback),
-                method.RoundtripDeclarationIdentity.Value.DeclarationId.Value, proofs.ToArray(), contract.AddressOperands);
+                method.RoundtripDeclarationIdentity.Value.DeclarationId.Value, proofs.ToArray(), exactLocations ?? contract.AddressOperands);
         }
 
         // A concrete nominal witness can satisfy the whole conjunction even if
@@ -625,7 +624,7 @@ sealed partial class ProjectedCallableEntries
                 {
                     exactFacades.Add(id);
                     MakeExactFacade(owner, m, copy, entry.Plan);
-                    if (owner.Kind.OrDefault() == "interface" && entry.Plan.Facets.Any(f => f.Evidence.Any(HasMethodVariable)))
+                    if (owner.Kind.OrDefault() == "interface" && m.TypeParams.Value.Any(p => p.Constraints.OrEmpty().Any(HasMethodVariable)))
                         result.Add(DeclareConstrainedSlot(owner, m, names, id));
                 }
                 else if (m.Virtual.OrDefault())
@@ -676,8 +675,8 @@ sealed partial class ProjectedCallableEntries
         return slot;
     }
 
-    void ImplementConstrainedSlot(IBirTypeDeclaration owner, BirFunctionDeclaration target, TypeNode.Fqn construction,
-        string id, NullableRepresentationFrame frame)
+    void ImplementConstrainedSlot(BirFileDeclaration[] files, IBirTypeDeclaration owner, BirFunctionDeclaration target, TypeNode.Fqn construction,
+        string id, int[] locations, NullableRepresentationFrame frame)
     {
         var selected = ConstrainedSlotId(id);
         string name;
@@ -695,18 +694,16 @@ sealed partial class ProjectedCallableEntries
         {
             if (!references.TryDeclarationSignatureSlot(selected, out var slot)) return;
             name = slot.Name; signature = slot.Parameters; result = slot.Return;
-            parameters = references.SelectedPhysicalMethod(selected).GetGenericArguments()
-                .Select(ReferenceMetadataReader.GenericParamSourceDeclaration).ToArray();
+            parameters = references.PhysicalMethodTypeParametersInPhysicalFrame(selected, nativeNames: true);
         }
         TypeNode Close(TypeNode t) => SupertypeGraph.SubstOwnerTvs(t, construction.Args ?? []);
         foreach (var p in parameters)
             if (p.Constraints.HasValue) p.Constraints = p.Constraints.Value.Select(Close).ToArray();
         var descriptor = new BirMethodImpl { Owner = construction, Member = name, Arity = parameters.Length,
             Params = signature.Select(Close).ToArray(), Ret = Close(result) };
-        var body = NewSlotForwarder(owner, target, descriptor, parameters, true);
-        var arguments = Enumerable.Range(0, target.TypeParams.Value.Length)
-            .Select(i => (TypeNode)new TypeNode.Tv("method", frame?.SourcePosition(i) ?? i)).ToArray();
-        body.Body = referenceBuild ? RefBodySquash.SourceThrowStubBody(references) : ForwardBody(owner, body, target, arguments);
+        // Even an unsplit method frame can have a weakened owner-dependent bound.
+        // Use the same physical proof as the projected forwarder before calling the native MethodDef.
+        DeclareFixedSlotForwarder(files, owner, target, descriptor, new(parameters, [], []), frame, id, locations);
     }
 
     void ApplyNativeSignature(BirFunctionDeclaration method, ProjectedMethodPlan plan)
